@@ -34,6 +34,9 @@ const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
 const { frequentaNaJanela, avaliarFrequencia } = require('../utils/kidsFrequencia');
 const { agruparMotivos, montarContagens, rotuloMotivo } = require('../utils/kidsSituacao');
 const { avaliarResolucao: avaliarResolucaoKids, resumoFila: resumoFilaKids } = require('../utils/kidsConversaoFila');
+// Apresentação de crianças · horário do culto (08/09/2026): catálogo
+// `apresentacao_horarios` (9h30 até o limite → 11h30) editável AQUI pela equipe.
+const { horariosConfigurados: apresHorariosConfigurados, ocupacaoPorHorario: apresOcupacaoPorHorario } = require('../services/apresentacaoHorarios');
 // O Planning Center Check-Ins saiu do código (Marcos 2026-07-20): a frequência
 // do Kids é 100% do nosso totem (kids_checkins). Sobrou só a coluna legada
 // kids_criancas.planning_center_id e a tabela kids_pco_presencas (histórico
@@ -2380,17 +2383,31 @@ router.patch('/batismos/:id', authorizeModule('kids', 3), async (req, res) => {
 // Apresentação de crianças · inscrições do form público (agrupadas por turma na UI)
 router.get('/apresentacoes', authorizeModule('kids', 1), async (req, res) => {
   try {
-    const { data } = await supabase.from('apresentacao_criancas')
-      // ⚠️ `crianca_data_nascimento` (22/08/2026): `crianca_idade` é SNAPSHOT do dia
-      // da inscrição e envelhece sozinho — "8 meses" de maio segue 8 meses em
-      // setembro. Com a data, o app calcula a idade de HOJE.
-      // ⚠️ Nada de CPF, e-mail ou endereço aqui: a lista é PII na tela de um
-      // celular, e nada disso é preciso pra contatar a família.
-      .select('id, nome_pai, nome_mae, crianca_nome, crianca_idade, crianca_data_nascimento, telefone, data_apresentacao, status, observacoes, origem, crianca_id, created_at')
-      .is('deleted_at', null)
-      .order('data_apresentacao', { ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false })
-      .limit(1000);
+    // ⚠️ `crianca_data_nascimento` (22/08/2026): `crianca_idade` é SNAPSHOT do dia
+    // da inscrição e envelhece sozinho — "8 meses" de maio segue 8 meses em
+    // setembro. Com a data, o app calcula a idade de HOJE.
+    // ⚠️ Nada de CPF, e-mail ou endereço aqui: a lista é PII na tela de um
+    // celular, e nada disso é preciso pra contatar a família. A ficha completa
+    // (o que a pessoa preencheu) é `GET /apresentacoes/:id`, aberta de propósito.
+    // `horario_culto` (08/09): o culto da família — 9h30/11h30 pela régua.
+    const BASE = 'id, nome_pai, nome_mae, crianca_nome, crianca_idade, crianca_data_nascimento, crianca_sexo, telefone, data_apresentacao, status, observacoes, origem, crianca_id, created_at';
+    const listar = (comHorario) => {
+      let q = supabase.from('apresentacao_criancas')
+        .select(comHorario ? `${BASE}, horario_culto` : BASE)
+        .is('deleted_at', null)
+        .order('data_apresentacao', { ascending: false, nullsFirst: false });
+      if (comHorario) q = q.order('horario_culto', { ascending: true, nullsFirst: false });
+      return q.order('created_at', { ascending: false }).limit(1000);
+    };
+    let { data, error } = await listar(true);
+    // ⚠️ Sem a migration `20260908150000`, pedir `horario_culto` faz o PostgREST
+    // recusar a query INTEIRA (42703) — e a lista do Kids apareceria VAZIA em
+    // silêncio. Recai no select antigo em vez de esconder as inscrições.
+    if (error && (error.code === '42703' || /horario_culto/.test(error.message || ''))) {
+      console.warn('[totemKids] apresentacoes: coluna horario_culto ausente (migration 20260908150000 não aplicada) — listando sem horário');
+      ({ data, error } = await listar(false));
+    }
+    if (error) throw error;
     res.json(data || []);
   } catch (e) {
     console.error('[totemKids] apresentacoes:', e.message);
@@ -2398,14 +2415,158 @@ router.get('/apresentacoes', authorizeModule('kids', 1), async (req, res) => {
   }
 });
 
+// ── Horários da apresentação (catálogo `apresentacao_horarios`) ──────────────
+// Pedido do Marcos (08/09): "até 6 inscrições no 9h30, passando de 6 vai pro
+// 11h30, com a possibilidade de editar dentro da área do Kids". A régua que
+// atribui vive em utils/apresentacaoHorario; aqui a equipe mexe no CATÁLOGO
+// (abrir/fechar, limite, rótulo, ordem) e vê a ocupação da próxima turma.
+// ⚠️ Definidas ANTES de `/apresentacoes/:id` pra `horarios` não virar um id.
+function _proximoSegundoDomingoKids() {
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const seg = (y, m) => { const p1 = new Date(y, m, 1); return new Date(y, m, 1 + ((7 - p1.getDay()) % 7) + 7); };
+  let y = hoje.getFullYear(), m = hoje.getMonth();
+  let d = seg(y, m);
+  if (d < hoje) { m += 1; if (m > 11) { y += 1; m = 0; } d = seg(y, m); }
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// GET /apresentacoes/horarios?data= — catálogo inteiro (incl. fechados) + ocupação da turma
+router.get('/apresentacoes/horarios', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const data = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.data || '')) ? String(req.query.data) : _proximoSegundoDomingoKids();
+    const [horarios, ocup, semH] = await Promise.all([
+      apresHorariosConfigurados(),
+      apresOcupacaoPorHorario(data),
+      supabase.from('apresentacao_criancas').select('id', { count: 'exact', head: true })
+        .eq('data_apresentacao', data).is('horario_culto', null).is('deleted_at', null).neq('status', 'cancelado'),
+    ]);
+    if (horarios === null) return res.status(500).json({ error: 'Não consegui ler os horários' });
+    res.json({
+      data_apresentacao: data,
+      horarios: horarios.map((h) => ({ ...h, inscritos: ocup[h.horario] || 0 })),
+      // Inscrições da turma ainda SEM culto (chegaram com o catálogo lotado ou
+      // antes da régua existir) — a equipe precisa atribuir na mão.
+      sem_horario: semH.count || 0,
+    });
+  } catch (e) {
+    console.error('[totemKids] apresentacoes/horarios:', e.message);
+    res.status(500).json({ error: 'Erro ao listar horários' });
+  }
+});
+
+// POST /apresentacoes/horarios — adiciona um horário ao catálogo
+router.post('/apresentacoes/horarios', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const horario = String(req.body?.horario || '').trim().slice(0, 40);
+    if (!/^\d{2}:\d{2}$/.test(horario)) return res.status(400).json({ error: 'Horário no formato HH:MM (ex.: 09:30)' });
+    const label = String(req.body?.label || '').trim().slice(0, 120)
+      || `Culto das ${horario.replace(/^0/, '').replace(':00', 'h').replace(':', 'h')}`;
+    const limite = req.body?.limite != null && req.body.limite !== '' ? parseInt(req.body.limite, 10) : null;
+    const aberto = req.body?.aberto !== false;
+    const ordem = Number.isFinite(+req.body?.ordem) ? +req.body.ordem : 99;
+    const { data, error } = await supabase.from('apresentacao_horarios')
+      .insert({ horario, label, limite: Number.isFinite(limite) ? Math.max(0, limite) : null, aberto, ordem })
+      .select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[totemKids] apresentacoes/horarios POST:', e.message);
+    res.status(500).json({ error: e.code === '23505' ? 'Esse horário já existe' : 'Erro ao criar horário' });
+  }
+});
+
+// PATCH /apresentacoes/horarios/:id — abrir/fechar, limite, label, ordem
+router.patch('/apresentacoes/horarios/:id', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const upd = { updated_at: new Date().toISOString() };
+    if (typeof req.body?.aberto === 'boolean') upd.aberto = req.body.aberto;
+    if (req.body?.label != null) upd.label = String(req.body.label).trim().slice(0, 120);
+    if ('limite' in (req.body || {})) {
+      const l = req.body.limite;
+      upd.limite = (l === null || l === '') ? null : (Number.isFinite(+l) ? Math.max(0, parseInt(l, 10)) : null);
+    }
+    if (Number.isFinite(+req.body?.ordem)) upd.ordem = +req.body.ordem;
+    const { data, error } = await supabase.from('apresentacao_horarios')
+      .update(upd).eq('id', req.params.id).is('deleted_at', null).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[totemKids] apresentacoes/horarios PATCH:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar horário' });
+  }
+});
+
+// DELETE /apresentacoes/horarios/:id — remove do catálogo (soft). Inscrições já
+// atribuídas a ele MANTÊM o horario_culto — a tela mostra o valor cru.
+router.delete('/apresentacoes/horarios/:id', authorizeModule('kids', 4), async (req, res) => {
+  try {
+    const { error } = await supabase.from('apresentacao_horarios')
+      .update({ deleted_at: new Date().toISOString() }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[totemKids] apresentacoes/horarios DELETE:', e.message);
+    res.status(500).json({ error: 'Erro ao remover horário' });
+  }
+});
+
+// GET /apresentacoes/:id — a FICHA: tudo o que a pessoa preencheu no formulário.
+// Pedido do Marcos (08/09): "quero a opção de ver o preenchimento do formulário
+// pela pessoa, pois aí qualquer problema nós conseguimos ver" (o gatilho foi o
+// nome da mãe dobrado no certificado). Aqui vai o CPF/e-mail/endereço que a
+// lista omite, + consentimentos (prova legal) + saúde da ficha do Kids +
+// quem é o responsável no sistema. É PII de menor: abre-se UMA inscrição, de
+// propósito, e nunca em lista.
+router.get('/apresentacoes/:id', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data: insc, error } = await supabase.from('apresentacao_criancas')
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (error) throw error;
+    if (!insc) return res.status(404).json({ error: 'Inscrição não encontrada' });
+
+    const [cons, kid, resp] = await Promise.all([
+      supabase.from('inscricao_consentimentos')
+        .select('tipo, aceito, texto, em, ip_origem, user_agent')
+        .eq('porta', 'apresentacao').eq('ref_id', insc.id).is('deleted_at', null).order('em'),
+      insc.crianca_id
+        ? supabase.from('kids_criancas')
+          .select('id, nome, data_nascimento, sexo, visitante, tem_alergia, alergia_qual, tem_espectro, espectro_qual, tem_limitacao_fisica, limitacao_fisica_qual, observacoes_internas')
+          .eq('id', insc.crianca_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+      insc.responsavel_membro_id
+        ? supabase.from('mem_membros').select('id, nome, telefone, email, status').eq('id', insc.responsavel_membro_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
+    res.json({
+      ...insc,
+      consentimentos: cons.data || [],
+      crianca_kids: kid.data || null,
+      responsavel_membro: resp.data || null,
+    });
+  } catch (e) {
+    console.error('[totemKids] apresentacao detalhe:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a ficha' });
+  }
+});
+
 router.patch('/apresentacoes/:id', authorizeModule('kids', 3), async (req, res) => {
   try {
-    const allowed = ['status', 'observacoes', 'data_apresentacao', 'crianca_idade'];
+    // `horario_culto` (08/09): a equipe corrige o culto da criança na tela.
+    // `nome_pai`/`nome_mae`: pra consertar o nome dobrado sem mexer no banco.
+    const allowed = ['status', 'observacoes', 'data_apresentacao', 'crianca_idade', 'horario_culto', 'nome_pai', 'nome_mae'];
     const payload = { updated_at: new Date().toISOString() };
     for (const k of allowed) if (req.body[k] !== undefined) payload[k] = req.body[k];
+    for (const k of ['nome_pai', 'nome_mae']) {
+      if (k in payload) payload[k] = payload[k] ? (String(payload[k]).trim().replace(/\s+/g, ' ').slice(0, 200) || null) : null;
+    }
+    if ('horario_culto' in payload) {
+      const h = payload.horario_culto ? String(payload.horario_culto).trim().slice(0, 40) : null;
+      if (h && !/^\d{2}:\d{2}$/.test(h)) return res.status(400).json({ error: 'Horário no formato HH:MM' });
+      payload.horario_culto = h;
+    }
     const { data, error } = await supabase.from('apresentacao_criancas')
       .update(payload).eq('id', req.params.id).is('deleted_at', null)
-      .select('id, status, observacoes, data_apresentacao, crianca_idade').single();
+      .select('id, status, observacoes, data_apresentacao, crianca_idade, horario_culto, nome_pai, nome_mae').single();
     if (error) throw error;
     res.json(data);
   } catch (e) {

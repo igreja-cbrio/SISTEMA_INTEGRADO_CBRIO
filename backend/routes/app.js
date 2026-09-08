@@ -6814,6 +6814,12 @@ const {
   separar: _separarApres,
   juntar: _juntarApres,
 } = require('../utils/apresentacaoHistorico');
+// Horário do culto (08/09/2026): a MESMA régua e as MESMAS consultas do
+// formulário público (`services/apresentacaoHorarios`) — 9h30 até o limite,
+// depois 11h30, catálogo `apresentacao_horarios` editável no Kids. Duas cópias
+// é como o app e o web passam a discordar do horário da família.
+const { escolherHorarioPara: _escolherHorarioApres } = require('../services/apresentacaoHorarios');
+const { paisIguais: _paisIguaisApres, rotuloHorarioApresentacao: _rotuloHorarioApres } = require('../utils/apresentacaoHorario');
 
 /**
  * Quem são os pais/mães de cada criança da lista (id → [ids dos responsáveis]).
@@ -6859,7 +6865,7 @@ async function paisDasCriancas(ids) {
  * se fosse minha. Lei do Contrato de porta.
  */
 async function apresentacoesDaPessoa(membro) {
-  const COLS = 'id, crianca_nome, data_apresentacao, status, crianca_id, created_at';
+  const COLS = 'id, crianca_nome, data_apresentacao, horario_culto, status, crianca_id, created_at';
   const vazio = { vinculo: [], cpf: [], ficha_kids: [] };
   if (!membro?.id) return { linhas: [], incompleto: false };
 
@@ -6975,13 +6981,17 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
 
     const dataApres = _isoData(_proxSegDom());
 
-    // Culto de domingo daquele dia (informativo · o balcão confirma)
-    let cultoId = null;
-    try {
-      const { data: cultos } = await supabase.from('cultos')
-        .select('id').eq('data', dataApres).is('deleted_at', null).order('id').limit(1);
-      if (cultos && cultos[0]) cultoId = cultos[0].id;
-    } catch (e) { /* informativo · não trava o pedido */ }
+    // ⚠️ O caso Isabella (08/09): pai e mãe com o MESMO nome dobra o nome na
+    // lista do Kids e no certificado. Só no caminho de terceiro — no "é meu
+    // filho" os nomes são derivados do sexo e nunca colidem.
+    if (!p.propria && _paisIguaisApres(p.responsavel.nome_pai, p.responsavel.nome_mae)) {
+      return res.status(400).json({ error: 'O nome do pai e o da mãe estão iguais. Se há só um responsável, preencha apenas o campo dele.' });
+    }
+
+    // Horário do culto — atribuído pela régua (9h30 até o limite, depois 11h30).
+    // Nunca trava o pedido: sem catálogo entra sem horário e o Kids define.
+    const escolhaHorario = await _escolherHorarioApres(dataApres);
+    const horarioCulto = escolhaHorario.horario;
 
     let criancaMembroId = null;
     let reusou = false;
@@ -7183,19 +7193,21 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
         : { nome_pai: p.responsavel.nome_pai || null, nome_mae: p.responsavel.nome_mae || null }),
       observacoes: p.observacoes,
       data_apresentacao: dataApres,
+      // Culto da família (coluna `horario_culto` · migration 20260908150000).
+      // ⚠️ `culto_id` continua NÃO existindo em `apresentacao_criancas` — mandar
+      // coluna inexistente faz o PostgREST recusar o INSERT INTEIRO (42703).
+      // Só menciona a coluna quando há valor (tolera a migration ausente: com
+      // `horario_culto: null` o PostgREST recusaria o INSERT inteiro · 42703).
+      ...(horarioCulto ? { horario_culto: horarioCulto } : {}),
       registrado_por: req.user?.id || null,
     };
-    // ⚠️ `culto_id` só existe em `apresentacao_bebes`; a tabela do Kids não tem a
-    // coluna, e mandar coluna inexistente faz o PostgREST recusar o INSERT
-    // INTEIRO (42703) — a família perderia o pedido por causa de um informativo.
-    void cultoId;
 
     // ⚠️ Idempotência: reenviar o formulário não cria segundo pedido pra mesma
     // criança na mesma cerimônia. Sem isso, um toque duplo no botão põe a família
     // duas vezes na lista do domingo.
     if (p.propria) {
       const { data: jaTem } = await supabase.from('apresentacao_criancas')
-        .select('id').eq('responsavel_membro_id', membro.id)
+        .select('id, horario_culto').eq('responsavel_membro_id', membro.id)
         .eq('data_apresentacao', dataApres)
         .ilike('crianca_nome', p.crianca.nome)
         .is('deleted_at', null).maybeSingle();
@@ -7204,6 +7216,8 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
           ok: true, ja_inscrito: true, id: jaTem.id,
           data_apresentacao: dataApres, crianca_membro_id: criancaMembroId,
           familia: familiaNome, reusou_crianca: reusou,
+          horario_culto: jaTem.horario_culto || null,
+          horario_rotulo: _rotuloHorarioApres(jaTem.horario_culto, escolhaHorario.configurados),
         });
       }
     }
@@ -7218,7 +7232,8 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
       await notificar({
         modulo: 'kids', tipo: 'apresentacao_crianca',
         titulo: 'Apresentação de criança pelo app',
-        mensagem: `${p.responsavel.nome} pediu a apresentação de ${p.crianca.nome} em ${dataApres.split('-').reverse().join('/')}.`,
+        mensagem: `${p.responsavel.nome} pediu a apresentação de ${p.crianca.nome} em ${dataApres.split('-').reverse().join('/')}`
+          + (horarioCulto ? ` · ${_rotuloHorarioApres(horarioCulto, escolhaHorario.configurados)}.` : '. Sem horário atribuído — definir na tela do Kids.'),
         link: '/kids', severidade: 'info',
         chaveDedup: `apres_app_${criada.id}`,
       });
@@ -7228,6 +7243,9 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
       ok: true, id: criada.id, data_apresentacao: dataApres,
       crianca_membro_id: criancaMembroId, familia: familiaNome,
       reusou_crianca: reusou,
+      // Culto em que a criança será apresentada (nulo = a equipe define e avisa).
+      horario_culto: horarioCulto,
+      horario_rotulo: _rotuloHorarioApres(horarioCulto, escolhaHorario.configurados),
       // A tela AVISA a família que vai receber pager — quem decide é o totem no
       // check-in; aqui é só não deixar a novidade pro domingo de manhã.
       pager_inclusao: precisaPagerPorInclusao(p.crianca.saude),

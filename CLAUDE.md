@@ -91,6 +91,92 @@ Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
 leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
 membro via `membro_id`.
 
+## ⚠️⚠️ APRESENTAÇÃO DE CRIANÇAS · o CULTO da família, a FICHA e o nome dobrado (2026-09-08 · migration `20260908150000`)
+
+Pedido do Marcos (via Milena, no Kids): *"não aparece o horário que as crianças
+vão se apresentar. Criar uma ótica parecida com a do batismo: até 6 inscrições,
+sempre no culto de 9:30; passando de 6, culto de 11:30; com a possibilidade de
+editar dentro da área do Kids os horários. E o nome da mãe está aparecendo
+duplicado (Aline Lazaro / Aline Lazaro) — no certificado aparece dobrado. Quero
+a opção de ver o preenchimento do formulário pela pessoa."*
+
+### 1 · O culto é ATRIBUÍDO no envio — o batismo é o molde, com uma diferença
+
+`apresentacao_horarios` espelha `batismo_horarios` (horario · label · aberto ·
+limite · ordem) e `apresentacao_criancas.horario_culto` espelha
+`batismo_inscricoes.horario_culto`. **A diferença é quem escolhe**: no batismo a
+PESSOA escolhe e a régua valida; aqui o SISTEMA atribui (1º horário aberto com
+vaga, na `ordem`) e a equipe corrige na tela. Semente: 09:30 (limite 6) → 11:30
+(sem teto = recebe o transbordo).
+
+- **Régua PURA em `backend/utils/apresentacaoHorario.js`**
+  (`escolherHorarioApresentacao`) · consultas em `services/apresentacaoHorarios.js`
+  — **as MESMAS pras duas portas** (`publicApresentacao.js` e o
+  `POST /app/apresentacao-crianca` de `app.js`). Duas cópias é como app e web
+  passariam a mandar a mesma família pra cultos diferentes.
+- ⚠️⚠️ **IRMÃOS NUNCA SE SEPARAM**: a escolha é UMA por envio e vai em todas as
+  crianças; o limite é conferido ANTES da família entrar (uma família de 2 pode
+  fechar o 9h30 com 7). E reenvio com irmão já inscrito herda o culto dele.
+- ⚠️ **FALHA FECHADA À MODA DA APRESENTAÇÃO**: catálogo ilegível ou tudo lotado
+  ⇒ `horario_culto` NULL e **a inscrição ENTRA** — o oposto do batismo (que
+  recusa 409). Aqui o horário é atribuição interna, não escolha da pessoa;
+  perder a inscrição por um informativo é pior que deixá-lo em branco. A tela
+  do Kids marca "sem culto definido" em âmbar e o card de horários conta quantas.
+- ⚠️ `limite` nulo NUNCA lota; `limite` 0 lota sempre. Cancelada não ocupa vaga.
+- `GET /public/apresentacao-criancas/proxima-data` devolve `horario_previsto`
+  (o form mostra como previsão); o POST devolve `horario_culto` + `horario_rotulo`
+  (a tela de sucesso diz "no Culto das 9h30"). Sem horário, o texto é OMITIDO —
+  nunca inventado (lei do B9). A notificação à equipe leva o culto.
+- **Kids** (`totemKids/ApresentacaoCriancas.tsx`): card recolhível **"Horários
+  da apresentação"** (gêmeo do `BatismoHorarios`: abrir/fechar, limite, rótulo,
+  adicionar, remover · `GET|POST|PATCH|DELETE /totem-kids/apresentacoes/horarios`)
+  + seletor de culto POR CRIANÇA na linha + contagem por culto no cabeçalho da
+  turma. ⚠️ As rotas de horários são declaradas ANTES de `/apresentacoes/:id`.
+
+### 2 · "Ver ficha" · tudo o que a pessoa preencheu
+
+`GET /totem-kids/apresentacoes/:id` (kids ≥ 1) devolve a linha INTEIRA (o que a
+lista omite: CPF, e-mail, endereço) + `consentimentos`
+(`inscricao_consentimentos` porta `apresentacao`) + `crianca_kids` (as 3
+perguntas de saúde da ficha) + `responsavel_membro`. ⚠️ É PII de menor:
+abre-se UMA inscrição, de propósito, e o CPF **continua fora da lista**.
+Na ficha, **só pai/mãe são editáveis** — é o caminho pra consertar o caso
+Isabella sem SQL. `PATCH /apresentacoes/:id` ganhou `horario_culto`, `nome_pai`,
+`nome_mae` na allowlist.
+
+### 3 · ⚠️⚠️ O nome dobrado NÃO era bug de exibição — era a pessoa preenchendo os dois campos
+
+"Aline Lazaro / Aline Lazaro": a mãe escreveu o próprio nome em "pai" E em
+"mãe" (o form pede "pai OU mãe"). Consertado em TRÊS camadas, e as três são
+necessárias:
+- **porta**: público (400) e app no caminho de terceiro (400) recusam pai = mãe
+  (`paisIguais` · caixa/acento/espaço ignorados); o form valida antes de enviar.
+- **leitura**: `nomesDosPaisUnicos` na lista do Kids **e no certificado** — as
+  linhas antigas dobradas saem uma vez sem mexer no dado. Selo âmbar na linha.
+- ⚠️ O caminho "é meu filho" do app **não colide** por construção
+  (`nomesDosPais` deriva do sexo · `else if`), então não foi tocado.
+- **Espelho front × backend**: `src/lib/apresentacaoPais.ts` ×
+  `utils/apresentacaoHorario.js`, e `src/test/apresentacaoHorario.test.ts` roda
+  a MESMA tabela de casos nos dois — divergir faria a porta recusar o que a tela
+  aceita.
+
+⚠️ **Não medido em produção**: a sonda ao banco foi bloqueada nesta máquina
+(classificador recusou a leitura do `.env`), então a linha da Isabella e quantas
+mais estão dobradas **não foram contadas**. A leitura deduplica todas; corrigir o
+dado é pela ficha.
+
+⚠️ **Deploy em 2 etapas TOLERADO** (lição do `parcelas_max`): os dois INSERTs só
+mencionam `horario_culto` quando há valor (sem catálogo o serviço devolve null,
+e a chave fica de fora — `horario_culto: null` com a coluna ausente faria o
+PostgREST recusar o INSERT INTEIRO e a família perderia a inscrição); e a lista
+do Kids recai no select antigo em 42703 em vez de aparecer VAZIA. Até a migration
+ser aplicada, o card de horários mostra erro e nenhuma inscrição ganha culto —
+nada se perde. **Aplicar a migration é o que liga a régua.**
+
+Gate: `src/test/apresentacaoHorario.test.ts` (22 casos · `npm test`) · build ·
+os 21 scripts do `deploy-vercel.yml` · vitest 3.575 verdes.
+⚠️ `20260908120000` já era da Comunicação (#2878) — esta é `20260908150000`.
+
 ## ⚠️ A UI da elegibilidade · "Cultos de X" no membro da equipe (2026-09-04 · SEM migration)
 
 Fecha o item: a régua e a anotação existiam, mas **nada gravava `service_type_ids`**.

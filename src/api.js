@@ -2182,8 +2182,17 @@ export const totemKids = {
   voluntariadoInscricaoUpdate: (id, dados) => patch(`/totem-kids/voluntariado-inscricoes/${id}`, dados),
   batismos: () => get('/totem-kids/batismos'),
   apresentacoes: () => get('/totem-kids/apresentacoes'),
+  // A ficha completa de UMA inscrição (o que a pessoa preencheu · 08/09/2026)
+  apresentacaoDetalhe: (id) => get(`/totem-kids/apresentacoes/${id}`),
   apresentacaoUpdate: (id, body) => patch(`/totem-kids/apresentacoes/${id}`, body),
   apresentacaoRemove: (id) => del(`/totem-kids/apresentacoes/${id}`),
+  // Catálogo dos cultos da apresentação (9h30 até o limite → 11h30) · editável pelo Kids
+  apresentacaoHorarios: {
+    list: (data) => get('/totem-kids/apresentacoes/horarios' + (data ? `?data=${encodeURIComponent(data)}` : '')),
+    create: (body) => post('/totem-kids/apresentacoes/horarios', body),
+    update: (id, body) => patch(`/totem-kids/apresentacoes/horarios/${id}`, body),
+    remove: (id) => del(`/totem-kids/apresentacoes/horarios/${id}`),
+  },
   resumoExemplo: () => post('/totem-kids/resumo/exemplo', {}),
   comparativoMes: (mes) => get(`/totem-kids/comparativo-mes?mes=${encodeURIComponent(mes)}`),
   frequenciaSistema: (data) => get(`/totem-kids/frequencia-sistema?data=${encodeURIComponent(data)}`),
