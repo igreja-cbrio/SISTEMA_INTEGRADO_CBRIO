@@ -16,7 +16,7 @@
 ## Backend
 - `backend/routes/comunicacao.js`
 Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
-<details><summary>Endpoints (31)</summary>
+<details><summary>Endpoints (33)</summary>
 - `DELETE /api/comunicacao/agendamentos/:id`
 - `GET /api/comunicacao/agendamentos`
 - `GET /api/comunicacao/atendentes`
@@ -30,6 +30,7 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `GET /api/comunicacao/custo`
 - `GET /api/comunicacao/envios`
 - `GET /api/comunicacao/envios/resumo`
+- `GET /api/comunicacao/equipe`
 - `GET /api/comunicacao/erros`
 - `GET /api/comunicacao/numeros`
 - `GET /api/comunicacao/tarifas`
@@ -45,6 +46,7 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `PUT /api/comunicacao/atendentes/:id`
 - `PUT /api/comunicacao/bot-ia/areas/:area`
 - `PUT /api/comunicacao/bot-ia/config`
+- `PUT /api/comunicacao/equipe/:area`
 - `PUT /api/comunicacao/numeros/:id`
 - `PUT /api/comunicacao/tarifas/:categoria`
 - `PUT /api/comunicacao/templates/:id`
@@ -55,6 +57,7 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `backend/utils/appError.js`
 - `backend/utils/botIaRegras.js`
 - `backend/utils/cronAuth.js`
+- `backend/utils/equipeAtendimento.js`
 - `backend/utils/sentry.js`
 - `backend/utils/supabase.js`
 
@@ -65,6 +68,7 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `backend/services/comunicacaoAutomaticas.js`
 - `backend/services/comunicacaoDisparosOff.js`
 - `backend/services/sugestaoGrupoAgenda.js`
+- `backend/services/waEquipe.js`
 - `backend/services/waInbox.js`
 - `backend/services/waStatusReconcile.js`
 - `backend/services/waTemplates.js`
@@ -77,9 +81,11 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `inscricao_consentimentos`
 - `mem_grupos`
 - `mem_membros`
+- `profiles`
 - `wa_agendamentos`
 - `wa_atendentes`
 - `wa_bot_areas`
+- `wa_equipe_atendimento`
 - `wa_mensagens`
 - `wa_numeros`
 - `wa_tarifas`
