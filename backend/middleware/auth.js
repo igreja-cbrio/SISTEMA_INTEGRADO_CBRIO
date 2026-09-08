@@ -77,6 +77,15 @@ const ROUTE_MODULE_MAP = {
   // ou membro/voluntário sem módulo ministerial) é bloqueado. Fecha o vazamento de
   // PII em rotas que antes eram só `authenticate`.
   'membros':      ['membresia','grupos','cuidados','integracao','next','next-batismo','voluntariado','kids','ami','bridge','online','face'],
+  // varredura 2026-09 (A01) · painel de novos convertidos — o componente
+  // JornadaConvertidos, montado em 5 telas (cuidados, online, ami, bridge, kids).
+  // Chave ESTREITA de propósito: a lista traz nome, telefone e CPF, e
+  // `src/test/jornadaPiiGuard.test.ts` fixou que lista de PII não usa a chave
+  // ampla `membros` (12 módulos, inclui produção e marketing). Aqui entram só os
+  // 5 donos reais da tela. E, ao contrário de `membros`, esta lista NÃO tem
+  // `membresia` — então também não pega o atalho de `role === 'voluntario'`
+  // (L617-621), que libera sem olhar se o método é leitura ou escrita.
+  'jornada-convertidos': ['cuidados','online','ami','bridge','kids'],
   // Dado financeiro do membro (contribuições) · membresia OU financeiro, nível 2.
   'membros-financeiro': ['membresia','financeiro'],
   // Como 'membros', + a conta de quiosque do lounge (módulo totem-membro ·
