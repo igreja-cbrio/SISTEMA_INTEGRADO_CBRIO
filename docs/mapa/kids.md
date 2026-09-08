@@ -33,8 +33,9 @@
 ## Backend
 - `backend/routes/totemKids.js`
 Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
-<details><summary>Endpoints (120)</summary>
+<details><summary>Endpoints (125)</summary>
 - `DELETE /api/totem-kids/apresentacoes/:id`
+- `DELETE /api/totem-kids/apresentacoes/horarios/:id`
 - `DELETE /api/totem-kids/atendimentos/:id`
 - `DELETE /api/totem-kids/ausentes/:criancaId/contato`
 - `DELETE /api/totem-kids/criancas/:criancaId/responsaveis/:membroId`
@@ -45,6 +46,8 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `DELETE /api/totem-kids/salas/:id`
 - `GET /api/totem-kids/aniversariantes`
 - `GET /api/totem-kids/apresentacoes`
+- `GET /api/totem-kids/apresentacoes/:id`
+- `GET /api/totem-kids/apresentacoes/horarios`
 - `GET /api/totem-kids/auditoria/overrides`
 - `GET /api/totem-kids/ausentes`
 - `GET /api/totem-kids/batismos`
@@ -100,6 +103,7 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `GET /api/totem-kids/vinculo-solicitacoes/:id`
 - `GET /api/totem-kids/voluntariado-inscricoes`
 - `PATCH /api/totem-kids/apresentacoes/:id`
+- `PATCH /api/totem-kids/apresentacoes/horarios/:id`
 - `PATCH /api/totem-kids/batismos/:id`
 - `PATCH /api/totem-kids/checkin/:id`
 - `PATCH /api/totem-kids/checkin/:id/pager`
@@ -113,6 +117,7 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `PATCH /api/totem-kids/salas/:id`
 - `PATCH /api/totem-kids/salas/:id/localizacao`
 - `PATCH /api/totem-kids/voluntariado-inscricoes/:id`
+- `POST /api/totem-kids/apresentacoes/horarios`
 - `POST /api/totem-kids/ausentes/:criancaId/contato`
 - `POST /api/totem-kids/checkin`
 - `POST /api/totem-kids/checkin/:id/reabrir`
@@ -170,6 +175,7 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 
 **Serviços**
 
+- `backend/services/apresentacaoHorarios.js`
 - `backend/services/membroMatch.js`
 - `backend/services/notificar.js`
 - `backend/services/volInscricaoStatus.js`
@@ -180,9 +186,11 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 **Tabelas que estas rotas tocam**
 
 - `apresentacao_criancas`
+- `apresentacao_horarios`
 - `batismo_inscricoes`
 - `cultos`
 - `cultos_decisoes_pessoas`
+- `inscricao_consentimentos`
 - `kids_atendimentos`
 - `kids_checkins`
 - `kids_codigos_reservados`
