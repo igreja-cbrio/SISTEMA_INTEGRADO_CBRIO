@@ -28,6 +28,10 @@ import {
   Zap, Megaphone, AlertTriangle, Lightbulb,
 } from 'lucide-react';
 import { toast } from 'sonner';
+// Réguas PURAS do redesenho de 08/09/2026 (testadas no gate): variáveis das
+// prontas + comando "/" · chips Abertas/Sem resposta/Finalizadas com idade.
+import { preencherVariaveis, variaveisPendentes, comandoBarra, filtrarProntas } from '@/lib/mensagemVariaveis';
+import { aplicarVista, contarVistas, horasSemResposta, rotuloIdade, semResposta, vencida, type Vista } from '@/lib/waConversaEstado';
 
 type Colaborador = { id: string; name: string; avatar_url: string | null };
 type Area = { nome: string; setor: string | null };
@@ -36,6 +40,7 @@ type Conversa = {
   id: string; telefone: string; nome: string | null; membro_id: string | null; foto_url: string | null;
   area: string | null; nao_lidas: number; resolvida: boolean; ultima_previa: string | null;
   atribuido_a: string | null; notas: string | null; last_message_at: string | null;
+  last_inbound_at: string | null; // última mensagem DA PESSOA · decide "sem resposta" e a idade da espera
   protocolo: string | null; satisfacao: number | null; pesquisa_estado: string | null;
   dentro_janela: boolean; janela_expira_em: string | null;
 };
@@ -113,7 +118,11 @@ export default function ConversasInbox({
   currentUserId, userAreas = [], isAdmin = false, abrirTelefone, textoInicial,
 }: { atendentes?: any[]; currentUserId?: string; userAreas?: string[]; isAdmin?: boolean; abrirTelefone?: string; textoInicial?: string }) {
   const [conversas, setConversas] = useState<Conversa[] | null>(null);
-  const [status, setStatus] = useState<'abertas' | 'todas'>('abertas');
+  // Vista da lista (chips): Abertas · Sem resposta (recorte do cliente sobre as
+  // abertas) · Finalizadas (status próprio no servidor). Substituiu o checkbox
+  // "Incluir resolvidas" escondido no funil (08/09/2026).
+  const [vista, setVista] = useState<Vista>('abertas');
+  const [contagens, setContagens] = useState({ abertas: 0, sem_resposta: 0, vencidas: 0 });
   const [soNaoLidas, setSoNaoLidas] = useState(false);
   const [areaFiltro, setAreaFiltro] = useState<string>('todas');
   const [busca, setBusca] = useState('');
@@ -133,6 +142,7 @@ export default function ConversasInbox({
   const [novaOpen, setNovaOpen] = useState(false);
   const [prontas, setProntas] = useState<{ id: string; titulo: string; texto: string }[]>([]);
   const [prontasOpen, setProntasOpen] = useState(false);
+  const [slashIdx, setSlashIdx] = useState(0); // item realçado na lista do "/"
   // Sugestão de resposta (26/08/2026 · agenda · 31/08/2026 · link do grupo).
   //
   // ⚠️ Busca AUTOMÁTICA só quando a última mensagem é DELA e ainda não foi
@@ -155,14 +165,18 @@ export default function ConversasInbox({
   selRef.current = selId;
 
   const areasChips = isAdmin ? areasDisp.map(a => a.nome) : userAreas;
-  const statusApi = status === 'abertas' ? 'abertas' : 'todas';
+  const statusApi = vista === 'finalizadas' ? 'finalizadas' : 'abertas';
   const respName = (id: string | null) => (id ? colaboradores.find(a => a.id === id)?.name || null : null);
   const respFoto = (id: string | null) => (id ? colaboradores.find(a => a.id === id)?.avatar_url || null : null);
 
   const carregarConversas = useCallback(async () => {
     try {
       const r = await waInbox.conversas({ status: statusApi, q: busca || undefined, area: areaFiltro });
-      setConversas(r?.conversas || []);
+      const rows: Conversa[] = r?.conversas || [];
+      setConversas(rows);
+      // As contagens dos chips saem da lista de ABERTAS. A vista "finalizadas"
+      // carrega OUTRA lista e não pode zerar os números dos outros dois chips.
+      if (statusApi === 'abertas') setContagens(contarVistas(rows, Date.now()));
     } catch { setConversas([]); }
   }, [statusApi, busca, areaFiltro]);
 
@@ -308,11 +322,24 @@ export default function ConversasInbox({
   }
 
   const foraJanela = conv && !conv.dentro_janela;
-  const lista = (conversas || []).filter(c => !soNaoLidas || c.nao_lidas > 0);
+  const agoraMs = Date.now();
+  const lista = aplicarVista((conversas || []).filter(c => !soNaoLidas || c.nao_lidas > 0), vista);
   const totalNaoLidas = (conversas || []).reduce((a, c) => a + (c.nao_lidas || 0), 0);
   const filtroLabel = areaFiltro === 'todas' ? 'Todas' : areaFiltro === 'entrada' ? 'Entrada' : areaFiltro === 'minhas' ? 'Minhas' : areaFiltro;
-  const filtroAtivo = areaFiltro !== 'todas' || status !== 'abertas' || soNaoLidas;
+  const filtroAtivo = areaFiltro !== 'todas' || soNaoLidas;
   const respFiltrados = colaboradores.filter(c => c.name.toLowerCase().includes(buscaResp.toLowerCase()));
+  // Contexto das variáveis das prontas ({{primeiro_nome}}, {{atendente}}…): só o
+  // que a tela JÁ tem em mãos — nada é consultado a mais pra preencher.
+  const ctxVariaveis = {
+    nome: conv?.nome || null,
+    telefone: conv ? telBonito(conv.telefone) : null,
+    protocolo: conv?.protocolo || null,
+    area: conv?.area || null,
+    atendente: respName(currentUserId || null),
+    grupo: perfil?.grupo || null,
+  };
+  const pendentes = variaveisPendentes(texto);
+  const slash = comandoBarra(texto);
 
   return (
     <TooltipProvider delayDuration={200}>
@@ -360,13 +387,40 @@ export default function ConversasInbox({
                   ))}
                 </div>
                 <DropdownMenuSeparator />
-                <DropdownMenuCheckboxItem checked={status === 'todas'} onCheckedChange={v => setStatus(v ? 'todas' : 'abertas')}>Incluir resolvidas</DropdownMenuCheckboxItem>
                 <DropdownMenuCheckboxItem checked={soNaoLidas} onCheckedChange={v => setSoNaoLidas(!!v)}>Só não lidas</DropdownMenuCheckboxItem>
               </DropdownMenuContent>
             </DropdownMenu>
             <Button variant="ghost" size="icon" className="h-9 w-9 shrink-0 text-muted-foreground" onClick={() => carregarConversas()} title="Atualizar"><RefreshCw className="h-3.5 w-3.5" /></Button>
           </div>
-          <div className="px-3 pt-1.5 text-[11px] text-muted-foreground">Vendo: <span className="font-medium text-foreground">{filtroLabel}</span>{status === 'todas' ? ' · c/ resolvidas' : ''}{soNaoLidas ? ' · não lidas' : ''}</div>
+          {/* Chips de vista (08/09/2026): a pergunta de quem abre o inbox é
+              "quem está esperando por mim?" — por isso "Sem resposta" tem
+              contagem própria e fica vermelha quando alguém espera há +48h
+              (o mesmo corte de 2 dias que o Marcos pediu no dashboard). */}
+          <div className="flex items-center gap-1.5 px-3 pt-2">
+            {([
+              { k: 'abertas', l: 'Abertas', n: contagens.abertas },
+              { k: 'sem_resposta', l: 'Sem resposta', n: contagens.sem_resposta },
+              { k: 'finalizadas', l: 'Finalizadas', n: null },
+            ] as { k: Vista; l: string; n: number | null }[]).map(ch => {
+              const ativo = vista === ch.k;
+              const alerta = ch.k === 'sem_resposta' && contagens.vencidas > 0;
+              return (
+                <button key={ch.k} onClick={() => setVista(ch.k)}
+                  className={`flex items-center gap-1 rounded-full border px-2.5 py-1 text-[11px] font-medium transition-colors ${ativo ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted/60'}`}>
+                  {ch.l}
+                  {ch.n !== null && (
+                    <span className={`rounded-full px-1.5 text-[10px] tabular-nums ${alerta ? 'bg-red-500/15 text-red-600 dark:text-red-400' : ativo ? 'bg-primary/15' : 'bg-muted'}`}>{ch.n}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          {contagens.vencidas > 0 && vista !== 'finalizadas' && (
+            <div className="px-3 pt-1 text-[10px] text-red-600 dark:text-red-400">
+              {contagens.vencidas} {contagens.vencidas === 1 ? 'pessoa espera' : 'pessoas esperam'} resposta há mais de 2 dias
+            </div>
+          )}
+          <div className="px-3 pt-1.5 text-[11px] text-muted-foreground">Vendo: <span className="font-medium text-foreground">{filtroLabel}</span>{soNaoLidas ? ' · não lidas' : ''}</div>
 
           <ScrollArea className="flex-1 mt-1" viewportClassName="[&>div]:!block">
             <div className="flex flex-col gap-0.5 p-2 pt-1.5">
@@ -397,6 +451,17 @@ export default function ConversasInbox({
                           ? <Badge variant="outline" className="h-4.5 border-violet-500/25 bg-violet-500/10 px-1.5 py-0 text-[10px] font-normal text-violet-600 dark:text-violet-400">{c.area}</Badge>
                           : <Badge variant="outline" className="h-4.5 border-amber-500/25 bg-amber-500/10 px-1.5 py-0 text-[10px] font-normal text-amber-600 dark:text-amber-400">Entrada</Badge>}
                         {c.resolvida && <Badge variant="outline" className="h-4.5 border-blue-500/25 bg-blue-500/10 px-1.5 py-0 text-[10px] font-normal text-blue-600 dark:text-blue-400">Resolvida</Badge>}
+                        {semResposta(c) && (() => {
+                          // Idade da ESPERA (desde a última mensagem da pessoa), vermelha a partir de 48h.
+                          const hrs = horasSemResposta(c, agoraMs);
+                          const venc = vencida(hrs);
+                          return (
+                            <Badge variant="outline" title="A última mensagem é da pessoa — ninguém respondeu ainda"
+                              className={`h-4.5 px-1.5 py-0 text-[10px] font-normal ${venc ? 'border-red-500/30 bg-red-500/10 text-red-600 dark:text-red-400' : 'border-amber-500/25 bg-amber-500/10 text-amber-600 dark:text-amber-400'}`}>
+                              sem resposta {rotuloIdade(hrs)}
+                            </Badge>
+                          );
+                        })()}
                         {c.atribuido_a && respName(c.atribuido_a) && (
                           <Tooltip><TooltipTrigger asChild><span className="flex items-center gap-0.5 text-[10px] text-muted-foreground"><UserCheck className="h-3 w-3" />{respName(c.atribuido_a)!.split(' ')[0]}</span></TooltipTrigger><TooltipContent>Responsável: {respName(c.atribuido_a)}</TooltipContent></Tooltip>
                         )}
@@ -489,7 +554,7 @@ export default function ConversasInbox({
                   </DropdownMenu>
                   {conv.resolvida
                     ? <Button size="sm" variant="outline" onClick={() => resolver(false)}>Reabrir</Button>
-                    : <Button size="sm" variant="outline" onClick={() => resolver(true)}><Check className="mr-1 h-3.5 w-3.5" />Finalizar</Button>}
+                    : <Button size="sm" onClick={() => resolver(true)} title="Finaliza e tira das abertas · se a janela de 24h estiver aberta, a pessoa recebe a pesquisa de satisfação"><Check className="mr-1 h-3.5 w-3.5" />Finalizar</Button>}
                 </div>
               </div>
 
@@ -545,10 +610,24 @@ export default function ConversasInbox({
                 const waMe = `https://wa.me/${telDig}${texto.trim() ? `?text=${encodeURIComponent(texto.trim())}` : ''}`;
                 const enviarMsg = () => {
                   if (!texto.trim()) return;
+                  if (slash.ativo) return; // "/" aberto: Enter escolhe a pronta, nunca envia "/next"
+                  // ⚠️ Fail-closed no que sai em nome da igreja: variável sem valor
+                  // ({{grupo}} de quem não está em grupo) NÃO vai — pede pra completar.
+                  if (pendentes.length) { toast.error(`Complete antes de enviar: ${pendentes.map(f => `{{${f}}}`).join(', ')}`); return; }
                   if (foraJanela) { window.open(waMe, '_blank', 'noopener'); }
                   else responder();
                 };
-                const usarPronta = (t: string) => { setTexto(prev => (prev.trim() ? prev + '\n' + t : t)); setProntasOpen(false); };
+                const prontasVisiveis = slash.ativo ? filtrarProntas(prontas, slash.filtro) : prontas;
+                const listaAberta = prontasOpen || slash.ativo;
+                // Insere a pronta com as variáveis preenchidas. Vindo do "/", o comando
+                // é SUBSTITUÍDO (não se anexa "/next" à mensagem); vindo do ⚡ com texto
+                // já digitado, anexa embaixo como antes.
+                const usarPronta = (t: string) => {
+                  const cheio = preencherVariaveis(t, ctxVariaveis);
+                  setTexto(prev => (comandoBarra(prev).ativo || !prev.trim()) ? cheio.texto : prev + '\n' + cheio.texto);
+                  setProntasOpen(false); setSlashIdx(0);
+                  if (cheio.faltando.length) toast.warning(`Complete antes de enviar: ${cheio.faltando.map(f => `{{${f}}}`).join(', ')}`);
+                };
                 // ⚠️ Só BUSCA e MOSTRA. Quem envia é a pessoa, depois de ler —
                 // a lei de 12/08 ("não quero bot") vale aqui: uma detecção
                 // errada custa uma sugestão recusada, não uma mensagem errada
@@ -566,20 +645,25 @@ export default function ConversasInbox({
                 };
                 return (
                   <div className="relative border-t border-border p-3">
-                    {prontasOpen && (
+                    {listaAberta && (
                       <div className="absolute bottom-full left-3 right-3 mb-2 max-h-80 overflow-y-auto rounded-xl border border-border bg-popover shadow-lg z-20">
                         <div className="flex items-center justify-between px-3 py-2 border-b border-border">
-                          <span className="text-xs font-semibold">Mensagens prontas</span>
-                          <span className="text-[11px] text-muted-foreground">Gerencie na aba "Mensagens prontas"</span>
+                          <span className="text-xs font-semibold">Mensagens prontas{slash.ativo && slash.filtro ? <span className="ml-1 font-normal text-muted-foreground">· "{slash.filtro}"</span> : null}</span>
+                          <span className="text-[11px] text-muted-foreground">{slash.ativo ? '↑↓ escolhe · Enter insere · Esc fecha' : 'Gerencie na aba "Mensagens prontas"'}</span>
                         </div>
                         {prontas.length === 0 && (
                           <div className="px-3 py-4 text-center text-xs text-muted-foreground">Nenhuma mensagem pronta. Crie na aba "Mensagens prontas".</div>
                         )}
+                        {prontas.length > 0 && prontasVisiveis.length === 0 && (
+                          <div className="px-3 py-4 text-center text-xs text-muted-foreground">Nenhuma pronta casa com "{slash.filtro}".</div>
+                        )}
                         <div className="divide-y divide-border/60">
-                          {prontas.map(p => (
-                            <button key={p.id} className="block w-full text-left px-3 py-2 hover:bg-accent/40" onClick={() => usarPronta(p.texto)}>
+                          {prontasVisiveis.map((p, i) => (
+                            <button key={p.id} className={`block w-full text-left px-3 py-2 hover:bg-accent/40 ${slash.ativo && i === slashIdx ? 'bg-accent/60' : ''}`}
+                              onMouseEnter={() => { if (slash.ativo) setSlashIdx(i); }} onClick={() => usarPronta(p.texto)}>
                               <div className="text-xs font-medium text-foreground truncate">{p.titulo}</div>
-                              <div className="text-[11px] text-muted-foreground line-clamp-2">{p.texto}</div>
+                              {/* prévia JÁ preenchida: quem escolhe vê "Oi Maria", não "Oi {{primeiro_nome}}" */}
+                              <div className="text-[11px] text-muted-foreground line-clamp-2">{preencherVariaveis(p.texto, ctxVariaveis).texto}</div>
                             </button>
                           ))}
                         </div>
@@ -662,14 +746,29 @@ export default function ConversasInbox({
                           {anexando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Paperclip className="h-4 w-4" />}
                         </Button>
                       )}
-                      <textarea value={texto} onChange={e => setTexto(e.target.value)}
-                        onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviarMsg(); } }}
-                        rows={1} placeholder={foraJanela ? 'Escreva a mensagem…  (Enter abre o WhatsApp da pessoa)' : 'Escreva uma mensagem…  (Enter envia · Shift+Enter quebra linha)'}
+                      <textarea value={texto} onChange={e => { setTexto(e.target.value); setSlashIdx(0); }}
+                        onKeyDown={e => {
+                          // "/" aberto: as setas andam na lista, Enter INSERE a pronta
+                          // realçada (nunca envia "/next") e Esc limpa o comando.
+                          if (slash.ativo) {
+                            if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIdx(i => Math.min(i + 1, Math.max(0, prontasVisiveis.length - 1))); return; }
+                            if (e.key === 'ArrowUp') { e.preventDefault(); setSlashIdx(i => Math.max(0, i - 1)); return; }
+                            if (e.key === 'Escape') { e.preventDefault(); setTexto(''); return; }
+                            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); const p = prontasVisiveis[slashIdx]; if (p) usarPronta(p.texto); return; }
+                          }
+                          if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); enviarMsg(); }
+                        }}
+                        rows={1} placeholder={foraJanela ? 'Escreva a mensagem…  ("/" abre as prontas · Enter abre o WhatsApp da pessoa)' : 'Escreva uma mensagem…  ("/" abre as prontas · Enter envia · Shift+Enter quebra linha)'}
                         className="max-h-32 min-h-[36px] flex-1 resize-none bg-transparent px-1 py-1.5 text-sm outline-none placeholder:text-muted-foreground" />
                       <Button size="icon" disabled={enviando || !texto.trim()} onClick={enviarMsg} className="h-9 w-9 shrink-0" title={foraJanela ? 'Abrir no WhatsApp da pessoa' : 'Enviar'}>
                         {enviando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
                       </Button>
                     </div>
+                    {pendentes.length > 0 && (
+                      <div className="mt-1.5 flex items-center gap-1 px-1 text-[11px] text-amber-700 dark:text-amber-300">
+                        <AlertTriangle className="h-3 w-3 shrink-0" />Complete antes de enviar: {pendentes.map(f => `{{${f}}}`).join(' · ')}
+                      </div>
+                    )}
                     {!foraJanela && conv.janela_expira_em && janelaRestante(conv.janela_expira_em) && (
                       <div className="mt-1.5 flex items-center gap-1 px-1 text-[11px] text-muted-foreground"><Clock className="h-3 w-3" />Janela de resposta livre expira em <span className="font-medium text-foreground">{janelaRestante(conv.janela_expira_em)}</span></div>
                     )}

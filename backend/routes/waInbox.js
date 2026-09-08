@@ -396,7 +396,11 @@ router.get('/conversas', authorizeModule('conversas', 1), async (req, res) => {
       .not('last_message_at', 'is', null) // esconde conversas criadas só por clique (sem nenhuma mensagem)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(200);
+    // 08/09/2026: os chips do inbox pedem TRÊS vistas — abertas · finalizadas ·
+    // todas. 'sem resposta' é recorte do cliente sobre as abertas (régua pura
+    // em src/lib/waConversaEstado.ts), então não é status do servidor.
     if (status === 'abertas') query = query.eq('resolvida', false);
+    else if (status === 'finalizadas') query = query.eq('resolvida', true);
     // escapePostgrestValue: vírgula/parêntese cru no .or() quebra a query
     // inteira do PostgREST e o catch da UI virava "Nenhuma conversa aqui"
     // (buscar "Silva, Maria" = inbox falsamente vazio).

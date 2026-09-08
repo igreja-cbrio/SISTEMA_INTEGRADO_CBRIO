@@ -1063,7 +1063,7 @@ export default function Comunicacao() {
         </TabsList>
 
         <TabsContent value="dashboard"><Dashboard /></TabsContent>
-        {/* Chat: renderiza o default de Conversas.tsx (já tem sub-abas Conversas/Painel/Mensagens prontas). */}
+        {/* Chat: renderiza o default de Conversas.tsx (sub-abas Conversas/Mensagens prontas · o Painel saiu em 08/09/2026). */}
         <TabsContent value="conversas"><Conversas /></TabsContent>
         <TabsContent value="envios"><Envios podeReenviar={podeNvl3} /></TabsContent>
         <TabsContent value="disparos"><Disparos podeEscrever={podeNvl3} podeExcluir={podeNvl4} /></TabsContent>

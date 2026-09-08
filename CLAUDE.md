@@ -4122,6 +4122,61 @@ que sobrou como regra viva:
 - ⚠️ O **e2e do Next** foi atualizado pro contrato mas **não foi EXECUTADO**
   (exige app rodando + cria inscrição real).
 
+## ⚠️ Comunicação · INBOX: chips com idade, "/" nas prontas e Finalizar em destaque (2026-09-08 · SEM migration)
+
+Fase 1 do redesenho do módulo pedido pelo Marcos em 08/09 (direção aprovada:
+*"vamos seguir com as mudanças que você propôs"*). Esta leva é só a TELA do
+inbox; a equipe de atendimento por área (titular + suplente) é a leva seguinte,
+porque exige migration.
+
+### Chips **Abertas · Sem resposta · Finalizadas** (`src/lib/waConversaEstado.ts`)
+
+- **"Sem resposta" = conversa aberta cuja última mensagem é DA PESSOA**
+  (`last_inbound_at >= last_message_at`). ⚠️ Igualdade conta como esperando DE
+  PROPÓSITO: o RPC `wa_conversa_inbound` grava as duas colunas com o MESMO
+  instante. Bot que respondeu conta como respondida (a pessoa não está esperando).
+- **A idade é da ESPERA** (desde a última mensagem da pessoa), não da conversa.
+  Fica **vermelha a partir de 48h** — o mesmo corte de "+2 dias" da medição de
+  08/09 (91 conversas nesse estado) e do dashboard que ele pediu. A vista "Sem
+  resposta" vem ordenada da espera mais LONGA para a mais curta: é fila de
+  quem espera há mais tempo, não de quem falou por último.
+- ⚠️ **As contagens dos chips saem da lista de ABERTAS** e ficam em estado
+  próprio: a vista "Finalizadas" carrega OUTRA lista (`status=finalizadas`,
+  novo no `GET /wa-inbox/conversas`) e não pode zerar os outros dois chips.
+- O checkbox "Incluir resolvidas", escondido no funil, **saiu** — era o único
+  caminho até as finalizadas e ninguém o achava.
+- ⚠️ `last_inbound_at` entrou no tipo `Conversa` do front (o `SEL` do servidor
+  já o mandava; a tela é que não o lia).
+
+### "/" abre as prontas · variáveis (`src/lib/mensagemVariaveis.ts`)
+
+- **"/" é comando SÓ quando o campo inteiro é `/` + zero ou mais caracteres sem
+  espaço** ("/", "/next"). "/ boa noite" e "preço/dia" são mensagem normal.
+  Setas andam na lista, **Enter INSERE (nunca envia "/next")**, Esc limpa.
+- **Lista FECHADA de 7 variáveis**: `{{primeiro_nome}} {{nome}} {{telefone}}
+  {{protocolo}} {{area}} {{atendente}} {{grupo}}` — só o que a tela JÁ tem em
+  mãos (conversa, perfil, quem está logado). Nada é consultado a mais.
+- ⚠️⚠️ **Variável sem valor NÃO some nem vira vazio: fica escrita e o ENVIO é
+  BLOQUEADO** (`variaveisPendentes` → toast + faixa âmbar). Mandar "Oi, , tudo
+  bem?" ou "Oi {{primeiro_nome}}" em nome da igreja é pior que pedir pra
+  completar. Fail-closed no que sai, como nos links do bot.
+- A prévia da lista já mostra o texto PREENCHIDO ("Oi Maria", não
+  "Oi {{primeiro_nome}}"); vindo do "/", o comando é SUBSTITUÍDO pela pronta;
+  vindo do ⚡ com texto digitado, anexa embaixo como antes.
+- A aba **Mensagens prontas** ganhou os chips de variáveis (clique insere no
+  cursor) e a explicação de que valor ausente pede pra completar.
+
+### O resto
+
+- **Finalizar virou botão primário** no topo da thread (era `outline`, igual aos
+  vizinhos). Já tirava das abertas; agora se vê.
+- **A sub-aba "Painel" (pendências por área) SAIU** de `Conversas.tsx` — *"essa
+  aba de painel não é útil"*. Os chips respondem a mesma pergunta na própria
+  lista. `GET /wa-inbox/resumo-areas` segue vivo e sem consumidor (dormente).
+
+Testes no `npm test`: `src/test/waConversaEstado.test.ts` (14) e
+`src/test/mensagemVariaveis.test.ts` (16), ambos com o relógio INJETADO.
+
 ## ⚠️⚠️ Comunicação · BOT DE IA POR ÁREA (2026-09-08 · migration `20260908120000`)
 
 Pedido do Marcos, depois de medir que **ninguém atende o inbox** (216 conversas com
