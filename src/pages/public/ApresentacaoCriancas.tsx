@@ -9,6 +9,7 @@
 // backend (GET /textos) — o snapshot gravado é sempre o canônico.
 import { useEffect, useState } from 'react';
 import { apresentacaoCriancasPublico } from '../../api';
+import { paisIguais } from '../../lib/apresentacaoPais';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
@@ -125,6 +126,10 @@ type Crianca = { nome: string; nascimento: string; sexo: string };
 export default function ApresentacaoCriancas() {
   const { C } = usePublicTheme();
   const [proximaData, setProximaData] = useState('');
+  // Culto previsto pra próxima inscrição (9h30 até o limite, depois 11h30) e o
+  // definitivo que veio na resposta do envio. Nulo ⇒ o texto é omitido.
+  const [horarioPrevisto, setHorarioPrevisto] = useState<string | null>(null);
+  const [horarioFinal, setHorarioFinal] = useState<string | null>(null);
   const [form, setForm] = useState({
     nome_pai: '', nome_mae: '', telefone: '', cpf_responsavel: '', email: '', endereco: '',
     website: '', // honeypot
@@ -147,7 +152,10 @@ export default function ApresentacaoCriancas() {
 
   useEffect(() => {
     apresentacaoCriancasPublico.proximaData()
-      .then((r: { data_apresentacao: string }) => setProximaData(r.data_apresentacao))
+      .then((r: { data_apresentacao: string; horario_previsto_rotulo?: string | null }) => {
+        setProximaData(r.data_apresentacao);
+        setHorarioPrevisto(r.horario_previsto_rotulo || null);
+      })
       .catch(() => {});
     apresentacaoCriancasPublico.textos()
       .then((t: any) => { if (t?.menor_responsavel) setTextos(t); })
@@ -169,6 +177,10 @@ export default function ApresentacaoCriancas() {
       if (n && !nomeCompletoValido(n)) {
         return setError(temAbreviacaoNome(n) ? 'Escreva o nome do pai/mãe completo, sem abreviações.' : 'Escreva o nome do pai/mãe completo.');
       }
+    }
+    // O mesmo nome nos dois campos dobra o nome no certificado (caso Isabella · 08/09).
+    if (paisIguais(form.nome_pai, form.nome_mae)) {
+      return setError('O nome do pai e o da mãe estão iguais. Se há só um responsável, preencha apenas o campo dele e deixe o outro em branco.');
     }
     const criancasValidas = criancas
       .map(c => ({ nome: c.nome.trim().replace(/\s+/g, ' '), data_nascimento: c.nascimento, sexo: c.sexo }))
@@ -208,6 +220,7 @@ export default function ApresentacaoCriancas() {
         setError(`${jaInscritas.join(', ')} já ${jaInscritas.length > 1 ? 'estavam inscritas' : 'estava inscrita'} para esta data — não criamos inscrição nova. Nossa equipe do Kids já tem o contato de vocês.`);
       } else {
         if (jaInscritas.length) setAvisoJaInscritas(jaInscritas);
+        setHorarioFinal(r?.horario_rotulo || null);
         setSent(true);
       }
     } catch (err: any) {
@@ -239,7 +252,7 @@ export default function ApresentacaoCriancas() {
           </h1>
           <p style={{ fontSize: 13, color: C.text3, marginTop: 6, lineHeight: 1.5 }}>
             Que bom que você decidiu apresentar seu(sua) filho(a) na CBRio! Preencha abaixo —
-            entraremos em contato para agendar o horário.
+            o culto da apresentação é definido na hora e aparece ao final.
           </p>
           {proximaData && (
             <div style={{
@@ -250,6 +263,7 @@ export default function ApresentacaoCriancas() {
               color: '#00B39D', fontSize: 13, fontWeight: 600,
             }}>
               Próxima apresentação: {formatDataLonga(proximaData)}
+              {horarioPrevisto && !sent && <span style={{ fontWeight: 500, opacity: 0.85 }}> · {horarioPrevisto}</span>}
             </div>
           )}
         </div>
@@ -269,8 +283,10 @@ export default function ApresentacaoCriancas() {
               Inscrição enviada!
             </h2>
             <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
-              {proximaData && <>A próxima apresentação é em <strong>{formatDataLonga(proximaData)}</strong>. </>}
-              Nossa equipe do Kids vai entrar em contato pelo telefone informado para agendar o horário.
+              {proximaData && <>A apresentação é em <strong>{formatDataLonga(proximaData)}</strong>{horarioFinal && <>, no <strong>{horarioFinal}</strong></>}. </>}
+              {horarioFinal
+                ? 'Chegue com antecedência e procure a equipe do Kids na entrada. Qualquer mudança, avisaremos pelo telefone informado.'
+                : 'Nossa equipe do Kids vai entrar em contato pelo telefone informado para confirmar o horário.'}
             </p>
             {avisoJaInscritas.length > 0 && (
               <p style={{ fontSize: 12, color: '#00B39D', fontWeight: 600, marginTop: 10 }}>

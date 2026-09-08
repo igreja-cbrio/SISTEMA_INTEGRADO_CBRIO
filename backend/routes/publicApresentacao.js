@@ -26,6 +26,12 @@ const {
 // (esta e a do app). Duas listas fariam a criança entrar com dado diferente
 // conforme a porta — o desalinhamento que o Marcos mandou consertar.
 const { normalizarSaude } = require('../utils/saudeCrianca');
+// Horário do culto (08/09/2026): o SISTEMA atribui (9h30 até o limite, depois
+// 11h30 — catálogo `apresentacao_horarios`, editável no Kids). Régua pura em
+// `utils/apresentacaoHorario`; leitura em `services/apresentacaoHorarios` — as
+// MESMAS que o app usa. E a guarda do nome dobrado (pai = mãe).
+const { escolherHorarioPara } = require('../services/apresentacaoHorarios');
+const { paisIguais, rotuloHorarioApresentacao } = require('../utils/apresentacaoHorario');
 
 // Limiter GENEROSO do router (padrão grupos/NPS/eventos): Wi-Fi único da
 // igreja — 10/15min por IP dava 429 na 11ª família (sweep 28/07).
@@ -84,8 +90,17 @@ function nomeCompletoOk(nome) {
 }
 
 // GET /api/public/apresentacao-criancas/proxima-data
-router.get('/proxima-data', (_req, res) => {
-  res.json({ data_apresentacao: proximoSegundoDomingoISO() });
+// + `horario_previsto`: o culto que a PRÓXIMA inscrição receberia agora (a
+// tela mostra como previsão; o definitivo vem na resposta do POST). Nulo quando
+// não há como saber — o texto é omitido, nunca inventado.
+router.get('/proxima-data', async (_req, res) => {
+  const data_apresentacao = proximoSegundoDomingoISO();
+  const h = await escolherHorarioPara(data_apresentacao);
+  res.json({
+    data_apresentacao,
+    horario_previsto: h.horario,
+    horario_previsto_rotulo: h.horario ? rotuloHorarioApresentacao(h.horario, h.configurados) : null,
+  });
 });
 
 // GET /api/public/apresentacao-criancas/textos — textos canônicos (o snapshot
@@ -143,6 +158,12 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
     for (const n of [nomePaiT, nomeMaeT]) {
       if (n && !nomeCompletoOk(n)) return res.status(400).json({ error: 'Escreva o nome completo do pai/mãe, sem abreviações.' });
     }
+    // ⚠️ O caso Isabella (08/09): a mãe escreveu o próprio nome nos DOIS campos e
+    // saiu "Aline Lazaro e Aline Lazaro" no certificado. Um responsável só?
+    // Preenche só o campo dele — o outro fica em branco.
+    if (paisIguais(nomePaiT, nomeMaeT)) {
+      return res.status(400).json({ error: 'O nome do pai e o da mãe estão iguais. Se há só um responsável, preencha apenas o campo dele e deixe o outro em branco.' });
+    }
 
     const tel = String(telefone || '').replace(/\D+/g, '');
     if (tel.length < 10 || tel.length > 11) return res.status(400).json({ error: 'Informe um telefone válido com DDD.' });
@@ -170,10 +191,17 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
     const criados = [];
     const criancaIds = [];
     const jaInscritas = [];
+
+    // Horário do culto: escolhido UMA vez por envio — irmãos nunca se separam.
+    // Se um irmão já está inscrito nesta data com horário, a família fica nele.
+    const escolha = await escolherHorarioPara(dataApresentacao);
+    let horarioFamilia = escolha.horario;
+    let catalogoHorarios = escolha.configurados;
+
     for (const c of lista) {
       const { data: dup, error: eDup } = await supabase
         .from('apresentacao_criancas')
-        .select('id')
+        .select('id, horario_culto')
         .eq('cpf_responsavel', cpfDig)
         .eq('data_apresentacao', dataApresentacao)
         .ilike('crianca_nome', c.nome)
@@ -181,7 +209,11 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
         .is('deleted_at', null)
         .limit(1);
       if (eDup) throw eDup;
-      if (dup && dup.length) { jaInscritas.push(c.nome); continue; }
+      if (dup && dup.length) {
+        jaInscritas.push(c.nome);
+        if (dup[0].horario_culto) horarioFamilia = dup[0].horario_culto;
+        continue;
+      }
 
       // kids_criancas: reusa se já existe (nome + nascimento), senão cria com
       // dados de verdade — antes criava criança "órfã" duplicada a cada envio.
@@ -247,6 +279,11 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
           email: emailNorm,
           endereco: enderecoT,
           data_apresentacao: dataApresentacao,
+          // ⚠️ Só menciona a coluna quando há valor: sem a migration `20260908150000`
+          // aplicada, `horario_culto: null` faria o PostgREST recusar o INSERT
+          // INTEIRO (42703) e a família perderia a inscrição por um informativo.
+          // Sem catálogo o serviço devolve null, então a chave fica de fora.
+          ...(horarioFamilia ? { horario_culto: horarioFamilia } : {}),
           status: 'pendente',
           origem: 'publico',
           crianca_id: criancaId,
@@ -322,6 +359,7 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
       }).catch((err) => console.error('[publicApresentacao] identidade:', err.message));
 
       const nomes = lista.map(c => c.nome).join(', ');
+      const rotuloH = rotuloHorarioApresentacao(horarioFamilia, catalogoHorarios);
       // ⚠️ Quem recebe vem de `notificacao_regras` (modulo kids, tipo
       // nova_apresentacao_crianca), NÃO de e-mail cravado aqui.
       //
@@ -339,7 +377,9 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
         modulo: 'kids',
         tipo: 'nova_apresentacao_crianca',
         titulo: criados.length > 1 ? 'Nova apresentação de crianças' : 'Nova apresentação de criança',
-        mensagem: `${nomes} — inscriç${criados.length > 1 ? 'ões' : 'ão'} para a apresentação de ${dataApresentacao}. Entrar em contato com a família para agendar o horário.`,
+        mensagem: `${nomes} — inscriç${criados.length > 1 ? 'ões' : 'ão'} para a apresentação de ${dataApresentacao}`
+          + (rotuloH ? ` · ${rotuloH}.` : '. Sem horário atribuído (catálogo cheio ou indisponível) — definir na tela do Kids.')
+          + (escolha.lotado ? ' ⚠️ Todos os horários estão lotados.' : ''),
         // ⚠️ O `?id=` é o que faz o toque na notificação abrir A INSCRIÇÃO em
         // vez da lista inteira (app do staff · `destinoDoPush`). Só vai quando
         // é UMA criança: com várias, apontar para a primeira seria arbitrário
@@ -352,7 +392,12 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
       }).catch(err => console.error('[publicApresentacao] notificacao falhou:', err.message));
     }
 
-    res.status(201).json({ ok: true, ids: criados, ja_inscritas: jaInscritas, data_apresentacao: dataApresentacao });
+    res.status(201).json({
+      ok: true, ids: criados, ja_inscritas: jaInscritas, data_apresentacao: dataApresentacao,
+      // O culto em que a família será apresentada (nulo = a equipe define e avisa).
+      horario_culto: horarioFamilia,
+      horario_rotulo: rotuloHorarioApresentacao(horarioFamilia, catalogoHorarios),
+    });
   } catch (e) {
     console.error('[publicApresentacao] erro:', e.message);
     res.status(500).json({ error: 'Erro ao enviar inscrição.' });
