@@ -8,6 +8,7 @@ const { enqueueSync } = require('../services/cerebroSync');
 const { chamarModelo: organogramaIA } = require('../services/organogramaIA');
 const { aplicarCobertura, encerrarCobertura } = require('../services/cobertura');
 const rhOnboardingEnvios = require('../services/rhOnboardingEnvios');
+const { caminhoNoBucket, aplicarAssinaturas } = require('../utils/storagePath'); // varredura 2026-09: RHP-01 documento de RG servido por URL pública — precisa derivar o caminho e assinar na leitura
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -139,6 +140,7 @@ router.get('/dashboard', async (req, res) => {
       .lte('data_expiracao', em60)
       .gte('data_expiracao', hoje)
       .order('data_expiracao');
+    const docsVencendoAssinados = await assinarDocumentosRh(docsVencendo || []); // varredura 2026-09: RHP-01 este card também mostra o link do documento — precisa da URL assinada
 
     res.json({
       total, ativos, ferias, licenca, inativos, emAdmissao,
@@ -147,7 +149,7 @@ router.get('/dashboard', async (req, res) => {
       totalSalarios, custoMensal,
       porContrato, porArea,
       feriasProximas: feriasProximas || [],
-      docsVencendo: docsVencendo || [],
+      docsVencendo: docsVencendoAssinados,
     });
   } catch (e) {
     console.error('[RH] Dashboard:', e.message);
@@ -325,7 +327,7 @@ router.get('/funcionarios/:id', async (req, res) => {
     await preencherFotoDoPerfil(func);
     res.json({
       ...func,
-      documentos: docs.data || [],
+      documentos: await assinarDocumentosRh(docs.data || []), // varredura 2026-09: RHP-01 caminho no bucket privado precisa virar URL assinada de 1h na leitura
       treinamentos: treinamentos.data || [],
       ferias_licencas: ferias.data || [],
     });
@@ -1192,6 +1194,38 @@ router.post('/funcionarios/:id/foto', uploadMw.single('foto'), async (req, res) 
 });
 
 // ── DOCUMENTOS ─────────────────────────────────────────────
+// varredura 2026-09: RHP-01 — documento pessoal (RG/CPF/CTPS/contrato) ia pro
+// bucket PÚBLICO `rh-fotos` e a URL pública ficava gravada em
+// `rh_documentos.storage_path`: qualquer pessoa com o link baixava sem login
+// (medido: HTTP 200, application/pdf, 288.582 bytes, sem chave nem JWT). Passa
+// a gravar o CAMINHO relativo no bucket PRIVADO `documentos-rh` e a assinar na
+// LEITURA — mesmo padrão de `services/anexosLogArquivos`. `caminhoNoBucket` é
+// idempotente e fail-closed, então o histórico misto (URL antiga do `rh-fotos`,
+// link do SharePoint) passa INTACTO e nada quebra.
+const BUCKET_DOCS_RH = 'documentos-rh';
+const DOCS_RH_TTL_SEG = 60 * 60; // 1h: a pessoa abre a ficha e clica em seguida
+async function assinarDocumentosRh(linhas) {
+  if (!Array.isArray(linhas) || !linhas.length) return linhas;
+  const caminhos = [...new Set(
+    linhas.map((l) => caminhoNoBucket(l?.storage_path, BUCKET_DOCS_RH)).filter(Boolean)
+  )];
+  if (!caminhos.length) return linhas;
+  const { data, error } = await supabase.storage
+    .from(BUCKET_DOCS_RH).createSignedUrls(caminhos, DOCS_RH_TTL_SEG);
+  // ⚠️ Falhou a assinatura: devolve o valor original (mostra que o anexo
+  // existe) em vez de sumir com o documento da ficha.
+  if (error) {
+    console.warn('[RH] createSignedUrls documentos-rh falhou:', error.message);
+    return linhas;
+  }
+  const mapa = {};
+  for (const item of (data || [])) {
+    const url = item?.signedUrl || item?.signedURL; // o SDK já usou as duas grafias
+    if (item?.path && url && !item.error) mapa[item.path] = url;
+  }
+  if (!Object.keys(mapa).length) return linhas;
+  return linhas.map((l) => aplicarAssinaturas(l, ['storage_path'], BUCKET_DOCS_RH, mapa));
+}
 // POST /api/rh/funcionarios/:id/documentos — aceita JSON ou multipart com arquivo
 router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (req, res) => {
   try {
@@ -1206,13 +1240,15 @@ router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (r
       extArquivo = (req.file.originalname || nome).split('.').pop();
       const supaPath = `documentos/${req.params.id}/${Date.now()}_${sanitizePath(nome)}.${extArquivo}`;
       const { error: upErr } = await supabase.storage
-        .from('rh-fotos')
+        .from(BUCKET_DOCS_RH) // varredura 2026-09: RHP-01 documento pessoal ia pro bucket PÚBLICO `rh-fotos` — vai pro bucket privado `documentos-rh`
         .upload(supaPath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
-      if (upErr) console.error('[RH] Supabase upload error:', upErr.message);
-      else {
-        const { data: urlData } = supabase.storage.from('rh-fotos').getPublicUrl(supaPath);
-        finalStoragePath = urlData.publicUrl;
+      // varredura 2026-09: RHP-01 · o upload falhava em SILÊNCIO (só console.error) e o registro
+      // nascia apontando pro caminho antigo. Documento pessoal não pode falhar mudo.
+      if (upErr) {
+        console.error('[RH] Supabase upload error:', upErr.message);
+        return res.status(502).json({ error: 'Não foi possível guardar o documento. Tente novamente; se persistir, avise a TI.' });
       }
+      finalStoragePath = supaPath; // varredura 2026-09: RHP-01 gravava a URL PÚBLICA (baixável sem login) — grava o caminho relativo e assina na leitura
     }
 
     // Insere PRIMEIRO pra ter o id do documento. A sincronização do SharePoint
@@ -1253,7 +1289,8 @@ router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (r
       })();
     }
 
-    res.json(data);
+    const [docAssinado] = await assinarDocumentosRh([data]); // varredura 2026-09: RHP-01 a resposta do upload devolvia URL pública — devolve URL assinada
+    res.json(docAssinado || data);
   } catch (e) {
     console.error('[RH] Criar documento:', e.message);
     res.status(500).json({ error: 'Erro ao criar documento' });
