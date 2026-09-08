@@ -4038,6 +4038,12 @@ export const comunicacao = {
     simular: (body) => post('/comunicacao/bot-ia/simular', body, { timeout: 60_000 }),
     resumo: (dias = 7) => get(`/comunicacao/bot-ia/resumo?dias=${dias}`),
   },
+  // Equipe de atendimento (08/09/2026): titular + suplente por área ('Entrada' =
+  // conversa ainda sem área). Substitui a aba Configurações → Atendentes.
+  equipe: {
+    list: () => get('/comunicacao/equipe'),
+    salvar: (area, body) => put(`/comunicacao/equipe/${encodeURIComponent(area)}`, body),
+  },
   erros: {
     list: () => get('/comunicacao/erros'),
     reenviar: (id, telefone) => post(`/comunicacao/erros/${id}/reenviar`, telefone ? { telefone } : {}),

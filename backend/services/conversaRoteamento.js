@@ -9,6 +9,7 @@
 const { supabase } = require('../utils/supabase');
 const { decidirRoteamento, JANELA_DIAS } = require('../utils/roteamentoDisparo');
 const { notificar } = require('./notificar');
+const waEquipe = require('./waEquipe');
 
 /** Últimos 8 dígitos — a MESMA chave que `acharOuCriarConversa` e `contatoPessoa` usam. */
 function sufixo(telefone) {
@@ -68,11 +69,20 @@ async function rotearPorDisparo(conversa) {
     if (!disparo?.contexto) return null;
 
     const setores = await setoresAtivos();
-    const decisao = decidirRoteamento({
+    const decisaoBase = decidirRoteamento({
       area: conversa.area, atribuidoA: conversa.atribuido_a,
       contexto: disparo.contexto, disparoEm: disparo.criado_em, setores,
     });
-    if (!decisao) return null;
+    if (!decisaoBase) return null;
+    const decisao = { ...decisaoBase };
+
+    // Equipe de atendimento (08/09/2026): setor sem atendente próprio cai no
+    // TITULAR da área (senão suplente) e só ele é avisado. Sem equipe, como
+    // antes: só etiqueta, ninguém atribuído.
+    if (!decisao.atendenteId) {
+      const resp = await waEquipe.responsavelDaArea(decisao.area).catch(() => null);
+      if (resp) decisao.atendenteId = resp.profileId;
+    }
 
     const patch = { area: decisao.area };
     if (decisao.atendenteId) patch.atribuido_a = decisao.atendenteId;

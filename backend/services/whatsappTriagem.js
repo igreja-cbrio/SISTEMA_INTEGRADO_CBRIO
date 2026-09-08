@@ -6,6 +6,7 @@ const { supabase } = require('../utils/supabase');
 const { enviarTexto } = require('./whatsappSend');
 const { normalizarTelefone } = require('./whatsappService');
 const waInbox = require('./waInbox');
+const waEquipe = require('./waEquipe');
 const { notificar } = require('./notificar');
 const { ehSoAgradecimento } = require('../utils/agradecimento');
 
@@ -29,10 +30,16 @@ async function concluirTriagem({ conv, telefone, setor, nomeInformado }) {
   const area = setor?.area || null;
   const rotulo = setor?.rotulo || area || 'atendimento';
   const paraAtendente = !!(setor?.destino_tipo === 'atendente' && setor?.atendente_id);
+  // Equipe de atendimento (08/09/2026): opção que aponta pra ÁREA atribui ao
+  // TITULAR da área (senão suplente) e avisa só ele. A opção com atendente
+  // específico continua mandando — é a decisão mais fina. Sem equipe
+  // configurada vale o de sempre: avisa a área inteira, ninguém atribuído.
+  const responsavel = paraAtendente ? null : await waEquipe.responsavelDaArea(area).catch(() => null);
   const patch = { bot_estado: 'concluido', bot_area_pendente: null, area };
   // só sobrescreve o nome se não veio do cadastro de membro
   if (!conv.membro_id && nomeInformado) patch.nome = nomeInformado;
   if (paraAtendente) patch.atribuido_a = setor.atendente_id;
+  else if (responsavel) patch.atribuido_a = responsavel.profileId;
   await supabase.from('wa_conversas').update(patch).eq('id', conv.id);
 
   const nome = primeiroNome(patch.nome || conv.nome || nomeInformado || '');
@@ -43,13 +50,15 @@ async function concluirTriagem({ conv, telefone, setor, nomeInformado }) {
     : `Obrigado${nome ? `, ${nome}` : ''}! 🙏 Já encaminhei sua mensagem pro time de *${rotulo}*. Em breve alguém fala com você por aqui.${proto}`);
 
   try {
-    const alvos = paraAtendente ? [setor.atendente_id] : await resolverProfilesDaArea(area);
+    const atribuidoA = paraAtendente ? setor.atendente_id : (responsavel?.profileId || null);
+    const alvos = atribuidoA ? [atribuidoA] : await resolverProfilesDaArea(area);
     const nomePessoa = patch.nome || conv.nome || nomeInformado || 'Contato';
+    const sup = responsavel?.papel === 'suplente' ? ' (você é o suplente da área)' : '';
     await notificar({
       modulo: 'conversas',
       tipo: 'conversa_triada',
       titulo: `Nova conversa · ${rotulo}`,
-      mensagem: `${nomePessoa}${conv.membro_id ? '' : ' (⚠️ não cadastrado na membresia)'} quer falar com ${rotulo}${paraAtendente ? ' — atribuída a você' : ''}.`,
+      mensagem: `${nomePessoa}${conv.membro_id ? '' : ' (⚠️ não cadastrado na membresia)'} quer falar com ${rotulo}${atribuidoA ? ` — atribuída a você${sup}` : ''}.`,
       link: `/comunicacao?tab=conversas${area ? `&area=${encodeURIComponent(area)}` : ''}`,
       chaveDedup: `conversa_triada_${conv.id}`,
       targetIds: alvos.length ? alvos : undefined, // sem alvos → fallback admin/diretor do notificar

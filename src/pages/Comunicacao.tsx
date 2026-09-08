@@ -28,6 +28,7 @@ import { WhatsappBotConfig } from './admin/Whatsapp';
 import ConversasSetores from './admin/ConversasSetores';
 import ContatosTab from '../components/comunicacao/ContatosTab';
 import BotIaAreas from '../components/comunicacao/BotIaAreas';
+import EquipeAtendimento from '../components/comunicacao/EquipeAtendimento';
 
 const C = { primary: '#00B39D' };
 
@@ -807,15 +808,20 @@ function Atendentes({ podeEscrever }: { podeEscrever: boolean }) {
 // 08/09 (pedido do Marcos): a sub-aba "IA por área" é a primeira — é o bot que
 // dá fôlego enquanto não há gente atendendo, com interruptor por área. O menu
 // de setores e a configuração antiga continuam ao lado.
+// 08/09 (2ª leva): a sub-aba "Equipe" (titular + suplente por área) veio da
+// antiga Configurações → Atendentes — quem atende fica junto do fluxo que
+// atribui ("atendentes longe do fluxo do bot fica ruim de gerenciar").
 function BotAdmin({ podeEscrever }: { podeEscrever: boolean }) {
   return (
     <Tabs defaultValue="ia" className="space-y-4">
       <TabsList>
         <TabsTrigger value="ia"><Sparkles className="mr-1.5 h-3.5 w-3.5" />IA por área</TabsTrigger>
+        <TabsTrigger value="equipe"><Users className="mr-1.5 h-3.5 w-3.5" />Equipe</TabsTrigger>
         <TabsTrigger value="menu"><Bot className="mr-1.5 h-3.5 w-3.5" />Menu do bot</TabsTrigger>
         <TabsTrigger value="config"><MessageSquare className="mr-1.5 h-3.5 w-3.5" />Configuração</TabsTrigger>
       </TabsList>
       <TabsContent value="ia"><BotIaAreas podeEscrever={podeEscrever} /></TabsContent>
+      <TabsContent value="equipe"><EquipeAtendimento podeEscrever={podeEscrever} /></TabsContent>
       <TabsContent value="menu"><ConversasSetores /></TabsContent>
       <TabsContent value="config"><WhatsappBotConfig /></TabsContent>
     </Tabs>
@@ -1018,7 +1024,8 @@ const TABS = ['dashboard', 'conversas', 'envios', 'disparos', 'contatos', 'bot',
 // Deep-links antigos (?tab=programadas etc.) caem na aba nova certa.
 const TAB_LEGADO: Record<string, string> = {
   programadas: 'disparos', automaticas: 'disparos', erros: 'envios',
-  templates: 'config', numeros: 'config', atendentes: 'config',
+  templates: 'config', numeros: 'config',
+  atendentes: 'bot', // Atendentes virou Bot → Equipe (08/09/2026)
 };
 
 export default function Comunicacao() {
@@ -1104,19 +1111,21 @@ function Disparos({ podeEscrever, podeExcluir }: { podeEscrever: boolean; podeEx
   );
 }
 
-// ═══ CONFIGURAÇÕES (Templates · Números · Atendentes · Tarifas) ═══
+// ═══ CONFIGURAÇÕES (Templates · Números · Tarifas) ═══
+// Atendentes SAIU daqui em 08/09/2026 (Marcos: "atendentes longe do fluxo do
+// bot fica ruim de gerenciar") e virou Bot → Equipe (titular + suplente por
+// área). O componente `Atendentes` acima (tabela wa_atendentes) fica DORMENTE —
+// nada o lê; dropar a tabela é decisão do Marcos.
 function Configuracoes({ podeNvl3, podeNvl5 }: { podeNvl3: boolean; podeNvl5: boolean }) {
   return (
     <Tabs defaultValue="templates" className="space-y-4">
       <TabsList>
         <TabsTrigger value="templates"><FileText className="mr-1.5 h-3.5 w-3.5" />Templates</TabsTrigger>
         <TabsTrigger value="numeros"><Phone className="mr-1.5 h-3.5 w-3.5" />Números</TabsTrigger>
-        <TabsTrigger value="atendentes"><Users className="mr-1.5 h-3.5 w-3.5" />Atendentes</TabsTrigger>
         <TabsTrigger value="tarifas"><Coins className="mr-1.5 h-3.5 w-3.5" />Tarifas</TabsTrigger>
       </TabsList>
       <TabsContent value="templates"><Templates podeSync={podeNvl3} podeEditar={podeNvl3} /></TabsContent>
       <TabsContent value="numeros"><Numeros podeEscrever={podeNvl5} /></TabsContent>
-      <TabsContent value="atendentes"><Atendentes podeEscrever={podeNvl3} /></TabsContent>
       <TabsContent value="tarifas"><Tarifas podeEditar={podeNvl5} /></TabsContent>
     </Tabs>
   );

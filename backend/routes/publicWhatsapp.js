@@ -261,6 +261,10 @@ async function inboxDireto(m, pnid) {
     phoneNumberId: pnid,
     replyToWaId: m.context?.id || null,
   });
+  // Equipe de atendimento (08/09/2026): neste número não há bot, então a
+  // conversa vai direto pro titular da área dela (ou da Entrada) e só ele é
+  // avisado. Best-effort: o serviço nunca lança.
+  await require('../services/waEquipe').atribuirPelaEquipe({ telefone, origem: 'inbox' });
 }
 
 // C0 · Processa os recibos de status da Meta (value.statuses[]).
@@ -675,6 +679,15 @@ async function processarMensagem(m, cfg, pnid = null, erroCfg = null) {
           erro: erroCfg ? 'config_indisponivel' : 'respostas_automaticas_desligadas',
           modulo_destino: 'conversas',
         }), '[wa-webhook]');
+      }
+      // ── EQUIPE DE ATENDIMENTO (Marcos · 08/09/2026) ─────────────────────
+      // Se NINGUÉM respondeu à pessoa (bot desligado, área desligada, teto,
+      // erro), a conversa vai pro titular da área dela — ou da Entrada — e só
+      // ele é avisado. Bot que RESPONDEU ou ENCAMINHOU não aciona a equipe: a
+      // pessoa foi atendida, e avisar o titular a cada resposta da IA seria o
+      // ruído que faz ninguém ler o sino. Best-effort: o serviço nunca lança.
+      if (!['responder', 'encaminhar', 'duplicado'].includes(botIa.acao)) {
+        await require('../services/waEquipe').atribuirPelaEquipe({ telefone, origem: 'inbox' });
       }
       return;
     }

@@ -4122,6 +4122,63 @@ que sobrou como regra viva:
 - ⚠️ O **e2e do Next** foi atualizado pro contrato mas **não foi EXECUTADO**
   (exige app rodando + cria inscrição real).
 
+## ⚠️⚠️ Comunicação · EQUIPE DE ATENDIMENTO por área (2026-09-08 · migration `20260908160000`)
+
+Segunda leva da Fase 1 do redesenho. Pedido do Marcos: *"quem é responsável por
+receber as mensagens daquela área; uma pessoa poderá ser responsável por mais de
+uma área"* — e o achado que a tornou urgente: **`wa_atendentes` tinha 0 linhas e
+nenhum código a lia** (a aba Configurações → Atendentes era fachada), o destino
+"área" do menu avisava **6 a 9 pessoas** do organograma e ninguém assumia, e a
+conversa que caía na **Entrada** (162 das 232) não avisava **ninguém**.
+
+### Onde mora
+
+| peça | arquivo |
+|---|---|
+| régua PURA (no gate · `src/test/equipeAtendimento.test.ts`, 19 casos · **7 mutantes RODADOS e mortos**) | `backend/utils/equipeAtendimento.js` |
+| leitura + atribuição + aviso | `backend/services/waEquipe.js` |
+| tabela área → titular + suplente | `wa_equipe_atendimento` (migration `20260908160000`) |
+| rotas `GET/PUT /comunicacao/equipe[/:area]` | `backend/routes/comunicacao.js` |
+| tela **Comunicação → Bot → Equipe** | `src/components/comunicacao/EquipeAtendimento.tsx` |
+
+### ⚠️⚠️ As leis
+
+- **A conversa que chega pela área nasce ATRIBUÍDA ao titular, e só ele é
+  avisado.** Vale nos 5 caminhos, com UMA régua (`decidirResponsavel`): opção do
+  MENU que aponta pra área · resposta a DISPARO etiquetada · IA calada (área
+  desligada ou bot desligado) · triagem/transferência humana · **Entrada**
+  (menu calado, IA calada ou número CBZap sem bot).
+- **Titular → suplente → ninguém.** Sem titular entra o suplente; sem os dois,
+  devolve `null` e vale o comportamento antigo (avisa a área toda pelo
+  organograma, ninguém atribuído). **Inventar responsável é pior que não ter.**
+  `indisponiveis` é o gancho do escalonamento — hoje ninguém o preenche.
+- ⚠️⚠️ **Só onde `atribuido_a` está VAZIO — decisão humana manda.** O UPDATE é
+  CONDICIONADO (`.is('atribuido_a', null)`) e é ele que decide se houve
+  transição: a pessoa manda 3 mensagens seguidas, o webhook roda 3× em
+  paralelo, e sem a guarda o aviso sairia 3× (lição dos recibos da Meta).
+- **A chave de dedup do aviso leva a ÁREA** (`conversa_triada_<id>_<area>`): o
+  dedup do `notificar` é por chave enquanto não lida, não por destinatário — a
+  conversa que sai da Entrada e vai pra Grupos avisa o titular de Grupos mesmo
+  com o aviso da Entrada ainda não lido por outra pessoa.
+- ⚠️ **Bot de IA que RESPONDEU ou ENCAMINHOU não aciona a equipe**: a pessoa
+  foi atendida; avisar o titular a cada resposta do bot da área LIGADA seria o
+  ruído que faria ninguém ler o sino. Só o silêncio (bot desligado, área
+  desligada, teto, erro) manda a conversa pra gente.
+- ⚠️ `'Entrada'` é a chave da conversa sem área. **A linha da Entrada é a que
+  mais vale preencher**, e a tela DIZ isso em âmbar enquanto estiver vazia.
+- **Titular ≠ suplente** (CHECK no banco + validação na rota): a mesma pessoa
+  nos dois é suplente nenhum.
+- **Tudo tolera a migration ausente** (42P01 ⇒ equipe vazia ⇒ comportamento de
+  sempre · a tela avisa · o PUT responde 409).
+- A aba **Configurações → Atendentes SAIU** (era o pedido: "atendentes longe do
+  fluxo do bot fica ruim de gerenciar"). O componente `Atendentes` e as rotas
+  `/atendentes` (tabela `wa_atendentes`) ficam **DORMENTES** — não são lidos por
+  nada; dropar a tabela é decisão do Marcos. `?tab=atendentes` cai em `bot`.
+
+⏳ **Pendente de GENTE**: aplicar a migration · preencher o titular de cada área
+na tela (Entrada e Grupos primeiro) · o aviso ao titular sai pelo sino/app do
+staff — quem não tem push token continua vendo só o sino.
+
 ## ⚠️ Comunicação · INBOX: chips com idade, "/" nas prontas e Finalizar em destaque (2026-09-08 · SEM migration)
 
 Fase 1 do redesenho do módulo pedido pelo Marcos em 08/09 (direção aprovada:
