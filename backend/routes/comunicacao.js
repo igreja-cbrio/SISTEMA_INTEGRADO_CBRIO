@@ -387,6 +387,57 @@ router.put('/atendentes/:id', authorizeModule('comunicacao', 3), async (req, res
   res.json(data);
 });
 
+// ── Equipe de atendimento (titular + suplente por área · 08/09/2026) ──────
+// Substitui a aba Atendentes: quem RECEBE a conversa de cada área ('Entrada' =
+// conversa ainda sem área). As rotas /atendentes acima ficam DORMENTES (tabela
+// wa_atendentes · nada as lê). A régua é pura em utils/equipeAtendimento.js.
+router.get('/equipe', async (_req, res) => {
+  const R = require('../utils/equipeAtendimento');
+  const { lerEquipe } = require('../services/waEquipe');
+  try {
+    const [eq, areasR, colabR] = await Promise.all([
+      lerEquipe(),
+      supabase.from('areas').select('nome').neq('ativo', false).order('nome'),
+      supabase.from('profiles').select('id, name, avatar_url, email, is_membro_only').eq('active', true).order('name'),
+    ]);
+    if (areasR.error) throw areasR.error;
+    if (colabR.error) throw colabR.error;
+    // mesmo recorte de gente do GET /wa-inbox/colaboradores: sem conta só-de-membro e sem agentes
+    const ehAgente = p => /^\s*agente\s/i.test(p.name || '') || /^agente\.[^@]+@cbrio\.org$/i.test(p.email || '');
+    const colaboradores = (colabR.data || [])
+      .filter(p => p.name && !p.is_membro_only && !ehAgente(p))
+      .map(p => ({ id: p.id, name: p.name, avatar_url: p.avatar_url || null }));
+    const linhas = R.montarLinhas({ areas: (areasR.data || []).map(a => a.nome), equipe: eq.equipe });
+    res.json({ migration_ok: !eq.migracaoAusente, linhas, colaboradores });
+  } catch (e) {
+    console.error('[comunicacao] equipe:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a equipe de atendimento' });
+  }
+});
+
+router.put('/equipe/:area', authorizeModule('comunicacao', 3), async (req, res) => {
+  const R = require('../utils/equipeAtendimento');
+  const v = R.validarEquipe({ area: req.params.area, titular_id: req.body?.titular_id, suplente_id: req.body?.suplente_id });
+  if (!v.ok) return res.status(400).json({ error: v.erro });
+  const linha = { ...v.valor, atualizado_em: new Date().toISOString(), atualizado_por: req.user?.userId || req.user?.id || null };
+  let { data, error } = await supabase.from('wa_equipe_atendimento')
+    .upsert(linha, { onConflict: 'area' }).select().maybeSingle();
+  // assinatura sem profile (conta de serviço) → grava sem ela; titular/suplente inválido segue 23503 abaixo
+  if (error && error.code === '23503' && linha.atualizado_por) {
+    ({ data, error } = await supabase.from('wa_equipe_atendimento')
+      .upsert({ ...linha, atualizado_por: null }, { onConflict: 'area' }).select().maybeSingle());
+  }
+  if (error) {
+    if (error.code === '42P01' || /wa_equipe_atendimento/.test(error.message || '')) {
+      return res.status(409).json({ error: 'A migration 20260908160000_wa_equipe_atendimento ainda não foi aplicada.' });
+    }
+    if (error.code === '23503') return res.status(400).json({ error: 'Titular ou suplente não é um usuário do sistema.' });
+    if (error.code === '23514') return res.status(400).json({ error: 'Titular e suplente não podem ser a mesma pessoa.' });
+    return res.status(400).json({ error: error.message });
+  }
+  res.json(data);
+});
+
 // Liga/desliga um disparo automático do catálogo (decisão do Marcos · 14/08:
 // "na aba de disparos automáticos eu não consigo cancelar isso"). Desligar NÃO
 // é caminho de envio — é o freio central que faltava; cada cron consulta a
