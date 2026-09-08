@@ -16,11 +16,14 @@
 ## Backend
 - `backend/routes/comunicacao.js`
 Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
-<details><summary>Endpoints (25)</summary>
+<details><summary>Endpoints (31)</summary>
 - `DELETE /api/comunicacao/agendamentos/:id`
 - `GET /api/comunicacao/agendamentos`
 - `GET /api/comunicacao/atendentes`
 - `GET /api/comunicacao/automaticas`
+- `GET /api/comunicacao/bot-ia/areas`
+- `GET /api/comunicacao/bot-ia/config`
+- `GET /api/comunicacao/bot-ia/resumo`
 - `GET /api/comunicacao/contatos`
 - `GET /api/comunicacao/conversas/:id/sugestao-grupo`
 - `GET /api/comunicacao/cron/agendamentos`
@@ -34,11 +37,14 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `PATCH /api/comunicacao/automaticas/:id`
 - `POST /api/comunicacao/agendamentos`
 - `POST /api/comunicacao/atendentes`
+- `POST /api/comunicacao/bot-ia/simular`
 - `POST /api/comunicacao/erros/:id/reenviar`
 - `POST /api/comunicacao/numeros`
 - `POST /api/comunicacao/templates/sync`
 - `PUT /api/comunicacao/agendamentos/:id`
 - `PUT /api/comunicacao/atendentes/:id`
+- `PUT /api/comunicacao/bot-ia/areas/:area`
+- `PUT /api/comunicacao/bot-ia/config`
 - `PUT /api/comunicacao/numeros/:id`
 - `PUT /api/comunicacao/tarifas/:categoria`
 - `PUT /api/comunicacao/templates/:id`
@@ -47,12 +53,14 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 **Réguas puras (backend/utils)**
 
 - `backend/utils/appError.js`
+- `backend/utils/botIaRegras.js`
 - `backend/utils/cronAuth.js`
 - `backend/utils/sentry.js`
 - `backend/utils/supabase.js`
 
 **Serviços**
 
+- `backend/services/botIaResposta.js`
 - `backend/services/busca.js`
 - `backend/services/comunicacaoAutomaticas.js`
 - `backend/services/comunicacaoDisparosOff.js`
@@ -64,16 +72,20 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 
 **Tabelas que estas rotas tocam**
 
+- `areas`
 - `camp_campanhas`
 - `inscricao_consentimentos`
 - `mem_grupos`
 - `mem_membros`
 - `wa_agendamentos`
 - `wa_atendentes`
+- `wa_bot_areas`
 - `wa_mensagens`
 - `wa_numeros`
 - `wa_tarifas`
 - `wa_templates`
+- `whatsapp_coletas`
+- `whatsapp_config`
 - `whatsapp_envios`
 - `whatsapp_lideres`
 - `whatsapp_status_orfaos`
