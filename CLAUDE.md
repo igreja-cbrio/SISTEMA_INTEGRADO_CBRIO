@@ -4036,6 +4036,78 @@ que sobrou como regra viva:
 - ⚠️ O **e2e do Next** foi atualizado pro contrato mas **não foi EXECUTADO**
   (exige app rodando + cria inscrição real).
 
+## ⚠️⚠️ Comunicação · BOT DE IA POR ÁREA (2026-09-08 · migration `20260908120000`)
+
+Pedido do Marcos, depois de medir que **ninguém atende o inbox** (216 conversas com
+mensagem em 90 dias · **7 com resposta humana** · 91 abertas sem resposta há mais
+de 2 dias · as 7 respostas eram dele): *"deixar o Claude simples respondendo
+dúvidas rápidas — se perguntar de grupos manda o link, se estiver inscrito pede
+para falar com o líder, dúvida profunda manda o número do CBZap. Criar POR ÁREA:
+quando uma área começar a atender, desligamos o bot naquela área."*
+
+⚠️ **Isto convive com a lei de 12/08 do Matheus ("não quero bot, atendimento
+humanizado")**: nasce **DESLIGADO** (`whatsapp_config.bot_ia.ativo = false`, toda
+área `ativo = false`), e ligar é ato na tela, área a área. É fôlego enquanto não
+há gente — e sai da frente assim que houver.
+
+### Onde mora
+
+| peça | arquivo |
+|---|---|
+| régua PURA (no gate · `src/test/botIaRegras.test.ts`, 30 casos · 6 mutantes RODADOS e mortos) | `backend/utils/botIaRegras.js` |
+| leitura do banco + modelo + envio | `backend/services/botIaResposta.js` |
+| gancho no webhook (só com o MENU calado) | `backend/routes/publicWhatsapp.js` · bloco `botPodeResponder` |
+| rotas `/comunicacao/bot-ia/*` (config · areas · simular · resumo) | `backend/routes/comunicacao.js` |
+| tela **Comunicação → Bot → IA por área** | `src/components/comunicacao/BotIaAreas.tsx` |
+| tabela por área + coluna global | `wa_bot_areas` · `whatsapp_config.bot_ia` |
+
+### ⚠️⚠️ As leis
+
+- **Quem responde é UM seletor de três**: Ninguém · Menu de setores
+  (`respostas_automaticas`) · IA por área (`bot_ia.ativo`). O `PUT /bot-ia/config`
+  escreve as DUAS colunas juntas — menu e IA nunca ficam ligados ao mesmo tempo.
+  O bot de IA só entra quando `freioBot.botPodeResponder` diz NÃO (menu calado) e a
+  config foi LIDA (com `erroCfg` ninguém fala · fail-closed de 26/08).
+- **Área DESLIGADA cala o bot, mesmo com resposta boa** — a equipe daquela área
+  responde pelo inbox. E "encaminhar" numa área desligada TAMBÉM cala: mandar a
+  pessoa pro CBZap quando há equipe atendendo aqui seria empurrá-la pra fora da
+  fila certa. ⚠️ A área reconhecida vira **etiqueta da conversa** (só onde `area`
+  está NULL) — inclusive no silêncio: é aí que a equipe precisa vê-la no filtro.
+- **O modelo não inventa link nem telefone**: a resposta passa por
+  `sanitizarResposta` — só saem URLs da lista FECHADA da área (`wa_bot_areas.links`)
+  e o telefone do contato humano (ou do líder do grupo, que veio do BANCO). Se a
+  sanitização esvaziar o texto, vira encaminhamento.
+- **O encaminhamento é texto DETERMINÍSTICO** (`textoEncaminhamento`): é a única
+  mensagem que carrega telefone, e telefone é o que não pode sair errado. Sem
+  `contato_humano` configurado, encaminhar vira SILÊNCIO.
+- **Tetos e freios**: `limite_dia` (200) · `limite_conversa_dia` (3) ·
+  `horas_silencio_apos_humano` (48 — se um humano respondeu nesta conversa há
+  menos que isso, o bot não entra) · só agradecimento ⇒ silêncio · mídia ⇒
+  silêncio. Erro na CONTAGEM conta como teto atingido.
+- **Idempotência = UNIQUE de `whatsapp_coletas.whatsapp_message_id`**: o serviço
+  INSERE a trilha (`modulo_destino='bot_ia'`, `erro='bot_ia:<acao>'`,
+  `parsed.bot_ia = {acao, area, motivo, uso}`) ANTES de chamar o modelo; reentrega
+  da Meta bate no UNIQUE e sai. É essa trilha que o `/bot-ia/resumo` lê.
+- **Ferramenta FORÇADA** (`tool_choice: decidir`): o modelo devolve `{area, acao,
+  resposta, motivo}` — nunca texto solto que poderia sair pra pessoa por engano.
+  Modelo = `WHATSAPP_BOT_IA_MODEL` (default o Haiku dos outros serviços de texto
+  curto da casa).
+- **Tudo tolera a migration ausente**: `bot_ia` ausente ⇒ desligado ·
+  `wa_bot_areas` ausente ⇒ sem áreas ⇒ silêncio · a tela mostra o aviso e o
+  `PUT` responde 409. O select de `bot_ia` é ISOLADO do select do webhook (lição do
+  `parcelas_max`).
+- **Contexto da pessoa** reusa a régua do inbox: `sugestaoGrupoAgenda` (grupo por
+  vínculo, líder, próximo encontro, texto pronto da casa) + cadastro/batismo/Next.
+  O simulador da tela (`POST /bot-ia/simular`) roda o MESMO caminho sem enviar e
+  sem gravar — é como se testa o conhecimento antes de ligar.
+
+⚠️ A `Geral` é pseudo-área: carrega `institucional.horarios/endereco/sobre` da
+config do bot antigo — é onde "qual o horário do culto?" cai.
+
+⏳ **Pendente de GENTE**: aplicar a migration · preencher o contato humano (CBZap)
+· escrever o conhecimento de cada área e ligar UMA de cada vez (Grupos primeiro,
+que é 56 das 232 conversas) · o Matheus saber que o bot voltou, por área.
+
 ## ⚠️ Comunicação · módulo central de WhatsApp (revisão de 05/08 → 14/08/2026)
 
 Estado consolidado. **Diário completo (5 críticos, lotes 2–5, F1/F2/F3, recibos,

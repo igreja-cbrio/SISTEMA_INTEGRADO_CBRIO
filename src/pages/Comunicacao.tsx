@@ -20,13 +20,14 @@ import { toast } from 'sonner';
 import {
   Loader2, BarChart3, Inbox, Send, CalendarClock, FileText, Phone, Users,
   Bot, AlertTriangle, RefreshCw, Plus, Trash2, Pencil, Power, Save, X, MessageSquare, Repeat,
-  Settings, Coins, BookUser,
+  Settings, Coins, BookUser, Sparkles,
 } from 'lucide-react';
 import { Switch } from '../components/ui/switch';
 import Conversas from './Conversas';
 import { WhatsappBotConfig } from './admin/Whatsapp';
 import ConversasSetores from './admin/ConversasSetores';
 import ContatosTab from '../components/comunicacao/ContatosTab';
+import BotIaAreas from '../components/comunicacao/BotIaAreas';
 
 const C = { primary: '#00B39D' };
 
@@ -803,13 +804,18 @@ function Atendentes({ podeEscrever }: { podeEscrever: boolean }) {
 // líderes de integração não compraram a ideia) e Avisos idem (substituído
 // pelas Programadas com audiência — o broadcast antigo nem persistia o
 // resultado). A tela antiga segue no repo (admin/Whatsapp.jsx · dormante).
-function BotAdmin() {
+// 08/09 (pedido do Marcos): a sub-aba "IA por área" é a primeira — é o bot que
+// dá fôlego enquanto não há gente atendendo, com interruptor por área. O menu
+// de setores e a configuração antiga continuam ao lado.
+function BotAdmin({ podeEscrever }: { podeEscrever: boolean }) {
   return (
-    <Tabs defaultValue="menu" className="space-y-4">
+    <Tabs defaultValue="ia" className="space-y-4">
       <TabsList>
+        <TabsTrigger value="ia"><Sparkles className="mr-1.5 h-3.5 w-3.5" />IA por área</TabsTrigger>
         <TabsTrigger value="menu"><Bot className="mr-1.5 h-3.5 w-3.5" />Menu do bot</TabsTrigger>
         <TabsTrigger value="config"><MessageSquare className="mr-1.5 h-3.5 w-3.5" />Configuração</TabsTrigger>
       </TabsList>
+      <TabsContent value="ia"><BotIaAreas podeEscrever={podeEscrever} /></TabsContent>
       <TabsContent value="menu"><ConversasSetores /></TabsContent>
       <TabsContent value="config"><WhatsappBotConfig /></TabsContent>
     </Tabs>
@@ -1062,7 +1068,7 @@ export default function Comunicacao() {
         <TabsContent value="envios"><Envios podeReenviar={podeNvl3} /></TabsContent>
         <TabsContent value="disparos"><Disparos podeEscrever={podeNvl3} podeExcluir={podeNvl4} /></TabsContent>
         <TabsContent value="contatos"><ContatosTab podeGerirLideres={podeBot} /></TabsContent>
-        {podeBot && <TabsContent value="bot"><BotAdmin /></TabsContent>}
+        {podeBot && <TabsContent value="bot"><BotAdmin podeEscrever={podeNvl3} /></TabsContent>}
         <TabsContent value="config">
           <Configuracoes podeNvl3={podeNvl3} podeNvl5={podeNvl5} />
         </TabsContent>

@@ -653,12 +653,29 @@ async function processarMensagem(m, cfg, pnid = null, erroCfg = null) {
     // abrindo o menu de setores contra a lei de 12/08 ("não quero bot"), que é
     // exatamente o que aconteceu com a Thalya em 25/08.
     if (!freioBot.botPodeResponder({ cfg, erroConfig: erroCfg })) {
-      await semFalhar(supabase.from('whatsapp_coletas').insert({
-        whatsapp_message_id: messageId, telefone, raw_text: texto,
-        status: 'ignorado',
-        erro: erroCfg ? 'config_indisponivel' : 'respostas_automaticas_desligadas',
-        modulo_destino: 'conversas',
-      }), '[wa-webhook]');
+      // ── BOT DE IA POR ÁREA (Marcos · 08/09/2026) ─────────────────────────
+      // Com o MENU calado, quem pode falar é o bot de IA por área — e só se
+      // `whatsapp_config.bot_ia.ativo` for true (o serviço é fail-closed:
+      // coluna ausente, erro de leitura ou área desligada ⇒ silêncio). Com a
+      // config ILEGÍVEL (erroCfg) ninguém fala: é a lei do freio de 26/08.
+      // A mensagem já está no inbox; o que este bloco decide é só a resposta.
+      let botIa = { acao: 'desligado' };
+      if (!erroCfg) {
+        botIa = await require('../services/botIaResposta')
+          .tratar({ telefone, texto, messageId, phoneNumberId: pnid, cfg })
+          .catch(e => { console.error('[whatsapp webhook] bot ia:', e.message); return { acao: 'erro' }; });
+      }
+      // O serviço grava a própria trilha em `whatsapp_coletas` quando ENTRA
+      // (responder/encaminhar/silêncio/erro). Aqui só registramos quando ele nem
+      // entrou, mantendo a assinatura histórica 'respostas_automaticas_desligadas'.
+      if (botIa.acao === 'desligado') {
+        await semFalhar(supabase.from('whatsapp_coletas').insert({
+          whatsapp_message_id: messageId, telefone, raw_text: texto,
+          status: 'ignorado',
+          erro: erroCfg ? 'config_indisponivel' : 'respostas_automaticas_desligadas',
+          modulo_destino: 'conversas',
+        }), '[wa-webhook]');
+      }
       return;
     }
 

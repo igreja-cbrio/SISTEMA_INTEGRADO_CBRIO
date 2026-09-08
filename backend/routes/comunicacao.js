@@ -743,6 +743,172 @@ router.get('/erros', async (_req, res, next) => {
   }
 });
 
+// ── BOT DE IA POR ÁREA (Marcos · 08/09/2026) ─────────────────────────────
+// Configuração global (quem responde quem escreve · contato humano · tetos),
+// conhecimento e interruptor POR ÁREA, simulador (sem enviar) e resumo do que
+// o bot fez. A régua mora em utils/botIaRegras (pura, no gate); o caminho de
+// resposta em services/botIaResposta. Leitura = nível 1 (o router), escrita = 3.
+const MODOS_BOT = ['ninguem', 'menu', 'ia'];
+const MIGRATION_BOT_IA = 'A migration 20260908120000 ainda não foi aplicada — aplique e tente de novo.';
+
+router.get('/bot-ia/config', async (_req, res, next) => {
+  try {
+    const botIa = require('../services/botIaResposta');
+    const R = require('../utils/botIaRegras');
+    const { data: cfg, error } = await supabase.from('whatsapp_config')
+      .select('ia_ativa, respostas_automaticas').eq('id', 1).maybeSingle();
+    if (error) throw error;
+    const c = await botIa.lerConfig();
+    res.json({
+      modo: R.modoResposta({ cfg, erroCfg: null, botIa: c.botIa }),
+      ia_ativa: cfg?.ia_ativa !== false,
+      menu_ligado: cfg?.respostas_automaticas !== false,
+      bot_ia: c.botIa,
+      migration_ok: !c.migracaoAusente,
+      modelo: botIa.MODEL,
+      limites_padrao: R.LIMITES_PADRAO,
+      anthropic_configurada: !!process.env.ANTHROPIC_API_KEY,
+    });
+  } catch (e) {
+    console.error('[comunicacao] bot-ia config:', e.message);
+    next(communicationError(e, 'Erro ao ler a configuração do bot.'));
+  }
+});
+
+router.put('/bot-ia/config', authorizeModule('comunicacao', 3), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const botIa = require('../services/botIaResposta');
+    const R = require('../utils/botIaRegras');
+    const atual = await botIa.lerConfig();
+    if (atual.migracaoAusente) return res.status(409).json({ error: MIGRATION_BOT_IA });
+    const patch = { updated_at: new Date().toISOString() };
+    const novo = { ...atual.botIa };
+    if ('modo' in b) {
+      if (!MODOS_BOT.includes(b.modo)) return res.status(400).json({ error: 'Modo inválido.' });
+      // ⚠️ Um seletor, duas colunas: o MENU vive em `respostas_automaticas`
+      // (a lei do freio de 26/08) e a IA em `bot_ia.ativo`. Escrever os dois
+      // juntos é o que impede menu E ia ligados ao mesmo tempo.
+      patch.respostas_automaticas = b.modo === 'menu';
+      novo.ativo = b.modo === 'ia';
+    }
+    if ('contato_humano' in b) novo.contato_humano = String(b.contato_humano || '').trim().slice(0, 60);
+    for (const k of ['limite_dia', 'limite_conversa_dia', 'horas_silencio_apos_humano']) if (k in b) novo[k] = Number(b[k]);
+    if ('instrucoes' in b) novo.instrucoes = String(b.instrucoes || '').slice(0, 2000);
+    const n = R.lerConfigBotIa(novo);
+    patch.bot_ia = {
+      ativo: n.ativo, contato_humano: n.contato_humano, limite_dia: n.limite_dia,
+      limite_conversa_dia: n.limite_conversa_dia, horas_silencio_apos_humano: n.horas_silencio_apos_humano,
+      instrucoes: n.instrucoes,
+    };
+    const { error } = await supabase.from('whatsapp_config').update(patch).eq('id', 1);
+    if (error) throw error;
+    const { data: cfg } = await supabase.from('whatsapp_config').select('ia_ativa, respostas_automaticas').eq('id', 1).maybeSingle();
+    res.json({ ok: true, bot_ia: n, modo: R.modoResposta({ cfg, erroCfg: null, botIa: n }) });
+  } catch (e) {
+    console.error('[comunicacao] bot-ia config put:', e.message);
+    next(communicationError(e, 'Erro ao salvar a configuração do bot.'));
+  }
+});
+
+router.get('/bot-ia/areas', async (_req, res, next) => {
+  try {
+    const botIa = require('../services/botIaResposta');
+    const a = await botIa.lerAreas();
+    const { data: cat } = await supabase.from('areas').select('nome').neq('ativo', false).order('nome');
+    res.json({ areas: a.areas, catalogo: (cat || []).map(x => x.nome).filter(Boolean), migration_ok: !a.migracaoAusente, erro: a.erro || null });
+  } catch (e) {
+    console.error('[comunicacao] bot-ia areas:', e.message);
+    next(communicationError(e, 'Erro ao listar as áreas do bot.'));
+  }
+});
+
+router.put('/bot-ia/areas/:area', authorizeModule('comunicacao', 3), async (req, res, next) => {
+  try {
+    const area = String(req.params.area || '').trim().slice(0, 80);
+    if (!area) return res.status(400).json({ error: 'Informe a área.' });
+    const b = req.body || {};
+    const row = { area, atualizado_em: new Date().toISOString(), atualizado_por: req.user?.userId || req.user?.id || null };
+    if ('ativo' in b) row.ativo = b.ativo === true;
+    if ('descricao' in b) row.descricao = String(b.descricao || '').trim().slice(0, 300) || null;
+    if ('conhecimento' in b) row.conhecimento = String(b.conhecimento || '').trim().slice(0, 6000) || null;
+    if ('encaminhar_para' in b) row.encaminhar_para = String(b.encaminhar_para || '').trim().slice(0, 300) || null;
+    if (Array.isArray(b.links)) {
+      // Lista FECHADA do que o bot pode enviar: só http(s), teto de 20.
+      row.links = b.links
+        .map(l => ({ rotulo: String(l?.rotulo || '').trim().slice(0, 80), url: String(l?.url || '').trim().slice(0, 500) }))
+        .filter(l => /^https?:\/\//i.test(l.url)).slice(0, 20);
+    }
+    let r = await supabase.from('wa_bot_areas').upsert(row, { onConflict: 'area' }).select().single();
+    if (r.error && r.error.code === '23503') {
+      // autor sem profile (conta de serviço) — grava sem a assinatura
+      r = await supabase.from('wa_bot_areas').upsert({ ...row, atualizado_por: null }, { onConflict: 'area' }).select().single();
+    }
+    if (r.error) {
+      if (r.error.code === '42P01') return res.status(409).json({ error: MIGRATION_BOT_IA });
+      throw r.error;
+    }
+    res.json(require('../utils/botIaRegras').lerArea(r.data));
+  } catch (e) {
+    console.error('[comunicacao] bot-ia area put:', e.message);
+    next(communicationError(e, 'Erro ao salvar a área do bot.'));
+  }
+});
+
+router.post('/bot-ia/simular', authorizeModule('comunicacao', 3), async (req, res, next) => {
+  try {
+    const texto = String(req.body?.texto || '').trim();
+    if (!texto) return res.status(400).json({ error: 'Escreva a mensagem a simular.' });
+    const r = await require('../services/botIaResposta').simular({
+      texto: texto.slice(0, 1500),
+      conversaId: req.body?.conversa_id || null,
+      telefone: req.body?.telefone || null,
+    });
+    res.json(r);
+  } catch (e) {
+    console.error('[comunicacao] bot-ia simular:', e.message);
+    next(communicationError(e, 'Erro ao simular o bot.'));
+  }
+});
+
+router.get('/bot-ia/resumo', async (req, res, next) => {
+  try {
+    const dias = Math.min(parseInt(req.query.dias, 10) || 7, 90);
+    const desde = new Date(Date.now() - dias * 86400000).toISOString();
+    const rows = [];
+    for (let from = 0; from < 5000; from += 1000) {
+      const { data, error } = await supabase.from('whatsapp_coletas')
+        .select('id, parsed, erro, created_at').eq('modulo_destino', 'bot_ia').is('deleted_at', null)
+        .gte('created_at', desde).order('created_at', { ascending: true }).order('id', { ascending: true })
+        .range(from, from + 999);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    const porAcao = {}; const porArea = {}; const porMotivo = {}; let tokens = 0;
+    for (const r of rows) {
+      const b = r.parsed?.bot_ia || {};
+      const acao = b.acao || String(r.erro || '').replace(/^bot_ia:/, '') || 'desconhecido';
+      porAcao[acao] = (porAcao[acao] || 0) + 1;
+      const area = b.area || '(sem área)';
+      porArea[area] = porArea[area] || { total: 0, responder: 0, encaminhar: 0, silencio: 0 };
+      porArea[area].total += 1;
+      if (Object.prototype.hasOwnProperty.call(porArea[area], acao)) porArea[area][acao] += 1;
+      if (b.motivo) porMotivo[b.motivo] = (porMotivo[b.motivo] || 0) + 1;
+      tokens += (b.uso?.input || 0) + (b.uso?.output || 0);
+    }
+    res.json({
+      dias, total: rows.length, por_acao: porAcao,
+      por_area: Object.entries(porArea).map(([area, v]) => ({ area, ...v })).sort((a, b) => b.total - a.total),
+      por_motivo: Object.entries(porMotivo).map(([motivo, n]) => ({ motivo, n })).sort((a, b) => b.n - a.n).slice(0, 12),
+      tokens, truncado: rows.length >= 5000,
+    });
+  } catch (e) {
+    console.error('[comunicacao] bot-ia resumo:', e.message);
+    next(communicationError(e, 'Erro ao resumir o bot.'));
+  }
+});
+
 // Reenviar uma falha terminal (após corrigir o telefone, p.ex.): volta a linha
 // pra 'pendente' com telefone opcionalmente corrigido — o cron reprocessa.
 router.post('/erros/:id/reenviar', authorizeModule('comunicacao', 3), async (req, res, next) => {
