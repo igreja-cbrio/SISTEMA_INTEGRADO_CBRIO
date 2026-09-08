@@ -518,6 +518,7 @@ export default function ConversasInbox({
                         {m.tipo === 'pesquisa' && <p className="mb-0.5 text-[10px] font-medium opacity-70">pesquisa de satisfação</p>}
                         {m.tipo === 'avaliacao' && <p className="mb-0.5 flex items-center gap-0.5 text-[10px] font-medium opacity-80"><Star className="h-3 w-3 fill-current" />avaliação</p>}
                         {m.tipo === 'institucional' && <p className="mb-0.5 text-[10px] font-medium opacity-70">resposta automática</p>}
+                        {m.tipo === 'bot' && <p className="mb-0.5 text-[10px] font-medium opacity-70">resposta automática · bot</p>}
                         {m.tipo === 'image' && m.media_url && <img src={m.media_url} alt="imagem" className="mb-1 max-h-60 rounded-lg" />}
                         {m.tipo === 'document' && m.media_url && <a href={m.media_url} target="_blank" rel="noreferrer" className="mb-1 flex items-center gap-1 underline"><ExternalLink className="h-3.5 w-3.5" />documento</a>}
                         {m.texto && <p className="leading-relaxed">{m.texto}</p>}

@@ -4018,6 +4018,17 @@ export const comunicacao = {
     resumo: (dias = 30) => get(`/comunicacao/envios/resumo?dias=${dias}`),
   },
   custo: (meses = 6) => get(`/comunicacao/custo?meses=${meses}`),
+  // Bot de IA por área (08/09/2026): quem responde quem escreve, conhecimento
+  // e interruptor por área, simulador (não envia) e resumo do que o bot fez.
+  botIa: {
+    config: () => get('/comunicacao/bot-ia/config'),
+    salvarConfig: (body) => put('/comunicacao/bot-ia/config', body),
+    areas: () => get('/comunicacao/bot-ia/areas'),
+    salvarArea: (area, body) => put(`/comunicacao/bot-ia/areas/${encodeURIComponent(area)}`, body),
+    // o modelo leva alguns segundos — o timeout padrão de 30s serve, mas com folga
+    simular: (body) => post('/comunicacao/bot-ia/simular', body, { timeout: 60_000 }),
+    resumo: (dias = 7) => get(`/comunicacao/bot-ia/resumo?dias=${dias}`),
+  },
   erros: {
     list: () => get('/comunicacao/erros'),
     reenviar: (id, telefone) => post(`/comunicacao/erros/${id}/reenviar`, telefone ? { telefone } : {}),
