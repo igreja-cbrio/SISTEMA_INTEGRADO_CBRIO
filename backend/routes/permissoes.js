@@ -1,16 +1,33 @@
 const router = require('express').Router();
 const {
-  authenticate, authorize, bustPermissionCaches,
+  // varredura 2026-09 · B01: `authorize` saiu daqui — ele liberava por NÍVEL DE
+  // CARGO (>=4) sem olhar a matriz; quem decide agora é `authorizeModule`.
+  authenticate, authorizeModule, bustPermissionCaches,
   resolveEffectivePerms, getCargoMatrix, getModulos,
   AREA_MODULO_BOOST, _normalizarArea,
 } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
-router.use(authenticate, authorize('admin', 'diretor'));
+// varredura 2026-09 · B01: `authorize('admin','diretor')` passava com
+// max(cargoNivelLeitura, cargoNivelEscrita) >= 4 — 20 contas ativas, 15 delas SEM
+// nenhuma linha no módulo `permissoes-admin` — ou seja a matriz que a própria tela
+// desenha não valia aqui. Com a routeKey mapeada (`permissoes` →
+// ['permissoes-admin'] · auth.js:118) o ramo do nível padrão do cargo
+// (auth.js:649) não roda e o gate passa a ser a matriz.
+// ⚠️ Router-wide é seguro NESTE arquivo: nenhuma rota daqui alimenta agregado do
+// /painel (a LEI do jornada.js:52-55) — todas servem a tela de Permissões.
+// varredura 2026-09 · B01: nivel 4, nao 2. Na convencao da casa 2 e "pessoal", e
+// este modulo CONCEDE acesso. Medido em 08/09: dos 45 cargos, so `Dev` e
+// `Coord Estrategico` tem linha em `permissoes-admin`, os dois com nivel 5, e ha
+// 1 unico override (tambem 5) — entao 4 nao tira ninguem que 2 deixaria passar,
+// e fecha a faixa 2-3 que um override futuro poderia abrir sem querer.
+router.use(authenticate, authorizeModule('permissoes', 4));
 
 // Criar LOGIN é restrito a "devs" (você + Marcos Paulo) · mesmo critério do
 // requireDev de agents.js (sobrescrevível por env DEV_EMAILS). Não confundir
-// com o authorize('admin','diretor') do router — isto restringe ainda mais.
+// varredura 2026-09: comentário corrigido — o router NÃO usa mais
+// authorize('admin','diretor') e sim authorizeModule('permissoes', 2); isto aqui
+// restringe ainda mais. Comentário que mente engana a próxima sessão.
 const DEV_EMAILS = (process.env.DEV_EMAILS || 'gestao@cbrio.com.br,infra@cbrio.com.br,matheus.toscano@cbrio.org,diego.assis@cbrio.org')
   .split(',').map(e => e.trim().toLowerCase()).filter(Boolean);
 // Dev = lista fixa (env) OU super-admin (app_super_admins) — robusto a qual
@@ -36,6 +53,43 @@ function bloqueiaAutoEdicao(req, resolved) {
     && req.user.granular?.usuarioId != null
     && String(resolved.id) === String(req.user.granular.usuarioId);
   return sameProfile || sameUsuario;
+}
+
+// varredura 2026-09 · B01: role admin/diretor PULA o authorizeModule (auth.js:614),
+// então a trava do router não segura as 17 contas com esse role. As rotas que mexem
+// no CONTROLE DE ACESSO em si (matriz global e profiles.role) exigem, ALÉM do
+// router: nível 5 de escrita em `permissoes-admin` OU dev/super-admin.
+const NIVEL_TOTAL_PERMISSOES = 5;
+async function podeMexerNoControleDeAcesso(req) {
+  // varredura 2026-09 · B01: modulePerms é indexado por slug (auth.js:255) e o
+  // gate é ESCRITA — leitura alta não autoriza mudar a régua de terceiros.
+  const perm = req.user?.granular?.modulePerms?.['permissoes-admin'];
+  if (perm && (perm.escrita ?? 0) >= NIVEL_TOTAL_PERMISSOES) return true;
+  return ehDev(req);
+}
+
+// varredura 2026-09 · B02: mudança no controle de acesso não deixava rastro —
+// depois do fato ninguém sabia quem promoveu quem. Grava em `app_audit_log`
+// (tabela que já existe · migration 20260521230000, mesmo padrão do lgpd.js) e
+// NUNCA derruba a operação: perder a trilha é ruim, desfazer o que o admin
+// acabou de decidir é pior.
+async function auditarAcesso(req, { rowId, action = 'UPDATE', changes }) {
+  try {
+    await supabase.from('app_audit_log').insert({
+      table_name: 'permissoes_admin',
+      row_id: String(rowId ?? '-'),
+      action,
+      user_id: req.user?.id || null,
+      user_email: req.user?.email || null,
+      changes: {
+        rota: `${req.method} ${req.originalUrl}`,
+        ator_nome: req.user?.name || null,
+        ...changes,
+      },
+    });
+  } catch (e) {
+    console.error('[permissoes] auditoria falhou:', e.message);
+  }
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -388,6 +442,24 @@ router.put('/matriz/celula', async (req, res) => {
     if (!cargo_id || !modulo_id) return res.status(400).json({ error: 'cargo_id e modulo_id são obrigatórios' });
     if (typeof nivel !== 'number' || nivel < 0 || nivel > 5) return res.status(400).json({ error: 'nível deve estar entre 0 e 5' });
 
+    // varredura 2026-09 · B01: a matriz é a régua de TODO MUNDO que tem o cargo —
+    // mexer nela é o poder mais amplo do sistema, então exige nível total.
+    if (!(await podeMexerNoControleDeAcesso(req))) {
+      return res.status(403).json({ error: 'Só quem tem nível 5 em Permissões (ou o time de sistemas) pode alterar a matriz dos cargos.' });
+    }
+    // varredura 2026-09 · B02: sem esta guarda o ator elevava o PRÓPRIO cargo a 5
+    // em qualquer módulo — a porta lateral que o bloqueiaAutoEdicao não cobria,
+    // porque aqui não há :id de pessoa, só o cargo.
+    // varredura 2026-09 · B02: MEDIDO em 08/09 — 5 contas ativas tem o cargo `Dev`.
+    // Sem o escape abaixo, a linha desse cargo ficaria INEDITAVEL por todo mundo
+    // (nao e "peca a outro administrador", e beco sem saida). O time de sistemas
+    // (DEV_EMAILS + app_super_admins) mexe no proprio cargo; o resto, nao.
+    if (req.user?.granular?.cargoId != null
+        && String(cargo_id) === String(req.user.granular.cargoId)
+        && !(await ehDev(req))) {
+      return res.status(403).json({ error: 'Você não pode alterar a régua do seu próprio cargo. Peça a outro administrador.' });
+    }
+
     const { error } = await supabase.from('cargo_modulo_permissao').upsert({
       cargo_id, modulo_id, nivel,
       pode_exportar: !!pode_exportar,
@@ -397,6 +469,11 @@ router.put('/matriz/celula', async (req, res) => {
     }, { onConflict: 'cargo_id,modulo_id' });
     if (error) return res.status(400).json({ error: error.message });
 
+    // varredura 2026-09 · B02: a matriz não tinha trilha nenhuma de quem mexeu.
+    await auditarAcesso(req, {
+      rowId: `${cargo_id}:${modulo_id}`,
+      changes: { tipo: 'matriz_celula', cargo_id, modulo_id, nivel, pode_exportar: !!pode_exportar, pode_aprovar: !!pode_aprovar, escopo_proprio: !!escopo_proprio },
+    });
     bustPermissionCaches();
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -548,11 +625,26 @@ router.post('/usuario', async (req, res) => {
       return res.status(400).json({ error: 'É preciso um e-mail válido para criar o acesso deste colaborador.' });
     }
 
+    // varredura 2026-09 · B02: esta rota casa por E-MAIL e gravava cargo_id sem
+    // passar por bloqueiaAutoEdicao — o ator mandava o PRÓPRIO e-mail + o cargo
+    // `dev` (5/5) e se auto-promovia. O e-mail do token barra também quem não tem
+    // linha granular (aí o insert criaria a linha já no cargo escolhido).
+    if (emailNorm === String(req.user?.email || '').trim().toLowerCase()) {
+      return res.status(403).json({ error: 'Você não pode criar nem alterar o próprio cadastro de acesso. Peça a outro administrador.' });
+    }
+
     // Check if exists by email
     const { data: existing } = await supabase.from('usuarios')
       .select('id').eq('email', emailNorm).limit(1);
 
+    // varredura 2026-09 · B02: cobre quem tem outro e-mail no token e a mesma
+    // linha em `usuarios` (o par que o bloqueiaAutoEdicao já conhece).
+    if (existing?.length && bloqueiaAutoEdicao(req, { id: existing[0].id })) {
+      return res.status(403).json({ error: 'Você não pode alterar o próprio cadastro de acesso. Peça a outro administrador.' });
+    }
+
     let userId;
+    let acaoAudit = 'UPDATE';
     if (existing?.length) {
       await supabase.from('usuarios').update({ nome, cargo_id }).eq('id', existing[0].id);
       userId = existing[0].id;
@@ -561,8 +653,11 @@ router.post('/usuario', async (req, res) => {
         .insert({ nome, email: emailNorm, cargo_id }).select().single();
       if (error) return res.status(400).json({ error: error.message });
       userId = data.id;
+      acaoAudit = 'INSERT';
     }
 
+    // varredura 2026-09 · B02: esta rota define CARGO, que é a régua base da pessoa.
+    await auditarAcesso(req, { rowId: userId, action: acaoAudit, changes: { tipo: 'usuario_cargo', email: emailNorm, cargo_id } });
     res.json({ id: userId });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -712,6 +807,9 @@ router.put('/usuario/:id/cargo', async (req, res) => {
       if (err3) return res.status(400).json({ error: err3.message });
     }
 
+    // varredura 2026-09 · B02: cargo é a régua base — sem trilha, "quem mudou o
+    // cargo dessa pessoa?" não tinha resposta.
+    await auditarAcesso(req, { rowId: resolved.id, changes: { tipo: 'usuario_cargo', cargo_id, alvo_param: req.params.id } });
     bustPermissionCaches();
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -733,12 +831,22 @@ router.put('/usuario/:id/role', async (req, res) => {
     if (bloqueiaAutoEdicao(req, null)) {
       return res.status(403).json({ error: 'Você não pode alterar o próprio acesso base. Peça a outro administrador.' });
     }
+    // varredura 2026-09 · B01: role admin/diretor pula TODO authorizeModule
+    // (auth.js:614) — conceder esse role é a promoção mais forte que existe aqui.
+    if (!(await podeMexerNoControleDeAcesso(req))) {
+      return res.status(403).json({ error: 'Só quem tem nível 5 em Permissões (ou o time de sistemas) pode mudar o acesso base de alguém.' });
+    }
+    // varredura 2026-09 · B02: lê o valor ANTERIOR antes de gravar — o update
+    // devolve o novo, e sem o de-para a trilha não diz o que mudou.
+    const { data: antes } = await supabase.from('profiles')
+      .select('role').eq('id', req.params.id).maybeSingle();
     // O :id é o UUID do profile (vem de GET /colaboradores)
     const { data, error } = await supabase.from('profiles')
       .update({ role }).eq('id', req.params.id).select('id').maybeSingle();
     if (error) return res.status(400).json({ error: error.message });
     if (!data) return res.status(404).json({ error: 'Perfil não encontrado.' });
 
+    await auditarAcesso(req, { rowId: req.params.id, changes: { tipo: 'profile_role', role: { old: antes?.role ?? null, new: role } } });
     bustPermissionCaches();
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -765,6 +873,9 @@ router.put('/usuario/:id/areas', async (req, res) => {
       if (error) return res.status(400).json({ error: error.message });
     }
 
+    // varredura 2026-09 · B02: área dá BOOST pra nível 5 no módulo da área
+    // (AREA_MODULO_BOOST) — é concessão de acesso e precisa de trilha.
+    await auditarAcesso(req, { rowId: userId, changes: { tipo: 'usuario_areas', area_ids: area_ids || [], alvo_param: req.params.id } });
     bustPermissionCaches();
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -787,6 +898,15 @@ router.put('/usuario/:id/modulo', async (req, res) => {
     if (bloqueiaAutoEdicao(req, resolved)) {
       return res.status(403).json({ error: 'Você não pode alterar as próprias permissões. Peça a outro administrador.' });
     }
+    // varredura 2026-09 · B01: override no PROPRIO modulo de permissoes e conceder a
+    // chave do cofre por procuracao — sem isto, quem passa no gate do router (4)
+    // daria nivel 5 em `permissoes-admin` a um terceiro e voltaria por ele.
+    try {
+      const { data: mod } = await supabase.from('modulos').select('slug').eq('id', modulo_id).maybeSingle();
+      if (mod?.slug === 'permissoes-admin' && !(await podeMexerNoControleDeAcesso(req))) {
+        return res.status(403).json({ error: 'Conceder acesso ao módulo Permissões exige nível 5 (ou o time de sistemas).' });
+      }
+    } catch (e) { console.error('[permissoes] checagem de override em permissoes-admin falhou:', e.message); }
     const userId = resolved.id;
 
     // Busca a celula default do cargo do usuário para o módulo
@@ -835,6 +955,12 @@ router.put('/usuario/:id/modulo', async (req, res) => {
       if (error) return res.status(400).json({ error: error.message });
     }
 
+    // varredura 2026-09 · B02: override é a exceção SOBERANA (vence cargo e área,
+    // inclusive o deny com nivel_leitura=0) — o de-para tem que ficar registrado.
+    await auditarAcesso(req, {
+      rowId: `${userId}:${modulo_id}`,
+      changes: { tipo: equalsDefault ? 'override_removido_por_igualar_default' : 'override_definido', modulo_id, nivel_leitura, nivel_escrita, alvo_param: req.params.id },
+    });
     bustPermissionCaches();
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -845,11 +971,27 @@ router.delete('/usuario/:id/modulo/:moduloId', async (req, res) => {
   try {
     const resolved = await resolverUsuarioId(req.params.id);
     if (!resolved) return res.status(404).json({ error: 'Usuário não encontrado' });
+    // varredura 2026-09 · B02: era a 3ª porta lateral — sem esta guarda o ator
+    // apagava o PRÓPRIO deny (override com nivel_leitura=0, que um admin impôs) e
+    // voltava a ver o módulo. O PUT irmão já bloqueava; o DELETE não.
+    if (bloqueiaAutoEdicao(req, resolved)) {
+      return res.status(403).json({ error: 'Você não pode alterar as próprias permissões. Peça a outro administrador.' });
+    }
+    // varredura 2026-09 · B02: lê o override ANTES de apagar — depois do delete não
+    // há como saber o que foi removido.
+    const { data: antes } = await supabase.from('permissoes_modulo')
+      .select('nivel_leitura, nivel_escrita, motivo')
+      .eq('usuario_id', resolved.id).eq('modulo_id', req.params.moduloId).maybeSingle();
     const { error } = await supabase.from('permissoes_modulo')
       .delete()
       .eq('usuario_id', resolved.id)
       .eq('modulo_id', req.params.moduloId);
     if (error) return res.status(400).json({ error: error.message });
+    await auditarAcesso(req, {
+      rowId: `${resolved.id}:${req.params.moduloId}`,
+      action: 'DELETE',
+      changes: { tipo: 'override_removido', modulo_id: req.params.moduloId, removido: antes ?? null, alvo_param: req.params.id },
+    });
     bustPermissionCaches();
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
