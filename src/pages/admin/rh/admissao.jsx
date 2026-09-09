@@ -208,7 +208,13 @@ export function funcionarioParaForm(func) {
 }
 
 // ── Painel lateral: formulário de admissão ────────────────
-export function AdmissaoFormModal({ data, onClose, onSave, saving }) {
+// varredura 2026-09: RHP-03 — `podeRemun` chega como PROP porque CPF e salário são
+// os campos que a leitura passou a ocultar e o PUT já descartava (CAMPOS_RH_SENSIVEIS):
+// sem o gate, quem está abaixo do nível abria a ficha com o campo em BRANCO (mesmo
+// existindo no banco), digitava e salvava — e o servidor descartava em silêncio.
+// ⚠️ O default é FALSE (fail-closed): quem esquecer de passar a prop esconde o campo,
+// que é o lado seguro — o oposto exibiria dado confidencial por descuido.
+export function AdmissaoFormModal({ data, onClose, onSave, saving, podeRemun = false }) {
   const [f, setF] = useState({ tipo_contrato: 'PJ', ...data });
   const [errors, setErrors] = useState({});
   const upd = (k, v) => { setF(p => ({ ...p, [k]: v })); setErrors(e => ({ ...e, [k]: '' })); };
@@ -245,7 +251,8 @@ export function AdmissaoFormModal({ data, onClose, onSave, saving }) {
             <div style={styles.sectionTitle}>Dados Pessoais</div>
             <Input label="Nome Completo *" value={f.nome || ''} onChange={e => upd('nome', e.target.value)} error={errors.nome} />
             <div style={styles.formRow}>
-              <Input label="CPF" value={f.cpf || ''} onChange={e => upd('cpf', e.target.value)} />
+              {/* varredura 2026-09: RHP-03 — CPF só aparece pra quem pode ver/editar (a API oculta na leitura e descarta no PUT) */}
+              {podeRemun && <Input label="CPF" value={f.cpf || ''} onChange={e => upd('cpf', e.target.value)} />}
               <Input label="RG" value={f.rg || ''} onChange={e => upd('rg', e.target.value)} />
             </div>
             <div style={styles.formRow}>
@@ -289,7 +296,8 @@ export function AdmissaoFormModal({ data, onClose, onSave, saving }) {
               <Input label="Área" value={f.area || ''} onChange={e => upd('area', e.target.value)} />
             </div>
             <div style={styles.formRow}>
-              <Input label="Salário / Valor Mensal (R$)" type="number" step="0.01" value={f.salario || ''} onChange={e => upd('salario', e.target.value)} />
+              {/* varredura 2026-09: RHP-03 — salário idem: campo em branco que o PUT descarta é pior que campo ausente */}
+              {podeRemun && <Input label="Salário / Valor Mensal (R$)" type="number" step="0.01" value={f.salario || ''} onChange={e => upd('salario', e.target.value)} />}
               <div style={styles.formGroup}>
                 <label style={styles.label}>Data de Início *</label>
                 <DatePicker value={f.data_inicio || ''} onChange={v => upd('data_inicio', v)} aria-invalid={!!errors.data_inicio} />

@@ -281,7 +281,10 @@ export default function LogisticaCompras() {
       {pendentes.length > 0 && (
         <div style={{ ...S.card, padding: 16, marginBottom: 18, borderTop: `2px solid ${C.amber}` }}>
           <div style={{ fontSize: 14, fontWeight: 700, color: C.text, marginBottom: 10 }}>
-            🕓 {pendentes.length} {pendentes.length === 1 ? 'compra escaneada aguardando' : 'compras escaneadas aguardando'} sua conferência
+            {/* varredura 2026-09 · RHP-02: a fila deixou de ser so do scan — registro
+                manual e planilha importada tambem nascem `pendente` e caem aqui, entao
+                o rotulo nao pode dizer "escaneada". */}
+            🕓 {pendentes.length} {pendentes.length === 1 ? 'compra aguardando' : 'compras aguardando'} sua conferência
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {pendentes.map((c) => (

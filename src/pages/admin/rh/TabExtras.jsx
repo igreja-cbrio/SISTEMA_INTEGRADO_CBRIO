@@ -111,16 +111,27 @@ export default function TabExtras({ funcionarios, onRefresh }) {
     } catch (err) { setError(err.message); }
   }
 
+  // varredura 2026-09: RHP-03 — os três `catch` daqui eram VAZIOS. Com o guard novo
+  // de nível 3 no DELETE /extras/:id e no PUT /config/:chave, um 403 virava NADA:
+  // o botão não fazia efeito, a linha continuava na tela e o usuário concluía que o
+  // sistema quebrou. `setError` já existe no componente e é renderizado logo acima
+  // da tabela — a mensagem do backend ("Sem permissão…") passa a aparecer.
   async function updateStatus(id, status) {
-    try { await rh.extras.update(id, { status }); load(); } catch { }
+    setError('');
+    try { await rh.extras.update(id, { status }); load(); }
+    catch (err) { setError(err.message || 'Não foi possível alterar o status desta escala.'); }
   }
 
   async function remove(id) {
-    try { await rh.extras.remove(id); load(); } catch { }
+    setError('');
+    try { await rh.extras.remove(id); load(); }
+    catch (err) { setError(err.message || 'Não foi possível excluir esta escala.'); }
   }
 
   async function saveValorPadrao() {
-    try { await rh.config.set('valor_extra_padrao', valorPadrao); setShowConfig(false); } catch { }
+    setError('');
+    try { await rh.config.set('valor_extra_padrao', valorPadrao); setShowConfig(false); }
+    catch (err) { setError(err.message || 'Não foi possível salvar o valor padrão.'); }
   }
 
   const nSel = form.funcionario_ids.length;

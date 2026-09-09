@@ -16,12 +16,21 @@
 // ============================================================================
 
 const router = require('express').Router();
-const { authenticate, authorize, isSuperAdminEmail } = require('../middleware/auth');
+const { authenticate, authorize, isSuperAdminEmail, apenasColaborador } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const Anthropic = require('@anthropic-ai/sdk');
 const { montarLentes, CORTE_DOMINGO_0930 } = require('../utils/lentesDomingo');
 
 router.use(authenticate);
+// varredura 2026-09: A05 — o dashboard semanal é o caso mais exposto: o menu da
+// web trata '/dashboard-semanal' como PUBLICO_TODOS (src/lib/menuAccess.ts) e
+// nada no front olha `is_membro_only`, então as 138 contas só-app (04/09)
+// enxergavam frequência, YoY, YTD, metas e ranking. Piso no router: nenhuma
+// rota daqui entra sem `req.user` (sem cron, sem rota pública) e o app de
+// membros não chama /api/dashboard-semanal (só /api/app/* e /api/public/*).
+// ⚠️ O véu de /lentes-domingo é OUTRA régua (flag `lentes_domingo_publicas` +
+// super-admin) e segue intacto — este piso só tira a conta de membro da fila.
+router.use(apenasColaborador);
 
 // ⚠️⚠️ A capacidade agora é DADO (`vol_service_types.capacidade_lugares`), não
 // regex no nome do culto (31/08/2026). O Bridge acontece no Espaço CBRio, com

@@ -822,7 +822,24 @@ function applyAccessFilter(query, req, routeKey, opts = {}) {
   return query.eq('id', '00000000-0000-0000-0000-000000000000');
 }
 
-module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, bustPermissionCaches, ROLE_MAP, ROUTE_MODULE_MAP,
+// varredura 2026-09: A05 — "autenticado" NÃO é "colaborador". O login do app de
+// membros e o do ERP compartilham o mesmo Supabase Auth: das 201 contas ativas
+// medidas em 04/09, 138 são `is_membro_only` (membro/quiosque). Rotas de
+// governança, estratégia, expansão, dashboards e orçamento de evento trazem
+// número financeiro e discussão estratégica — não é conteúdo de membro.
+// Extraído de `routes/ataSemanal.js`, que já aplicava exatamente esta fronteira,
+// para que os demais routers possam reusar em vez de recriar o bloco.
+// ⚠️ É PISO, não substituto de `authorizeModule`: bloqueia a conta só-app, mas
+// não distingue módulo nem nível. Onde houver routeKey no ROUTE_MODULE_MAP,
+// prefira o guard de módulo por rota.
+function apenasColaborador(req, res, next) {
+  if (req.user?.is_membro_only) {
+    return res.status(403).json({ error: 'Acesso restrito a colaboradores' });
+  }
+  next();
+}
+
+module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, bustPermissionCaches, ROLE_MAP, ROUTE_MODULE_MAP, apenasColaborador,
   // exports aditivos · reuso da resolução de permissão (ex.: cobertura de férias,
   // grade de acesso efetivo por módulo na tela de Permissões > Usuários)
   resolveEffectivePerms, getCargoMatrix, getModulos, AREA_MODULO_BOOST, _normalizarArea,

@@ -305,11 +305,18 @@ const TABS = [
 // COMPONENTE PRINCIPAL
 // ═══════════════════════════════════════════════════════════
 export default function RH() {
-  const { isAdmin, getAccessLevel } = useAuth();
+  const { isAdmin, getAccessLevel, canAccessModule } = useAuth();
   // Quem vê remuneração (salário/benefícios/Folha/PCS/CPF) na tela · MESMA regra do
   // backend (podeEditarRemuneracao): admin/diretor ou RH nível ≥4. Padrão conservador,
   // ajustável quando a política de confidencialidade for definida com o RH.
   const podeRemun = isAdmin || getAccessLevel(['rh']) >= 4;
+  // varredura 2026-09: RHP-03 — quem EDITA remuneração/CPF é a régua de ESCRITA, e o
+  // backend usa exatamente ela (`nivelModuloRh(req,'escrita')` em podeEditarRemuneracao).
+  // `cargo_modulo_permissao.nivel` é coluna ÚNICA (leitura = escrita pro cargo), então
+  // hoje os dois coincidem; a assimetria só existe no override por PESSOA
+  // (`permissoes_modulo`) — e é lá que um leitura 4 / escrita 2 veria o campo e teria o
+  // PUT descartando em silêncio, que é o defeito que este lote existe pra fechar.
+  const podeEditarRemun = canAccessModule(['rh'], 'escrita', 4);
   // Disparo em massa do formulário de onboarding é ação sensível (fala com todos
   // os colaboradores pendentes de uma vez) — nível 5, igual aos outros disparos
   // em massa do sistema (grupos/censo).
@@ -394,6 +401,9 @@ export default function RH() {
 
   async function saveFuncionario(data) {
     const anterior = data.id ? funcs.find(x => x.id === data.id) : null;
+    // varredura 2026-09: RHP-03 — nao mandar o que o servidor vai descartar:
+    // sem isto o campo volta em branco na tela e o usuario acha que apagou.
+    if (!podeEditarRemun) { delete data.cpf; delete data.salario; }
     try {
       if (data.id) await rh.funcionarios.update(data.id, data);
       else await rh.funcionarios.create(data);
@@ -428,6 +438,12 @@ export default function RH() {
     setSavingAdm(true);
     try {
       const payload = formParaFuncionario(form);
+      // varredura 2026-09: RHP-03 — quem não pode ver/editar remuneração não vê os
+      // campos (AdmissaoFormModal), então o payload não pode AFIRMAR `cpf: null` /
+      // `salario: null` por eles. O servidor já descarta (PUT) e ignora (POST), mas
+      // mandar null explícito é o payload dizendo "apague isto" — e no dia em que a
+      // whitelist mudar, apagaria mesmo.
+      if (!podeEditarRemun) { delete payload.cpf; delete payload.salario; }
       if (form.id) await rh.funcionarios.update(form.id, payload);
       else await rh.funcionarios.create({ ...payload, status: 'em_admissao' });
       setModalAdmissao(null);
@@ -618,7 +634,7 @@ export default function RH() {
       </Tabs>
 
       {/* Modais */}
-      <FuncionarioFormModal open={!!modalFunc} data={modalFunc} onClose={() => setModalFunc(null)} onSave={saveFuncionario} funcionarios={funcs} setores={setores} areas={areas} podeRemun={podeRemun} />
+      <FuncionarioFormModal open={!!modalFunc} data={modalFunc} onClose={() => setModalFunc(null)} onSave={saveFuncionario} funcionarios={funcs} setores={setores} areas={areas} podeRemun={podeEditarRemun} />{/* varredura 2026-09: RHP-03 — este form usava a regua de LEITURA; quem ve mas nao edita digitava e o PUT descartava em silencio */}
       <TreinamentoFormModal open={!!modalTreino} data={modalTreino} onClose={() => setModalTreino(null)} onSave={saveTreinamento} />
       
       <FuncionarioDetailPanel
@@ -653,7 +669,7 @@ export default function RH() {
       <DesligarModal func={desligarFunc} onClose={() => setDesligarFunc(null)} onConfirm={confirmarDesligamento} />
 
       {/* Admissão · form (nova/editar) + editor de contrato */}
-      {modalAdmissao && <AdmissaoFormModal data={modalAdmissao} onClose={() => setModalAdmissao(null)} onSave={saveAdmissao} saving={savingAdm} />}
+      {modalAdmissao && <AdmissaoFormModal data={modalAdmissao} onClose={() => setModalAdmissao(null)} onSave={saveAdmissao} saving={savingAdm} podeRemun={podeEditarRemun} />}
       {modalContrato && <ContratoEditorModal data={modalContrato} onClose={() => setModalContrato(null)} onSave={salvarContratoAdmissao} saving={savingAdm} />}
 
       {/* Toast & Confirm */}
@@ -3070,7 +3086,15 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
           )}
           <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
             {onEditAdmissao && <Button variant="outline" size="sm" onClick={() => onEditAdmissao(data)}><Pencil className="h-3.5 w-3.5" /> Editar dados</Button>}
-            {onContratoAdmissao && <Button variant="outline" size="sm" onClick={() => onContratoAdmissao(data)}>{data.admissao_dados?.contrato_editado ? 'Ver/editar contrato' : 'Gerar contrato'}</Button>}
+            {/* varredura 2026-09: RHP-03 — o contrato INTERPOLA cpf e salário (gerarContratoPJ/CLT).
+                Sem este gate, quem não pode ver esses campos gerava o contrato com
+                "_______________" e "R$ ___________" e o salvava POR CIMA em
+                admissao_dados.contrato_editado — destruindo o contrato correto de quem gerou antes.
+                E "Ver/editar" precisa do MESMO gate: o texto salvo carrega cpf e salário por extenso,
+                então exibi-lo abriria pela leitura exatamente o que a redação fecha.
+                Escolha declarada: gatear o BOTÃO em vez de tirar a redação da ficha — a ficha é a
+                mesma resposta que a tela usa pra tudo, e destravá-la reabriria o vazamento de PII. */}
+            {podeRemun && onContratoAdmissao && <Button variant="outline" size="sm" onClick={() => onContratoAdmissao(data)}>{data.admissao_dados?.contrato_editado ? 'Ver/editar contrato' : 'Gerar contrato'}</Button>}
             {podeRemun && onConcluirAdmissao && <Button size="sm" onClick={() => onConcluirAdmissao(data.id)}>✓ Concluir admissão</Button>}
           </div>
         </div>

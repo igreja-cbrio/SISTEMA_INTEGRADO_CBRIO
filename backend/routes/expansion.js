@@ -1,8 +1,14 @@
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, apenasColaborador } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
 router.use(authenticate);
+// varredura 2026-09: A05 — plano de expansão (marcos, tarefas e datas da
+// expansão 2025-2029) estava aberto a qualquer conta autenticada, incluindo as
+// 138 `is_membro_only` (04/09). Piso no router: nenhuma rota deste arquivo
+// entra sem `req.user` (sem cron, sem rota pública) e o app de membros não
+// chama /api/expansion (só /api/app/* e /api/public/*).
+router.use(apenasColaborador);
 
 // GET /api/expansion/dashboard
 router.get('/dashboard', async (req, res) => {
