@@ -182,7 +182,7 @@ export default function PlanejamentoAnual() {
                 ? <>calendário <strong style={{ color: C.green }}>publicado em {fmtData(String(ciclo.publicado_em).slice(0, 10))}</strong></>
                 : <>calendário <strong style={{ color: C.t3 }}>não publicado</strong></>}
             </span>
-            <span style={{ marginLeft: 'auto', color: C.t3 }}>
+            <span style={{ flexBasis: '100%', color: C.t3 }}>
               Diretorias: {(ciclo.avaliadores || []).map((a) => `${rotuloDiretoria(a.diretoria)} (${a.nome || '—'})`).join(' · ')}
             </span>
           </div>
