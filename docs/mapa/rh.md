@@ -13,7 +13,7 @@
 - `backend/routes/events.js`
 - `backend/routes/painelRh.js`
 - `backend/routes/rh.js`
-Guard: `authorizeModule('rh', 1 | 2 | 3 | 5 | padrão)`
+Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 <details><summary>Endpoints (95)</summary>
 - `DELETE /api/events/:id`
 - `DELETE /api/events/attachments/:attachId`
