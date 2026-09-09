@@ -16,6 +16,10 @@ const { sincronizarComMeta, seedDosEnvs } = require('../services/waTemplates');
 const { enfileirarLote } = require('../services/whatsappFila');
 const { AppError, ERROR_CODES } = require('../utils/appError');
 const { captureHandledException } = require('../utils/sentry');
+// Dashboard (F2 · 09/09/2026): régua pura + janela da casa + dia BRT
+const DASH = require('../utils/comunicacaoDashboard');
+const { resolverJanelaPeriodo, rotuloJanela } = require('../utils/janelaPeriodo');
+const { diaBrt } = require('../utils/whatsappModulo');
 
 function communicationError(error, publicMessage) {
   return new AppError(error?.message || publicMessage, {
@@ -766,6 +770,144 @@ router.get('/custo', async (req, res, next) => {
   } catch (e) {
     console.error('[comunicacao] custo:', e.message);
     next(communicationError(e, 'Erro ao calcular o custo.'));
+  }
+});
+
+// ── DASHBOARD do módulo (F2 do redesenho · 09/09/2026) ─────────────────────
+// Pedido do Marcos: pizza de mensagens por área, linha por dia, filtro por
+// data e por ano, engajamento dos disparos, quem espera resposta há +2 dias
+// (número principal, com a lista) e tempo de resposta por atendente/área.
+// A CONTA mora em utils/comunicacaoDashboard (pura, no gate); aqui só se lê.
+// Um endpoint, vários BLOCOS best-effort: bloco que falha entra em `avisos` e
+// vira NULL (a tela declara) — nunca zero. Um gráfico morto não pode derrubar
+// o número de quem está esperando resposta.
+// Janela: ?dias=7|30|90|365 (padrão 30) ou ?ano=AAAA — validada pela régua da
+// casa (utils/janelaPeriodo). ⚠️ Os dias são BRT: a régua devolve o dia LOCAL
+// do servidor (UTC na Vercel), então o recorte é refeito em diaBrt, e o filtro
+// no banco usa limitesUtc (03:00Z a 03:00Z) — a mensagem do culto de domingo à
+// noite fica no domingo.
+router.get('/dashboard', async (req, res, next) => {
+  try {
+    const agora = Date.now();
+    const j = resolverJanelaPeriodo({ dias: req.query.dias, ano: req.query.ano, diasValidos: [7, 30, 90, 365], diasPadrao: 30, agora });
+    const hoje = diaBrt(new Date(agora));
+    let inicio, fim;
+    if (j.ano) { inicio = j.inicio; fim = j.fim < hoje ? j.fim : hoje; }
+    else { fim = hoje; inicio = diaBrt(new Date(agora - (j.dias - 1) * 86400000)); }
+    const gran = DASH.granularidade({ dias: j.ano ? null : j.dias, ano: j.ano });
+    const { de, ate } = DASH.limitesUtc(inicio, fim);
+    const ateMs = new Date(ate).getTime();
+    // +7 dias de rabo: o engajamento conta resposta em até 7 dias DEPOIS do disparo.
+    const ateComRabo = new Date(ateMs + 7 * 86400000).toISOString();
+
+    const avisos = [];
+    const bloco = async (nome, fn, vazio) => {
+      try { return await fn(); }
+      catch (e) { console.warn(`[comunicacao] dashboard ${nome}:`, e.message); avisos.push(nome); return vazio; }
+    };
+    // Paginação que LANÇA em erro (fetchAllRows devolve o acumulado em silêncio,
+    // e aqui erro tem que virar aviso, não número menor). Com ORDER BY: range()
+    // sem ordem tem páginas indefinidas no PostgREST.
+    const lerTudo = async (build, { page = 1000, max = 20000 } = {}) => {
+      const out = [];
+      for (let from = 0; from < max; from += page) {
+        const { data, error } = await build().range(from, from + page - 1);
+        if (error) throw error;
+        out.push(...(data || []));
+        if (!data || data.length < page) return { rows: out, truncado: false };
+      }
+      return { rows: out, truncado: true };
+    };
+
+    // 1 · conversas — retrato de AGORA (quem espera), não da janela
+    const conversas = await bloco('conversas', async () => {
+      const r = await lerTudo(() => supabase.from('wa_conversas')
+        .select('id, nome, telefone, area, resolvida, atribuido_a, last_inbound_at, last_message_at, created_at, deleted_at')
+        .is('deleted_at', null).order('id'));
+      if (r.truncado) avisos.push('conversas_truncado');
+      return r.rows;
+    }, null);
+    // 2 · mensagens da janela (com o rabo de 7 dias, só pro engajamento)
+    const mensagens = await bloco('mensagens', async () => {
+      const r = await lerTudo(() => supabase.from('wa_mensagens')
+        .select('id, conversa_id, direcao, tipo, autor_id, criado_em')
+        .gte('criado_em', de).lt('criado_em', ateComRabo)
+        .order('criado_em').order('id'));
+      if (r.truncado) avisos.push('mensagens_truncado');
+      return r.rows;
+    }, null);
+    // 3 · disparos da janela — só o que SAIU
+    const disparos = await bloco('disparos', async () => {
+      const r = await lerTudo(() => supabase.from('whatsapp_envios')
+        .select('id, telefone, contexto, criado_em, enviado_em, tipo')
+        .eq('status', 'enviado').gte('criado_em', de).lt('criado_em', ate)
+        .order('criado_em').order('id'));
+      if (r.truncado) avisos.push('disparos_truncado');
+      return r.rows;
+    }, null);
+    // 4 · contagens da fila (o resumo que a aba já tinha, agora na MESMA janela)
+    const fila = await bloco('fila', async () => {
+      const conta = async (f) => {
+        let q = supabase.from('whatsapp_envios').select('id', { count: 'exact', head: true }).gte('criado_em', de).lt('criado_em', ate);
+        q = f(q);
+        const { count, error } = await q;
+        if (error) throw error;
+        return count || 0;
+      };
+      const [total, enviados, pendentes, erros, entregues, lidos, falhos_meta] = await Promise.all([
+        conta(q => q), conta(q => q.eq('status', 'enviado')), conta(q => q.eq('status', 'pendente')), conta(q => q.eq('status', 'erro')),
+        conta(q => q.not('delivered_at', 'is', null)), conta(q => q.not('read_at', 'is', null)), conta(q => q.not('failed_at', 'is', null)),
+      ]);
+      return { total, enviados, pendentes, erros, entregues, lidos, falhos_meta };
+    }, null);
+
+    // Fora do rabo: série, área e tempos são SÓ da janela.
+    const msgsJanela = (mensagens || []).filter(m => { const t = new Date(m.criado_em).getTime(); return Number.isFinite(t) && t < ateMs; });
+    const temMsgs = mensagens !== null;
+    const temConvs = conversas !== null;
+
+    const serie = temMsgs ? DASH.montarSerie(msgsJanela, { inicio, fim, gran }) : null;
+    const porArea = (temMsgs && temConvs) ? DASH.agruparPorArea(msgsJanela, conversas) : null;
+    const resumoConv = temConvs ? DASH.resumoConversas(conversas, { agoraMs: agora, inicio, fim, top: 30 }) : null;
+    const amostras = (temMsgs && temConvs) ? DASH.temposDeResposta(msgsJanela, conversas) : [];
+    const porAtendente = DASH.agregarTempos(amostras, 'autor_id');
+    // Nome de quem respondeu (best-effort · sem nome a tela mostra o id encurtado, nunca inventa).
+    const nomes = await bloco('atendentes', async () => {
+      const ids = porAtendente.map(a => a.autor_id);
+      const out = new Map();
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data, error } = await supabase.from('profiles').select('id, name').in('id', ids.slice(i, i + 200));
+        if (error) throw error;
+        for (const p of data || []) out.set(p.id, p.name);
+      }
+      return out;
+    }, new Map());
+
+    let engajamento = null;
+    if (temMsgs && temConvs && disparos !== null) {
+      const telDaConv = new Map(conversas.map(c => [c.id, c.telefone]));
+      const inbounds = mensagens.filter(m => m.direcao === 'in').map(m => ({ telefone: telDaConv.get(m.conversa_id), criado_em: m.criado_em }));
+      engajamento = DASH.engajamentoDisparos(disparos, inbounds, { janelaDias: 7 });
+    }
+
+    res.json({
+      janela: { inicio, fim, dias: j.ano ? null : j.dias, ano: j.ano || null, rotulo: rotuloJanela(j), gran, limite_sem_resposta_h: DASH.LIMITE_SEM_RESPOSTA_H },
+      agora: new Date(agora).toISOString(),
+      conversas: resumoConv,
+      por_area: porArea,
+      serie,
+      tempo_resposta: {
+        n: amostras.length,
+        por_atendente: porAtendente.map(a => ({ ...a, nome: nomes.get(a.autor_id) || null })),
+        por_area: DASH.agregarTempos(amostras, 'area'),
+      },
+      engajamento,
+      fila,
+      avisos,
+    });
+  } catch (e) {
+    console.error('[comunicacao] dashboard:', e.message);
+    next(communicationError(e, 'Erro ao montar o dashboard.'));
   }
 });
 

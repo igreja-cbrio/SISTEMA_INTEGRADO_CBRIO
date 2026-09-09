@@ -29,6 +29,7 @@ import ConversasSetores from './admin/ConversasSetores';
 import ContatosTab from '../components/comunicacao/ContatosTab';
 import BotIaAreas from '../components/comunicacao/BotIaAreas';
 import EquipeAtendimento from '../components/comunicacao/EquipeAtendimento';
+import DashboardComunicacao from '../components/comunicacao/DashboardComunicacao';
 
 const C = { primary: '#00B39D' };
 
@@ -52,131 +53,13 @@ function ErroBox({ msg, onRetry }: { msg: string; onRetry: () => void }) {
 // ═══ DASHBOARD ═══════════════════════════════════════════════════════
 type Resumo = { dias: number; total: number; enviados: number; pendentes: number; erros: number; entregues: number; lidos: number; falhos_meta: number; orfaos?: number; respostas?: number };
 
-function StatCard({ label, value, cor }: { label: string; value: number | string; cor?: string }) {
-  return (
-    <Card className="p-4">
-      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="mt-1 text-2xl font-bold tabular-nums" style={cor ? { color: cor } : undefined}>{value}</div>
-    </Card>
-  );
-}
-
-type Custo = {
-  meses: number; total: number; envios_considerados: number; nao_classificados: number;
-  por_mes: { mes: string; custo: number }[];
-  por_modulo: { modulo: string; custo: number }[];
-  por_categoria: { categoria: string; envios: number; custo: number }[];
-};
+// O Dashboard foi extraído para components/comunicacao/DashboardComunicacao.tsx
+// no redesenho de 09/09/2026 (F2): quem espera resposta, mensagens por área e
+// por dia, tempo de resposta, engajamento, fila e custo — numa janela de dias
+// ou de ano. `brl` fica aqui porque a aba Tarifas o usa.
 const brl = (v: number) => `R$ ${(Number(v) || 0).toFixed(2)}`;
-const mesLabel = (m: string) => {
-  const [a, mm] = m.split('-'); const M = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
-  return `${M[Number(mm) - 1] || mm}/${String(a).slice(2)}`;
-};
 
-function Dashboard() {
-  const [dias, setDias] = useState(30);
-  const [resumo, setResumo] = useState<Resumo | null>(null);
-  const [custo, setCusto] = useState<Custo | null>(null);
-  const [erro, setErro] = useState(false);
-
-  const carregar = useCallback(() => {
-    setErro(false); setResumo(null); setCusto(null);
-    comunicacao.envios.resumo(dias).then((r: Resumo) => setResumo(r)).catch(() => setErro(true));
-    // Custo real por mês/módulo/categoria (janela fixa de 6 meses · independe do seletor de dias)
-    comunicacao.custo(6).then((r: Custo) => setCusto(r)).catch(() => setCusto(null));
-  }, [dias]);
-  useEffect(() => { carregar(); }, [carregar]);
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">Resumo dos envios de WhatsApp de todos os módulos.</p>
-        <div className="flex items-center gap-2">
-          <Select value={String(dias)} onValueChange={(v) => setDias(Number(v))}>
-            <SelectTrigger className="w-[130px] h-9"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="7">Últimos 7 dias</SelectItem>
-              <SelectItem value="30">Últimos 30 dias</SelectItem>
-              <SelectItem value="90">Últimos 90 dias</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button variant="outline" size="sm" onClick={carregar}><RefreshCw className="h-4 w-4" /></Button>
-        </div>
-      </div>
-      {erro ? <ErroBox msg="Falha ao consultar o resumo de envios." onRetry={carregar} />
-        : !resumo ? <Spinner />
-        : (
-          <>
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-8">
-              <StatCard label="Total" value={resumo.total} />
-              <StatCard label="Enviados" value={resumo.enviados} cor={C.primary} />
-              <StatCard label="Entregues" value={resumo.entregues} cor="#0ea5e9" />
-              <StatCard label="Lidos" value={resumo.lidos} cor="#7c3aed" />
-              <StatCard label="Respostas recebidas" value={resumo.respostas ?? 0} cor="#059669" />
-              <StatCard label="Pendentes" value={resumo.pendentes} cor="#d97706" />
-              <StatCard label="Erros" value={resumo.erros} cor="#dc2626" />
-              <StatCard label="Falhas Meta" value={resumo.falhos_meta} cor="#dc2626" />
-            </div>
-            {/* Custo estimado real (últimos 6 meses · Σ envios × tarifa da categoria do template) */}
-            {custo && (
-              <div className="grid gap-3 lg:grid-cols-3">
-                <Card className="p-4">
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Custo estimado · {custo.meses} meses</div>
-                  <div className="mt-1 text-3xl font-bold tabular-nums" style={{ color: C.primary }}>{brl(custo.total)}</div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    {custo.envios_considerados} envios · texto (janela 24h) não custa.
-                  </p>
-                  {custo.nao_classificados > 0 && (
-                    <p className="mt-2 text-[11px] text-amber-600">
-                      ⚠️ {custo.nao_classificados} envio(s) de template <b>sem categoria</b> (custo não somado). Classifique na aba Templates pra estimativa fechar.
-                    </p>
-                  )}
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {custo.por_categoria.map((c) => (
-                      <Badge key={c.categoria} variant="secondary">{c.categoria}: {brl(c.custo)} ({c.envios})</Badge>
-                    ))}
-                  </div>
-                </Card>
-                <Card className="p-4">
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Por mês</div>
-                  <div className="mt-2 space-y-1.5">
-                    {custo.por_mes.length === 0 ? <p className="text-sm text-muted-foreground">Sem envios no período.</p>
-                      : custo.por_mes.map((m) => {
-                        const max = Math.max(...custo.por_mes.map((x) => x.custo), 0.01);
-                        return (
-                          <div key={m.mes} className="flex items-center gap-2 text-xs">
-                            <span className="w-12 text-muted-foreground">{mesLabel(m.mes)}</span>
-                            <div className="h-2 flex-1 rounded bg-muted">
-                              <div className="h-2 rounded" style={{ width: `${Math.max(3, (m.custo / max) * 100)}%`, background: C.primary }} />
-                            </div>
-                            <span className="w-16 text-right tabular-nums">{brl(m.custo)}</span>
-                          </div>
-                        );
-                      })}
-                  </div>
-                </Card>
-                <Card className="p-4">
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Por módulo</div>
-                  <div className="mt-2 space-y-1.5">
-                    {custo.por_modulo.length === 0 ? <p className="text-sm text-muted-foreground">—</p>
-                      : custo.por_modulo.slice(0, 8).map((m) => (
-                        <div key={m.modulo} className="flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground">{m.modulo}</span>
-                          <span className="tabular-nums font-medium">{brl(m.custo)}</span>
-                        </div>
-                      ))}
-                  </div>
-                </Card>
-              </div>
-            )}
-            <p className="text-[11px] text-muted-foreground">
-              Estimativa (não é a fatura da Meta): custo = envios de template × tarifa da categoria. Conversa de serviço/janela 24h não custa.
-            </p>
-          </>
-        )}
-    </div>
-  );
-}
+function Dashboard() { return <DashboardComunicacao />; }
 
 // ═══ ENVIOS (absorveu a aba Erros · decisão do Marcos 13/08) ═════════
 // Um histórico só: o status diz se foi ou se deu errado, o filtro recorta,

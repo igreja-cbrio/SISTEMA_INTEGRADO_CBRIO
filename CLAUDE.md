@@ -4122,6 +4122,69 @@ que sobrou como regra viva:
 - ⚠️ O **e2e do Next** foi atualizado pro contrato mas **não foi EXECUTADO**
   (exige app rodando + cria inscrição real).
 
+## ⚠️ Comunicação · DASHBOARD do módulo (2026-09-09 · SEM migration)
+
+Fase 2 do redesenho pedido pelo Marcos em 08/09 (*"o dashboard está muito
+cru"*). Era oito cards de contagem da fila e o custo. Virou: **quem espera
+resposta** (o número principal, com a lista), mensagens **por área** (pizza) e
+**no tempo** (linha), **tempo de resposta** por atendente e por área,
+**engajamento** dos disparos, a fila na mesma janela e o custo. Filtro por
+**dias (7/30/90/365) ou por ANO**.
+
+### Onde mora
+
+| peça | arquivo |
+|---|---|
+| régua PURA (no gate · `src/test/comunicacaoDashboard.test.ts`, 15 casos · **10 mutantes RODADOS e mortos**) | `backend/utils/comunicacaoDashboard.js` |
+| `GET /comunicacao/dashboard?dias=7\|30\|90\|365` ou `?ano=AAAA` (blocos best-effort + `avisos[]`) | `backend/routes/comunicacao.js` |
+| tela **Comunicação → Dashboard** (extraída da página) | `src/components/comunicacao/DashboardComunicacao.tsx` |
+
+### ⚠️⚠️ As leis
+
+- **O número principal é RETRATO DE AGORA, não da janela**: "pessoas esperando
+  resposta há mais de 2 dias" = conversa aberta cuja última mensagem é da
+  pessoa, com idade contada da última mensagem dela. É a **MESMA régua do chip
+  do inbox** (`semResposta`/`horasSemResposta`/`vencida` de
+  `src/lib/waConversaEstado.ts`, espelhadas no servidor) — o teste roda a
+  MESMA tabela de casos nos dois lados; divergir é a tela e o número
+  discordando. A lista sai do mais antigo pro mais novo e cada linha abre a
+  conversa (`hrefConversa`). Só `novas` (conversas criadas) é da janela.
+- ⚠️ **Dia é BRT.** Chave de dia/semana/mês sai de `diaBrt` (a mesma função do
+  módulo) e o filtro no banco usa `limitesUtc` (`03:00Z` a `03:00Z` do dia
+  seguinte): a mensagem do culto de domingo à noite fica no domingo. A régua
+  da casa (`resolverJanelaPeriodo`) valida `dias`/`ano`, mas devolve dia LOCAL
+  do servidor (UTC na Vercel) — por isso o recorte móvel é refeito em BRT
+  ("últimos 7 dias" = 7 dias BRT terminando hoje) e o fim do ano corrente é
+  `min(fim, hoje)`.
+- **Até 31 dias a série é por DIA** (o pedido literal foi "por dia"); até 180
+  por semana (segunda); ano por mês. **Balde vazio é ZERO, não some** —
+  mensagem de `tipo 'sistema'` (nota de transferência) fica fora.
+- **Tempo de resposta é HUMANO**: da PRIMEIRA mensagem da pessoa depois da
+  nossa última saída até a próxima saída de GENTE (`autor_id`). Bot, template
+  e pesquisa ENCERRAM a espera (a pessoa recebeu algo) mas não viram amostra.
+  **Mediana, com o n sempre na frente** — medido em 08/09: **16 respostas
+  humanas em 365 dias**; o n é pequeno e a tela diz isso em vez de esconder.
+- **Engajamento** = % dos disparos (`whatsapp_envios` com `status='enviado'`)
+  que receberam mensagem da pessoa em até **7 dias**, casados por `tel8` (a
+  mesma chave da fila). Resposta ANTES do disparo não conta. **Sem disparo na
+  janela a taxa é `null`, nunca 0%** — 0% se lê como "ninguém respondeu".
+- ⚠️ **Bloco que falha vira `null` + entrada em `avisos[]`**, e a tela mostra a
+  faixa âmbar com "não deu para carregar" — **nunca zero**. A paginação é
+  PRÓPRIA e LANÇA em erro (`fetchAllRows` devolve o acumulado em silêncio, e
+  aqui erro tem que virar aviso, não número menor); teto de 20 mil DECLARADO
+  (`*_truncado`).
+- **Gasto por ÁREA não existe, e a tela diz por quê**: a Meta cobra por
+  conversa iniciada e o que se sabe é o MÓDULO que disparou (`contexto`). O
+  custo segue vindo de `GET /custo` (6 meses, por módulo), intocado.
+- `Entrada` (conversa sem área) entra na pizza em **cinza** de propósito: não é
+  área, é fila. Chat (inbox) e templates da fila são blocos SEPARADOS na tela —
+  somar os dois diria "mensagens" para coisas que a igreja paga de jeito
+  diferente.
+- ⚠️ Os arquivos do checkout Windows estão em **CRLF**: splice por script casa
+  âncora em LF e devolve o EOL original (as duas primeiras tentativas de
+  editar `api.js`/`Comunicacao.tsx` falharam por "âncora não achada" só por
+  causa do `\r`).
+
 ## ⚠️⚠️ Comunicação · EQUIPE DE ATENDIMENTO por área (2026-09-08 · migration `20260908160000`)
 
 Segunda leva da Fase 1 do redesenho. Pedido do Marcos: *"quem é responsável por
