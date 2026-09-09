@@ -4,7 +4,7 @@ import { toast } from 'sonner';
 import ModuleHeader from '../../components/layout/ModuleHeader';
 import { useAuth } from '../../contexts/AuthContext';
 import { planejamentoAnual as api } from '../../api';
-import { C, btn, fmtData } from './comum';
+import { C, btn, fmtData, rotuloDiretoria } from './comum';
 import PropostasTab from './PropostasTab';
 import AvaliacaoTab from './AvaliacaoTab';
 import OrcamentoTab from './OrcamentoTab';
@@ -183,7 +183,7 @@ export default function PlanejamentoAnual() {
                 : <>calendário <strong style={{ color: C.t3 }}>não publicado</strong></>}
             </span>
             <span style={{ marginLeft: 'auto', color: C.t3 }}>
-              Diretorias: {(ciclo.avaliadores || []).map((a) => `${a.diretoria} (${a.nome || '—'})`).join(' · ')}
+              Diretorias: {(ciclo.avaliadores || []).map((a) => `${rotuloDiretoria(a.diretoria)} (${a.nome || '—'})`).join(' · ')}
             </span>
           </div>
 
