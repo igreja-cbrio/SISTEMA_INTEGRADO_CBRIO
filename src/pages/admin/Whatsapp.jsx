@@ -568,7 +568,7 @@ function AbaAvisos() {
 }
 
 // ── Aba Configuração (institucional + toggle IA) ────────────────────
-function AbaConfig() {
+function AbaConfig({ soInstitucional = false }) {
   const [cfg, setCfg] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -639,6 +639,12 @@ function AbaConfig() {
 
   return (
     <div className="space-y-5 mt-4">
+      {/* F4 da Comunicação (09/09/2026): os dois interruptores e o teste de template
+          MUDARAM de lugar — "responder sozinho" vive no topo do Menu do bot, o
+          webhook em Configurações → Conexão e o teste em Configurações → Templates.
+          Montada pela Comunicação (`soInstitucional`), esta aba mostra só o
+          conteúdo institucional. Solta (admin antigo, dormente) segue inteira. */}
+      {!soInstitucional && (<>
       {/* ⚠️ DOIS interruptores, e a diferença importa (12/08/2026):
           · "Responder sozinho" = o bot responde quem escreve (menu de setores +
             institucional). Desligado, a mensagem CONTINUA chegando na aba
@@ -688,6 +694,8 @@ function AbaConfig() {
         </div>
       </Card>
 
+      </>)}
+
       <Card className="p-4 space-y-4">
         <div>
           <p className="font-medium text-foreground">Conteúdo institucional</p>
@@ -723,7 +731,8 @@ function Campo({ label, v, onChange, rows }) {
   );
 }
 
-// A Configuração do bot (IA on/off · respostas automáticas · institucional ·
-// teste de disparo) é a única parte VIVA desta tela — montada na aba Bot do
-// módulo Comunicação.
+// O conteúdo INSTITUCIONAL (missão, visão, valores, horários, endereço) é a
+// única parte VIVA desta tela — montada como Bot → Institucional na Comunicação
+// (`<WhatsappBotConfig soInstitucional />`). Os interruptores e o teste de
+// template saíram daqui em 09/09/2026 (F4); as telas antigas seguem dormentes.
 export const WhatsappBotConfig = AbaConfig;

@@ -17,11 +17,13 @@ import {
   ResponsiveContainer, PieChart, Pie, Cell, Tooltip, Legend,
   LineChart, Line, XAxis, YAxis, CartesianGrid,
 } from 'recharts';
-import { RefreshCw, AlertTriangle, Loader2, Clock, MessageSquare, Send, Inbox } from 'lucide-react';
+import { RefreshCw, AlertTriangle, Loader2, Clock, MessageSquare, Send, Inbox, Pencil, Save, X } from 'lucide-react';
+import { toast } from 'sonner';
 import { comunicacao } from '../../api';
 import { Card } from '../ui/card';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
+import { Input } from '../ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { opcoesAno } from '@/lib/janelaPeriodo';
 import { hrefConversa } from '@/lib/conversas';
@@ -129,13 +131,43 @@ function Indisponivel({ oque }: { oque: string }) {
   return <p className="text-sm text-amber-700 flex items-center gap-1.5"><AlertTriangle className="h-4 w-4" /> Não deu para carregar {oque} agora.</p>;
 }
 
-export default function DashboardComunicacao() {
+export default function DashboardComunicacao({ podeEditarTarifas = false }: { podeEditarTarifas?: boolean }) {
   const navigate = useNavigate();
   const [periodo, setPeriodo] = useState<Periodo>('d30');
   const [dados, setDados] = useState<Dash | null>(null);
   const [custo, setCusto] = useState<Custo | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [verTodas, setVerTodas] = useState(false);
+  // Tarifas (F4 · 09/09/2026): o lápis do card de custo. Era uma sub-aba própria
+  // em Configurações — a tarifa só existe pra este número, então mora aqui.
+  const [tarifas, setTarifas] = useState<{ categoria: string; tarifa: number }[] | null>(null);
+  const [editandoTarifas, setEditandoTarifas] = useState(false);
+  const [valores, setValores] = useState<Record<string, string>>({});
+  const [salvandoTarifas, setSalvandoTarifas] = useState(false);
+
+  async function abrirTarifas() {
+    try {
+      const r: { categoria: string; tarifa: number }[] = await comunicacao.tarifas.list();
+      setTarifas(r || []);
+      setValores(Object.fromEntries((r || []).map(t => [t.categoria, String(t.tarifa)])));
+      setEditandoTarifas(true);
+    } catch { toast.error('Não deu para carregar as tarifas.'); }
+  }
+  async function salvarTarifas() {
+    if (!tarifas) return;
+    setSalvandoTarifas(true);
+    try {
+      for (const t of tarifas) {
+        const v = Number(String(valores[t.categoria] ?? '').replace(',', '.'));
+        if (!Number.isFinite(v) || v < 0) { toast.error(`Valor inválido em ${t.categoria}.`); return; }
+        if (v !== Number(t.tarifa)) await comunicacao.tarifas.atualizar(t.categoria, v);
+      }
+      toast.success('Tarifas atualizadas — o custo estimado usa estes valores.');
+      setEditandoTarifas(false);
+      comunicacao.custo(6).then((r: Custo) => setCusto(r)).catch(() => {});
+    } catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao salvar as tarifas'); }
+    finally { setSalvandoTarifas(false); }
+  }
   const anos = useMemo(() => opcoesAno() as { dias: string; label: string; ano: number }[], []);
 
   const carregar = useCallback(() => {
@@ -404,7 +436,12 @@ export default function DashboardComunicacao() {
             {custo && (
               <div className="grid gap-3 lg:grid-cols-3">
                 <Card className="p-4">
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Custo estimado · {custo.meses} meses</div>
+                  <div className="flex items-center justify-between">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Custo estimado · {custo.meses} meses</div>
+                    {podeEditarTarifas && !editandoTarifas && (
+                      <button type="button" onClick={abrirTarifas} title="Editar as tarifas por categoria (R$ por conversa)" className="rounded p-1 text-muted-foreground hover:bg-muted hover:text-primary"><Pencil className="h-3.5 w-3.5" /></button>
+                    )}
+                  </div>
                   <div className="mt-1 text-3xl font-bold tabular-nums" style={{ color: C.primary }}>{brl(custo.total)}</div>
                   <p className="mt-1 text-[11px] text-muted-foreground">
                     {custo.envios_considerados} envios · texto (janela 24h) não custa. Estimativa, não a fatura da Meta.
@@ -419,6 +456,23 @@ export default function DashboardComunicacao() {
                       <Badge key={c.categoria} variant="secondary">{c.categoria}: {brl(c.custo)} ({c.envios})</Badge>
                     ))}
                   </div>
+                  {editandoTarifas && tarifas && (
+                    <div className="mt-3 rounded-md border p-2">
+                      <div className="mb-1 text-[11px] text-muted-foreground">R$ por conversa iniciada, por categoria — estimativa; confira contra a tarifa vigente da Meta.</div>
+                      <div className="grid grid-cols-2 gap-2">
+                        {tarifas.map(t => (
+                          <label key={t.categoria} className="text-xs">
+                            <span className="text-muted-foreground">{t.categoria}</span>
+                            <Input className="mt-0.5 h-8" value={valores[t.categoria] ?? ''} onChange={(e) => setValores(v => ({ ...v, [t.categoria]: e.target.value }))} />
+                          </label>
+                        ))}
+                      </div>
+                      <div className="mt-2 flex justify-end gap-1">
+                        <Button size="sm" variant="outline" onClick={() => setEditandoTarifas(false)} disabled={salvandoTarifas} title="Cancelar"><X className="h-3.5 w-3.5" /></Button>
+                        <Button size="sm" onClick={salvarTarifas} disabled={salvandoTarifas} className="gap-1"><Save className="h-3.5 w-3.5" />Salvar</Button>
+                      </div>
+                    </div>
+                  )}
                 </Card>
                 <Card className="p-4">
                   <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Por mês</div>
