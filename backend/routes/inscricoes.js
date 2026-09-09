@@ -23,6 +23,7 @@ const { contarInscritosVivos } = require('../services/inscricaoContagem');
 const { normalizarIds, separarExclusaoLote, resumoDoLote } = require('../utils/exclusaoInscricaoLote');
 const checkoutExterno = require('../utils/checkoutExterno');
 const { sanitizarLotes } = require('../utils/lotesEvento');
+const { resumoPorPlataforma } = require('../utils/eInscricao');
 const {
   previewTemplate,
   esqueletoPadrao,
@@ -951,7 +952,7 @@ router.get('/eventos/:id', authorizeModule('inscricoes', 1), async (req, res) =>
 // listas impressas por faixa/sexo) e `membro_id` (vínculo com o cadastro).
 // **CPF continua fora** — é o campo de identificação mais sensível e serve pro
 // matcher, não pra tela; quem precisa vê no detalhe da pessoa.
-const INSCRITOS_COLS = 'id, codigo, nome_completo, telefone, email, data_nascimento, sexo, membro_id, status, numero_sorte, whatsapp_optin, dados, created_at, '
+const INSCRITOS_COLS = 'id, codigo, nome_completo, telefone, email, data_nascimento, sexo, membro_id, status, numero_sorte, whatsapp_optin, dados, created_at, origem, '
   // Bolsa/isenção (migration 20260730170000): quem paga menos ou nada, por quê
   // e quem concedeu. Sem isto a lista mostraria "aguardando pagamento" pra quem
   // foi de graça — que não está aguardando nada.
@@ -1228,10 +1229,34 @@ async function contadoresEvento(eventoId) {
     console.error('[inscricoes] contagem de comprovantes indisponível:', e.message);
   }
 
+  // Por PLATAFORMA (09/09/2026 · AMI CAMP 2027): quem pagou cartão no
+  // E-Inscrição entra aqui importado (`origem = 'e_inscricao'`, valor LÍQUIDO
+  // já sem a taxa da plataforma) e não tem `insc_pagamentos` — o dinheiro dele
+  // NÃO está em `arrecadado_centavos`. Sem esta separação o placar diria
+  // "34 inscritos, R$ 7 mil" e o Arthur teria que somar a planilha na mão.
+  // ⚠️ Best-effort: sem linhas de origem externa vem zerado, e a tela esconde.
+  let por_plataforma = null;
+  try {
+    const linhas = [];
+    for (let off = 0; off < 20000; off += 1000) {
+      const { data, error } = await supabase.from('inscricoes')
+        .select('origem, status, valor_cobrado_centavos')
+        .eq('evento_id', eventoId).is('deleted_at', null)
+        .range(off, off + 999);
+      if (error) throw error;
+      linhas.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    por_plataforma = resumoPorPlataforma(linhas, arrecadado_centavos);
+  } catch (e) {
+    console.error('[inscricoes] placar por plataforma indisponível:', e.message);
+  }
+
   return {
     inscritos, ativos: inscritos - canceladas, confirmadas,
     aguardando_pagamento: aguardando, canceladas, presentes,
     arrecadado_centavos, por_metodo, isentas, comprovantes_em_analise,
+    por_plataforma,
   };
 }
 
