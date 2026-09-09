@@ -15,7 +15,7 @@
 - `backend/routes/membresia.js`
 - `backend/routes/voluntariado.js`
 Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
-<details><summary>Endpoints (233)</summary>
+<details><summary>Endpoints (229)</summary>
 - `DELETE /api/membresia/cadastros/:id`
 - `DELETE /api/membresia/checkins/:id`
 - `DELETE /api/membresia/contribuicoes/:id`
@@ -91,7 +91,6 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `GET /api/voluntariado/antecedentes/pendentes`
 - `GET /api/voluntariado/availability`
 - `GET /api/voluntariado/check-ins`
-- `GET /api/voluntariado/config`
 - `GET /api/voluntariado/cron/antecedentes`
 - `GET /api/voluntariado/cron/emails`
 - `GET /api/voluntariado/cron/sync`
@@ -104,7 +103,6 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `GET /api/voluntariado/inscricoes-summary`
 - `GET /api/voluntariado/inscricoes/:id/antecedentes`
 - `GET /api/voluntariado/inscricoes/por-direcionada`
-- `GET /api/voluntariado/kpis/taticos`
 - `GET /api/voluntariado/my-check-ins`
 - `GET /api/voluntariado/positions`
 - `GET /api/voluntariado/relatorio-dados`
@@ -193,7 +191,6 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `POST /api/voluntariado/face/match`
 - `POST /api/voluntariado/face/save-profile`
 - `POST /api/voluntariado/face/save-qrcode`
-- `POST /api/voluntariado/frequencia/importar`
 - `POST /api/voluntariado/frequencia/revincular`
 - `POST /api/voluntariado/frequencia/saiu-igreja`
 - `POST /api/voluntariado/frequencia/sugerir-vinculos`
@@ -239,7 +236,6 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `PUT /api/membresia/ministerios/:id`
 - `PUT /api/membresia/totem/membros/:id`
 - `PUT /api/membresia/voluntarios/:id`
-- `PUT /api/voluntariado/config`
 - `PUT /api/voluntariado/frequencia/inatividade`
 - `PUT /api/voluntariado/positions/:id`
 - `PUT /api/voluntariado/profiles/:id/contact`
@@ -312,7 +308,6 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `backend/services/volCheckinResolver.js`
 - `backend/services/volEmailSender.js`
 - `backend/services/volInscricaoStatus.js`
-- `backend/services/volNomeFiltro.js`
 - `backend/services/volVinculoIA.js`
 - `backend/services/voluntariadoFreqPCO.js`
 - `backend/services/voluntariadoSync.js`
@@ -346,7 +341,6 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `jornada_encaminhamentos`
 - `kids_criancas`
 - `kids_responsaveis`
-- `kpi_indicadores_taticos`
 - `mem_cadastros_pendentes`
 - `mem_censo_convites`
 - `mem_checkins`
@@ -406,7 +400,6 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `vol_volunteer_qrcodes`
 - `vw_censo_campanha`
 - `vw_insc_pagamento_estado`
-- `vw_kpi_trajetoria_atual`
 - `vw_membros_duplicados`
 - `vw_membros_orfaos_stats`
 - `vw_pessoas_papeis`

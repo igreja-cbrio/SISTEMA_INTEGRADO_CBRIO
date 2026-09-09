@@ -18,6 +18,7 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **ami** | `/ami` | — | [ami](ami.md) |
 | **apresentacoes** | — | `apresentacoes.js` | [apresentacoes](apresentacoes.md) |
 | **batismo** | `/batismo` | — | [batismo](batismo.md) |
+| **batismo-leitura** | — | `kpis.js` | [batismo-leitura](batismo-leitura.md) |
 | **bridge** | `/bridge` | — | [bridge](bridge.md) |
 | **campanhas** | `/campanhas` | `campanhas.js` | [campanhas](campanhas.md) |
 | **censo** | — | `censo.js` | [censo](censo.md) |
@@ -26,6 +27,7 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **conversas** | — | `waInbox.js` | [conversas](conversas.md) |
 | **cuidados** | `/ministerial/cuidados` | `cuidados.js` `nextConvite.js` | [cuidados](cuidados.md) |
 | **eventos-externos** | — | `eventosExternos.js` | [eventos-externos](eventos-externos.md) |
+| **events** | — | `events.js` | [events](events.md) |
 | **expansao** | `/expansao` | — | [expansao](expansao.md) |
 | **face** | — | `face.js` | [face](face.md) |
 | **financeiro** | — | `financeiro.js` `financeiroV2.js` | [financeiro](financeiro.md) |
@@ -33,7 +35,7 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **grupos** | `/grupos` `/grupos/supervisao` | `grupos.js` `whatsappGrupos.js` | [grupos](grupos.md) |
 | **inscricoes** | `/inscricoes` `/inscricoes/evento/:id` `/inscricoes/evento/:id/checkin` … | `inscricoes.js` | [inscricoes](inscricoes.md) |
 | **inscricoes-totem** | — | `inscricoes.js` | [inscricoes-totem](inscricoes-totem.md) |
-| **integracao** | `/integracao/coleta` | `integracao.js` | [integracao](integracao.md) |
+| **integracao** | `/integracao/coleta` | `integracao.js` `kpis.js` | [integracao](integracao.md) |
 | **jornada-convertidos** | — | `cuidados.js` | [jornada-convertidos](jornada-convertidos.md) |
 | **kids** | `/ministerial/totem-kids` `/ministerial/kids` `/ministerial/totem-kids/criancas` … | `totemKids.js` | [kids](kids.md) |
 | **links** | — | `links.js` | [links](links.md) |
@@ -49,8 +51,10 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **painel** | — | `painel.js` | [painel](painel.md) |
 | **painel-area** | — | `painelArea.js` | [painel-area](painel-area.md) |
 | **patrimonio** | — | `patrimonio.js` | [patrimonio](patrimonio.md) |
+| **permissoes** | — | `permissoes.js` | [permissoes](permissoes.md) |
 | **planejamento-anual** | `/planejamento-anual` | — | [planejamento-anual](planejamento-anual.md) |
 | **producao** | `/producao` | `producao.js` | [producao](producao.md) |
+| **projects** | — | `projects.js` | [projects](projects.md) |
 | **propostas** | `/propostas` | `propostas.js` | [propostas](propostas.md) |
 | **relatorios** | — | `relatorios.js` | [relatorios](relatorios.md) |
 | **rh** | — | `events.js` `painelRh.js` | [rh](rh.md) |
@@ -213,7 +217,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/sexoDeclarado.js` | `src/test/sexoDeclarado.test.ts` |
 | `backend/utils/solicitacaoStatusLabel.js` | — |
 | `backend/utils/storagePath.js` | `src/test/storagePath.test.ts` |
-| `backend/utils/supabase.js` | `src/test/anexosLogArquivos.test.ts` `src/test/appIdentidadePreencher.test.ts` `src/test/censoJaRespondeu.test.ts` `src/test/fetchFalhaDb.test.ts` `src/test/importSupabase.test.ts` `src/test/jornadaPiiGuard.test.ts` `src/test/nextGuardNivel.test.ts` `src/test/notificarRegraPorTipo.test.ts` `src/test/npsNomeTurma.test.ts` `src/test/pagamentosReemissao.test.ts` `src/test/routeModuleMap.test.ts` |
+| `backend/utils/supabase.js` | `src/test/anexosLogArquivos.test.ts` `src/test/appIdentidadePreencher.test.ts` `src/test/censoJaRespondeu.test.ts` `src/test/fetchFalhaDb.test.ts` `src/test/importSupabase.test.ts` `src/test/jornadaPiiGuard.test.ts` `src/test/lote2RotasComGate.test.ts` `src/test/nextGuardNivel.test.ts` `src/test/notificarRegraPorTipo.test.ts` `src/test/npsNomeTurma.test.ts` `src/test/pagamentosReemissao.test.ts` `src/test/routeModuleMap.test.ts` |
 | `backend/utils/supervisorArea.js` | `backend/services/supervisorSubarea.test.js` `src/test/supervisorArea.test.ts` |
 | `backend/utils/suporteApp.js` | `src/test/suporteApp.test.ts` |
 | `backend/utils/telefoneVoluntario.js` | `src/test/telefoneVoluntario.test.ts` |

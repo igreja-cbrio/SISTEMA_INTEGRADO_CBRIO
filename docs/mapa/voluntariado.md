@@ -15,7 +15,7 @@
 - `backend/routes/voluntariado-sync.js`
 - `backend/routes/voluntariado.js`
 Guard: `authorizeModule('voluntariado', 1 | 2 | 3 | 5)`
-<details><summary>Endpoints (160)</summary>
+<details><summary>Endpoints (156)</summary>
 - `DELETE /:id`
 - `DELETE /api/voluntariado/1x1/:id`
 - `DELETE /api/voluntariado/availability/:id`
@@ -40,7 +40,6 @@ Guard: `authorizeModule('voluntariado', 1 | 2 | 3 | 5)`
 - `GET /api/voluntariado/antecedentes/pendentes`
 - `GET /api/voluntariado/availability`
 - `GET /api/voluntariado/check-ins`
-- `GET /api/voluntariado/config`
 - `GET /api/voluntariado/cron/antecedentes`
 - `GET /api/voluntariado/cron/emails`
 - `GET /api/voluntariado/cron/sync`
@@ -54,7 +53,6 @@ Guard: `authorizeModule('voluntariado', 1 | 2 | 3 | 5)`
 - `GET /api/voluntariado/inscricoes-summary`
 - `GET /api/voluntariado/inscricoes/:id/antecedentes`
 - `GET /api/voluntariado/inscricoes/por-direcionada`
-- `GET /api/voluntariado/kpis/taticos`
 - `GET /api/voluntariado/my-check-ins`
 - `GET /api/voluntariado/pco-cpf-check`
 - `GET /api/voluntariado/pco-schedule-debug`
@@ -117,7 +115,6 @@ Guard: `authorizeModule('voluntariado', 1 | 2 | 3 | 5)`
 - `POST /api/voluntariado/face/match`
 - `POST /api/voluntariado/face/save-profile`
 - `POST /api/voluntariado/face/save-qrcode`
-- `POST /api/voluntariado/frequencia/importar`
 - `POST /api/voluntariado/frequencia/revincular`
 - `POST /api/voluntariado/frequencia/saiu-igreja`
 - `POST /api/voluntariado/frequencia/sugerir-vinculos`
@@ -164,7 +161,6 @@ Guard: `authorizeModule('voluntariado', 1 | 2 | 3 | 5)`
 - `POST /templates`
 - `POST /upload-imagem`
 - `PUT /:id`
-- `PUT /api/voluntariado/config`
 - `PUT /api/voluntariado/frequencia/inatividade`
 - `PUT /api/voluntariado/positions/:id`
 - `PUT /api/voluntariado/profiles/:id/contact`
@@ -216,7 +212,6 @@ Guard: `authorizeModule('voluntariado', 1 | 2 | 3 | 5)`
 - `backend/services/volEmailIa.js`
 - `backend/services/volEmailSender.js`
 - `backend/services/volInscricaoStatus.js`
-- `backend/services/volNomeFiltro.js`
 - `backend/services/volVinculoIA.js`
 - `backend/services/voluntariadoFreqPCO.js`
 - `backend/services/voluntariadoSync.js`
@@ -226,7 +221,6 @@ Guard: `authorizeModule('voluntariado', 1 | 2 | 3 | 5)`
 
 - `cargos`
 - `cultos`
-- `kpi_indicadores_taticos`
 - `mem_membros`
 - `profiles`
 - `usuarios`
@@ -262,7 +256,6 @@ Guard: `authorizeModule('voluntariado', 1 | 2 | 3 | 5)`
 - `vol_training_checkins`
 - `vol_user_roles`
 - `vol_volunteer_qrcodes`
-- `vw_kpi_trajetoria_atual`
 - `vw_vol_frequencia`
 
 **RPCs**

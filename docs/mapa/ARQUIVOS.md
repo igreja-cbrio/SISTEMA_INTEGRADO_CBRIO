@@ -50,7 +50,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/encaminhamentos.js` | rota backend | — | `/api/encaminhamentos` |
 | `backend/routes/estrategia.js` | rota backend | — | `/api/estrategia` |
 | `backend/routes/eventosExternos.js` | rota backend | eventos-externos | `/api/eventos-externos` |
-| `backend/routes/events.js` | rota backend | rh | `/api/events` |
+| `backend/routes/events.js` | rota backend | events | `/api/events` |
 | `backend/routes/expansion.js` | rota backend | — | `/api/expansion` |
 | `backend/routes/face.js` | rota backend | face | `/api/face` |
 | `backend/routes/feedback.js` | rota backend | — | `/api/feedback` |
@@ -62,7 +62,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/inscricoes.js` | rota backend | inscricoes | `/api/inscricoes` |
 | `backend/routes/integracao.js` | rota backend | integracao | `/api/integracao` |
 | `backend/routes/jornada.js` | rota backend | membresia | `/api/jornada` |
-| `backend/routes/kpis.js` | rota backend | — | `/api/kpis` |
+| `backend/routes/kpis.js` | rota backend | batismo-leitura | `/api/kpis` |
 | `backend/routes/kpisV2.js` | rota backend | — | `/api/kpis/v2` |
 | `backend/routes/lgpd.js` | rota backend | membresia | `/api/lgpd` |
 | `backend/routes/links.js` | rota backend | links | `/api/links` |
@@ -86,13 +86,13 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/painelRh.js` | rota backend | rh | `/api/painel-rh` |
 | `backend/routes/patrimonio.js` | rota backend | patrimonio | `/api/patrimonio` |
 | `backend/routes/pcs.js` | rota backend | — | `/api/pcs` |
-| `backend/routes/permissoes.js` | rota backend | — | `/api/permissoes` |
+| `backend/routes/permissoes.js` | rota backend | permissoes | `/api/permissoes` |
 | `backend/routes/pessoas.js` | rota backend | membros | `/api/pessoas` |
 | `backend/routes/planejamento.js` | rota backend | — | `/api/planejamento` |
 | `backend/routes/planejamentoAnual.js` | rota backend | — | `/api/planejamento-anual` |
 | `backend/routes/processos.js` | rota backend | — | `/api/processos` |
 | `backend/routes/producao.js` | rota backend | producao | `/api/producao` |
-| `backend/routes/projects.js` | rota backend | — | `/api/projects` |
+| `backend/routes/projects.js` | rota backend | projects | `/api/projects` |
 | `backend/routes/propostas.js` | rota backend | propostas | `/api/propostas` |
 | `backend/routes/publicApresentacao.js` | rota backend | — | `/api/public/apresentacao-criancas` |
 | `backend/routes/publicBatismo.js` | rota backend | — | `/api/public/batismo` |

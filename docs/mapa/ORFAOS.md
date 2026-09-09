@@ -102,7 +102,7 @@ conferir.
 | `/admin/grupos/temporadas` | `src/pages/admin/TemporadasGrupos` | sim |
 | `/suporte` | `src/pages/public/Suporte` | sim |
 
-## Arquivos de rota que nenhum módulo reivindica (77)
+## Arquivos de rota que nenhum módulo reivindica (74)
 
 - `backend/routes/agentTasks.js`
 - `backend/routes/agenteBatismoNext.js`
@@ -129,7 +129,6 @@ conferir.
 - `backend/routes/expansion.js`
 - `backend/routes/feedback.js`
 - `backend/routes/gestao.js`
-- `backend/routes/kpis.js`
 - `backend/routes/kpisV2.js`
 - `backend/routes/meetings.js`
 - `backend/routes/ml.js`
@@ -140,11 +139,9 @@ conferir.
 - `backend/routes/occurrences.js`
 - `backend/routes/pagamentosWebhook.js`
 - `backend/routes/pcs.js`
-- `backend/routes/permissoes.js`
 - `backend/routes/planejamento.js`
 - `backend/routes/planejamentoAnual.js`
 - `backend/routes/processos.js`
-- `backend/routes/projects.js`
 - `backend/routes/publicApresentacao.js`
 - `backend/routes/publicBatismo.js`
 - `backend/routes/publicCampanha.js`

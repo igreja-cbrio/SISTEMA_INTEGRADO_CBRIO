@@ -1,4 +1,4 @@
-# Módulo `integracao`
+# Módulo `batismo-leitura`
 <!-- GERADO por backend/scripts/gerar-mapa.cjs — NÃO editar à mão. -->
 
 > ⚠️ **Este mapa responde ONDE algo mora, nunca SE está certo.** Ele é derivado do
@@ -9,28 +9,14 @@
 > ⚠️ É regenerado sem travar deploy, então pode estar algumas horas atrás. Se citar
 > arquivo que não existe, **vale o código**.
 
-## Telas (ERP)
-| rota | arquivo | nível |
-|---|---|---|
-| `/integracao/coleta` | `src/pages/ministerial/coleta/ColetaCulto` | 2 |
 ## Backend
-- `backend/routes/integracao.js`
 - `backend/routes/kpis.js`
-Guard: `authorizeModule('integracao', 1 | 2 | 3)`
-<details><summary>Endpoints (55)</summary>
+Guard: `authorizeModule('batismo-leitura', 1)`
+<details><summary>Endpoints (41)</summary>
 - `DELETE /api/kpis/batismos/horarios/:id`
 - `DELETE /api/kpis/cultos/:id`
 - `DELETE /api/kpis/cultura/pense/:id`
 - `DELETE /api/kpis/decisoes-pessoas/:id`
-- `GET /api/integracao/coleta/cultos-abertos`
-- `GET /api/integracao/coleta/minhas`
-- `GET /api/integracao/coleta/pendentes`
-- `GET /api/integracao/cron/gerar-cultos-recorrentes`
-- `GET /api/integracao/dashboard`
-- `GET /api/integracao/decisoes-app`
-- `GET /api/integracao/historico-anual`
-- `GET /api/integracao/historico-batismos`
-- `GET /api/integracao/kpis/taticos`
 - `GET /api/kpis/batismos`
 - `GET /api/kpis/batismos/checkin/do-dia`
 - `GET /api/kpis/batismos/cobertura-convertidos`
@@ -53,11 +39,6 @@ Guard: `authorizeModule('integracao', 1 | 2 | 3)`
 - `GET /api/kpis/service-types`
 - `PATCH /api/kpis/batismos/config`
 - `PATCH /api/kpis/batismos/horarios/:id`
-- `POST /api/integracao/coleta`
-- `POST /api/integracao/coleta/:id/aprovar`
-- `POST /api/integracao/coleta/:id/rejeitar`
-- `POST /api/integracao/decisoes-app/:id/confirmar`
-- `POST /api/integracao/decisoes-app/:id/descartar`
 - `POST /api/kpis/batismos`
 - `POST /api/kpis/batismos/:id/checkin`
 - `POST /api/kpis/batismos/:id/foto-referencia`
@@ -82,7 +63,6 @@ Guard: `authorizeModule('integracao', 1 | 2 | 3)`
 - `backend/utils/cultoToken.js`
 - `backend/utils/divisorMandala.js`
 - `backend/utils/inscricaoMenor.js`
-- `backend/utils/isoWeek.js`
 - `backend/utils/lentesDomingo.js`
 - `backend/utils/supabase.js`
 
@@ -97,15 +77,12 @@ Guard: `authorizeModule('integracao', 1 | 2 | 3)`
 
 **Tabelas que estas rotas tocam**
 
-- `app_decisoes`
 - `batismo_config`
 - `batismo_horarios`
 - `batismo_inscricoes`
 - `cultos`
-- `cultos_dados_submissoes`
 - `cultos_decisoes_pessoas`
 - `cultura_mensal`
-- `kpi_indicadores_taticos`
 - `kpi_metas`
 - `mem_checkins`
 - `mem_devocionais`
@@ -116,20 +93,12 @@ Guard: `authorizeModule('integracao', 1 | 2 | 3)`
 - `pense_videos`
 - `profiles`
 - `vol_service_types`
-- `vw_batismo_historico_anual`
-- `vw_culto_historico_anual`
 - `vw_culto_stats`
 - `vw_culto_voluntarios`
-- `vw_kpi_trajetoria_atual`
 - `wifi_visitantes`
 
 **RPCs**
 
 - `fin_generosidade_mes`
-- `gerar_cultos_recorrentes`
 - `kpi_servir_comunidade`
-
-**Namespace no front (src/api.js)**
-
-- `integracao`
 
