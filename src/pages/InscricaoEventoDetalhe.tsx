@@ -75,6 +75,23 @@ function EInscricaoBadge({ inscricao, tamanho = 'xs' }: { inscricao: any; tamanh
   );
 }
 
+/** Etiqueta do LOTE que a pessoa comprou (vem do backend: categoria da plataforma · valor cobrado · posição). */
+const LOTE_FONTE_DICA: Record<string, string> = {
+  plataforma: 'Lote informado pela plataforma externa (planilha do E-Inscrição)',
+  valor: 'Lote pelo valor cobrado nesta inscrição',
+  posicao: 'Lote pela posição na ordem de chegada (isenta, bolsa ou ainda sem pagar)',
+};
+function LoteBadge({ lote, tamanho = 'xs' }: { lote: any; tamanho?: 'xs' | 'sm' }) {
+  if (!lote?.nome) return null;
+  return (
+    <span className={`inline-flex items-center rounded-full bg-violet-500/15 text-violet-700 dark:text-violet-300 font-medium px-2 py-0.5 shrink-0 ${tamanho === 'sm' ? 'text-xs' : 'text-[11px]'}`}
+      title={LOTE_FONTE_DICA[lote.fonte] || 'Lote'}>
+      {lote.nome}
+    </span>
+  );
+}
+const SEM_LOTE = '__sem_lote__';
+
 /** Filtro "onde se inscreveu": aqui (Pix) × plataforma externa (cartão). */
 type OrigemFiltro = 'todos' | 'sistema' | 'e_inscricao';
 const casaOrigem = (i: any, f: OrigemFiltro) =>
@@ -130,6 +147,7 @@ function TabelaInscritos({ inscritos, ev, podeEditar, selecionadas, alternarSele
   premiosGanhos: (id: string) => any[];
 }) {
   const temExterno = inscritos.some(ehEInscricao) || !!ev?.checkout_externo_url;
+  const temLote = inscritos.some((i: any) => i.lote?.nome);
   return (
     <div className="overflow-x-auto rounded-lg border border-border">
       <table className="w-full text-sm">
@@ -140,6 +158,7 @@ function TabelaInscritos({ inscritos, ev, podeEditar, selecionadas, alternarSele
             <th className="text-left px-3 py-2 font-medium whitespace-nowrap">Idade · sexo</th>
             <th className="text-left px-3 py-2 font-medium">Telefone</th>
             {temExterno && <th className="text-left px-3 py-2 font-medium whitespace-nowrap">Onde se inscreveu</th>}
+            {temLote && <th className="text-left px-3 py-2 font-medium">Lote</th>}
             {ev?.pagamento_ativo && <th className="text-left px-3 py-2 font-medium">Pagamento</th>}
             <th className="text-left px-3 py-2 font-medium whitespace-nowrap">Inscrita em</th>
             <th className="w-8 px-2 py-2" />
@@ -196,6 +215,7 @@ function TabelaInscritos({ inscritos, ev, podeEditar, selecionadas, alternarSele
                       : <span className="inline-flex items-center rounded-full bg-primary/10 text-primary text-[11px] font-medium px-2 py-0.5">Sistema{i.pagamento?.metodo ? ` · ${METODO_LABEL[i.pagamento.metodo] || i.pagamento.metodo}` : ''}</span>}
                   </td>
                 )}
+                {temLote && <td className="px-3 py-1.5 whitespace-nowrap"><LoteBadge lote={i.lote} /></td>}
                 {ev?.pagamento_ativo && <td className="px-3 py-1.5"><PagamentoCelula i={i} /></td>}
                 <td className="px-3 py-1.5 whitespace-nowrap text-xs text-muted-foreground tabular-nums">
                   {i.created_at ? new Date(i.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
@@ -250,6 +270,8 @@ export default function InscricaoEventoDetalhe() {
   // Onde se inscreveu (todos · sistema/Pix · E-Inscrição/cartão) e o modo da
   // lista (cards detalhados × tabela). O modo fica lembrado no navegador.
   const [origemFiltro, setOrigemFiltro] = useState<OrigemFiltro>('todos');
+  // Lote comprado ('todos' · nome do lote · SEM_LOTE). Opções = o que está na lista.
+  const [loteFiltro, setLoteFiltro] = useState<string>('todos');
   const [modoLista, setModoListaState] = useState<ModoLista>(lerModoLista);
   const setModoLista = (m: ModoLista) => { setModoListaState(m); try { localStorage.setItem(MODO_LISTA_KEY, m); } catch { /* sem storage, segue */ } };
   const [inscSel, setInscSel] = useState<any>(null);
@@ -318,7 +340,8 @@ export default function InscricaoEventoDetalhe() {
 
   const inscritos = useMemo(() => {
     const porCampo = aplicarFiltroCampos(ev?.inscritos || [], filtrosCampo)
-      .filter((i: any) => casaOrigem(i, origemFiltro));
+      .filter((i: any) => casaOrigem(i, origemFiltro))
+      .filter((i: any) => loteFiltro === 'todos' ? true : loteFiltro === SEM_LOTE ? !i.lote?.nome : i.lote?.nome === loteFiltro);
     const q = busca.trim().toLowerCase();
     if (!q) return porCampo;
     return porCampo.filter((i: any) =>
@@ -326,7 +349,23 @@ export default function InscricaoEventoDetalhe() {
       || String(i.telefone || '').includes(q.replace(/\D/g, '') || ' ')
       || String(i.numero_sorte || '') === q,
     );
-  }, [ev, busca, filtrosCampo, origemFiltro]);
+  }, [ev, busca, filtrosCampo, origemFiltro, loteFiltro]);
+  // Lotes presentes na lista, na ordem da tabela do evento (e os fora dela por nome).
+  const lotesNaLista = useMemo(() => {
+    const cont = new Map<string, number>();
+    let semLote = 0;
+    for (const i of (ev?.inscritos || [])) {
+      if (i.lote?.nome) cont.set(i.lote.nome, (cont.get(i.lote.nome) || 0) + 1); else semLote++;
+    }
+    const ordem = (ev?.lotes || []).map((l: any) => l.nome);
+    const nomes = [...cont.keys()].sort((a, b) => {
+      const ia = ordem.indexOf(a); const ib = ordem.indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+    });
+    return { opcoes: nomes.map(n => ({ nome: n, total: cont.get(n) || 0 })), semLote };
+  }, [ev]);
+  const mostraFiltroLote = lotesNaLista.opcoes.length > 0;
+  const filtroLoteAtivo = loteFiltro !== 'todos';
   // Contagens do filtro de origem sobre o evento INTEIRO (mesma régua dos
   // filtros por campo: número que muda com a busca não ajuda a escolher).
   const contagemOrigem = useMemo(() => {
@@ -522,7 +561,7 @@ export default function InscricaoEventoDetalhe() {
     const header = [
       // Primeira coluna: é por ele que a pessoa se identifica no atendimento.
       'Código', 'Nome completo', 'WhatsApp', 'E-mail', 'Nascimento', 'Idade', 'Faixa', 'Sexo',
-      'Pagamento', 'Forma', 'Nº da sorte', 'Status', 'Inscrição em',
+      'Pagamento', 'Forma', 'Lote', 'Nº da sorte', 'Status', 'Inscrição em',
       ...campos.map((c: any) => c.label),
     ];
     // ⚠️ Exporta o RECORTE VISÍVEL (filtro + busca), não a base inteira: o botão
@@ -537,6 +576,7 @@ export default function InscricaoEventoDetalhe() {
       i.sexo ? sexoLabel(i.sexo) : '',
       i.pagamento?.status_pagamento ? (PAG_LABEL[i.pagamento.status_pagamento] || i.pagamento.status_pagamento) : '',
       i.pagamento?.metodo ? (METODO_LABEL[i.pagamento.metodo] || i.pagamento.metodo) : '',
+      i.lote?.nome || '',
       i.numero_sorte ?? '', i.status,
       i.created_at ? new Date(i.created_at).toLocaleString('pt-BR') : '',
       ...campos.map((c: any) => {
@@ -547,7 +587,7 @@ export default function InscricaoEventoDetalhe() {
     const csv = '﻿' + [header, ...linhas].map(l => l.map(esc).join(';')).join('\r\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a');
-    const recorte = (filtrosAtivos > 0 || busca.trim()) ? '-recorte' : '';
+    const recorte = (filtrosAtivos > 0 || filtroOrigemAtivo || filtroLoteAtivo || busca.trim()) ? '-recorte' : '';
     a.href = url; a.download = `inscritos-${ev.slug}${recorte}.csv`; a.click();
     URL.revokeObjectURL(url);
   }
@@ -887,6 +927,20 @@ export default function InscricaoEventoDetalhe() {
                   <option value="e_inscricao">E-Inscrição · cartão ({contagemOrigem.externo})</option>
                 </select>
               )}
+              {/* Lote comprado — só quando o evento tem lotes em alguma inscrição. */}
+              {mostraFiltroLote && (
+                <select
+                  value={loteFiltro}
+                  onChange={e => setLoteFiltro(e.target.value)}
+                  title="Lote comprado"
+                  aria-label="Lote comprado"
+                  className={`h-8 rounded-md border bg-[var(--cbrio-input-bg)] text-sm px-2 max-w-[15rem] ${filtroLoteAtivo ? 'border-primary text-primary' : 'border-border'}`}
+                >
+                  <option value="todos">Lote · todos</option>
+                  {lotesNaLista.opcoes.map(o => <option key={o.nome} value={o.nome}>{o.nome} ({o.total})</option>)}
+                  {lotesNaLista.semLote > 0 && <option value={SEM_LOTE}>Sem lote ({lotesNaLista.semLote})</option>}
+                </select>
+              )}
               {/* Um filtro por campo de escolha do formulário deste evento. */}
               {camposFiltro.map(c => (
                 <select
@@ -923,7 +977,7 @@ export default function InscricaoEventoDetalhe() {
           )}
           {/* Quantos o recorte atual mostra — sem isso o filtro muda a lista e
               não diz o tamanho do resultado, que é o número que a pessoa quer. */}
-          {(filtrosAtivos > 0 || filtroOrigemAtivo || busca.trim()) && (ev.inscritos || []).length > 0 && (
+          {(filtrosAtivos > 0 || filtroOrigemAtivo || filtroLoteAtivo || busca.trim()) && (ev.inscritos || []).length > 0 && (
             <p className="text-xs text-muted-foreground">
               Mostrando <strong className="text-foreground">{inscritos.length}</strong> de {(ev.inscritos || []).length} inscritos.
             </p>
@@ -958,9 +1012,9 @@ export default function InscricaoEventoDetalhe() {
           <p className="text-sm text-muted-foreground py-4 text-center">Ninguém se inscreveu ainda.</p>
         ) : inscritos.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">
-            {(filtrosAtivos > 0 || filtroOrigemAtivo) && busca.trim()
+            {(filtrosAtivos > 0 || filtroOrigemAtivo || filtroLoteAtivo) && busca.trim()
               ? 'Nenhum inscrito bate com o filtro e a busca.'
-              : (filtrosAtivos > 0 || filtroOrigemAtivo)
+              : (filtrosAtivos > 0 || filtroOrigemAtivo || filtroLoteAtivo)
                 ? 'Nenhum inscrito neste filtro.'
                 : 'Nenhum inscrito bate com a busca.'}
           </p>
@@ -1013,6 +1067,7 @@ export default function InscricaoEventoDetalhe() {
                       )}
                       {cancelada && <span className="rounded-full bg-red-500/10 text-red-600 text-[11px] font-medium px-2 py-0.5 shrink-0">cancelada</span>}
                       {ehEInscricao(i) && <EInscricaoBadge inscricao={i} />}
+                      <LoteBadge lote={i.lote} />
                       {i.telefone && (
                         <a href={`https://wa.me/55${tel}`} target="_blank" rel="noreferrer"
                           title="Enviar WhatsApp" onClick={e => e.stopPropagation()}
@@ -1842,6 +1897,7 @@ function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, evento, 
             )}
             {cancelada && <span className="rounded-full bg-red-500/10 text-red-600 text-xs font-medium px-2 py-0.5 shrink-0">cancelada</span>}
             {ehEInscricao(inscricao) && <EInscricaoBadge inscricao={inscricao} tamanho="sm" />}
+            <LoteBadge lote={inscricao.lote} tamanho="sm" />
             {!editando && (
               <Button size="sm" variant="outline" className="ml-auto shrink-0" onClick={entrarEdicao}>
                 <Pencil className="h-3.5 w-3.5 mr-1" /> Editar

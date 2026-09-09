@@ -22,7 +22,7 @@ const { elegiveisDoSorteio, motivoSemElegivel } = require('../services/inscricao
 const { contarInscritosVivos } = require('../services/inscricaoContagem');
 const { normalizarIds, separarExclusaoLote, resumoDoLote } = require('../utils/exclusaoInscricaoLote');
 const checkoutExterno = require('../utils/checkoutExterno');
-const { sanitizarLotes } = require('../utils/lotesEvento');
+const { sanitizarLotes, anexarLoteNasInscricoes } = require('../utils/lotesEvento');
 const { resumoPorPlataforma } = require('../utils/eInscricao');
 const {
   previewTemplate,
@@ -1086,8 +1086,22 @@ async function lerInscritosDoEvento(eventoId, { busca = '', status = '', limit =
     eventoId, limit > 0 ? inscritos.map((i) => i.id) : null,
   );
 
+  // Lote que cada pessoa comprou (09/09/2026): régua em `utils/lotesEvento`
+  // (categoria da plataforma externa → valor cobrado → posição). A posição só
+  // é confiável com a lista COMPLETA; na página curta do app ficam as 2 primeiras
+  // fontes. Best-effort: evento sem lotes (ou coluna ausente) → `lote: null`.
+  let comLote = inscritos;
+  try {
+    const { data: evLotes, error: eLotes } = await supabase.from('insc_eventos')
+      .select('lotes').eq('id', eventoId).maybeSingle();
+    if (eLotes) throw eLotes;
+    comLote = anexarLoteNasInscricoes(evLotes?.lotes || [], inscritos, { completo: !(limit > 0) });
+  } catch (e) {
+    console.error('[inscricoes] lote por inscrição indisponível:', e.message);
+  }
+
   return {
-    itens: inscritos.map((i) => ({
+    itens: comLote.map((i) => ({
       ...i,
       pagamento: porInscricao.get(i.id) || null,
       comprovantes: porComprovante.get(i.id) || null,

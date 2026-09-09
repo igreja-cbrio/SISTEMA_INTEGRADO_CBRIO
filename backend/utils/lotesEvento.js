@@ -93,4 +93,54 @@ function loteAtual(lotes, ocupadas) {
   };
 }
 
-module.exports = { MAX_LOTES, sanitizarLotes, totalVagasLotes, loteDaPosicao, loteAtual };
+/**
+ * O lote que UMA inscrição comprou (09/09/2026 · "deve ter escrito na pessoa
+ * que lote ela comprou"). Três fontes, nesta ordem:
+ *   1. `dados.e_inscricao.categoria` — quem pagou cartão na plataforma externa
+ *      traz o lote de LÁ na planilha ("Lote 1"); a régua de preço é a deles.
+ *   2. `valor_cobrado_centavos` casando com um lote da tabela — é o que a pessoa
+ *      de fato pagou; vale mesmo que a posição tenha mudado depois (uma
+ *      importação com `created_at` antigo desloca posições, não o que foi cobrado).
+ *   3. a POSIÇÃO na ordem de chegada (mesma régua do POST) — cobre isenta/bolsa
+ *      (valor não casa com lote nenhum) e quem ainda não pagou.
+ * Sem lotes no evento devolve null. `fonte` diz de onde veio, pra tela poder
+ * explicar ("pago", "pela posição").
+ */
+function loteDaInscricao(lotes, insc, posicao) {
+  const lista = sanitizarLotes(lotes) || [];
+  const cat = insc?.dados?.e_inscricao?.categoria;
+  if (cat && String(cat).trim()) {
+    const nome = String(cat).trim();
+    const idx = lista.findIndex((l) => l.nome.toLowerCase() === nome.toLowerCase());
+    return { nome, indice: idx >= 0 ? idx : null, valor_centavos: null, fonte: 'plataforma' };
+  }
+  if (!lista.length) return null;
+  const valor = Number(insc?.valor_cobrado_centavos);
+  if (valor > 0) {
+    const idx = lista.findIndex((l) => l.valor_centavos === valor);
+    if (idx >= 0) return { nome: lista[idx].nome, indice: idx, valor_centavos: lista[idx].valor_centavos, fonte: 'valor' };
+  }
+  const porPos = loteDaPosicao(lista, posicao);
+  if (!porPos) return null;
+  return { nome: porPos.nome, indice: porPos.indice, valor_centavos: porPos.valor_centavos, fonte: 'posicao' };
+}
+
+/**
+ * Anexa `lote` em cada inscrição da lista. A posição só é conhecida quando a
+ * lista está COMPLETA (`completo`): conta as vivas não-canceladas na ordem
+ * `(created_at, id)`, a mesma do banco. Em página parcial (app) a posição fica
+ * de fora e valem só as fontes 1 e 2. Não muta a entrada.
+ */
+function anexarLoteNasInscricoes(lotes, inscritos, { completo = true } = {}) {
+  const lista = Array.isArray(inscritos) ? inscritos : [];
+  const posicao = new Map();
+  if (completo) {
+    const vivas = lista.filter((i) => i && i.status !== 'cancelada' && !i.deleted_at)
+      .slice()
+      .sort((a, b) => (String(a.created_at) < String(b.created_at) ? -1 : String(a.created_at) > String(b.created_at) ? 1 : String(a.id).localeCompare(String(b.id))));
+    vivas.forEach((i, k) => posicao.set(i.id, k + 1));
+  }
+  return lista.map((i) => ({ ...i, lote: loteDaInscricao(lotes, i, posicao.get(i?.id) || null) }));
+}
+
+module.exports = { MAX_LOTES, sanitizarLotes, totalVagasLotes, loteDaPosicao, loteAtual, loteDaInscricao, anexarLoteNasInscricoes };
