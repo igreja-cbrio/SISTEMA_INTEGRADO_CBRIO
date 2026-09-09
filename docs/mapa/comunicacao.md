@@ -16,7 +16,7 @@
 ## Backend
 - `backend/routes/comunicacao.js`
 Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
-<details><summary>Endpoints (34)</summary>
+<details><summary>Endpoints (36)</summary>
 - `DELETE /api/comunicacao/agendamentos/:id`
 - `GET /api/comunicacao/agendamentos`
 - `GET /api/comunicacao/atendentes`
@@ -40,6 +40,8 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `POST /api/comunicacao/agendamentos`
 - `POST /api/comunicacao/atendentes`
 - `POST /api/comunicacao/bot-ia/simular`
+- `POST /api/comunicacao/envios/agora`
+- `POST /api/comunicacao/envios/previa`
 - `POST /api/comunicacao/erros/:id/reenviar`
 - `POST /api/comunicacao/numeros`
 - `POST /api/comunicacao/templates/sync`
@@ -61,6 +63,7 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `backend/utils/cronAuth.js`
 - `backend/utils/equipeAtendimento.js`
 - `backend/utils/janelaPeriodo.js`
+- `backend/utils/novoEnvio.js`
 - `backend/utils/sentry.js`
 - `backend/utils/supabase.js`
 - `backend/utils/whatsappModulo.js`
