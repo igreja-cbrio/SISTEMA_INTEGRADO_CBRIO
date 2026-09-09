@@ -4027,6 +4027,16 @@ export const comunicacao = {
     resumo: (dias = 30) => get(`/comunicacao/envios/resumo?dias=${dias}`),
   },
   custo: (meses = 6) => get(`/comunicacao/custo?meses=${meses}`),
+  // Dashboard do módulo (F2 · 09/09/2026): quem espera resposta, mensagens por
+  // área e por dia, tempo de resposta e engajamento dos disparos — numa janela
+  // de dias (7/30/90/365) OU de ano. Quem conta é o servidor.
+  dashboard: (params = {}) => {
+    const p = new URLSearchParams();
+    if (params.ano) p.set('ano', String(params.ano));
+    else if (params.dias) p.set('dias', String(params.dias));
+    const qs = p.toString();
+    return get(`/comunicacao/dashboard${qs ? `?${qs}` : ''}`, { timeout: 60_000 });
+  },
   // Bot de IA por área (08/09/2026): quem responde quem escreve, conhecimento
   // e interruptor por área, simulador (não envia) e resumo do que o bot fez.
   botIa: {
