@@ -8751,6 +8751,67 @@ pagamento**, pago ou não (dúvida acontece antes E depois de pagar).
   pagamento. Admin: campo no EventoForm. Seed do retiro na migration
   (só-onde-vazio).
 
+## AMI CAMP 2027 · importação do E-Inscrição (2026-09-09 · SEM migration)
+
+Pedido do Marcos: *"temos essa planilha que vem do E-Inscrição, são inscritos do
+retiro, quero que você adicione essas pessoas no nosso sistema, identifique que ela
+foi inscrita pelo E-inscrição, coloque o valor referente ao que cobramos lá (retire
+os 5,5% de taxa), e na nossa plataforma deixe uma etiqueta, quanto dinheiro temos no
+e-inscrição, quanto temos no sistema, quantos inscritos em cada uma também, e reduza
+as vagas do lote 1 com base na quantidade total atual"*.
+
+Quem paga CARTÃO sai da nossa página pro E-Inscrição ANTES de existir inscrição aqui
+— a equipe do retiro só via essa gente numa planilha exportada de lá. Agora ela entra:
+
+- **Régua PURA `backend/utils/eInscricao.js`** (gate: `src/test/eInscricao.test.ts`):
+  parser do CSV da plataforma (`;`, Windows-1252, TAB no cabeçalho) · linha →
+  `inscricoes` com **`origem = 'e_inscricao'`** · **valor gravado é o LÍQUIDO**
+  (bruto − 5,5% retidos pela plataforma: R$ 850 → R$ 803,25) · respostas caem nas
+  MESMAS keys opacas `c_retiro_*` do nosso evento · bloco de menor nas colunas
+  `responsavel_*` (autoriza batismo TRI-ESTADO) · código/forma/parcelas/aceites da
+  plataforma em **`dados.e_inscricao`** · `created_at` = instante REAL da compra lá
+  (BRT), porque a posição no lote é por `created_at`.
+- **Script `backend/scripts/_importar_einscricao_retiro.cjs [csv] [--exec]`** —
+  IDEMPOTENTE (chave = CPF vivo no evento OU `dados.e_inscricao.codigo`); "Cancelada?
+  = Sim" cancela a inscrição correspondente aqui; nunca sobrescreve existente; liga a
+  membresia pelo matcher (`acharOuCriarGuardado`, mesma política da porta pública).
+  Sem caminho pega o `retiro-ami-2027 - inscricoes*.csv` mais novo de ~/Downloads.
+  Roda de worktree (`.env`/`node_modules` do checkout principal via NODE_PATH).
+  Backup em `~/Downloads/_bk_<data>_import_einscricao_retiro.json`.
+- **Executado em 09/09/2026**: 24 inscrições (`CBR-2026-000408`…`431`), 14 ligadas a
+  cadastro existente + 10 cadastros novos, 0 falhas · bruto R$ 20.400 → **líquido
+  R$ 19.278**. Placar depois: E-Inscrição 24 · sistema 10 (R$ 5.810 pagos) · **34
+  posições de 350** · Lote 1 a R$ 830 com **16 restantes**.
+- **Placar por plataforma** no `GET /eventos/:id/resumo` → `contadores.por_plataforma`
+  (`resumoPorPlataforma`: externo {inscritos, valor_liquido_centavos} · sistema
+  {inscritos, arrecadado_centavos} · total) e o card "Por plataforma" na página do
+  evento (só aparece quando há inscrição externa). **`arrecadado_centavos` segue
+  sendo só o Pix nosso** — o dinheiro do E-Inscrição não tem `insc_pagamentos`.
+- **Etiqueta "E-Inscrição · Cartão 9x"** na linha da lista e no cabeçalho da ficha
+  (`INSCRITOS_COLS` ganhou `origem`); a ficha mostra o bloco "Pago no E-Inscrição"
+  (bruto · líquido · código · lote de lá) no lugar do bloco de pagamento nosso.
+
+### ⚠️⚠️ Lotes NÃO foram editados — e não devem ser
+
+A inscrição importada é linha viva não-cancelada ⇒ **JÁ ocupa posição** na régua do
+lote e da vaga (`fn_insc_inscrever` / `lotesEvento.loteAtual`). 24 lá + 10 aqui = 34
+posições do Lote 1 consumidas, "restam 16" — exatamente o "reduza as vagas do lote 1
+pela quantidade total" pedido. Reduzir `lotes[0].vagas` POR CIMA disso contaria a
+mesma pessoa duas vezes. ⚠️ A régua do E-Inscrição (850/880/900 · vagas do lote de
+LÁ) é gerida LÁ — alinhar o lote 1 deles pra 16 é ação manual do Arthur na plataforma.
+
+### Avisos da planilha de 08/09 (dados, não código)
+
+- **Laura Perassolli Moreno · nascimento 16/03/2025** como digitado (1 ano) — quase
+  certamente 2015; a data ficou como veio, corrigir na ficha depois de confirmar.
+- Ana Clara Costa Valente respondeu "Sim, Não" em "É membro" e deu igreja "Fonte da
+  Vida (Taquara)"; Pedro Gargalhone respondeu "X" nos campos do responsável (adulto —
+  o "X" é descartado, não vira bloco de menor).
+- Os 2 contatos de emergência vêm num campo só lá → ficam inteiros em
+  `c_retiro_emerg1` (dividir por vírgula/"e" erraria em metade das linhas).
+- A planilha é SNAPSHOT: quem comprar no cartão depois de 08/09 só entra rodando o
+  script de novo com a exportação nova.
+
 ## ⚠️⚠️ EXCLUIR EVENTO travava no card espelho do Marketing (2026-08-14 · migration `20260814190000`)
 
 Marcos, ao tentar apagar o "Dia Reforma Protestante": *"quero apagar o da reforma

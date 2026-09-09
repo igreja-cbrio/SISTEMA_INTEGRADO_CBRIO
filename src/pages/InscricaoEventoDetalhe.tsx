@@ -58,6 +58,23 @@ const STATUS_BADGE: Record<string, string> = {
   arquivado: 'bg-foreground/10 text-muted-foreground',
 };
 
+/** Inscrição importada da plataforma externa (cartão no E-Inscrição · 09/09/2026). */
+const ORIGEM_E_INSCRICAO = 'e_inscricao';
+const ehEInscricao = (i: any) => i?.origem === ORIGEM_E_INSCRICAO;
+const brl = (c: number | null | undefined) => (c == null ? '—' : (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
+
+/** Etiqueta "E-Inscrição" — a pessoa pagou LÁ (cartão); aqui só existe o registro importado. */
+function EInscricaoBadge({ inscricao, tamanho = 'xs' }: { inscricao: any; tamanho?: 'xs' | 'sm' }) {
+  const e = inscricao?.dados?.e_inscricao || {};
+  const detalhe = [e.forma_pagamento ? (METODO_LABEL[e.forma_pagamento] || e.forma_pagamento) : null, e.parcelas > 1 ? `${e.parcelas}x` : null].filter(Boolean).join(' ');
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full bg-sky-500/15 text-sky-700 dark:text-sky-300 font-medium px-2 py-0.5 shrink-0 ${tamanho === 'sm' ? 'text-xs' : 'text-[11px]'}`}
+      title={`Inscrita pelo ${e.plataforma || 'E-Inscrição'}${e.codigo ? ` · código ${e.codigo}` : ''}${detalhe ? ` · ${detalhe}` : ''}`}>
+      <ExternalLink className="h-3 w-3" /> E-Inscrição{detalhe ? ` · ${detalhe}` : ''}
+    </span>
+  );
+}
+
 /** Um número do placar. `dica` vira tooltip — o rótulo curto não cabe a régua. */
 function PlacarTile({ label, valor, cor, dica }: { label: string; valor: any; cor?: string; dica?: string }) {
   return (
@@ -577,6 +594,36 @@ export default function InscricaoEventoDetalhe() {
         </div>
       )}
 
+      {/* Por PLATAFORMA — o retiro vende em dois lugares: Pix aqui e cartão no
+          E-Inscrição (importado com o valor LÍQUIDO, taxa da plataforma já
+          descontada). O "Arrecadado" acima é só o que passou pelo nosso Pix. */}
+      {resumo?.por_plataforma && resumo.por_plataforma.externo?.inscritos > 0 && (
+        <Card className="glass-solid p-3">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">Por plataforma</div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+            <div className="rounded-lg border border-border p-2.5">
+              <div className="text-[11px] text-muted-foreground">Sistema (Pix)</div>
+              <div className="font-semibold tabular-nums">{resumo.por_plataforma.sistema.inscritos} inscritos</div>
+              <div className="text-xs text-muted-foreground tabular-nums">{brl(resumo.por_plataforma.sistema.arrecadado_centavos)} pagos</div>
+            </div>
+            <div className="rounded-lg border border-sky-500/40 bg-sky-500/5 p-2.5">
+              <div className="text-[11px] text-sky-700 dark:text-sky-300 inline-flex items-center gap-1"><ExternalLink className="h-3 w-3" /> {resumo.por_plataforma.externo.plataforma || 'E-Inscrição'} (cartão)</div>
+              <div className="font-semibold tabular-nums">{resumo.por_plataforma.externo.inscritos} inscritos</div>
+              <div className="text-xs text-muted-foreground tabular-nums" title="Valor que chega na conta: bruto menos a taxa retida pela plataforma">
+                {brl(resumo.por_plataforma.externo.valor_liquido_centavos)} líquidos
+              </div>
+            </div>
+            <div className="rounded-lg border border-primary/40 bg-primary/5 p-2.5">
+              <div className="text-[11px] text-primary">Total</div>
+              <div className="font-semibold tabular-nums">
+                {resumo.por_plataforma.total_inscritos} inscritos{ev.vagas ? <span className="text-muted-foreground font-normal"> de {ev.vagas} vagas</span> : null}
+              </div>
+              <div className="text-xs text-muted-foreground tabular-nums">{brl(resumo.por_plataforma.total_centavos)}</div>
+            </div>
+          </div>
+        </Card>
+      )}
+
       {/* Sorteio */}
       {(ev.tem_sorteio !== false) && (
         <Card className="glass-solid p-4">
@@ -773,6 +820,7 @@ export default function InscricaoEventoDetalhe() {
                         </span>
                       )}
                       {cancelada && <span className="rounded-full bg-red-500/10 text-red-600 text-[11px] font-medium px-2 py-0.5 shrink-0">cancelada</span>}
+                      {ehEInscricao(i) && <EInscricaoBadge inscricao={i} />}
                       {i.telefone && (
                         <a href={`https://wa.me/55${tel}`} target="_blank" rel="noreferrer"
                           title="Enviar WhatsApp" onClick={e => e.stopPropagation()}
@@ -1601,6 +1649,7 @@ function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, evento, 
               </span>
             )}
             {cancelada && <span className="rounded-full bg-red-500/10 text-red-600 text-xs font-medium px-2 py-0.5 shrink-0">cancelada</span>}
+            {ehEInscricao(inscricao) && <EInscricaoBadge inscricao={inscricao} tamanho="sm" />}
             {!editando && (
               <Button size="sm" variant="outline" className="ml-auto shrink-0" onClick={entrarEdicao}>
                 <Pencil className="h-3.5 w-3.5 mr-1" /> Editar
@@ -1708,6 +1757,34 @@ function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, evento, 
                   </div>
                 )}
               </div>
+
+              {/* Pagou no E-Inscrição: não há cobrança nossa — o que sabemos veio
+                  da planilha exportada de lá (bruto, forma, parcelas, código). */}
+              {ehEInscricao(inscricao) && !inscricao.pagamento && (
+                <div className="rounded-lg border border-sky-500/40 bg-sky-500/5 p-2.5">
+                  <div className="text-[11px] text-sky-700 dark:text-sky-300 uppercase tracking-wide mb-1 flex items-center gap-1">
+                    <ExternalLink className="h-3 w-3" /> Pago no {inscricao.dados?.e_inscricao?.plataforma || 'E-Inscrição'}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className="rounded-full text-xs font-medium px-2 py-0.5 bg-emerald-500/15 text-emerald-600">pago</span>
+                    {inscricao.dados?.e_inscricao?.forma_pagamento && (
+                      <span>{METODO_LABEL[inscricao.dados.e_inscricao.forma_pagamento] || inscricao.dados.e_inscricao.forma_pagamento}
+                        {inscricao.dados.e_inscricao.parcelas > 1 ? ` · ${inscricao.dados.e_inscricao.parcelas}x` : ''}
+                      </span>
+                    )}
+                    {inscricao.dados?.e_inscricao?.valor_bruto_centavos != null && (
+                      <span className="font-medium" title={`Taxa da plataforma: ${inscricao.dados.e_inscricao.taxa_pct ?? '—'}%`}>
+                        {brl(inscricao.dados.e_inscricao.valor_bruto_centavos)} bruto
+                        {inscricao.dados.e_inscricao.valor_liquido_centavos != null && ` · ${brl(inscricao.dados.e_inscricao.valor_liquido_centavos)} líquido`}
+                      </span>
+                    )}
+                    {inscricao.dados?.e_inscricao?.codigo && (
+                      <span className="text-[11px] font-mono text-muted-foreground" title="Código da inscrição na plataforma">{inscricao.dados.e_inscricao.codigo}</span>
+                    )}
+                    {inscricao.dados?.e_inscricao?.categoria && <span className="text-muted-foreground">{inscricao.dados.e_inscricao.categoria}</span>}
+                  </div>
+                </div>
+              )}
 
               {inscricao.pagamento && (
                 <div className="rounded-lg border border-border p-2.5">
