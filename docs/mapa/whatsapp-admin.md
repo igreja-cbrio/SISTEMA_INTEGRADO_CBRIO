@@ -36,6 +36,7 @@ Guard: `authorizeModule('whatsapp-admin', 3)`
 - `backend/services/whatsappGrupos.js`
 - `backend/services/whatsappSend.js`
 - `backend/services/whatsappService.js`
+- `backend/services/whatsappTesteDisparo.js`
 
 **Tabelas que estas rotas tocam**
 

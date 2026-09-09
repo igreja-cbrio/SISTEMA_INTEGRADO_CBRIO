@@ -16,7 +16,7 @@
 ## Backend
 - `backend/routes/comunicacao.js`
 Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
-<details><summary>Endpoints (36)</summary>
+<details><summary>Endpoints (39)</summary>
 - `DELETE /api/comunicacao/agendamentos/:id`
 - `GET /api/comunicacao/agendamentos`
 - `GET /api/comunicacao/atendentes`
@@ -24,6 +24,7 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `GET /api/comunicacao/bot-ia/areas`
 - `GET /api/comunicacao/bot-ia/config`
 - `GET /api/comunicacao/bot-ia/resumo`
+- `GET /api/comunicacao/conexao`
 - `GET /api/comunicacao/contatos`
 - `GET /api/comunicacao/conversas/:id/sugestao-grupo`
 - `GET /api/comunicacao/cron/agendamentos`
@@ -45,10 +46,12 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `POST /api/comunicacao/erros/:id/reenviar`
 - `POST /api/comunicacao/numeros`
 - `POST /api/comunicacao/templates/sync`
+- `POST /api/comunicacao/templates/testar`
 - `PUT /api/comunicacao/agendamentos/:id`
 - `PUT /api/comunicacao/atendentes/:id`
 - `PUT /api/comunicacao/bot-ia/areas/:area`
 - `PUT /api/comunicacao/bot-ia/config`
+- `PUT /api/comunicacao/conexao`
 - `PUT /api/comunicacao/equipe/:area`
 - `PUT /api/comunicacao/numeros/:id`
 - `PUT /api/comunicacao/tarifas/:categoria`
@@ -60,6 +63,7 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `backend/utils/appError.js`
 - `backend/utils/botIaRegras.js`
 - `backend/utils/comunicacaoDashboard.js`
+- `backend/utils/conexaoWhatsapp.js`
 - `backend/utils/cronAuth.js`
 - `backend/utils/equipeAtendimento.js`
 - `backend/utils/janelaPeriodo.js`
@@ -80,6 +84,7 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `backend/services/waStatusReconcile.js`
 - `backend/services/waTemplates.js`
 - `backend/services/whatsappFila.js`
+- `backend/services/whatsappTesteDisparo.js`
 
 **Tabelas que estas rotas tocam**
 
