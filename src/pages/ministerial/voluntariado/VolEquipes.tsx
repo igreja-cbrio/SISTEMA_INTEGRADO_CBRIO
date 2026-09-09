@@ -18,10 +18,15 @@ import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { voluntariado } from '@/api';
 import { toast } from 'sonner';
 import type { VolTeam, VolPosition } from './types';
+// varredura 2026-09: B08 — a escrita do módulo passou a exigir `voluntariado>=3`
+// no servidor; sem isto a tela mostrava o botão e o clique voltava 403.
+import { useVolPodeEscrever } from './hooks/useVolPodeEscrever';
 
 const TEAM_COLORS = ['#00B39D', '#3B82F6', '#EF4444', '#F59E0B', '#8B5CF6', '#EC4899', '#10B981', '#6366F1', '#F97316', '#14B8A6'];
 
 export default function VolEquipes() {
+  // varredura 2026-09: B08 — piso de escrita do módulo (espelha o servidor).
+  const podeEscrever = useVolPodeEscrever();
   const { data: teams = [], isLoading } = useVolTeamsManaged();
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -72,7 +77,8 @@ export default function VolEquipes() {
         <div className="flex gap-2">
           <ImportTeamsButton />
           <SyncMembersButton />
-          <Button onClick={() => setShowCreateDialog(true)} className="gap-1.5 bg-[#00B39D] hover:bg-[#00B39D]/90">
+          {/* varredura 2026-09: B08 — POST /teams-manage pede voluntariado>=3. */}
+          <Button onClick={() => setShowCreateDialog(true)} disabled={!podeEscrever} className="gap-1.5 bg-[#00B39D] hover:bg-[#00B39D]/90">
             <Plus className="h-4 w-4" /> Nova Equipe
           </Button>
         </div>
@@ -143,6 +149,7 @@ export default function VolEquipes() {
                         size="icon"
                         className="h-8 w-8 shrink-0"
                         onClick={e => { e.stopPropagation(); setEditTeam(team); }}
+                        disabled={!podeEscrever}
                         title="Editar equipe"
                       >
                         <Edit2 className="h-3.5 w-3.5" />
@@ -334,11 +341,13 @@ function MapearPcoDialog({ pcoNome, teams, onClose, onGravado }: {
 
 function ImportTeamsButton() {
   const importMut = useImportTeamsFromSchedules();
+  // varredura 2026-09: B08 — POST /teams-manage/import-from-schedules pede voluntariado>=3.
+  const podeEscrever = useVolPodeEscrever();
   return (
     <Button
       variant="outline"
       className="gap-1.5"
-      disabled={importMut.isPending}
+      disabled={importMut.isPending || !podeEscrever}
       onClick={() => {
         importMut.mutate(undefined, {
           onSuccess: (data: any) => toast.success(`${data.imported} equipes importadas`),
@@ -354,11 +363,13 @@ function ImportTeamsButton() {
 
 function SyncMembersButton() {
   const syncMut = useSyncTeamMembersFromSchedules();
+  // varredura 2026-09: B08 — POST /teams-manage/sync-members-from-schedules pede voluntariado>=3.
+  const podeEscrever = useVolPodeEscrever();
   return (
     <Button
       variant="outline"
       className="gap-1.5"
-      disabled={syncMut.isPending}
+      disabled={syncMut.isPending || !podeEscrever}
       onClick={() => {
         syncMut.mutate(undefined, {
           onSuccess: (data: any) =>
@@ -519,6 +530,8 @@ function TeamDetailDialog({ teamId, team, onClose }: { teamId: string | null; te
 }
 
 function TeamMembersList({ teamId, members, loading, positions }: { teamId: string; members: any[]; loading: boolean; positions: VolPosition[] }) {
+  // varredura 2026-09: B08 — POST/PUT/DELETE /team-members pedem voluntariado>=3.
+  const podeEscrever = useVolPodeEscrever();
   const addMember = useAddTeamMember();
   const removeMember = useRemoveTeamMember();
   const [showAdd, setShowAdd] = useState(false);
@@ -560,7 +573,8 @@ function TeamMembersList({ teamId, members, loading, positions }: { teamId: stri
   return (
     <div className="space-y-3">
       <div className="flex justify-end">
-        <Button size="sm" onClick={() => setShowAdd(!showAdd)} className="gap-1.5">
+        {/* varredura 2026-09: B08 — POST /team-members pede voluntariado>=3. */}
+        <Button size="sm" onClick={() => setShowAdd(!showAdd)} disabled={!podeEscrever} className="gap-1.5">
           <UserPlus className="h-4 w-4" /> Adicionar Membro
         </Button>
       </div>
@@ -742,6 +756,8 @@ function CultosDoMembro({ membro }: { membro: any }) {
 }
 
 function PositionsList({ teamId, positions }: { teamId: string; positions: VolPosition[] }) {
+  // varredura 2026-09: B08 — POST/DELETE /positions pedem voluntariado>=3.
+  const podeEscrever = useVolPodeEscrever();
   const createPosition = useCreatePosition();
   const deletePosition = useDeletePosition();
   const [showAdd, setShowAdd] = useState(false);
@@ -766,7 +782,8 @@ function PositionsList({ teamId, positions }: { teamId: string; positions: VolPo
   return (
     <div className="space-y-3">
       <div className="flex justify-end">
-        <Button size="sm" onClick={() => setShowAdd(!showAdd)} className="gap-1.5">
+        {/* varredura 2026-09: B08 — POST/DELETE /positions pedem voluntariado>=3. */}
+        <Button size="sm" onClick={() => setShowAdd(!showAdd)} disabled={!podeEscrever} className="gap-1.5">
           <Plus className="h-4 w-4" /> Nova Posição
         </Button>
       </div>

@@ -1,7 +1,8 @@
 const express = require('express');
 const multer = require('multer');
 const router = express.Router();
-const { authenticate, authorize, getEffectiveLevel } = require('../middleware/auth');
+// varredura 2026-09: `authorizeModule` entrou no import — as leituras de pessoa deste arquivo passaram a ser gateadas pela matriz cargo × módulo.
+const { authenticate, authorize, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
@@ -9,6 +10,8 @@ const { tipoVigenteEm } = require('../utils/lentesDomingo');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { reconciliarCpfTardio, propagarCpfConvertido } = require('../services/cpfReconciliar');
 const { cpfValido } = require('../utils/cpf');
+// varredura 2026-09: a `idade` da decisão era calculada no NAVEGADOR e o buscador parou de devolver o nascimento — o servidor passa a derivá-la. Reusa a régua que já existe (dia em BRT, não UTC).
+const { idadeEmAnos, hojeBRT } = require('../utils/inscricaoMenor');
 // Divisor da média de frequência da mandala = nº de DOMINGOS (régua pura · o
 // cabeçalho de utils/divisorMandala.js tem o porquê e os números medidos).
 const { divisorDomingos } = require('../utils/divisorMandala');
@@ -93,6 +96,56 @@ function authorizeBatismo(req, res, next) {
   return res.status(403).json({
     error: 'Sem permissão · necessário acesso a Batismo ou Integração',
   });
+}
+
+// ── varredura 2026-09 · LEITURA de pessoa neste arquivo (achado A02) ─────────
+// As ESCRITAS de culto/decisão/batismo já estavam em authorizeIntegracao /
+// authorizeBatismo (acima); só as LEITURAS ficaram com `authenticate` puro.
+// Medido em `profiles` (205 linhas): 184 contas role='assistente' ativas — o
+// voluntário comum com login, incluindo quem só usa o app — liam em JSON
+// `cultos_decisoes_pessoas` (218 linhas, com CPF, data_nascimento e o
+// responsável do menor) e `batismo_inscricoes` (634, com CPF, nascimento e
+// `possui_deficiencia`): convicção religiosa + saúde, art. 11 da LGPD.
+//
+// ⚠️ A régua de leitura SOMA com a régua da escrita. `authorizeModule` só olha a
+// matriz cargo × módulo; authorizeIntegracao/authorizeBatismo também aceitam
+// `profiles.kpi_areas` (fonte DIFERENTE de `usuario_areas`, que é a que gera o
+// boost da matriz). Sem somar, o dono legítimo do dado (líder de Integração por
+// kpi_areas) tomaria 403 na LISTA e continuaria com o botão de gravar.
+// ⚠️ O deny explícito por pessoa (`modulosBloqueados`) vence: é conferido ANTES
+// do atalho de kpi_areas, igual faz o `authorizeModule`.
+// ⚠️ Trava POR ROTA, nunca `router.use`: `/dashboard`, `/cultura` e `/metas`
+// deste arquivo são agregados sem PII e alimentam o /painel.
+const _gateIntegracaoLeitura = authorizeModule('integracao', 1);
+const _gateIntegracaoNominal = authorizeModule('integracao', 2);
+const _gateBatismoLeitura = authorizeModule('batismo-leitura', 1);
+
+// kpi_areas (profiles) inclui a área, e o módulo não está bloqueado por override.
+function _porAreaKpi(req, slug) {
+  const u = req.user || {};
+  if ((u.granular?.modulosBloqueados || []).includes(slug)) return false;
+  return (u.kpi_areas || []).map(a => String(a).toLowerCase()).includes(slug);
+}
+
+// Leitura de decisões (nível 1 = ver a lista do próprio módulo).
+function authorizeIntegracaoLeitura(req, res, next) {
+  if (_porAreaKpi(req, 'integracao')) return next();
+  return _gateIntegracaoLeitura(req, res, next);
+}
+
+// Leitura NOMINAL sobre a base inteira (buscador por CPF/nome) · exige nível 2,
+// a mesma régua de "resposta nominal" usada em membresia/censo.
+function authorizeIntegracaoNominal(req, res, next) {
+  if (_porAreaKpi(req, 'integracao')) return next();
+  return _gateIntegracaoNominal(req, res, next);
+}
+
+// Leitura de batismo · espelha authorizeBatismo em modo leitura: a tela
+// `/batismo` é gateada por `batismo` e a aba Batismos da Integração por
+// `integracao` (src/App.tsx:845-846), então as duas portas valem.
+function authorizeBatismoLeitura(req, res, next) {
+  if (_porAreaKpi(req, 'integracao')) return next();
+  return _gateBatismoLeitura(req, res, next);
 }
 
 // Helper: valida número >= 0 (rejeita negativos antes do INSERT/UPDATE)
@@ -229,7 +282,8 @@ router.get('/cultos/:id/voluntarios', async (req, res) => {
 // ── Decisões com dados das pessoas (cultos_decisoes_pessoas) ──────────────────
 // 1 row por pessoa que decidiu no culto · vincula opcionalmente a mem_membros.
 
-router.get('/cultos/:id/decisoes-pessoas', async (req, res) => {
+// varredura 2026-09: era só `authenticate` e devolvia nome/CPF/nascimento/responsável de quem decidiu — leitura de decisão agora exige Integração.
+router.get('/cultos/:id/decisoes-pessoas', authorizeIntegracaoLeitura, async (req, res) => {
   const { data, error } = await supabase
     .from('cultos_decisoes_pessoas')
     .select('id, culto_id, membro_id, nome, telefone, email, idade, data_nascimento, cpf, tipo_decisao, observacoes, status_followup, registrado_em, registrado_por, responsavel_nome, responsavel_telefone, responsavel_cpf')
@@ -243,7 +297,8 @@ router.get('/cultos/:id/decisoes-pessoas', async (req, res) => {
 // culto vinculado. Vem de mem_trilha_valores etapa='conversao' filtrando
 // por observacoes/origem. Alimenta a aba Pessoas em /integracao/decisoes
 // pra incluir esse histórico junto com as decisões registradas em cultos.
-router.get('/decisoes-pessoas/historico-importado', async (req, res) => {
+// varredura 2026-09: era só `authenticate` e devolvia CPF/nascimento de convertido importado — leitura de decisão agora exige Integração.
+router.get('/decisoes-pessoas/historico-importado', authorizeIntegracaoLeitura, async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 500, 2000);
     const desdeDias = Number(req.query.dias) || 365;
@@ -288,7 +343,8 @@ router.get('/decisoes-pessoas/historico-importado', async (req, res) => {
 // Decisões com cadastro incompleto (sem CPF ou sem data_nascimento)
 // Marcos: "futuramente quando tivermos esse convertido já alinhado na
 // jornada vamos conseguir buscar melhor esses dados em um censo posterior"
-router.get('/decisoes-pessoas/incompletos', async (req, res) => {
+// varredura 2026-09: era só `authenticate` e lista até 1.000 convertidos com CPF/nascimento — leitura de decisão agora exige Integração.
+router.get('/decisoes-pessoas/incompletos', authorizeIntegracaoLeitura, async (req, res) => {
   const limit = Math.min(Number(req.query.limit) || 200, 1000);
   const { data, error } = await supabase
     .from('cultos_decisoes_pessoas')
@@ -317,25 +373,30 @@ router.get('/decisoes-pessoas/incompletos', async (req, res) => {
 
 // Busca de membro/visitante por nome, CPF, email, telefone
 // Usada pelo autocomplete no modal antes de cadastrar manual
-router.get('/decisoes-pessoas/buscar-membro', async (req, res) => {
+// varredura 2026-09: com 5 dígitos de CPF isto era um oráculo CPF→nome/telefone/nascimento sobre 4.082 membros + 4.535 visitantes do WiFi — agora nível 2 em Integração.
+router.get('/decisoes-pessoas/buscar-membro', authorizeIntegracaoNominal, async (req, res) => {
   const q = String(req.query.q || '').trim();
   if (q.length < 2) return res.json([]);
 
   const cpfLimpo = q.replace(/\D/g, '');
-  const isCpf = cpfLimpo.length >= 5 && /^\d+$/.test(cpfLimpo);
+  // varredura 2026-09: exigia só PREFIXO de 5 dígitos (11 chamadas varrem o CPF inteiro) — agora só CPF COMPLETO busca por documento.
+  // varredura 2026-09 · sem `cpfValido` na BUSCA: o que mata a varredura por prefixo são os 11 DÍGITOS, não o DV. Medido em `mem_membros` vivos: 2.073 têm CPF (50,8%) e 4 deles têm DV INVÁLIDO (legado importado, todos com 11 dígitos). Exigir DV aqui faria o operador digitar o CPF ditado, não achar ninguém e cadastrar decisão NOVA — pessoa duplicada em vez de vínculo. A ESCRITA (POST, abaixo) continua exigindo DV: lá o CPF entra sob índice UNIQUE e um errado bloqueia o dono verdadeiro.
+  const isCpf = cpfLimpo.length === 11 && /^\d+$/.test(cpfLimpo);
   const escaped = q.replace(/[%_,()]/g, '\\$&');
 
   // 1) Membros cadastrados
   let memQuery = supabase
     .from('mem_membros')
-    .select('id, nome, email, telefone, cpf, data_nascimento, status')
+    // varredura 2026-09: `data_nascimento` saiu do select (ninguém mais o recebe) e o `cpf` fica só pra montar os 2 últimos dígitos e casar o filtro por documento.
+    .select('id, nome, email, telefone, cpf, status')
     .is('deleted_at', null)
     .limit(10);
 
   // 2) Pessoas da lista do WiFi (portal · podem ainda não ser membros)
   let wifiQuery = supabase
     .from('wifi_visitantes')
-    .select('nome, email, telefone, cpf, cpf_norm, tel_norm, membro_id, data_acesso')
+    // varredura 2026-09: `id` entrou no select — é a referência OPACA que o POST usa pra recompor o CPF do visitante (ver `wifi_id` no payload abaixo).
+    .select('id, nome, email, telefone, cpf, cpf_norm, tel_norm, membro_id, data_acesso')
     .is('deleted_at', null)
     .order('data_acesso', { ascending: false, nullsFirst: false })
     .limit(30);
@@ -359,7 +420,15 @@ router.get('/decisoes-pessoas/buscar-membro', async (req, res) => {
     console.error('[kpis/decisoes-pessoas buscar-membro wifi]', wifiRes.error.message);
   }
 
-  const out = (memRes.data || []).map(m => ({ ...m, membro_id: m.id, origem: 'membro' }));
+  // varredura 2026-09: o CPF e o nascimento NÃO voltam mais no payload — só os 2 últimos dígitos, o bastante pra desambiguar homônimo sem entregar o documento.
+  const doisUltimos = (v) => {
+    const d = String(v || '').replace(/\D/g, '');
+    return d ? d.slice(-2) : null;
+  };
+  const out = (memRes.data || []).map(m => ({
+    id: m.id, nome: m.nome, email: m.email, telefone: m.telefone, status: m.status,
+    cpf_final: doisUltimos(m.cpf), membro_id: m.id, origem: 'membro',
+  }));
   const idsMembro = new Set(out.map(m => m.id));
   const vistosWifi = new Set();
 
@@ -370,13 +439,16 @@ router.get('/decisoes-pessoas/buscar-membro', async (req, res) => {
     if (!chave || vistosWifi.has(chave)) continue;
     vistosWifi.add(chave);
     out.push({
-      id: w.membro_id || `wifi:${chave}`,
+      // varredura 2026-09: o id deixava de fora a máscara — `chave` é o `cpf_norm` (todos os 4.535 visitantes vivos têm), então `wifi:<chave>` devolvia o CPF INTEIRO no payload. Agora vai o id opaco da linha.
+      id: w.membro_id || `wifi:${w.id}`,
       membro_id: w.membro_id || null,
+      // varredura 2026-09: referência OPACA da linha do WiFi — o POST recompõe o CPF a partir dela (mesma ideia da recomposição por `membro_id`). Sem isto a decisão do visitante nasce SEM documento, cai em `/decisoes-pessoas/incompletos` e o trigger que resolve/cria `mem_membros` passa a casar só por nome/telefone.
+      wifi_id: w.id,
       nome: w.nome,
       email: w.email,
       telefone: w.telefone,
-      cpf: w.cpf_norm || (w.cpf || '').replace(/\D/g, '') || null,
-      data_nascimento: null,
+      // varredura 2026-09: mesma máscara do ramo de membros — o visitante do WiFi nunca consentiu com consulta de documento.
+      cpf_final: doisUltimos(w.cpf_norm || w.cpf),
       status: w.membro_id ? null : 'visitante',
       origem: 'wifi',
     });
@@ -468,6 +540,7 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
     nome, telefone, email, idade, data_nascimento, cpf,
     tipo_decisao, observacoes, membro_id,
     responsavel_nome, responsavel_telefone, responsavel_cpf,
+    wifi_id, // varredura 2026-09: referência opaca devolvida pelo buscador pro visitante de WiFi — o CPF dele não trafega mais, é recomposto abaixo.
   } = req.body || {};
 
   if (!nome || String(nome).trim().length < 2) {
@@ -482,6 +555,8 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
   //   obrigatório · CPF responsável opcional)
   let telLimpo = telefone ? String(telefone).replace(/\D/g, '') : '';
   let cpfLimpo = cpf ? String(cpf).replace(/\D/g, '') : null;
+  // varredura 2026-09: o buscador parou de devolver cpf/nascimento, então o valor agora é recomposto do CADASTRO abaixo (a tela já não tem o que copiar).
+  let nascLimpo = data_nascimento || null;
   let respTelLimpo = responsavel_telefone ? String(responsavel_telefone).replace(/\D/g, '') : '';
   let respCpfLimpo = responsavel_cpf ? String(responsavel_cpf).replace(/\D/g, '') : null;
 
@@ -512,6 +587,50 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
     }
   }
 
+  // varredura 2026-09: compensa o buscador mascarado — pessoa JÁ VINCULADA tem
+  // CPF e nascimento no cadastro, e sem isto a decisão nasceria vazia e cairia
+  // no relatório de `/decisoes-pessoas/incompletos` (fonte passa a ser o
+  // cadastro, não o navegador). Só consulta quando falta algo.
+  if (membro_id && tipo !== 'kids' && (!cpfLimpo || !nascLimpo)) {
+    const { data: cad } = await supabase
+      .from('mem_membros')
+      .select('cpf, data_nascimento')
+      .eq('id', membro_id)
+      .maybeSingle();
+    if (cad) {
+      if (!cpfLimpo && cad.cpf) cpfLimpo = String(cad.cpf).replace(/\D/g, '') || null;
+      if (!nascLimpo && cad.data_nascimento) nascLimpo = cad.data_nascimento;
+    }
+  }
+
+  // varredura 2026-09: mesma recomposição pro ramo do WiFi. O visitante não tem
+  // linha em `mem_membros` (é justamente quem o trigger vai criar), então sem
+  // isto a decisão nasce SEM CPF — o dado que `/decisoes-pessoas/incompletos`
+  // cobra — e o trigger passa a casar só por nome/telefone. Só consulta quando
+  // falta: um CPF digitado na mão (já validado no DV acima) vence a referência.
+  if (wifi_id && tipo !== 'kids' && !cpfLimpo) {
+    const { data: vis } = await supabase
+      .from('wifi_visitantes')
+      .select('cpf, cpf_norm')
+      .eq('id', wifi_id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    const dVis = String(vis?.cpf_norm || vis?.cpf || '').replace(/\D/g, '');
+    if (dVis.length === 11) cpfLimpo = dVis;
+  }
+
+  // varredura 2026-09: a `idade` vinha calculada do NAVEGADOR a partir do
+  // nascimento que o buscador deixou de devolver — sem derivar aqui ela nasceria
+  // NULL pra TODA decisão de membro vinculado. Deriva do nascimento já recomposto
+  // acima; `hojeBRT` porque das 21h do Rio em diante o dia UTC já virou e quem
+  // faz aniversário amanhã contaria um ano a mais. Faixa 0–120 espelha a mesma
+  // sanidade que a tela aplicava (`calcularIdade` em CalendarioCultos.jsx).
+  let idadeFinal = idade ? Number(idade) : null;
+  if (idadeFinal == null && nascLimpo) {
+    const derivada = idadeEmAnos(nascLimpo, hojeBRT());
+    if (derivada !== null && derivada >= 0 && derivada <= 120) idadeFinal = derivada;
+  }
+
   // Se não veio membro_id explicito, trigger BEFORE INSERT resolve/cria
   // (trigger pula tipo='kids' · não cria mem_membros pra criança por LGPD)
   const { data, error } = await supabase
@@ -522,8 +641,8 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
       nome: String(nome).trim(),
       telefone: telLimpo || null,
       email: email ? String(email).trim().toLowerCase() : null,
-      idade: idade ? Number(idade) : null,
-      data_nascimento: data_nascimento || null,
+      idade: idadeFinal, // varredura 2026-09: derivada do nascimento quando a tela não mandou (o buscador não devolve mais o nascimento pra ela calcular).
+      data_nascimento: nascLimpo, // varredura 2026-09: valor já recomposto do cadastro quando a tela não tinha o dado.
       cpf: cpfLimpo,
       tipo_decisao: tipo,
       observacoes: observacoes || null,
@@ -785,7 +904,8 @@ router.get('/cultos/auto-create', cultosAutoCreate);
 router.post('/cultos/auto-create', cultosAutoCreate);
 
 // ── Batismos ──────────────────────────────────────────────────────────────────
-router.get('/batismos', async (req, res) => {
+// varredura 2026-09: era só `authenticate` e devolve as 634 inscrições com CPF, nascimento e `possui_deficiencia` (inclusive de criança) — agora exige Batismo ou Integração.
+router.get('/batismos', authorizeBatismoLeitura, async (req, res) => {
   const { status } = req.query;
   let query = supabase
     .from('batismo_inscricoes')
@@ -820,7 +940,8 @@ router.get('/batismos', async (req, res) => {
   const DIA_MS = 86400000;
   const enriched = inscricoes.map(b => {
     // NÃO vaza o token de acesso (codigo_acesso) nem o código de conferência:
-    // esta rota é só `authenticate` (não gated a integração) e o codigo_acesso é
+    // varredura 2026-09: a rota deixou de ser só `authenticate` (agora Batismo ou
+    // Integração), mas o token continua FORA do payload — o codigo_acesso é
     // credencial das fotos. Quem precisa vê via fluxos gated (check-in / recuperação).
     const { codigo_acesso, codigo_conferencia, ...b2 } = b;
     b = b2;
@@ -843,7 +964,8 @@ router.get('/batismos', async (req, res) => {
 // acompanha aqui quem ja foi batizado, quem esta inscrito e quem ainda falta —
 // independente do acompanhamento pastoral (Cuidados). Cruza cui_convertidos com
 // batismo_inscricoes por membro_id, CPF ou nome. Paginado (cap de 1000 do PostgREST).
-router.get('/batismos/cobertura-convertidos', async (req, res) => {
+// varredura 2026-09: era só `authenticate` e devolve nome/telefone de cada convertido ainda não batizado — mesma régua do GET /batismos (a tela é a mesma).
+router.get('/batismos/cobertura-convertidos', authorizeBatismoLeitura, async (req, res) => {
   try {
     const onlyDigits = (v) => String(v || '').replace(/\D/g, '');
     const fetchAll = async (table, columns) => {

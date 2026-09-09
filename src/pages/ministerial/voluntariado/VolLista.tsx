@@ -19,6 +19,8 @@ import {
 } from './hooks';
 import VolDetalheDialog from './VolDetalheDialog';
 import MarcadoresJornada from '@/components/MarcadoresJornada';
+// varredura 2026-09: B08 — espelha a régua de escrita do servidor.
+import { useVolPodeEscrever } from './hooks/useVolPodeEscrever';
 
 type Tab = 'todos' | 'fila';
 
@@ -93,6 +95,8 @@ function waBday(tel?: string | null, msg?: string) {
 }
 
 function AniversariantesSemana() {
+  // varredura 2026-09: B08 — POST /aniversariantes/:id/parabenizar pede voluntariado>=3.
+  const podeEscrever = useVolPodeEscrever();
   const { data } = useQuery({ queryKey: ['vol', 'aniversariantes'], queryFn: () => voluntariado.aniversariantesSemana() });
   const rows: any[] = Array.isArray((data as any)?.rows) ? (data as any).rows : [];
   const [msg, setMsg] = useState<string>(() => {
@@ -174,7 +178,7 @@ function AniversariantesSemana() {
                       <CheckCircle2 className="h-3.5 w-3.5" /> Enviado
                     </Button>
                   ) : wa ? (
-                    <Button size="sm" disabled={enviandoId === r.vol_profile_id} onClick={() => parabenizar(r)} className="h-8 gap-1.5 bg-[#25D366] hover:bg-[#25D366]/85 text-white">
+                    <Button size="sm" disabled={enviandoId === r.vol_profile_id || !podeEscrever} onClick={() => parabenizar(r)} className="h-8 gap-1.5 bg-[#25D366] hover:bg-[#25D366]/85 text-white">
                       <MessageCircle className="h-3.5 w-3.5" /> {enviandoId === r.vol_profile_id ? 'Enviando…' : 'Parabenizar'}
                     </Button>
                   ) : (
@@ -207,6 +211,10 @@ function AniversariantesSemana() {
 
 // ── Lista principal ──────────────────────────────────────────────────────────
 function TodosList() {
+  // varredura 2026-09: B08 — sync do PCO, alocar em equipe e remover de equipe
+  // pedem voluntariado>=3. ⚠️ "Adicionar" (POST /profiles) NÃO entra: é a mesma
+  // rota do totem, que segue em membresia>=1 de propósito.
+  const podeEscrever = useVolPodeEscrever();
   const { data: pool = [], isLoading } = useVolunteersPool(true); // inclui arquivados p/ o card/filtro
   const sync = useSyncPlanningCenter();
   const queryClient = useQueryClient();
@@ -330,7 +338,7 @@ function TodosList() {
           <Button size="sm" className="gap-2 flex-1 sm:flex-none bg-[#00B39D] hover:bg-[#00B39D]/80" onClick={() => setShowAdd(true)}>
             <UserPlus className="h-4 w-4" /> Adicionar
           </Button>
-          <Button size="sm" variant="outline" className="gap-2 flex-1 sm:flex-none" onClick={handleSync} disabled={sync.isPending}>
+          <Button size="sm" variant="outline" className="gap-2 flex-1 sm:flex-none" onClick={handleSync} disabled={sync.isPending || !podeEscrever}>
             {sync.isPending ? <RefreshCw className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             Sincronizar
           </Button>
@@ -571,8 +579,9 @@ function TodosList() {
                     <span key={tm.id} className="inline-flex items-center gap-1.5 text-xs px-2 py-1 rounded-full bg-muted">
                       {tm.team?.color && <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: tm.team.color }} />}
                       {tm.team?.name}{tm.position ? ` · ${tm.position.name}` : ''}
-                      <button onClick={() => removeMember.mutate(tm.id)} disabled={removeMember.isPending}
-                        className="text-muted-foreground hover:text-red-600" title="Remover desta equipe"><X className="h-3 w-3" /></button>
+                      {/* varredura 2026-09: B08 — DELETE /team-members/:id pede voluntariado>=3. */}
+                      <button onClick={() => removeMember.mutate(tm.id)} disabled={removeMember.isPending || !podeEscrever}
+                        className="text-muted-foreground hover:text-red-600 disabled:opacity-40" title="Remover desta equipe"><X className="h-3 w-3" /></button>
                     </span>
                   ))}
                 </div>
@@ -594,7 +603,8 @@ function TodosList() {
                     ))}
                   </SelectContent>
                 </Select>
-                <Button className="bg-[#00B39D] hover:bg-[#00B39D]/80" disabled={!addTeam || allocate.isPending}
+                {/* varredura 2026-09: B08 — POST /allocate/:id pede voluntariado>=3. */}
+                <Button className="bg-[#00B39D] hover:bg-[#00B39D]/80" disabled={!addTeam || allocate.isPending || !podeEscrever}
                   onClick={() => allocate.mutate({ id: gvol.id, team_id: addTeam }, {
                     onSuccess: () => { toast.success('Equipe atribuída'); setAddTeam(''); },
                     onError: (e: any) => toast.error(e.message || 'Erro ao atribuir'),
@@ -618,6 +628,8 @@ function TodosList() {
 
 // ── Fila de Alocação ─────────────────────────────────────────────────────────
 function FilaAlocacao() {
+  // varredura 2026-09: B08 — POST /allocate/:id pede voluntariado>=3.
+  const podeEscrever = useVolPodeEscrever();
   const { data: queue = [], isLoading } = useWaitingAllocation();
   const { data: teams = [] } = useVolTeamsManaged();
   const allocate = useAllocateVolunteer();
@@ -687,6 +699,7 @@ function FilaAlocacao() {
               <Button
                 size="sm"
                 className="bg-[#00B39D] hover:bg-[#00B39D]/80 gap-1.5 shrink-0"
+                disabled={!podeEscrever}
                 onClick={() => { setAllocating(vol); setSelectedTeam(''); }}
               >
                 <UserCheck className="h-3.5 w-3.5" /> Alocar

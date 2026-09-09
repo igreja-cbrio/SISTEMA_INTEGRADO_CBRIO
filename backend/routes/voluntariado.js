@@ -104,6 +104,35 @@ router.get('/cron/emails', requireCron, async (req, res) => {
 
 router.use(authenticate, authorizeModule('membresia', 1));
 
+// ── varredura 2026-09: B08 — escrita do voluntariado exige `voluntariado>=3` ──
+// varredura 2026-09: B08 — o `router.use` acima só pede `membresia>=1`, e era o
+// único dono das ~35 rotas de ESCRITA deste arquivo: quem tinha membresia 1 e
+// voluntariado.escrita < 3 (36 contas de staff) criava/apagava culto, escala,
+// equipe, função e perfil de voluntário — e 20 dos `.delete()` daqui são
+// FÍSICOS, sem `deleted_at`.
+//
+// ⚠️ O gate é POR ROTA (LEI da casa), `authorizeModule('voluntariado', 3)`
+// declarado em cada `router.post/put/patch/delete`. NÃO existe `router.use`
+// condicional por método nem lista de exceções: rota nova nasce sem gate e
+// tem que ser decidida na hora de escrever, não herdada por regex.
+//
+// ⚠️ Quem NÃO leva o gate 3, e por quê (conferido rota a rota em 2026-09):
+//  (a) SELF-SERVICE / PORTA DO CULTO — `/me*`, `/my-*`, `/self-checkin`,
+//      `/quero-servir`, `/qr-lookup`, `/face/match`, `/check-ins`,
+//      `/check-ins/manha`, `POST /profiles`, `PUT /profiles/:id/contact`.
+//      O handler resolve a pessoa pelo token, ou é o ato de quem chegou no
+//      culto: `/voluntariado/checkin/*` e `/voluntariado/totem` são
+//      `ProtectedRoute` SEM ModuleGuard no App.tsx. Segue valendo o
+//      `membresia>=1` global. (`VOLUNTARIADO_SELF_SERVICE_PATTERNS` em
+//      auth.js:577 existiria pra isso e está DORMENTE: exige `'Membresia'`
+//      com M maiúsculo e `ROUTE_MODULE_MAP['membresia']` é minúsculo.)
+//  (b) RÉGUA PRÓPRIA já declarada — `/frequencia/*` (membresia 2),
+//      `/inscricoes*` (podeOperarInscricaoVol/nivelTriagem), `/antecedentes*`
+//      (nivelTriagem), `/acessos*` (soAdmin), `/roles*` e `/service-types*`
+//      (voluntariado 5), `/schedule-templates*` (authEscalaEscrita = 3).
+//      LEI: as duas réguas SOMAM, não se substituem — pôr 3 por cima daria
+//      403 no dono legítimo dessas rotas.
+
 // Disparo de e-mails pros voluntários (composer + segmentos + histórico).
 // Sub-router exige voluntariado>=3 em todas as rotas.
 router.use('/emails', require('./volEmails'));
@@ -1370,7 +1399,8 @@ const MSG_RESULTADO = {
   template_nao_configurado: 'Template de aniversário não configurado na Meta/env.',
   wpp_nao_configurado: 'WhatsApp não configurado.',
 };
-router.post('/aniversariantes/:volProfileId/parabenizar', async (req, res) => {
+// varredura 2026-09: B08 — dispara parabens em nome da igreja pro voluntario; gate POR ROTA (LEI 1).
+router.post('/aniversariantes/:volProfileId/parabenizar', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const volId = req.params.volProfileId;
     const { data: vp } = await supabase.from('vol_profiles')
@@ -1455,7 +1485,8 @@ router.post('/profiles', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao criar perfil' }); }
 });
 
-router.put('/profiles/:id', async (req, res) => {
+// varredura 2026-09: B08 — edita o perfil de QUALQUER voluntario (o self-service e PUT /me); gate POR ROTA (LEI 1).
+router.put('/profiles/:id', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { full_name, email, planning_center_id, avatar_url } = req.body;
     const { data, error } = await supabase.from('vol_profiles')
@@ -1922,7 +1953,9 @@ router.get('/roles', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar roles' }); }
 });
 
-router.post('/roles', async (req, res) => {
+// varredura 2026-09: B08 — `vol_user_roles` CONCEDE papel (admin/leader/volunteer):
+// é autorização, e o piso 3 do módulo não basta pra dar papel de admin a alguém.
+router.post('/roles', authorizeModule('voluntariado', 5), async (req, res) => {
   try {
     const { profile_id, role } = req.body;
     if (!profile_id || !role) return res.status(400).json({ error: 'profile_id e role obrigatórios' });
@@ -1932,7 +1965,8 @@ router.post('/roles', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao adicionar role' }); }
 });
 
-router.delete('/roles/:profileId/:role', async (req, res) => {
+// varredura 2026-09: B08 — remover papel é o mesmo poder de conceder (ver POST /roles).
+router.delete('/roles/:profileId/:role', authorizeModule('voluntariado', 5), async (req, res) => {
   try {
     const { error } = await supabase.from('vol_user_roles')
       .delete().eq('profile_id', req.params.profileId).eq('role', req.params.role);
@@ -2210,7 +2244,8 @@ router.post('/vincular-membros', authorizeModule('voluntariado', 3), async (req,
   }
 });
 
-router.post('/allocate/:id', async (req, res) => {
+// varredura 2026-09: B08 — aloca voluntario em equipe/funcao; gate POR ROTA (LEI 1).
+router.post('/allocate/:id', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { id } = req.params;
     const { team_id, position_id } = req.body;
@@ -3072,7 +3107,8 @@ router.get('/volunteer-qrcodes', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar QR codes' }); }
 });
 
-router.post('/volunteer-qrcodes', async (req, res) => {
+// varredura 2026-09: B08 — emite QR de voluntario (credencial de check-in); gate POR ROTA (LEI 1).
+router.post('/volunteer-qrcodes', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { planning_center_person_id, volunteer_name, avatar_url } = req.body;
     if (!planning_center_person_id || !volunteer_name) return res.status(400).json({ error: 'Campos obrigatorios' });
@@ -3087,7 +3123,8 @@ router.post('/volunteer-qrcodes', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // FACE DESCRIPTORS
 // ══════════════════════════════════════════════════════════════
-router.post('/face/save-profile', async (req, res) => {
+// varredura 2026-09: B08 — grava biometria facial de terceiro; gate POR ROTA (LEI 1).
+router.post('/face/save-profile', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { profile_id, descriptor, photo_url } = req.body;
     if (!profile_id || !descriptor) return res.status(400).json({ error: 'profile_id e descriptor obrigatórios' });
@@ -3099,7 +3136,8 @@ router.post('/face/save-profile', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao salvar face descriptor' }); }
 });
 
-router.post('/face/save-qrcode', async (req, res) => {
+// varredura 2026-09: B08 — grava biometria facial de terceiro; gate POR ROTA (LEI 1).
+router.post('/face/save-qrcode', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { qrcode_id, descriptor, photo_url } = req.body;
     if (!qrcode_id || !descriptor) return res.status(400).json({ error: 'qrcode_id e descriptor obrigatórios' });
@@ -3209,7 +3247,8 @@ router.get('/training-checkins', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar training checkins' }); }
 });
 
-router.post('/training-checkins', async (req, res) => {
+// varredura 2026-09: B08 — lanca presenca de treinamento de terceiro; gate POR ROTA (LEI 1).
+router.post('/training-checkins', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { service_id, volunteer_name, team_name, phone } = req.body;
     if (!volunteer_name || !team_name) return res.status(400).json({ error: 'volunteer_name e team_name obrigatórios' });
@@ -3282,7 +3321,8 @@ router.get('/team/:teamId/members', async (req, res) => {
 });
 
 // POST /api/voluntariado/1x1 - registrar reunião 1x1
-router.post('/1x1', async (req, res) => {
+// varredura 2026-09: B08 — registra 1x1 de acompanhamento; gate POR ROTA (LEI 1).
+router.post('/1x1', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { volunteer_profile_id, team_id, meeting_date, observacoes } = req.body;
     if (!volunteer_profile_id || !team_id) {
@@ -3324,7 +3364,8 @@ router.post('/1x1', async (req, res) => {
 });
 
 // DELETE /api/voluntariado/1x1/:id - desfazer marcacao
-router.delete('/1x1/:id', async (req, res) => {
+// varredura 2026-09: B08 — apaga 1x1 - DELETE fisico; gate POR ROTA (LEI 1).
+router.delete('/1x1/:id', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { error } = await supabase.from('vol_1x1_meetings').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -3352,7 +3393,8 @@ router.get('/teams', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // PLANNING CENTER SEARCH/GET (proxy)
 // ══════════════════════════════════════════════════════════════
-router.post('/pc/search-people', async (req, res) => {
+// varredura 2026-09: B08 — consulta o Planning Center com a credencial da igreja; gate POR ROTA (LEI 1).
+router.post('/pc/search-people', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { query } = req.body;
     if (!query || query.trim().length < 2) return res.status(400).json({ error: 'Query minimo 2 caracteres' });
@@ -3372,7 +3414,8 @@ router.post('/pc/search-people', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar no PC' }); }
 });
 
-router.post('/pc/get-person', async (req, res) => {
+// varredura 2026-09: B08 — consulta o Planning Center com a credencial da igreja; gate POR ROTA (LEI 1).
+router.post('/pc/get-person', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { person_id } = req.body;
     if (!person_id) return res.status(400).json({ error: 'person_id obrigatorio' });
@@ -3449,7 +3492,8 @@ router.delete('/service-types/:id', authorizeModule('voluntariado', 5), async (r
 });
 
 // Generate services from service type recurrence pattern
-router.post('/service-types/:id/generate', async (req, res) => {
+// varredura 2026-09: B08 — gera cultos em lote a partir do tipo; gate POR ROTA (LEI 1).
+router.post('/service-types/:id/generate', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { weeks, year } = req.body;
 
@@ -3530,7 +3574,8 @@ router.post('/service-types/:id/generate', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // SERVICES — Manual creation/update/delete
 // ══════════════════════════════════════════════════════════════
-router.post('/services', async (req, res) => {
+// varredura 2026-09: B08 — cria culto; gate POR ROTA (LEI 1).
+router.post('/services', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { name, service_type_name, service_type_id, scheduled_at, forcar } = req.body;
     if (!name || !scheduled_at) return res.status(400).json({ error: 'name e scheduled_at obrigatórios' });
@@ -3566,7 +3611,8 @@ router.post('/services', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao criar culto' }); }
 });
 
-router.put('/services/:id', async (req, res) => {
+// varredura 2026-09: B08 — edita culto; gate POR ROTA (LEI 1).
+router.put('/services/:id', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { name, service_type_name, scheduled_at } = req.body;
     const { data, error } = await supabase.from('vol_services')
@@ -3576,7 +3622,8 @@ router.put('/services/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar culto' }); }
 });
 
-router.delete('/services/:id', async (req, res) => {
+// varredura 2026-09: B08 — apaga culto - DELETE fisico; gate POR ROTA (LEI 1).
+router.delete('/services/:id', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { error } = await supabase.from('vol_services').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -3597,7 +3644,8 @@ router.get('/teams-manage', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar equipes' }); }
 });
 
-router.post('/teams-manage', async (req, res) => {
+// varredura 2026-09: B08 — cria equipe; gate POR ROTA (LEI 1).
+router.post('/teams-manage', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { name, description, color, leader_profile_id, sort_order, area, split_por_horario } = req.body;
     if (!name) return res.status(400).json({ error: 'name obrigatorio' });
@@ -3611,7 +3659,8 @@ router.post('/teams-manage', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao criar equipe' }); }
 });
 
-router.put('/teams-manage/:id', async (req, res) => {
+// varredura 2026-09: B08 — edita equipe; gate POR ROTA (LEI 1).
+router.put('/teams-manage/:id', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { name, description, color, leader_profile_id, is_active, sort_order, area, split_por_horario } = req.body;
     // ⚠️ `undefined` é descartado pelo JSON.stringify do supabase-js, então
@@ -3627,7 +3676,8 @@ router.put('/teams-manage/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar equipe' }); }
 });
 
-router.delete('/teams-manage/:id', async (req, res) => {
+// varredura 2026-09: B08 — apaga equipe - DELETE fisico; gate POR ROTA (LEI 1).
+router.delete('/teams-manage/:id', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { error } = await supabase.from('vol_teams').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -3649,7 +3699,8 @@ router.get('/positions', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar posições' }); }
 });
 
-router.post('/positions', async (req, res) => {
+// varredura 2026-09: B08 — cria funcao; gate POR ROTA (LEI 1).
+router.post('/positions', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { team_id, name, description, min_volunteers, max_volunteers, sort_order } = req.body;
     if (!team_id || !name) return res.status(400).json({ error: 'team_id e name obrigatórios' });
@@ -3660,7 +3711,8 @@ router.post('/positions', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao criar posição' }); }
 });
 
-router.put('/positions/:id', async (req, res) => {
+// varredura 2026-09: B08 — edita funcao; gate POR ROTA (LEI 1).
+router.put('/positions/:id', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { name, description, min_volunteers, max_volunteers, is_active, sort_order } = req.body;
     const { data, error } = await supabase.from('vol_positions')
@@ -3671,7 +3723,8 @@ router.put('/positions/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar posição' }); }
 });
 
-router.delete('/positions/:id', async (req, res) => {
+// varredura 2026-09: B08 — apaga funcao - DELETE fisico; gate POR ROTA (LEI 1).
+router.delete('/positions/:id', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { error } = await supabase.from('vol_positions').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -3695,7 +3748,8 @@ router.get('/team-members', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar membros da equipe' }); }
 });
 
-router.post('/team-members', async (req, res) => {
+// varredura 2026-09: B08 — poe voluntario na equipe; gate POR ROTA (LEI 1).
+router.post('/team-members', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { team_id, position_id, volunteer_profile_id, planning_center_person_id, volunteer_name } = req.body;
     if (!team_id || !volunteer_name) return res.status(400).json({ error: 'team_id e volunteer_name obrigatórios' });
@@ -3713,7 +3767,8 @@ router.post('/team-members', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao adicionar membro a equipe' }); }
 });
 
-router.put('/team-members/:id', async (req, res) => {
+// varredura 2026-09: B08 — edita o vinculo do voluntario com a equipe; gate POR ROTA (LEI 1).
+router.put('/team-members/:id', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { position_id, is_active, service_type_ids } = req.body;
 
@@ -3771,7 +3826,8 @@ router.put('/team-members/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar membro' }); }
 });
 
-router.delete('/team-members/:id', async (req, res) => {
+// varredura 2026-09: B08 — tira voluntario da equipe - DELETE fisico; gate POR ROTA (LEI 1).
+router.delete('/team-members/:id', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { error } = await supabase.from('vol_team_members').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -3897,7 +3953,8 @@ router.get('/availability', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar disponibilidade' }); }
 });
 
-router.post('/availability', async (req, res) => {
+// varredura 2026-09: B08 — indisponibilidade de QUALQUER voluntario (o self-service e /my-availability); gate POR ROTA (LEI 1).
+router.post('/availability', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { volunteer_profile_id, planning_center_person_id, unavailable_from, unavailable_to, reason } = req.body;
     if (!unavailable_from || !unavailable_to) return res.status(400).json({ error: 'Datas obrigatorias' });
@@ -3912,7 +3969,8 @@ router.post('/availability', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao registrar indisponibilidade' }); }
 });
 
-router.delete('/availability/:id', async (req, res) => {
+// varredura 2026-09: B08 — apaga indisponibilidade de terceiro - DELETE fisico; gate POR ROTA (LEI 1).
+router.delete('/availability/:id', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { error } = await supabase.from('vol_availability').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -4011,7 +4069,8 @@ async function _separarPorDisponibilidade(service_id, pessoas) {
   return { ok, pulados };
 }
 
-router.post('/schedules', async (req, res) => {
+// varredura 2026-09: B08 — escala voluntario no culto; gate POR ROTA (LEI 1).
+router.post('/schedules', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { service_id, volunteer_id, volunteer_name, team_id, team_name, position_id, position_name, planning_center_person_id, notes, forcar } = req.body;
     if (!service_id || !volunteer_name) return res.status(400).json({ error: 'service_id e volunteer_name obrigatórios' });
@@ -4052,7 +4111,8 @@ router.post('/schedules', async (req, res) => {
 });
 
 // Update schedule entry
-router.put('/schedules/:id', async (req, res) => {
+// varredura 2026-09: B08 — edita escala; gate POR ROTA (LEI 1).
+router.put('/schedules/:id', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { team_id, team_name, position_id, position_name, confirmation_status, notes } = req.body;
     const updates = {};
@@ -4071,7 +4131,8 @@ router.put('/schedules/:id', async (req, res) => {
 });
 
 // Delete schedule entry
-router.delete('/schedules/:id', async (req, res) => {
+// varredura 2026-09: B08 — tira voluntario da escala - DELETE fisico; gate POR ROTA (LEI 1).
+router.delete('/schedules/:id', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { error } = await supabase.from('vol_schedules').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -4084,7 +4145,8 @@ router.delete('/schedules/:id', async (req, res) => {
 // ⚠️ É o caminho do "escalar os N marcados" do painel lateral (13/08/2026) e,
 // como faz INSERT em lote, NÃO passava pelo `POST /schedules` — ou seja, a
 // trava de disponibilidade não o alcançava. Mesmo furo que o `/copy` teve.
-router.post('/schedules/bulk', async (req, res) => {
+// varredura 2026-09: B08 — escala em lote; gate POR ROTA (LEI 1).
+router.post('/schedules/bulk', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { service_id, assignments, forcar } = req.body;
     if (!service_id || !Array.isArray(assignments) || !assignments.length) {
@@ -4146,7 +4208,8 @@ router.post('/schedules/bulk', async (req, res) => {
  * não é enfeite: sem ele, um id de outro culto no payload apagaria escala que
  * ninguém estava vendo.
  */
-router.post('/schedules/desfazer-lote', async (req, res) => {
+// varredura 2026-09: B08 — desfaz lote de escala; gate POR ROTA (LEI 1).
+router.post('/schedules/desfazer-lote', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { service_id, ids } = req.body;
     if (!service_id || !Array.isArray(ids) || !ids.length) {
@@ -4162,7 +4225,8 @@ router.post('/schedules/desfazer-lote', async (req, res) => {
 });
 
 // Copy schedules from one service to another
-router.post('/schedules/copy', async (req, res) => {
+// varredura 2026-09: B08 — copia escala entre cultos; gate POR ROTA (LEI 1).
+router.post('/schedules/copy', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { from_service_id, to_service_id } = req.body;
     if (!from_service_id || !to_service_id) {
@@ -4252,7 +4316,8 @@ router.post('/schedules/copy', async (req, res) => {
  * A decisão de quem vai pra qual vaga é da régua PURA `utils/volRodizio`
  * (testada no gate). Aqui só se lê o banco e se grava o resultado.
  */
-router.post('/schedules/auto-fill', async (req, res) => {
+// varredura 2026-09: B08 — preenche a escala automaticamente; gate POR ROTA (LEI 1).
+router.post('/schedules/auto-fill', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const { service_id, team_id, team_ids } = req.body;
     if (!service_id) return res.status(400).json({ error: 'service_id obrigatório' });
@@ -4407,7 +4472,8 @@ router.post('/schedules/auto-fill', async (req, res) => {
 });
 
 // Import teams from existing schedule data (migration helper)
-router.post('/teams-manage/import-from-schedules', async (req, res) => {
+// varredura 2026-09: B08 — cria equipes a partir das escalas; gate POR ROTA (LEI 1).
+router.post('/teams-manage/import-from-schedules', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const teamNames = new Set();
 
@@ -4460,7 +4526,8 @@ router.post('/teams-manage/import-from-schedules', async (req, res) => {
 });
 
 // Opção B: backfill — varre vol_schedules existentes e atribui voluntários às equipes
-router.post('/teams-manage/sync-members-from-schedules', async (req, res) => {
+// varredura 2026-09: B08 — sincroniza membros de equipe a partir das escalas; gate POR ROTA (LEI 1).
+router.post('/teams-manage/sync-members-from-schedules', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
     const result = await syncTeamMembersFromSchedules(supabase);
     res.json(result);

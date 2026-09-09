@@ -12,3 +12,4 @@ export * from './useVolServiceTypes';
 export * from './useVolTeamsManage';
 export * from './useVolScheduleBuilder';
 export * from './useVolAvailability';
+export * from './useVolPodeEscrever';

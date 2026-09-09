@@ -111,7 +111,8 @@ router.put('/temporada-inscricoes', authorizeModule('grupos', 3), async (req, re
 });
 
 // GET /api/grupos — lista todos com contagem de membros e líder
-router.get('/', async (req, res) => {
+// varredura 2026-09: A03 GET / sem gate de modulo - select('*') de mem_grupos (endereco/bairro da casa anfitria) pra qualquer conta autenticada
+router.get('/', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { ativo, categoria, bairro, temporada, status_temporada, codigo } = req.query;
     let q = supabase.from('mem_grupos').select('*').is('deleted_at', null);
@@ -188,7 +189,8 @@ router.get('/', async (req, res) => {
 // ══════════════════════════════════════════════
 
 // GET /api/grupos/materiais — lista todos com filtro por etiqueta
-router.get('/materiais', async (req, res) => {
+// varredura 2026-09: A03 GET /materiais sem gate de modulo - material interno do grupo era legivel por qualquer conta autenticada
+router.get('/materiais', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { etiqueta, grupo_id } = req.query;
     let q = supabase.from('mem_grupo_documentos').select('*').order('created_at', { ascending: false });
@@ -311,7 +313,8 @@ router.patch('/participacao/:id/presenca', authorizeModule('grupos', 2), async (
 // ══════════════════════════════════════════════
 
 // GET /api/grupos/:id/encontros — lista encontros do grupo (mais recentes primeiro)
-router.get('/:id/encontros', async (req, res) => {
+// varredura 2026-09: A03 GET /:id/encontros sem gate de modulo - chamada nominal do encontro era legivel por qualquer conta autenticada
+router.get('/:id/encontros', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
     const { data: encontros, error } = await supabase.from('mem_grupo_encontros')
@@ -356,7 +359,8 @@ router.get('/:id/encontros', async (req, res) => {
 // alinhar significa uma régua só. Sem âncora, grupo quinzenal/mensal devolve
 // vazio: cobrar chamada de encontro que talvez não tenha existido é pior que
 // não cobrar.
-router.get('/:id/encontros-pendentes', async (req, res) => {
+// varredura 2026-09: A03 GET /:id/encontros-pendentes sem gate de modulo - agenda operacional do grupo era legivel por qualquer conta autenticada
+router.get('/:id/encontros-pendentes', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const gid = req.params.id;
     const { data: grupo, error: eG } = await supabase.from('mem_grupos')
@@ -466,7 +470,8 @@ router.post('/:id/agenda', authorizeModule('grupos', 3), async (req, res) => {
 // sempre foi: a Caixa de entrada.
 // Saída é soft (`saiu_em`), então a MESMA linha do roster aparece como entrada e,
 // se a pessoa saiu, também como saída.
-router.get('/:id/entradas-saidas', async (req, res) => {
+// varredura 2026-09: A03 GET /:id/entradas-saidas sem gate de modulo - quem entrou/saiu com nome e motivo pra qualquer conta autenticada
+router.get('/:id/entradas-saidas', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { data, error } = await supabase.from('mem_grupo_membros')
       .select('id, entrou_em, saiu_em, motivo_saida, funcao, created_at, membro:mem_membros(id, nome)')
@@ -523,7 +528,8 @@ router.post('/:id/encontros', authorizeModule('grupos', 2), async (req, res) => 
 });
 
 // GET /api/grupos/encontros/:encontroId — detalhe + presenças
-router.get('/encontros/:encontroId', async (req, res) => {
+// varredura 2026-09: A03 GET /encontros/:encontroId sem gate de modulo - presenca nominal do encontro pra qualquer conta autenticada
+router.get('/encontros/:encontroId', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { data: encontro, error } = await supabase.from('mem_grupo_encontros')
       .select('*').eq('id', req.params.encontroId).single();
@@ -631,7 +637,8 @@ function calcularMetricasGrupo(grupo, encontrosRaw, presencasPorEncontro, totalM
 }
 
 // GET /api/grupos/:id/metricas — saúde do grupo individual
-router.get('/:id/metricas', async (req, res) => {
+// varredura 2026-09: A03 GET /:id/metricas sem gate de modulo - metrica do grupo era legivel por qualquer conta autenticada
+router.get('/:id/metricas', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const id = req.params.id;
     const [grupoRes, encontrosRes, partRes] = await Promise.all([
@@ -674,7 +681,8 @@ function statusFrequenciaPorData(ultimaData) {
 // "quem não está indo naquele grupo" + % de frequência). % = presenças ÷
 // (encontros × inscritos). Inscritos do grupo = roster ativo ∪ líder ∪
 // supervisor (todos deviam comparecer). Nasce vazio até a 1ª chamada.
-router.get('/:id/frequencia', async (req, res) => {
+// varredura 2026-09: A03 GET /:id/frequencia sem gate de modulo - frequencia nominal (quem nao vai) pra qualquer conta autenticada
+router.get('/:id/frequencia', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const id = req.params.id;
     const { data: grupo, error: eG } = await supabase.from('mem_grupos')
@@ -742,7 +750,8 @@ router.get('/:id/frequencia', async (req, res) => {
 });
 
 // GET /api/grupos/saude — agregado: total ativos, em risco, ranking
-router.get('/saude/agregado', async (req, res) => {
+// varredura 2026-09: A03 GET /saude/agregado sem gate de modulo - diagnostico do modulo era legivel por qualquer conta autenticada
+router.get('/saude/agregado', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { temporada } = req.query;
     let q = supabase.from('mem_grupos')
@@ -825,7 +834,8 @@ router.get('/saude/agregado', async (req, res) => {
 // PostgREST sobre encontros/presencas. Query: temporada (uuid), meses (1-60).
 // Retorna: total_grupos, total_lideres, lideres_treinamento, satisfacao_lideres,
 //          frequência { media_por_encontro, série mensal } e funções (distribuição).
-router.get('/kpis/relatorio', async (req, res) => {
+// varredura 2026-09: A03 GET /kpis/relatorio sem gate de modulo - KPI do modulo era legivel por qualquer conta autenticada
+router.get('/kpis/relatorio', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { temporada } = req.query;
     const meses = Math.min(Math.max(parseInt(req.query.meses, 10) || 12, 1), 60);
@@ -847,7 +857,8 @@ router.get('/kpis/relatorio', async (req, res) => {
 // (fn_grupos_kpis_relatorio, métrica OPERACIONAL calculada direto das tabelas
 // de origem) — os dois números podem legitimamente divergir por definição.
 // Piloto: fechar a lacuna de que só "Minha Área" mostrava este dado hoje.
-router.get('/kpis/taticos', async (req, res) => {
+// varredura 2026-09: A03 GET /kpis/taticos sem gate de modulo - KPI do modulo era legivel por qualquer conta autenticada
+router.get('/kpis/taticos', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { data: kpisRaw, error: kpisErr } = await supabase
       .from('kpi_indicadores_taticos')
@@ -891,7 +902,8 @@ router.get('/kpis/taticos', async (req, res) => {
 // POR grupo (Marcos 2026-07-23: indicador por grupo pra achar quem está caindo).
 // Mesma definição do /:id/frequencia (% = presenças ÷ (encontros × inscritos),
 // inscritos = roster ∪ líder ∪ supervisor). Pior primeiro. Vazio até a 1ª chamada.
-router.get('/kpis/frequencia-grupos', async (req, res) => {
+// varredura 2026-09: A03 GET /kpis/frequencia-grupos sem gate de modulo - ranking de frequencia por grupo pra qualquer conta autenticada
+router.get('/kpis/frequencia-grupos', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { temporada } = req.query;
     let q = supabase.from('mem_grupos')
@@ -951,7 +963,8 @@ router.get('/kpis/frequencia-grupos', async (req, res) => {
 // congela (fn_temporada_metricas). Garante que o relatório filtrado por
 // temporada bate exatamente com o que vai pro histórico ao consolidar (Marcos
 // 17/07: "indicadores completos · certeza de que coleta certo"). Nível 1.
-router.get('/kpis/temporada-metricas', async (req, res) => {
+// varredura 2026-09: A03 GET /kpis/temporada-metricas sem gate de modulo - metrica da temporada era legivel por qualquer conta autenticada
+router.get('/kpis/temporada-metricas', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { temporada } = req.query;
     if (!temporada) return res.status(400).json({ error: 'Informe a temporada' });
@@ -1010,7 +1023,8 @@ router.get('/kpis/temporada-metricas', async (req, res) => {
 // GET /api/grupos/kpis/temporada-series?temporada=X — séries mensais
 // (frequência, inscrições, membresia) + tamanho/média dos grupos, escopadas
 // pela janela de data da temporada (fn_temporada_series · cap-safe em SQL).
-router.get('/kpis/temporada-series', async (req, res) => {
+// varredura 2026-09: A03 GET /kpis/temporada-series sem gate de modulo - serie da temporada era legivel por qualquer conta autenticada
+router.get('/kpis/temporada-series', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { temporada } = req.query;
     if (!temporada) return res.status(400).json({ error: 'Informe a temporada' });
@@ -1112,7 +1126,8 @@ router.get('/kpis/prontidao', authorizeModule('grupos', 3), async (req, res) => 
 // registrado (qualquer via: sistema ou WhatsApp aplicado) e há quantos dias.
 // Alimenta o bloco "Grupos sem relatório" da aba Relatórios (visão do Pr.
 // Nélio: quem não está reportando).
-router.get('/kpis/sem-relato', async (req, res) => {
+// varredura 2026-09: A03 GET /kpis/sem-relato sem gate de modulo - lista de lideres em falta pra qualquer conta autenticada
+router.get('/kpis/sem-relato', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { data: grupos, error } = await supabase
       .from('mem_grupos')
@@ -1173,7 +1188,8 @@ router.get('/kpis/sem-relato', async (req, res) => {
 // GET /api/grupos/kpis/lideres-treinamento — lista os líderes em treinamento
 // (funcao='lider_treinamento') dos grupos ativos, com nome e grupo. Volume
 // pequeno (poucos por vez); alimenta o detalhamento da aba Relatórios.
-router.get('/kpis/lideres-treinamento', async (req, res) => {
+// varredura 2026-09: A03 GET /kpis/lideres-treinamento sem gate de modulo - lista nominal de lideres em treinamento pra qualquer conta autenticada
+router.get('/kpis/lideres-treinamento', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { temporada } = req.query;
     let gq = supabase.from('mem_grupos').select('id, nome').is('deleted_at', null).eq('ativo', true);
@@ -1226,7 +1242,8 @@ function distanciaKm(lat1, lng1, lat2, lng2) {
 // GET /api/grupos/buscar — busca com filtros para o seletor
 // Query: lider_nome, categoria, bairro, cep, raio_km, temporada, status_temporada
 // Retorna grupos ATIVOS da temporada filtrada com info do líder
-router.get('/buscar', async (req, res) => {
+// varredura 2026-09: A03 GET /buscar sem gate de modulo - busca de grupos com endereco pra qualquer conta autenticada
+router.get('/buscar', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { lider_nome, categoria, bairro, cep, raio_km, temporada, status_temporada, q } = req.query;
 
@@ -1310,7 +1327,8 @@ router.get('/buscar', async (req, res) => {
 
 // GET /api/grupos/lideres/buscar — autocomplete de líderes com seus grupos
 // Query: q (texto), temporada
-router.get('/lideres/buscar', async (req, res) => {
+// varredura 2026-09: A03 GET /lideres/buscar sem gate de modulo - busca nominal de lideres pra qualquer conta autenticada
+router.get('/lideres/buscar', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { q, temporada } = req.query;
     const term = String(q || '').trim().toLowerCase();
@@ -1335,7 +1353,8 @@ router.get('/lideres/buscar', async (req, res) => {
 });
 
 // GET /api/grupos/lideres/:liderId/grupos — grupos liderados por um membro
-router.get('/lideres/:liderId/grupos', async (req, res) => {
+// varredura 2026-09: A03 GET /lideres/:liderId/grupos sem gate de modulo - grupos de um lider pra qualquer conta autenticada
+router.get('/lideres/:liderId/grupos', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { temporada } = req.query;
     let query = supabase.from('mem_grupos').select('*').eq('lider_id', req.params.liderId).eq('ativo', true);
@@ -1638,7 +1657,8 @@ router.get('/pedidos/list', authorizeModule('grupos', 1), async (req, res) => {
 // NÃO receberam pedido nenhum no período (no lançamento de 02/08 foram 30 de
 // 87 — é onde o Pr. Nélio precisa divulgar). Os outros números do painel são
 // derivados da própria lista no cliente, pra não existirem duas verdades.
-router.get('/entrada/cobertura', async (req, res) => {
+// varredura 2026-09: A03 GET /entrada/cobertura sem gate de modulo - retrato da caixa de entrada pra qualquer conta autenticada
+router.get('/entrada/cobertura', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { desde, ate } = req.query;
     const desdeISO = desde && !Number.isNaN(new Date(desde).getTime())
@@ -1691,7 +1711,8 @@ router.get('/entrada/cobertura', async (req, res) => {
 // GET /api/grupos/pedidos/resumo — cockpit da caixa de entrada (Nana):
 // pedidos de hoje, pendentes com envelhecimento, decididos em 30 dias e
 // tempo médio de resposta. Leitura agregada, sem PII além de contagens.
-router.get('/pedidos/resumo', async (req, res) => {
+// varredura 2026-09: A03 GET /pedidos/resumo sem gate de modulo - resumo dos 975 pedidos de entrada pra qualquer conta autenticada
+router.get('/pedidos/resumo', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const agora = Date.now();
     const hoje0 = new Date(); hoje0.setHours(0, 0, 0, 0);
@@ -1748,7 +1769,8 @@ router.get('/pedidos/resumo', async (req, res) => {
 
 // GET /api/grupos/pedidos/count — contador de pedidos pendentes do user logado
 // (grupos que ele lidera). Usado por badge na sidebar / aba Pedidos.
-router.get('/pedidos/count', async (req, res) => {
+// varredura 2026-09: A03 GET /pedidos/count sem gate de modulo - contagem dos pedidos de entrada pra qualquer conta autenticada
+router.get('/pedidos/count', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { data: prof } = await supabase
       .from('vol_profiles').select('membresia_id').eq('auth_user_id', req.user.userId).maybeSingle();
@@ -1804,7 +1826,8 @@ router.get('/pedidos/count', async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 
 // GET /api/grupos/lideres-inscricoes/list?desde=
-router.get('/lideres-inscricoes/list', async (req, res) => {
+// varredura 2026-09: A03 GET /lideres-inscricoes/list sem gate de modulo - select('*') de mem_lider_inscricoes expunha endereco/bairro dos 20 candidatos a lider
+router.get('/lideres-inscricoes/list', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { desde } = req.query;
     let q = supabase.from('mem_lider_inscricoes')
@@ -2911,7 +2934,8 @@ router.get('/meu', async (req, res) => {
 
 // GET /api/grupos/:id/historico-membros — lista de entradas/saidas do grupo
 // com origem e destino (para mostrar transferencias).
-router.get('/:id/historico-membros', async (req, res) => {
+// varredura 2026-09: A03 GET /:id/historico-membros sem gate de modulo - historico nominal do grupo pra qualquer conta autenticada
+router.get('/:id/historico-membros', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const grupoId = req.params.id;
     // Todas as participacoes do grupo (ativas + encerradas)
@@ -4079,7 +4103,8 @@ router.post('/duplicatas/ignorar', authorizeModule('grupos', 5), async (req, res
 // ══════════════════════════════════════════════
 // Redes (rede → supervisor → grupos) · ANTES das rotas /:id (Express casaria)
 // ══════════════════════════════════════════════
-router.get('/redes', async (req, res) => {
+// varredura 2026-09: A03 GET /redes sem gate de modulo - estrutura de redes era legivel por qualquer conta autenticada
+router.get('/redes', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { data: redes, error } = await supabase.from('mem_redes')
       .select('id, nome, cor, supervisor_id, ativa').eq('ativa', true).order('nome');
@@ -4124,7 +4149,8 @@ router.put('/redes/:id', authorizeModule('grupos', 3), async (req, res) => {
 // ══════════════════════════════════════════════
 
 // GET /api/grupos/:id — detalhe com membros
-router.get('/:id', async (req, res) => {
+// varredura 2026-09: A03 GET /:id sem gate de modulo - roster nominal com telefone/e-mail dos participantes pra qualquer conta autenticada
+router.get('/:id', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const id = req.params.id;
 
@@ -4132,7 +4158,7 @@ router.get('/:id', async (req, res) => {
     const [grupoRes, partRes, histRes, multRes] = await Promise.all([
       supabase.from('mem_grupos').select('*').eq('id', id).single(),
       supabase.from('mem_grupo_membros')
-        .select('*, mem_membros(id, nome, telefone, email, foto_url, status, data_nascimento)')
+        .select('*, mem_membros(id, nome, telefone, email, foto_url, status)') // varredura 2026-09: A03 — sai `data_nascimento` (nenhuma tela do /grupos lê; PII a mais no roster)
         .eq('grupo_id', id).is('saiu_em', null).order('entrou_em'),
       supabase.from('mem_grupo_membros')
         .select('*, mem_membros(id, nome)')
@@ -4278,7 +4304,8 @@ router.patch('/:id/aceitando', authorizeModule('grupos', 3), async (req, res) =>
 });
 
 // GET /api/grupos/temporadas — lista temporadas
-router.get('/temporadas/list', async (req, res) => {
+// varredura 2026-09: A03 GET /temporadas/list sem gate de modulo - temporadas eram legiveis por qualquer conta autenticada
+router.get('/temporadas/list', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { data, error } = await supabase.from('mem_temporadas')
       .select('*').order('ano', { ascending: false }).order('numero', { ascending: false });
@@ -4291,7 +4318,8 @@ router.get('/temporadas/list', async (req, res) => {
 // Devolve as temporadas JÁ congeladas (mem_temporada_consolidado) + as
 // métricas AO VIVO da temporada ativa quando ela ainda não foi consolidada
 // (linha "parcial · em andamento"). Rota estática ANTES de /temporadas/:id.
-router.get('/temporadas/consolidado', async (req, res) => {
+// varredura 2026-09: A03 GET /temporadas/consolidado sem gate de modulo - consolidado da temporada pra qualquer conta autenticada
+router.get('/temporadas/consolidado', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { data: congelados, error } = await supabase.from('mem_temporada_consolidado')
       .select('*').order('data_inicio', { ascending: true });
@@ -4354,7 +4382,8 @@ router.patch('/temporadas/:id', authorizeModule('grupos', 5), async (req, res) =
 });
 
 // GET /api/grupos/bairros/list — lista bairros distintos com contagem
-router.get('/bairros/list', async (req, res) => {
+// varredura 2026-09: A03 GET /bairros/list sem gate de modulo - mapa de bairros dos grupos pra qualquer conta autenticada
+router.get('/bairros/list', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { temporada } = req.query;
     let q = supabase.from('mem_grupos').select('bairro').not('bairro', 'is', null);
@@ -4887,7 +4916,8 @@ router.post('/vinculos/duplicados/resolver', authorizeModule('grupos', 4), async
 });
 
 // GET /api/grupos/pessoas/papeis
-router.get('/pessoas/papeis', async (req, res) => {
+// varredura 2026-09: A03 GET /pessoas/papeis sem gate de modulo - roster de 3.264 vinculos com telefone pra qualquer conta autenticada
+router.get('/pessoas/papeis', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const { data: grupos, error: eG } = await supabase
       .from('mem_grupos')
@@ -5169,7 +5199,8 @@ router.post('/pessoas/:membroId/pedir-dados', authorizeModule('grupos', 3), asyn
 // EM CADA grupo que ela é inscrita (Marcos 2026-07-23: "clica na pessoa e vê se
 // ela está frequentando TODOS os grupos" · vai no A, não vai no B). Roster ∪
 // liderar ∪ supervisionar. Nasce vazio até a 1ª chamada.
-router.get('/pessoas/:membroId/frequencia', async (req, res) => {
+// varredura 2026-09: A03 GET /pessoas/:membroId/frequencia sem gate de modulo - grade de frequencia de UMA pessoa pra qualquer conta autenticada
+router.get('/pessoas/:membroId/frequencia', authorizeModule('grupos', 1), async (req, res) => {
   try {
     const mid = req.params.membroId;
     // Guard UUID (o .or() abaixo interpola o valor · evita injeção PostgREST)
@@ -5300,6 +5331,31 @@ async function getMeuPerfilGrupo(user) {
   return { papel: null, membro_id: meuMembroId };
 }
 
+// varredura 2026-09: A03 — guard de LEITURA da supervisão. Soma as duas
+// réguas: módulo `grupos` >= 1 OU papel na hierarquia. As escritas irmãs
+// (POST/PATCH/DELETE de visitas, PUT de observação) autorizam por `papel`, então
+// gatear a leitura SÓ por módulo daria 403 na lista pro supervisor/coordenador
+// sem o módulo que continua com o botão de agir. Mesmo padrão de
+// `podeVerFilaCadastros` em routes/membresia.js.
+async function podeVerSupervisaoGrupos(req, res, next) {
+  try {
+    if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
+    // Deny explícito por usuário vence tudo (espelha authorizeModule).
+    if ((req.user.granular?.modulosBloqueados || []).includes('grupos')) {
+      return res.status(403).json({ error: 'Acesso bloqueado para este módulo.', modulos: ['grupos'] });
+    }
+    if (req.user.is_super_admin === true) return next();
+    if (['admin', 'diretor'].includes(req.user.role)) return next();
+    if ((req.user.granular?.modulePerms?.grupos?.leitura ?? 0) >= 1) return next();
+    const { papel } = await getMeuPerfilGrupo(req.user);
+    if (papel) return next();
+    return res.status(403).json({ error: 'Acesso negado ao módulo. Nível insuficiente para leitura.', modulos: ['grupos'] });
+  } catch (e) {
+    console.error('[grupos] podeVerSupervisaoGrupos:', e.message);
+    return res.status(500).json({ error: 'Erro ao verificar permissão de supervisão' });
+  }
+}
+
 // GET /api/grupos/supervisao/me · papel + grupos visíveis na hierarquia
 router.get('/supervisao/me', async (req, res) => {
   try {
@@ -5381,7 +5437,8 @@ async function enriquecerVisitas(visitas) {
 // todos os grupos ativos (última visita realizada + próxima agendada), as
 // visitas agendadas e o histórico recente. Read-only · a escrita é autorizada
 // nos POST/PATCH. `papel` null = usuário só visualiza.
-router.get('/visitas/painel', async (req, res) => {
+// varredura 2026-09: A03 GET /visitas/painel sem gate de modulo - painel de visitas era legivel por qualquer conta autenticada
+router.get('/visitas/painel', podeVerSupervisaoGrupos, async (req, res) => {
   try {
     const { papel, membro_id } = await getMeuPerfilGrupo(req.user);
 
@@ -5440,7 +5497,8 @@ router.get('/visitas/painel', async (req, res) => {
 });
 
 // GET /api/grupos/:id/visitas
-router.get('/:id/visitas', async (req, res) => {
+// varredura 2026-09: A03 GET /:id/visitas sem gate de modulo - visitas do grupo eram legiveis por qualquer conta autenticada
+router.get('/:id/visitas', podeVerSupervisaoGrupos, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('grupo_supervisao_visitas')
@@ -5596,7 +5654,8 @@ router.delete('/visitas/:visitaId', async (req, res) => {
 });
 
 // GET /api/grupos/:id/observacoes
-router.get('/:id/observacoes', async (req, res) => {
+// varredura 2026-09: A03 GET /:id/observacoes sem gate de modulo - observacao de supervisao era legivel por qualquer conta autenticada
+router.get('/:id/observacoes', podeVerSupervisaoGrupos, async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('grupo_supervisao_observacoes')

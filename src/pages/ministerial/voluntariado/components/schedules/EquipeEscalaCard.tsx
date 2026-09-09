@@ -41,15 +41,18 @@ export type AreaEscala = {
   stats: { total: number; confirmados: number; recusados: number; pendentes: number };
 };
 
-function LinhaEscalado({ sch, conflito, onRemover, onDragStart, onVerDetalhe }: {
+function LinhaEscalado({ sch, conflito, onRemover, onDragStart, onVerDetalhe, podeEscrever }: {
   sch: any; conflito: any[]; onRemover: () => void; onDragStart: (e: React.DragEvent) => void;
   onVerDetalhe: () => void;
+  // varredura 2026-09: B08 — arrastar e tirar da escala são PUT/DELETE /schedules
+  // (voluntariado>=3). Quem só lê continua vendo a escala montada.
+  podeEscrever: boolean;
 }) {
   const status = sch.confirmation_status;
   return (
     <div
-      draggable onDragStart={onDragStart}
-      className="group flex items-center justify-between gap-2 pl-2 pr-1 py-1.5 rounded-md hover:bg-accent/40 cursor-grab active:cursor-grabbing"
+      draggable={podeEscrever} onDragStart={onDragStart}
+      className={`group flex items-center justify-between gap-2 pl-2 pr-1 py-1.5 rounded-md hover:bg-accent/40 ${podeEscrever ? 'cursor-grab active:cursor-grabbing' : ''}`}
     >
       <div className="flex items-center gap-2 min-w-0">
         <GripVertical className="h-3.5 w-3.5 text-muted-foreground/25 shrink-0" />
@@ -83,7 +86,7 @@ function LinhaEscalado({ sch, conflito, onRemover, onDragStart, onVerDetalhe }: 
       <Button
         variant="ghost" size="icon"
         className="h-6 w-6 shrink-0 text-muted-foreground/50 hover:text-destructive opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity"
-        onClick={onRemover} title="Tirar da escala"
+        onClick={onRemover} title="Tirar da escala" disabled={!podeEscrever}
       >
         <X className="h-3.5 w-3.5" />
       </Button>
@@ -93,8 +96,11 @@ function LinhaEscalado({ sch, conflito, onRemover, onDragStart, onVerDetalhe }: 
 
 export default function EquipeEscalaCard({
   area, conflitoDe, onPreencher, onRemover, onDropTeam, onFixar, onVerDetalhe,
+  // varredura 2026-09: B08 — piso de escrita do módulo, vindo do VolScheduleBuilder.
+  podeEscrever = true,
 }: {
   area: AreaEscala;
+  podeEscrever?: boolean;
   conflitoDe: (sch: any) => any[];
   onPreencher: (g: GrupoFuncao) => void;
   onRemover: (sch: any) => void;
@@ -112,7 +118,7 @@ export default function EquipeEscalaCard({
       className={`transition-colors ${over ? 'border-[#00B39D] bg-[#00B39D]/5' : ''}`}
       onDragOver={e => { e.preventDefault(); setOver(true); }}
       onDragLeave={() => setOver(false)}
-      onDrop={e => { setOver(false); onDropTeam(e, area.team_id, area.team); }}
+      onDrop={e => { setOver(false); if (podeEscrever) onDropTeam(e, area.team_id, area.team); }}
     >
       <CardHeader className="pb-2 pt-3 px-4">
         <div className="flex items-center justify-between gap-2">
@@ -158,6 +164,7 @@ export default function EquipeEscalaCard({
               {g.escalados.map(sch => (
                 <LinhaEscalado
                   key={sch.id} sch={sch} conflito={conflitoDe(sch)}
+                  podeEscrever={podeEscrever}
                   onRemover={() => onRemover(sch)}
                   onVerDetalhe={() => onVerDetalhe(sch)}
                   onDragStart={e => {
@@ -167,7 +174,9 @@ export default function EquipeEscalaCard({
                 />
               ))}
               {/* A VAGA. É esta linha que o card "Cobertura" separado escondia. */}
-              {g.faltam > 0 && (
+              {/* varredura 2026-09: B08 — preencher vaga é POST /schedules (>=3);
+                  a contagem "N vaga(s) em aberto" continua visível abaixo. */}
+              {g.faltam > 0 && podeEscrever && (
                 <button
                   onClick={() => onPreencher(g)}
                   className="w-full flex items-center gap-2 px-2 py-1.5 rounded-md border border-dashed border-red-300 dark:border-red-900/60 text-left hover:bg-red-50 dark:hover:bg-red-900/10 transition-colors"
@@ -184,12 +193,15 @@ export default function EquipeEscalaCard({
 
           {/* Escalar alguém a mais numa área que já está completa continua
               possível — só não é o caminho em destaque. */}
+          {/* varredura 2026-09: B08 — POST /schedules pede voluntariado>=3. */}
+          {podeEscrever && (
           <button
             onClick={() => onPreencher({ item_id: null, position_id: null, position: null, alvo: 0, faltam: 0, escalados: [] })}
             className="text-xs text-muted-foreground hover:text-[#00B39D] transition-colors"
           >
             + adicionar alguém nesta área
           </button>
+          )}
         </CardContent>
       )}
     </Card>

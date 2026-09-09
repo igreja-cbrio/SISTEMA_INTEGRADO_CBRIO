@@ -24,6 +24,8 @@ import { ptBR } from 'date-fns/locale';
 import { toast } from 'sonner';
 import { normalizarBusca } from '@/lib/busca';
 import type { VolTeam, VolService } from './types';
+// varredura 2026-09: B08 — espelha a régua de escrita do servidor.
+import { useVolPodeEscrever } from './hooks/useVolPodeEscrever';
 
 // MIME types custom do drag & drop HTML5 (padrão usado no Planner do Marketing).
 const MIME_VOL = 'application/x-cbrio-vol';
@@ -64,6 +66,9 @@ const CATEGORIAS_CULTO = {
  *    que o endpoint fazia) — com desfazer.
  */
 export default function VolScheduleBuilder() {
+  // varredura 2026-09: B08 — montar escala é POST/PUT/DELETE /schedules e
+  // POST /services: tudo voluntariado>=3 agora. A escala montada segue legível.
+  const podeEscrever = useVolPodeEscrever();
   const { userAreas } = useAuth() as any;
   const { data: services = [], isLoading: servicesLoading } = useUpcomingServices();
   const { data: teams = [] } = useVolTeamsManaged();
@@ -378,7 +383,8 @@ export default function VolScheduleBuilder() {
             ))}
           </div>
         </div>
-        <Button size="sm" variant="outline" className="gap-1.5" onClick={() => setShowCreateService(true)}>
+        {/* varredura 2026-09: B08 — POST /services pede voluntariado>=3. */}
+        <Button size="sm" variant="outline" className="gap-1.5" disabled={!podeEscrever} onClick={() => setShowCreateService(true)}>
           <Plus className="h-4 w-4" /> Criar Culto
         </Button>
       </div>
@@ -467,6 +473,10 @@ export default function VolScheduleBuilder() {
             </CardContent></Card>
           </div>
 
+          {/* varredura 2026-09: B08 — a barra inteira é escrita de escala
+              (auto-preencher, escalar em área, copiar de outro culto): sem
+              voluntariado>=3 os três davam 403. */}
+          {podeEscrever && (
           <div className="flex flex-wrap gap-2">
             <AutoPreencherBotao
               serviceId={selectedServiceId}
@@ -483,6 +493,7 @@ export default function VolScheduleBuilder() {
               <Copy className="h-4 w-4" /> Copiar de outro culto
             </Button>
           </div>
+          )}
 
           {/* ⚠️ Sem composição E sem template pro tipo de culto, a pessoa
               ficaria sem saída: as vagas não existem, então o auto-preencher
@@ -515,7 +526,9 @@ export default function VolScheduleBuilder() {
                 </div>
                 <div className="flex flex-wrap gap-2">
                   {sugestoes.map((t: any) => (
-                    <Button key={t.id} size="sm" className="gap-1.5" disabled={aplicando}
+                    // varredura 2026-09: B08 — aplicar template materializa a escala
+                    // (POST /schedule-templates/:id/apply, voluntariado>=3).
+                    <Button key={t.id} size="sm" className="gap-1.5" disabled={aplicando || !podeEscrever}
                       onClick={() => aplicarTemplate(t.id, t.nome)}>
                       <Wand2 className="h-4 w-4" /> Aplicar "{t.nome}"
                     </Button>
@@ -545,6 +558,7 @@ export default function VolScheduleBuilder() {
                   {minhasAreas.map(a => (
                     <EquipeEscalaCard
                       key={a.team_id || a.team} area={a} conflitoDe={conflitoDe}
+                      podeEscrever={podeEscrever}
                       onPreencher={g => abrirVaga(a, g)} onRemover={removerEscala}
                       onDropTeam={handleDropOnTeam} onFixar={alternarFixada}
                       onVerDetalhe={sch => setDetalhe({ id: sch.volunteer_id || null, nome: sch.volunteer_name })}
@@ -561,6 +575,7 @@ export default function VolScheduleBuilder() {
                 {outrasAreas.map(a => (
                   <EquipeEscalaCard
                     key={a.team_id || a.team} area={a} conflitoDe={conflitoDe}
+                    podeEscrever={podeEscrever}
                     onPreencher={g => abrirVaga(a, g)} onRemover={removerEscala}
                     onDropTeam={handleDropOnTeam} onFixar={alternarFixada}
                       onVerDetalhe={sch => setDetalhe({ id: sch.volunteer_id || null, nome: sch.volunteer_name })}

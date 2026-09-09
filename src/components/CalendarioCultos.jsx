@@ -1370,6 +1370,8 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, hasKids, onSaved, onCan
     data_nascimento: pessoa?.data_nascimento || '',
     cpf: pessoa?.cpf || '',
     membro_id: pessoa?.membro_id || null,
+    // varredura 2026-09: referência opaca do visitante de WiFi escolhido na busca — o servidor recompõe o CPF por ela (o buscador não devolve mais documento). Só existe em cadastro novo.
+    wifi_id: null,
     tipo_decisao: pessoa?.tipo_decisao || 'presencial',
     observacoes: pessoa?.observacoes || '',
     // Kids · dados do responsável (LGPD: criança não da os dados dela)
@@ -1413,10 +1415,13 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, hasKids, onSaved, onCan
       nome: m.nome || '',
       telefone: m.telefone || '',
       email: m.email || '',
-      data_nascimento: m.data_nascimento || '',
-      cpf: m.cpf || '',
+      // varredura 2026-09: o buscador não devolve mais CPF nem nascimento (só `cpf_final`, 2 dígitos). Ficam vazios de propósito — quem recompõe é o servidor, pelo `membro_id` (cadastro) ou pelo `wifi_id`.
+      data_nascimento: '',
+      cpf: '',
       // resultado do WiFi sem vínculo de membro entra como pessoa nova (membro_id null)
       membro_id: m.membro_id ?? (m.origem === 'wifi' ? null : m.id),
+      // varredura 2026-09: guarda a referência opaca do WiFi pro POST recompor o CPF do visitante — sem ela a decisão nasce sem documento.
+      wifi_id: m.origem === 'wifi' ? (m.wifi_id || null) : null,
       tipo_decisao: form.tipo_decisao,
       observacoes: form.observacoes,
     });
@@ -1444,7 +1449,8 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, hasKids, onSaved, onCan
   };
 
   const limparVinculo = () => {
-    setForm(f => ({ ...f, membro_id: null }));
+    // varredura 2026-09: o `wifi_id` cai junto com o vínculo — referência velha recomporia o CPF do visitante ANTERIOR na pessoa que o operador escolher agora.
+    setForm(f => ({ ...f, membro_id: null, wifi_id: null }));
     setMostrarBusca(true);
   };
 
@@ -1497,6 +1503,8 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, hasKids, onSaved, onCan
         idade: idadeCalc,
         cpf: cpfDigits || null,
         membro_id: ehKids ? null : (form.membro_id || null),
+        // varredura 2026-09: vai a referência opaca, não o CPF — o servidor recompõe o documento do visitante de WiFi a partir dela.
+        wifi_id: ehKids ? null : (form.wifi_id || null),
         tipo_decisao: form.tipo_decisao,
         observacoes: form.observacoes || null,
         responsavel_nome:     ehKids ? form.responsavel_nome.trim() : null,
@@ -1562,7 +1570,8 @@ function DecisaoPessoaForm({ cultoId, pessoa, hasOnline, hasKids, onSaved, onCan
                     )}
                   </div>
                   <div style={{ fontSize: 10, color: C.t3 }}>
-                    {m.cpf && <>CPF {m.cpf.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4')}{' · '}</>}
+                    {/* varredura 2026-09: `m.cpf` não vem mais (o buscador mascarou o documento) e a linha ficava sem NADA pra separar homônimo — passa a mostrar os 2 últimos dígitos que o servidor devolve em `cpf_final`. */}
+                    {m.cpf_final && <>CPF •••.•••.•••-{m.cpf_final}{' · '}</>}
                     {m.email && <>{m.email}{' · '}</>}
                     {m.telefone && <>{m.telefone}</>}
                   </div>
