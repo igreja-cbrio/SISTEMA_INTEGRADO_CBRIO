@@ -12,7 +12,7 @@
 ## Backend
 - `backend/routes/membresia.js`
 - `backend/routes/pessoas.js`
-Guard: `authorizeModule('membros', 1 | 2)`
+Guard: `authorizeModule('membros', 1 | 2 | 3 | padrão)`
 <details><summary>Endpoints (103)</summary>
 - `DELETE /api/membresia/cadastros/:id`
 - `DELETE /api/membresia/checkins/:id`

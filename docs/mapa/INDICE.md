@@ -34,6 +34,7 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **inscricoes** | `/inscricoes` `/inscricoes/evento/:id` `/inscricoes/evento/:id/checkin` … | `inscricoes.js` | [inscricoes](inscricoes.md) |
 | **inscricoes-totem** | — | `inscricoes.js` | [inscricoes-totem](inscricoes-totem.md) |
 | **integracao** | `/integracao/coleta` | `integracao.js` | [integracao](integracao.md) |
+| **jornada-convertidos** | — | `cuidados.js` | [jornada-convertidos](jornada-convertidos.md) |
 | **kids** | `/ministerial/totem-kids` `/ministerial/kids` `/ministerial/totem-kids/criancas` … | `totemKids.js` | [kids](kids.md) |
 | **links** | — | `links.js` | [links](links.md) |
 | **logistica** | — | `logistica.js` | [logistica](logistica.md) |
@@ -45,6 +46,7 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **next-batismo** | `/entradas` | `nextBatismo.js` | [next-batismo](next-batismo.md) |
 | **nps** | — | `nps.js` | [nps](nps.md) |
 | **online** | `/online` | `online.js` | [online](online.md) |
+| **painel** | — | `painel.js` | [painel](painel.md) |
 | **painel-area** | — | `painelArea.js` | [painel-area](painel-area.md) |
 | **patrimonio** | — | `patrimonio.js` | [patrimonio](patrimonio.md) |
 | **planejamento-anual** | `/planejamento-anual` | — | [planejamento-anual](planejamento-anual.md) |

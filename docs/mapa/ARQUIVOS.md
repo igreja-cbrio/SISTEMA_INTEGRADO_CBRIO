@@ -81,7 +81,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/occurrences.js` | rota backend | — | `/api/occurrences` |
 | `backend/routes/online.js` | rota backend | online | `/api/online` |
 | `backend/routes/pagamentosWebhook.js` | rota backend | — | `/api/pagamentos-webhook` |
-| `backend/routes/painel.js` | rota backend | — | `/api/painel` |
+| `backend/routes/painel.js` | rota backend | painel | `/api/painel` |
 | `backend/routes/painelArea.js` | rota backend | painel-area | `/api/painel-area` |
 | `backend/routes/painelRh.js` | rota backend | rh | `/api/painel-rh` |
 | `backend/routes/patrimonio.js` | rota backend | patrimonio | `/api/patrimonio` |
