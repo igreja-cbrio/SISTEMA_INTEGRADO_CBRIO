@@ -6,7 +6,7 @@ import {
 import { planejamentoAnual as api, users as usersApi } from '../../api';
 import {
   C, cardStyle, btn, input, hint, Badge, EstadoBadge, fmtBRL, fmtData, fmtQuando,
-  MESES, MESES_LONGOS, DIAS_SEMANA, thStyle, tdStyle, rotuloArea,
+  MESES, MESES_LONGOS, DIAS_SEMANA, thStyle, tdStyle, rotuloArea, rotuloDiretoria,
 } from './comum';
 import CalendarioAno from './CalendarioAno';
 
@@ -218,7 +218,7 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
             <tbody>
               {p.avaliacoes.map((a) => (
                 <tr key={a.id}>
-                  <td style={{ ...tdStyle, fontWeight: 600 }}>{a.diretoria}</td>
+                  <td style={{ ...tdStyle, fontWeight: 600 }}>{rotuloDiretoria(a.diretoria)}</td>
                   {criterios.map((c) => <td key={c.chave} style={{ ...tdStyle, textAlign: 'center' }}>{a['nota_' + c.chave]}</td>)}
                 </tr>
               ))}
@@ -239,7 +239,7 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
             {p.avaliacoes.some((a) => a.comentario_geral || Object.values(a.coment_criterios || {}).some(Boolean)) ? (
               p.avaliacoes.map((a) => (
                 <div key={a.id} style={{ fontSize: 12.5, color: C.t2 }}>
-                  <Badge texto={a.diretoria} cor={C.blue} />{' '}
+                  <Badge texto={rotuloDiretoria(a.diretoria)} cor={C.blue} />{' '}
                   {[...Object.entries(a.coment_criterios || {}).filter(([, t]) => t).map(([k, t]) => `${k}: ${t}`), a.comentario_geral].filter(Boolean).join(' · ') || '—'}
                 </div>
               ))
