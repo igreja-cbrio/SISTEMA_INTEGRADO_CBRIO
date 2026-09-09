@@ -19,6 +19,10 @@ const SLUGS_REAIS = new Set([
   // + disparo em massa de onboarding do RH: 'rh' já existe no catálogo
   // (authorizeModule('rh', N) em uso em dezenas de rotas de backend/routes/rh.js).
   'rh',
+  // + F3 da Comunicação (09/09/2026): 'comunicacao' — em uso em
+  // authorizeModule('comunicacao', N) por todo routes/comunicacao.js e semeado
+  // pela migration 20260728230000 (matriz copiada de 'conversas').
+  'comunicacao',
 ]);
 
 describe('moduloDoContexto · quem é avisado quando o WhatsApp não chega', () => {

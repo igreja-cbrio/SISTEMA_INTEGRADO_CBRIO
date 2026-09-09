@@ -46,6 +46,10 @@ const MAPA = [
   ['kids', { modulo: 'kids', link: '/ministerial/totem-kids' }],
   ['solicitacoes', { modulo: 'solicitacoes', link: '/solicitacoes' }],
   ['rh', { modulo: 'rh', link: '/rh' }],
+  // Envios manuais e programadas da PRÓPRIA Comunicação (F3 · 09/09/2026):
+  // `comunicacao.envio_manual` e `comunicacao.agendamento`. Sem esta entrada a
+  // falha de entrega caía no PADRÃO (integracao) e o aviso ficava sem dono.
+  ['comunicacao', { modulo: 'comunicacao', link: '/comunicacao?tab=envios' }],
 ];
 
 // ⚠️ `integracao` como padrão preserva o comportamento que a fila já tinha —

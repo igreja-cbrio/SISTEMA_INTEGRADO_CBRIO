@@ -56,6 +56,11 @@ const ROTULOS = [
   ['solicitacoes', 'Solicitações'],
   ['rh.onboarding_lote', 'RH · formulário de dados pessoais'],
   ['rh', 'RH'],
+  // F3 da Comunicação (09/09/2026): o que sai pela aba Envios (Novo envio /
+  // programadas). O guard do teste exige rótulo pra todo prefixo do MAPA.
+  ['comunicacao.envio_manual', 'Comunicação · envio manual da equipe'],
+  ['comunicacao.agendamento', 'Comunicação · envio programado'],
+  ['comunicacao', 'Comunicação'],
   ['auto', 'Mensagem automática do sistema'],
 ];
 
