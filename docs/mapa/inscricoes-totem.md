@@ -80,6 +80,7 @@ Guard: `authorizeModule('inscricoes-totem', 1)`
 
 - `backend/utils/campoKey.js`
 - `backend/utils/checkoutExterno.js`
+- `backend/utils/eInscricao.js`
 - `backend/utils/eventoCheckinToken.js`
 - `backend/utils/exclusaoInscricaoLote.js`
 - `backend/utils/lotesEvento.js`

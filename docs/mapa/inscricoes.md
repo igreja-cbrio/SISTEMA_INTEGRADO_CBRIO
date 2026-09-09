@@ -87,6 +87,7 @@ Guard: `authorizeModule('inscricoes', 1 | 2 | 3 | 4 | 5)`
 
 - `backend/utils/campoKey.js`
 - `backend/utils/checkoutExterno.js`
+- `backend/utils/eInscricao.js`
 - `backend/utils/eventoCheckinToken.js`
 - `backend/utils/exclusaoInscricaoLote.js`
 - `backend/utils/lotesEvento.js`
