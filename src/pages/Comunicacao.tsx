@@ -32,6 +32,7 @@ import EquipeAtendimento from '../components/comunicacao/EquipeAtendimento';
 import DashboardComunicacao from '../components/comunicacao/DashboardComunicacao';
 import Agendados, { type Agendamento } from '../components/comunicacao/Agendados';
 import NovoEnvioModal from '../components/comunicacao/NovoEnvioModal';
+import { Conexao, TesteTemplate, MenuRespondeSozinho } from '../components/comunicacao/ConfiguracoesPecas';
 
 const C = { primary: '#00B39D' };
 
@@ -58,10 +59,9 @@ type Resumo = { dias: number; total: number; enviados: number; pendentes: number
 // O Dashboard foi extraído para components/comunicacao/DashboardComunicacao.tsx
 // no redesenho de 09/09/2026 (F2): quem espera resposta, mensagens por área e
 // por dia, tempo de resposta, engajamento, fila e custo — numa janela de dias
-// ou de ano. `brl` fica aqui porque a aba Tarifas o usa.
-const brl = (v: number) => `R$ ${(Number(v) || 0).toFixed(2)}`;
+// ou de ano. As tarifas viraram o lápis do card de custo (F4 · 09/09/2026).
 
-function Dashboard() { return <DashboardComunicacao />; }
+function Dashboard({ podeNvl5 }: { podeNvl5: boolean }) { return <DashboardComunicacao podeEditarTarifas={podeNvl5} />; }
 
 // ═══ ENVIOS (absorveu a aba Erros · decisão do Marcos 13/08) ═════════
 // Desde 09/09/2026 (F3) este é o HISTÓRICO (vista "Enviados") da aba fundida
@@ -381,75 +381,10 @@ function Templates({ podeSync, podeEditar }: { podeSync: boolean; podeEditar: bo
   );
 }
 
-// ═══ NÚMEROS ═════════════════════════════════════════════════════════
-type Numero = { id: string; phone_number_id: string; rotulo?: string | null; waba_id?: string | null; is_default?: boolean; ativo?: boolean };
-function Numeros({ podeEscrever }: { podeEscrever: boolean }) {
-  const [dados, setDados] = useState<{ numeros: Numero[]; env_phone_number_id: string | null } | null>(null);
-  const [erro, setErro] = useState(false);
-  const [form, setForm] = useState({ phone_number_id: '', rotulo: '', waba_id: '', is_default: true });
-  const [salvando, setSalvando] = useState(false);
-
-  const carregar = useCallback(() => {
-    setErro(false);
-    comunicacao.numeros.list().then((r) => setDados(r)).catch(() => setErro(true));
-  }, []);
-  useEffect(() => { carregar(); }, [carregar]);
-
-  async function salvar() {
-    if (!form.phone_number_id.trim()) { toast.error('Informe o phone_number_id.'); return; }
-    setSalvando(true);
-    try {
-      await comunicacao.numeros.criar({ phone_number_id: form.phone_number_id.trim(), rotulo: form.rotulo.trim() || null, waba_id: form.waba_id.trim() || null, is_default: form.is_default });
-      toast.success('Número cadastrado');
-      setForm({ phone_number_id: '', rotulo: '', waba_id: '', is_default: true }); carregar();
-    } catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao cadastrar'); }
-    finally { setSalvando(false); }
-  }
-
-  return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
-      <div className="space-y-3">
-        {erro ? <ErroBox msg="Falha ao listar números." onRetry={carregar} />
-          : !dados ? <Spinner />
-          : (
-            <>
-              {(!dados.numeros || dados.numeros.length === 0) && dados.env_phone_number_id && (
-                <Card className="p-4">
-                  <div className="flex items-center gap-2 text-sm font-medium"><Phone className="h-4 w-4 text-primary" />Número em uso (env)</div>
-                  <div className="mt-1 text-xs text-muted-foreground">Ainda não há número cadastrado. O envio usa o da variável de ambiente:</div>
-                  <div className="mt-1 font-mono text-sm">{dados.env_phone_number_id}</div>
-                </Card>
-              )}
-              {(dados.numeros || []).map((n) => (
-                <Card key={n.id} className="flex items-center justify-between p-4">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{n.rotulo || 'Sem rótulo'}</span>
-                      {n.is_default && <Badge variant="default">padrão</Badge>}
-                      {n.ativo === false && <Badge variant="secondary">inativo</Badge>}
-                    </div>
-                    <div className="mt-0.5 font-mono text-xs text-muted-foreground">phone_number_id: {n.phone_number_id}</div>
-                    {n.waba_id && <div className="font-mono text-xs text-muted-foreground">waba_id: {n.waba_id}</div>}
-                  </div>
-                </Card>
-              ))}
-              {dados.numeros && dados.numeros.length === 0 && !dados.env_phone_number_id && (
-                <Card className="p-8 text-center text-sm text-muted-foreground">Nenhum número.</Card>
-              )}
-            </>
-          )}
-      </div>
-      <Card className="space-y-3 self-start p-4">
-        <p className="flex items-center gap-1.5 text-sm font-semibold"><Phone className="h-4 w-4 text-primary" />Cadastrar número</p>
-        <Input placeholder="phone_number_id" value={form.phone_number_id} onChange={(e) => setForm((f) => ({ ...f, phone_number_id: e.target.value }))} disabled={!podeEscrever} />
-        <Input placeholder="Rótulo (ex.: Número principal)" value={form.rotulo} onChange={(e) => setForm((f) => ({ ...f, rotulo: e.target.value }))} disabled={!podeEscrever} />
-        <Input placeholder="waba_id (opcional)" value={form.waba_id} onChange={(e) => setForm((f) => ({ ...f, waba_id: e.target.value }))} disabled={!podeEscrever} />
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.is_default} onChange={(e) => setForm((f) => ({ ...f, is_default: e.target.checked }))} disabled={!podeEscrever} />Número padrão</label>
-        <Button className="w-full gap-1.5" disabled={!podeEscrever || salvando} onClick={salvar}>{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}Cadastrar</Button>
-      </Card>
-    </div>
-  );
-}
+// ═══ NÚMEROS → virou Configurações → Conexão (F4 · 09/09/2026) ═══
+// O card só-leitura mora em components/comunicacao/ConfiguracoesPecas.tsx
+// (`Conexao`). O envio usa o número da env; `wa_numeros` e as rotas /numeros
+// ficam DORMENTES (nada as lê) — dropar é decisão do Marcos.
 
 // ═══ ATENDENTES ══════════════════════════════════════════════════════
 type Atendente = { id: string; profile_id: string; areas?: string[]; horarios?: { dia: number; inicio: string; fim: string }[]; ativo?: boolean; profile?: { id: string; name?: string; email?: string } };
@@ -592,12 +527,14 @@ function BotAdmin({ podeEscrever }: { podeEscrever: boolean }) {
         <TabsTrigger value="ia"><Sparkles className="mr-1.5 h-3.5 w-3.5" />IA por área</TabsTrigger>
         <TabsTrigger value="equipe"><Users className="mr-1.5 h-3.5 w-3.5" />Equipe</TabsTrigger>
         <TabsTrigger value="menu"><Bot className="mr-1.5 h-3.5 w-3.5" />Menu do bot</TabsTrigger>
-        <TabsTrigger value="config"><MessageSquare className="mr-1.5 h-3.5 w-3.5" />Configuração</TabsTrigger>
+        <TabsTrigger value="config"><MessageSquare className="mr-1.5 h-3.5 w-3.5" />Institucional</TabsTrigger>
       </TabsList>
       <TabsContent value="ia"><BotIaAreas podeEscrever={podeEscrever} /></TabsContent>
       <TabsContent value="equipe"><EquipeAtendimento podeEscrever={podeEscrever} /></TabsContent>
-      <TabsContent value="menu"><ConversasSetores /></TabsContent>
-      <TabsContent value="config"><WhatsappBotConfig /></TabsContent>
+      <TabsContent value="menu"><MenuRespondeSozinho podeEscrever={podeEscrever} /><ConversasSetores /></TabsContent>
+      {/* F4 (09/09/2026): só o conteúdo institucional — os interruptores foram pro Menu (responder sozinho)
+          e pra Configurações → Conexão (webhook); o teste de template pra Configurações → Templates. */}
+      <TabsContent value="config"><WhatsappBotConfig soInstitucional /></TabsContent>
     </Tabs>
   );
 }
@@ -847,7 +784,7 @@ export default function Comunicacao() {
           <TabsTrigger value="config"><Settings className="mr-1.5 h-3.5 w-3.5" />Configurações</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="dashboard"><Dashboard /></TabsContent>
+        <TabsContent value="dashboard"><Dashboard podeNvl5={podeNvl5} /></TabsContent>
         {/* Chat: renderiza o default de Conversas.tsx (sub-abas Conversas/Mensagens prontas · o Painel saiu em 08/09/2026). */}
         <TabsContent value="conversas"><Conversas /></TabsContent>
         <TabsContent value="envios"><Envios podeReenviar={podeNvl3} podeEscrever={podeNvl3} podeExcluir={podeNvl4} vistaInicial={vistaEnvios} /></TabsContent>
@@ -875,83 +812,17 @@ function Configuracoes({ podeNvl3, podeNvl5 }: { podeNvl3: boolean; podeNvl5: bo
     <Tabs defaultValue="templates" className="space-y-4">
       <TabsList>
         <TabsTrigger value="templates"><FileText className="mr-1.5 h-3.5 w-3.5" />Templates</TabsTrigger>
-        <TabsTrigger value="numeros"><Phone className="mr-1.5 h-3.5 w-3.5" />Números</TabsTrigger>
-        <TabsTrigger value="tarifas"><Coins className="mr-1.5 h-3.5 w-3.5" />Tarifas</TabsTrigger>
+        <TabsTrigger value="conexao"><Phone className="mr-1.5 h-3.5 w-3.5" />Conexão</TabsTrigger>
       </TabsList>
-      <TabsContent value="templates"><Templates podeSync={podeNvl3} podeEditar={podeNvl3} /></TabsContent>
-      <TabsContent value="numeros"><Numeros podeEscrever={podeNvl5} /></TabsContent>
-      <TabsContent value="tarifas"><Tarifas podeEditar={podeNvl5} /></TabsContent>
+      <TabsContent value="templates">
+        <Templates podeSync={podeNvl3} podeEditar={podeNvl3} />
+        <TesteTemplate podeTestar={podeNvl3} />
+      </TabsContent>
+      <TabsContent value="conexao"><Conexao podeNvl5={podeNvl5} /></TabsContent>
     </Tabs>
   );
 }
 
-// ═══ TARIFAS (o backend existia desde julho SEM tela — o custo do Dashboard
-// lê daqui; era editável só por SQL) ═══
-type Tarifa = { categoria: string; tarifa: number; atualizado_em?: string };
-function Tarifas({ podeEditar }: { podeEditar: boolean }) {
-  const [lista, setLista] = useState<Tarifa[] | null>(null);
-  const [erro, setErro] = useState(false);
-  const [editCat, setEditCat] = useState<string | null>(null);
-  const [valor, setValor] = useState('');
-
-  const carregar = useCallback(() => {
-    setErro(false);
-    comunicacao.tarifas.list().then((r: Tarifa[]) => setLista(r || [])).catch(() => { setLista([]); setErro(true); });
-  }, []);
-  useEffect(() => { carregar(); }, [carregar]);
-
-  async function salvar(categoria: string) {
-    const t = Number(String(valor).replace(',', '.'));
-    if (!Number.isFinite(t) || t < 0) { toast.error('Valor inválido.'); return; }
-    try {
-      await comunicacao.tarifas.atualizar(categoria, t);
-      toast.success('Tarifa atualizada — o custo do Dashboard usa este valor.');
-      setEditCat(null); carregar();
-    } catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao salvar'); }
-  }
-
-  if (erro) return <ErroBox msg="Falha ao listar as tarifas." onRetry={carregar} />;
-  if (!lista) return <Spinner />;
-  return (
-    <div className="max-w-xl space-y-3">
-      <p className="text-sm text-muted-foreground">
-        Tarifa por conversa iniciada, por categoria de template (é a base do custo <b>estimado</b> do
-        Dashboard — não é a fatura da Meta). Conferir contra a tarifa vigente de vez em quando.
-      </p>
-      <Card className="overflow-hidden p-0">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border text-[11px] uppercase tracking-wide text-muted-foreground">
-              <th className="px-3 py-2.5 text-left font-medium">Categoria</th>
-              <th className="px-3 py-2.5 text-left font-medium">R$ por conversa</th>
-              <th className="px-3 py-2.5 text-right font-medium"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {lista.map((t) => (
-              <tr key={t.categoria} className="border-b border-border/60">
-                <td className="px-3 py-2 font-medium">{t.categoria}</td>
-                <td className="px-3 py-2 tabular-nums">
-                  {editCat === t.categoria
-                    ? <Input className="h-8 w-28" value={valor} onChange={(e) => setValor(e.target.value)} autoFocus />
-                    : brl(t.tarifa)}
-                </td>
-                <td className="px-3 py-2 text-right">
-                  {editCat === t.categoria ? (
-                    <div className="flex justify-end gap-1">
-                      <button onClick={() => salvar(t.categoria)} className="rounded p-1.5 text-muted-foreground hover:text-primary" title="Salvar"><Save className="h-4 w-4" /></button>
-                      <button onClick={() => setEditCat(null)} className="rounded p-1.5 text-muted-foreground hover:text-destructive" title="Cancelar"><X className="h-4 w-4" /></button>
-                    </div>
-                  ) : (
-                    <button disabled={!podeEditar} onClick={() => { setEditCat(t.categoria); setValor(String(t.tarifa)); }}
-                      className="rounded p-1.5 text-muted-foreground hover:text-primary disabled:opacity-40" title="Editar"><Pencil className="h-4 w-4" /></button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Card>
-    </div>
-  );
-}
+// ═══ TARIFAS → viraram o lápis do card "Custo estimado" do Dashboard (F4 · 09/09/2026) ═══
+// A tarifa só existe pra aquele número; editá-la longe dele era a sub-aba que
+// ninguém achava. O editor mora em components/comunicacao/DashboardComunicacao.tsx.

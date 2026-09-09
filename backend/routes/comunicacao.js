@@ -22,6 +22,8 @@ const { resolverJanelaPeriodo, rotuloJanela } = require('../utils/janelaPeriodo'
 const { diaBrt } = require('../utils/whatsappModulo');
 // Novo envio (F3 · 09/09/2026): destinatários, prévia, custo e validação — régua pura
 const NOVO = require('../utils/novoEnvio');
+// Conexão (F4 · 09/09/2026): o que é alerta no card só-leitura — régua pura
+const CONEXAO = require('../utils/conexaoWhatsapp');
 
 function communicationError(error, publicMessage) {
   return new AppError(error?.message || publicMessage, {
@@ -250,6 +252,106 @@ router.put('/numeros/:id', authorizeModule('comunicacao', 5), async (req, res) =
 });
 
 // ── Templates ────────────────────────────────────────────────────────
+// ── CONEXÃO (F4 do redesenho · 09/09/2026) ────────────────────────────────────
+// A sub-aba Números virou um card SÓ LEITURA: qual número está em uso (o da env
+// — `wa_numeros` existe e nada o lê), webhook ligado?, quem responde, e sinais
+// de vida (última recebida, último envio, último sync de templates). A régua do
+// que é alerta mora em utils/conexaoWhatsapp (pura, no gate). Cada leitura é
+// best-effort: o que não veio entra em `avisos`, nunca vira zero.
+router.get('/conexao', async (_req, res, next) => {
+  try {
+    const avisos = [];
+    const ler = async (nome, fn, vazio) => {
+      try { return await fn(); }
+      catch (e) { console.warn(`[comunicacao] conexao ${nome}:`, e.message); avisos.push(nome); return vazio; }
+    };
+    const cfg = await ler('config', async () => {
+      const { data, error } = await supabase.from('whatsapp_config').select('ia_ativa, respostas_automaticas, updated_at').eq('id', 1).maybeSingle();
+      if (error) throw error;
+      return data;
+    }, null);
+    // Quem responde: a MESMA régua do seletor de três (bot-ia/config). Sem config
+    // legível, 'ninguem' — fail-closed, como o webhook faz.
+    const modo = await ler('modo', async () => {
+      if (!cfg) return 'ninguem';
+      const botIa = require('../services/botIaResposta');
+      const R = require('../utils/botIaRegras');
+      const c = await botIa.lerConfig();
+      return R.modoResposta({ cfg, erroCfg: null, botIa: c.botIa });
+    }, 'ninguem');
+    const numeros = await ler('numeros', async () => {
+      const { data, error } = await supabase.from('wa_numeros').select('id, phone_number_id, rotulo, is_default, ativo').order('created_at');
+      if (error) throw error;
+      return data || [];
+    }, []);
+    const ultimo = (nome, tabela, coluna, filtro) => ler(nome, async () => {
+      let q = supabase.from(tabela).select(coluna).not(coluna, 'is', null).order(coluna, { ascending: false }).limit(1);
+      if (filtro) q = filtro(q);
+      const { data, error } = await q;
+      if (error) throw error;
+      return (data && data[0] && data[0][coluna]) || null;
+    }, null);
+    const [ultimaRecebida, ultimoEnvio, ultimoSync] = await Promise.all([
+      ultimo('ultima_recebida', 'wa_mensagens', 'criado_em', q => q.eq('direcao', 'in')),
+      ultimo('ultimo_envio', 'whatsapp_envios', 'enviado_em', q => q.eq('status', 'enviado')),
+      ultimo('sync_templates', 'wa_templates', 'sincronizado_em'),
+    ]);
+    const tpl = await ler('templates', async () => {
+      const { data, error } = await supabase.from('wa_templates').select('status_meta');
+      if (error) throw error;
+      const total = (data || []).length;
+      const aprovados = (data || []).filter(t => String(t.status_meta || '').toUpperCase() === 'APPROVED').length;
+      return { total, aprovados };
+    }, { total: 0, aprovados: 0 });
+
+    const r = CONEXAO.avaliarConexao({
+      envPhoneId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
+      wabaId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || null,
+      numeros, webhookLigado: cfg ? cfg.ia_ativa !== false : true, modo,
+      ultimoInboundEm: ultimaRecebida, ultimoOutboundEm: ultimoEnvio, ultimoSyncTemplatesEm: ultimoSync,
+      templatesAprovados: tpl.aprovados, templatesTotal: tpl.total, agoraMs: Date.now(),
+    });
+    res.json({
+      ...r,
+      alertas: r.alertas.map(codigo => ({ codigo, texto: CONEXAO.textoAlerta(codigo) })),
+      numeros_cadastrados: numeros,
+      config_atualizada_em: cfg ? cfg.updated_at || null : null,
+      avisos,
+    });
+  } catch (e) {
+    console.error('[comunicacao] conexao:', e.message);
+    next(communicationError(e, 'Erro ao consultar a conexão.'));
+  }
+});
+
+// O freio de emergência (`whatsapp_config.ia_ativa` = webhook inteiro). Nível 5:
+// desligado, TODA mensagem recebida deixa de ser registrada no inbox.
+router.put('/conexao', authorizeModule('comunicacao', 5), async (req, res, next) => {
+  try {
+    const v = req.body ? req.body.webhook_ligado : undefined;
+    if (typeof v !== 'boolean') return res.status(400).json({ error: 'Informe webhook_ligado como true ou false.' });
+    const { error } = await supabase.from('whatsapp_config')
+      .update({ ia_ativa: v, updated_at: new Date().toISOString(), updated_by: req.user?.userId || null }).eq('id', 1);
+    if (error) throw error;
+    res.json({ ok: true, webhook: v ? 'ligado' : 'desligado' });
+  } catch (e) {
+    console.error('[comunicacao] conexao put:', e.message);
+    next(communicationError(e, 'Erro ao alterar o webhook.'));
+  }
+});
+
+// Teste de template "pra mim" — veio de Bot → Configuração (F4). Mesma régua do
+// admin antigo (services/whatsappTesteDisparo), sob o guard deste módulo.
+router.post('/templates/testar', authorizeModule('comunicacao', 3), async (req, res, next) => {
+  try {
+    const { testarDisparoPara } = require('../services/whatsappTesteDisparo');
+    res.json(await testarDisparoPara(req.user?.userId, req.body ? req.body.chave : undefined));
+  } catch (e) {
+    console.error('[comunicacao] templates/testar:', e.message);
+    next(communicationError(e, 'Erro ao testar o template.'));
+  }
+});
+
 router.get('/templates', async (req, res) => {
   let q = supabase.from('wa_templates').select('*').order('nome');
   if (req.query.modulo) q = q.eq('modulo', String(req.query.modulo));

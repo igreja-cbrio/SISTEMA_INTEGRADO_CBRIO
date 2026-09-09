@@ -4122,6 +4122,68 @@ que sobrou como regra viva:
 - ⚠️ O **e2e do Next** foi atualizado pro contrato mas **não foi EXECUTADO**
   (exige app rodando + cria inscrição real).
 
+## ⚠️ Comunicação · FAXINA de Configurações (Conexão · lápis das tarifas · Bot→Configuração dissolvida) (2026-09-09 · SEM migration)
+
+Fase 4 (última) do redesenho pedido pelo Marcos em 08/09. Três mudanças de
+LUGAR, nenhuma de regra:
+
+| antes | agora |
+|---|---|
+| Configurações → **Números** (lista + "Cadastrar número") | Configurações → **Conexão**: card SÓ LEITURA (número em uso, webhook, quem responde, sinais de vida, alertas) |
+| Configurações → **Tarifas** (sub-aba própria) | **lápis no card "Custo estimado"** do Dashboard (nível 5) — a tarifa só existe pra aquele número |
+| Bot → **Configuração** (2 interruptores + teste de template + institucional) | "responder sozinho" → **topo do Menu do bot** · "Bot ativo" (webhook) → **Configurações → Conexão** · teste de template → **Configurações → Templates** · o que sobra vira **Bot → Institucional** |
+
+### Onde mora
+
+| peça | arquivo |
+|---|---|
+| régua PURA dos alertas da conexão (no gate · `src/test/conexaoWhatsapp.test.ts`, 11 casos · **8 mutantes RODADOS e mortos**) | `backend/utils/conexaoWhatsapp.js` |
+| `GET /comunicacao/conexao` (nível 1 · leituras best-effort + `avisos[]`) · `PUT /comunicacao/conexao` (nível 5 · só `webhook_ligado` booleano) · `POST /comunicacao/templates/testar` (nível 3) | `backend/routes/comunicacao.js` |
+| teste de template "pra mim" — régua ÚNICA, usada pelo admin antigo E pela Comunicação | `backend/services/whatsappTesteDisparo.js` |
+| `Conexao` · `TesteTemplate` · `MenuRespondeSozinho` | `src/components/comunicacao/ConfiguracoesPecas.tsx` |
+| o lápis das tarifas (`podeEditarTarifas`) | `src/components/comunicacao/DashboardComunicacao.tsx` |
+| `AbaConfig({ soInstitucional })` — montada pela Comunicação, só o institucional | `src/pages/admin/Whatsapp.jsx` |
+
+### ⚠️⚠️ As leis
+
+- **O número em uso é SEMPRE o da env** (`WHATSAPP_PHONE_NUMBER_ID`): `wa_numeros`
+  existe e **nada o lê** (0 linhas em 08/09). O card diz "em uso: env" e lista o
+  cadastro como cadastro — afirmar que um número cadastrado "está em uso" seria
+  mentir sobre por onde a mensagem sai. O formulário "Cadastrar número" SAIU;
+  as rotas `/numeros` ficam dormentes (dropar a tabela é decisão do Marcos).
+  **Com um número só, o inbox não tem seletor** — e não foi construído um.
+- **Webhook desligado é FREIO DE EMERGÊNCIA**, e a tela diz o efeito antes de
+  deixar desligar (confirmação inline em dois passos): toda mensagem recebida
+  deixa de ser registrada no inbox. Para só calar o bot, o caminho é "quem
+  responde" (Bot → IA por área ou o topo do Menu). `PUT /conexao` só aceita
+  **booleano** (`=== true/false`), nível 5.
+- **Alertas com régua declarada**: sem número · webhook desligado (que **cala** o
+  alerta de silêncio — um explica o outro) · nenhuma mensagem recebida há
+  **+72h** (216 conversas em 90 dias medidas: silêncio de 3 dias é webhook
+  quebrado, não a igreja calada) · espelho de templates sem sync há **+3h** (o
+  sync é horário) · catálogo vazio × nenhum aprovado (alertas diferentes) ·
+  **dois números padrão ATIVOS** (smell de dado; inativo não conta). Saúde
+  `atencao` só pelos graves; `templates_sem_sync` e `dois_numeros_padrao`
+  avisam sem pintar.
+- **O interruptor do Menu escreve pelo MESMO endpoint do seletor de três**
+  (`PUT /bot-ia/config` com `modo: menu|ninguem`) — nunca desalinha do que a
+  aba IA por área mostra. Com a IA ligada, o interruptor vira selo
+  ("IA por área") e diz onde trocar: ligar o menu por cima da IA em silêncio
+  seria dois bots falando.
+- **O teste de template virou serviço** (`whatsappTesteDisparo`) porque passou a
+  ter dois chamadores — o admin antigo (`/whatsapp/test-disparo`, guard
+  `whatsapp-admin`) e a Comunicação (`/comunicacao/templates/testar`, guard
+  `comunicacao ≥ 3`). Chave fora da lista devolve `ok:false` com motivo (antes
+  mandava `[nome]` pra qualquer chave e o "skipped" era opaco).
+- **O conteúdo institucional NÃO se perdeu**: ele alimenta o bot antigo e a
+  pseudo-área `Geral` da IA (`institucional.horarios/endereco/sobre`). Virou
+  **Bot → Institucional** (`<WhatsappBotConfig soInstitucional />`); a tela
+  antiga solta continua inteira e dormente.
+- **Tarifas**: o lápis abre os quatro valores dentro do próprio card, salva só o
+  que mudou (`PUT /tarifas/:categoria`, nível 5) e recarrega o custo. É
+  estimativa — o texto do card continua dizendo "não é a fatura da Meta".
+- Deep-link `?tab=numeros` continua caindo em Configurações (`TAB_LEGADO`).
+
 ## ⚠️ Comunicação · ENVIOS fundido (Enviados · Agendados · Automáticos) + "Novo envio" (2026-09-09 · SEM migration)
 
 Fase 3 do redesenho pedido pelo Marcos em 08/09. As abas **Envios** e

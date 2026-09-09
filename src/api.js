@@ -3995,6 +3995,14 @@ export const comunicacao = {
     },
     sync: () => post('/comunicacao/templates/sync', {}, { timeout: 120_000 }),
     atualizar: (id, body) => put(`/comunicacao/templates/${id}`, body),
+    // Teste "pra mim" (F4 · 09/09/2026): veio de Bot → Configuração
+    testar: (chave) => post('/comunicacao/templates/testar', { chave }),
+  },
+  // Conexão (F4 · 09/09/2026): card só-leitura que substituiu a sub-aba Números;
+  // o PUT é o freio de emergência (webhook), nível 5.
+  conexao: {
+    get: () => get('/comunicacao/conexao'),
+    salvar: (body) => put('/comunicacao/conexao', body),
   },
   agendamentos: {
     list: () => get('/comunicacao/agendamentos'),
