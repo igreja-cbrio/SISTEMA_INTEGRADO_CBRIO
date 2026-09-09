@@ -1,10 +1,18 @@
 const router = require('express').Router();
-const { authenticate, authorizeCycle, authorize } = require('../middleware/auth');
+const { authenticate, authorizeCycle, authorize, apenasColaborador } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 // Templates agora vem do banco (adm_task_templates)
 const { SHAREPOINT_CONFIGURED } = require('../services/storageService');
 
 router.use(authenticate);
+// varredura 2026-09: A05 — ciclo de evento carrega ORÇAMENTO (/expenses) e o
+// kanban de execução; estava aberto a qualquer conta autenticada, incluindo as
+// 138 `is_membro_only` (04/09). Piso no router: nenhuma rota deste arquivo
+// entra sem `req.user` (sem cron, sem rota pública) e o app de membros não
+// chama /api/cycles (só /api/app/* e /api/public/*).
+// ⚠️ Piso, não substituto do `authorizeCycle`/`authorize` por rota, que
+// seguem sendo a régua de quem pode aprovar, apagar e mexer em template.
+router.use(apenasColaborador);
 
 // ── Helper: buscar subtarefas em batches (evita URL >8KB no PostgREST) ──
 async function fetchSubtasksBatched(taskIds) {

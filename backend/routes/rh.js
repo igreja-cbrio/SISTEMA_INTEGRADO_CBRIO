@@ -298,7 +298,7 @@ router.get('/funcionarios', async (req, res) => {
     const { data, error } = await query;
     if (error) return res.status(400).json({ error: error.message });
     await preencherFotoDoPerfil(data);
-    res.json(data);
+    res.json(ocultarConfidenciaisRh(req, data)); // varredura 2026-09: RHP-03 — lista com `select('*')` vazava cpf/salário pra nível <4
   } catch (e) {
     console.error('[RH] Listar funcionários:', e.message);
     res.status(500).json({ error: 'Erro ao listar funcionários' });
@@ -326,7 +326,7 @@ router.get('/funcionarios/:id', async (req, res) => {
 
     await preencherFotoDoPerfil(func);
     res.json({
-      ...func,
+      ...ocultarConfidenciaisRh(req, func), // varredura 2026-09: RHP-03 — ficha devolvia cpf/salário/benefícios pra nível <4 (o front só pintava "•••")
       documentos: await assinarDocumentosRh(docs.data || []), // varredura 2026-09: RHP-01 caminho no bucket privado precisa virar URL assinada de 1h na leitura
       treinamentos: treinamentos.data || [],
       ferias_licencas: ferias.data || [],
@@ -699,9 +699,17 @@ router.post('/funcionarios', async (req, res) => {
     const statusInicial = status === 'em_admissao' ? 'em_admissao' : 'ativo';
 
     // Remuneracao no cadastro inicial · so quem tem nivel alto em RH define.
-    const podeRemun = ['admin', 'diretor'].includes(req.user.role) || getEffectiveLevel(req, 'rh') >= 4;
+    // varredura 2026-09: RHP-03 — era uma CÓPIA inline da régua, que ficou
+    // divergente ao consertar `podeEditarRemuneracao` (que deixou de usar
+    // `getEffectiveLevel`, ver o comentário de `nivelModuloRh`). Régua única.
+    const podeRemun = podeEditarRemuneracao(req);
     const insertPayload = {
-      nome, cpf: cpf || null, email: email || null, telefone: telefone || null,
+      // varredura 2026-09: RHP-03 — `cpf` gravava em QUALQUER nível, enquanto o PUT já
+      // o descartava (entrou em CAMPOS_RH_SENSIVEIS) e a leitura passou a ocultá-lo.
+      // Assimetria criar × editar: quem não pode editar o CPF de um colaborador também
+      // não pode defini-lo no cadastro inicial — senão o caminho de criação é a porta
+      // dos fundos da trava de edição.
+      nome, cpf: podeRemun ? (cpf || null) : null, email: email || null, telefone: telefone || null,
       cargo, area: area || null,
       tipo_contrato: String(tipo_contrato || 'CLT').toUpperCase(),  // CHECK exige CLT/PJ/PJ+/PREBENDA (uppercase)
       setor_id: setor_id ? parseInt(setor_id, 10) : null,
@@ -736,7 +744,11 @@ router.post('/funcionarios', async (req, res) => {
 
     enqueueSync('funcionario', data.id, 'upsert').catch(() => {});
 
-    res.status(201).json(data);
+    // varredura 2026-09: RHP-03 — o `.select()` do insert devolvia a linha INTEIRA
+    // (cpf/salário/benefícios) pra quem não pode ver, igual ao PUT e ao GET.
+    // ⚠️ A redação é só na RESPOSTA: `notificar` e `enqueueSync` acima leem `data`
+    // completo de propósito (nome/cargo/área/data de admissão, nada confidencial).
+    res.status(201).json(ocultarConfidenciaisRh(req, data));
   } catch (e) {
     console.error('[RH] Criar funcionário:', e.message);
     res.status(500).json({ error: 'Erro ao criar funcionário' });
@@ -746,10 +758,38 @@ router.post('/funcionarios', async (req, res) => {
 // Campos sensiveis (remuneracao + status de vinculo) · so editaveis por quem tem
 // nivel alto em RH (>=4) ou admin/diretor. Antes, um nivel-2 (data entry) editava
 // salario de qualquer funcionario — inclusive o proprio — ou demitia alguem.
+// varredura 2026-09: RHP-03 — nível do MÓDULO rh, espelhando o cálculo do
+// `authorizeModule` (mesmo módulo, mesmo campo). NÃO usar `getEffectiveLevel`
+// aqui: ele parte de `granular.cargoNivelLeitura` (`cargos.nivel_padrao_leitura`)
+// e só depois puxa pra cima com o módulo — ou seja, quem tem padrão alto no CARGO
+// passa mesmo SEM linha nenhuma em `rh`. Medido em 04/09: 10 cargos têm
+// `nivel_padrao_leitura >= 4` e 8 deles NÃO têm linha em `rh` (Acesso diretor,
+// Acesso admin, Pastor Sr, Pastor Pres, Dir Geral, Dir Estrat, Dir Mini, Dir Criat)
+// — com `getEffectiveLevel` esses 8 leriam CPF e folha de pagamento inteira, e
+// editariam salário, sem nunca terem recebido o módulo na matriz.
+// Quem OPERA rh não perde nada: Dir RH 5, Coord Estratégico 5, Coord Financ 4.
+// `cargo_modulo_permissao.nivel` é coluna ÚNICA (leitura = escrita pro cargo); a
+// assimetria só aparece no override por pessoa (`permissoes_modulo`), e é por isso
+// que leitura e escrita consultam campos diferentes aqui.
+function nivelModuloRh(req, tipo) {
+  if (req.user?.is_super_admin === true) return 5;
+  if (req.user?.role === 'admin') return 5;
+  if (req.user?.role === 'diretor') return 4;
+  return Number(req.user?.granular?.modulePerms?.rh?.[tipo]) || 0;
+}
 function podeEditarRemuneracao(req) {
-  return ['admin', 'diretor'].includes(req.user.role) || getEffectiveLevel(req, 'rh') >= 4;
+  // varredura 2026-09: RHP-03 — era `getEffectiveLevel(req, 'rh') >= 4`, que
+  // liberava a EDIÇÃO de salário pros 8 cargos sem linha em `rh` descritos acima.
+  return nivelModuloRh(req, 'escrita') >= 4;
+}
+function podeVerConfidenciaisRh(req) {
+  return nivelModuloRh(req, 'leitura') >= 4;
 }
 const CAMPOS_RH_SENSIVEIS = [
+  // varredura 2026-09: RHP-03 — `cpf` entra na trava de ESCRITA porque agora ele
+  // também é ocultado na LEITURA (ver CAMPOS_RH_CONFIDENCIAIS); sem isto, um
+  // nível <4 abriria a ficha sem CPF e o PUT do formulário gravaria null por cima.
+  'cpf',
   'salario', 'remuneracao_bruta', 'grau_id', 'data_enquadramento', 'status', 'data_demissao',
   // benefícios/descontos/totais/provisões também são remuneração → só nível alto edita
   'complemento_salario', 'alimentacao', 'transporte', 'saude', 'seguro_vida', 'educacao',
@@ -758,6 +798,56 @@ const CAMPOS_RH_SENSIVEIS = [
   'fgts', 'ir', 'inss', 'remuneracao_liquida', 'custo_total_mensal',
   'bonus_anual_50', 'bonus_anual_integral', 'ferias_integral',
 ];
+
+// varredura 2026-09: RHP-03 — as rotas de funcionário usam `select('*')` e mandavam
+// cpf/salário/benefícios no JSON pra qualquer nível; quem escondia era só o FRONT
+// ("•••" quando `podeRemun` = nível ≥ 4, RH.jsx). Nível 3 (escopo de área) lia a
+// folha inteira da própria área no payload. Aqui a leitura passa a usar a MESMA
+// régua da escrita (nível ≥ 4 NO MÓDULO rh), então nada muda na tela.
+// ⚠️ `observacoes` NÃO entra: a caixa de Notas do colaborador é editada por nível 2
+// e faz autosave — ocultar o valor apagaria a nota no primeiro caractere digitado.
+// ⚠️ `status`/`data_demissao` também não: são só write-protected, a tela lista por eles.
+// varredura 2026-09: RHP-03 — chaves sensiveis DENTRO do jsonb `admissao_dados`.
+// `contrato_editado` e o pior: e o HTML do contrato, com CPF e salario por
+// extenso escritos no corpo do texto.
+const CAMPOS_ADMISSAO_CONFIDENCIAIS = [
+  'contrato_editado', 'cpf', 'salario', 'rg', 'data_nascimento', 'endereco',
+  'pj_cnpj', 'pj_banco', 'pj_agencia', 'pj_conta', 'pj_pix', 'pj_razao_social',
+  'pj_inscricao_municipal', 'pj_endereco_empresa',
+];
+
+const CAMPOS_RH_CONFIDENCIAIS = [
+  'cpf',
+  'salario', 'remuneracao_bruta', 'grau_id', 'data_enquadramento',
+  'complemento_salario', 'alimentacao', 'transporte', 'saude', 'seguro_vida', 'educacao',
+  'saldo_livre', 'plano_saude', 'gratificacao', 'adicional_nivel', 'participacao_comite', 'veiculo',
+  'adicional_pastores', 'adicional_lideranca', 'adicional_pulpito',
+  'fgts', 'ir', 'inss', 'remuneracao_liquida', 'custo_total_mensal',
+  'bonus_anual_50', 'bonus_anual_integral', 'ferias_integral',
+];
+function ocultarConfidenciaisRh(req, payload) {
+  // varredura 2026-09: RHP-03 — régua de LEITURA do módulo (`modulePerms.rh`),
+  // nunca `getEffectiveLevel`: ver o comentário de `nivelModuloRh`.
+  if (!payload || podeVerConfidenciaisRh(req)) return payload;
+  const limpar = (row) => {
+    if (!row || typeof row !== 'object') return row;
+    const copia = { ...row };
+    for (const f of CAMPOS_RH_CONFIDENCIAIS) delete copia[f];
+    // varredura 2026-09: RHP-03 — apagar so as chaves de TOPO deixava passar o
+    // jsonb `admissao_dados`, que carrega o HTML do contrato com CPF e salario
+    // POR EXTENSO interpolados (admissao.jsx:57,67), alem de RG, endereco e
+    // dados bancarios PJ. Redige as chaves sensiveis DENTRO do jsonb tambem.
+    // ⚠️ Nao apaga o jsonb inteiro: `formParaFuncionario` o RECONSTROI a partir
+    // do form, e sumir com ele faria a tela regravar vazio por cima.
+    if (copia.admissao_dados && typeof copia.admissao_dados === 'object' && !Array.isArray(copia.admissao_dados)) {
+      const adm = { ...copia.admissao_dados };
+      for (const f of CAMPOS_ADMISSAO_CONFIDENCIAIS) delete adm[f];
+      copia.admissao_dados = adm;
+    }
+    return copia;
+  };
+  return Array.isArray(payload) ? payload.map(limpar) : limpar(payload);
+}
 
 // Tipos das colunas editaveis · coercao segura no UPDATE. O front manda ''
 // (string vazia) num campo nao preenchido; sem converter pra null o Postgres
@@ -823,6 +913,20 @@ router.put('/funcionarios/:id', async (req, res) => {
     // Bloqueia edicao de remuneracao/status por quem nao tem nivel suficiente.
     if (!podeEditarRemuneracao(req)) {
       for (const f of CAMPOS_RH_SENSIVEIS) delete updatePayload[f];
+      // varredura 2026-09: RHP-03 — a leitura redige `admissao_dados`, e o form
+      // REGRAVA o jsonb inteiro: sem preservar, salvar a ficha apagaria o
+      // contrato e os dados bancarios de quem nao pode ve-los. Le o valor atual
+      // e devolve as chaves redigidas por cima do que veio do navegador.
+      if (updatePayload.admissao_dados && typeof updatePayload.admissao_dados === 'object') {
+        const { data: atual } = await supabase
+          .from('rh_funcionarios').select('admissao_dados').eq('id', req.params.id).maybeSingle();
+        const antes = (atual && atual.admissao_dados) || {};
+        const merge = { ...updatePayload.admissao_dados };
+        for (const f of CAMPOS_ADMISSAO_CONFIDENCIAIS) {
+          if (antes[f] !== undefined) merge[f] = antes[f]; else delete merge[f];
+        }
+        updatePayload.admissao_dados = merge;
+      }
     }
     const { data, error } = await supabase
       .from('rh_funcionarios')
@@ -833,7 +937,7 @@ router.put('/funcionarios/:id', async (req, res) => {
 
     if (error) return res.status(400).json({ error: error.message });
     enqueueSync('funcionario', req.params.id, 'upsert').catch(() => {});
-    res.json(data);
+    res.json(ocultarConfidenciaisRh(req, data)); // varredura 2026-09: RHP-03 — o `.select()` do update devolvia a linha inteira (cpf/salário) pra quem não pode ver
   } catch (e) {
     console.error('[RH] Atualizar funcionário:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar funcionário' });
@@ -1298,7 +1402,11 @@ router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (r
 });
 
 // DELETE /api/rh/documentos/:id
-router.delete('/documentos/:id', async (req, res) => {
+// varredura 2026-09: RHP-03 — apagava documento (contrato, RG, CPF digitalizado) de
+// QUALQUER colaborador em nível 2, sem nenhuma checagem própria. Nível 3 é a mesma
+// régua já escrita neste arquivo pros outros deletes de registro auxiliar
+// (DELETE /treinamentos/:id e DELETE /ferias/:id). Trava POR ROTA (nunca router.use).
+router.delete('/documentos/:id', authorizeModule('rh', 3), async (req, res) => {
   try {
     const { error } = await supabase.rpc('app_soft_delete', {
       p_table_name: 'rh_documentos',
@@ -1730,7 +1838,9 @@ router.patch('/extras/:id', async (req, res) => {
 });
 
 // DELETE /api/rh/extras/:id
-router.delete('/extras/:id', async (req, res) => {
+// varredura 2026-09: RHP-03 — delete HARD de escala extra paga (plantão) rodava em
+// nível 2 sem checagem; mesmo degrau 3 dos outros deletes do módulo.
+router.delete('/extras/:id', authorizeModule('rh', 3), async (req, res) => {
   try {
     const { error } = await supabase.from('rh_escalas_extras').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -1757,7 +1867,10 @@ router.get('/config', async (req, res) => {
 });
 
 // PUT /api/rh/config/:chave  body { valor }
-router.put('/config/:chave', async (req, res) => {
+// varredura 2026-09: RHP-03 — config do MÓDULO inteiro (ex.: valor_extra_padrao, que
+// vira o valor default de todo plantão pago) gravava em nível 2. Nível 3 espelha a
+// régua do banco (`rh_config_update`). Trava POR ROTA.
+router.put('/config/:chave', authorizeModule('rh', 3), async (req, res) => {
   try {
     const { valor } = req.body || {};
     const { data, error } = await supabase
@@ -1778,7 +1891,11 @@ router.put('/config/:chave', async (req, res) => {
 
 // ── KPIs ──────────────────────────────────────────────────────
 // GET /api/rh/kpis
-router.get('/kpis', async (req, res) => {
+// varredura 2026-09: RHP-03 — ÚNICA rota de funcionários sem `applyAccessFilter`:
+// devolvia headcount global + a lista nominal das admissões do mês pra qualquer
+// nível 2. Nível 3 é o degrau da RLS viva de `rh_funcionarios`
+// (`current_user_module_level('rh') >= 3` = pode ver quadro alheio).
+router.get('/kpis', authorizeModule('rh', 3), async (req, res) => {
   try {
     const [{ count: total }, { count: ativos }, { count: ferias }, admissoes] = await Promise.all([
       supabase.from('rh_funcionarios').select('*', { count: 'exact', head: true }),
@@ -1870,7 +1987,10 @@ router.patch('/avaliacoes/:id', async (req, res) => {
   }
 });
 
-router.delete('/avaliacoes/:id', async (req, res) => {
+// varredura 2026-09: RHP-03 — delete HARD de avaliação 360° (ciclo PCS) rodava em
+// nível 2. Nível 4 é exatamente a régua que a própria aba PCS usa no front
+// (RH.jsx: `podeRemun = getAccessLevel(['rh']) >= 4` esconde a aba inteira).
+router.delete('/avaliacoes/:id', authorizeModule('rh', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('rh_avaliacoes').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });

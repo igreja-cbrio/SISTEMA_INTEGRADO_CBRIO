@@ -650,7 +650,15 @@ function PedidosTab({ data, loading, isDiretor, filtroStatus, setFiltroStatus, o
 
   async function bulkDelete() {
     if (!selected.length || !confirm(`Excluir ${selected.length} pedido(s)?`)) return;
-    for (const id of selected) { try { await onDelete(id); } catch {} }
+    // varredura 2026-09: RHP-02 — `catch {}` vazio engolia o 403 do gate novo
+    // (DELETE /pedidos exige logistica 4): o botao nao fazia nada e o usuario
+    // concluia que o sistema quebrou.
+    let falhas = 0, ultimoErro = '';
+    for (const id of selected) {
+      try { await onDelete(id); }
+      catch (e) { falhas++; ultimoErro = e?.message || 'erro ao excluir'; }
+    }
+    if (falhas) alert(`${falhas} de ${selected.length} não foram excluídos. ${ultimoErro}`);
     setSelected([]);
   }
 

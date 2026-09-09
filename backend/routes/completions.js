@@ -1,11 +1,17 @@
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, apenasColaborador } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { getGraphToken, ensureSharePointFolder, sanitizePath, SHAREPOINT_CONFIGURED, downloadFile } = require('../services/storageService');
 const { extractText } = require('../services/textExtractor');
 require('dotenv').config();
 
 router.use(authenticate);
+// varredura 2026-09: A05 — entregas de card sobem e baixam ARQUIVO do
+// SharePoint (upload-url, /attach, digest por IA); qualquer conta autenticada
+// entrava, incluindo as 138 `is_membro_only` (04/09). Piso no router: nenhuma
+// rota daqui entra sem `req.user` (sem cron, sem rota pública) e o app de
+// membros não chama /api/completions (só /api/app/* e /api/public/*).
+router.use(apenasColaborador);
 
 // ── Gerar digest de arquivo em background (não bloqueia response) ──
 async function generateDigestsInBackground(attachmentRows) {

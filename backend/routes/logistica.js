@@ -15,6 +15,18 @@ const { resolverFornecedor } = require('../services/comprasShared');
 const { enriquecerFornecedor } = require('../services/fornecedorEnriquecer');
 const { notificar } = require('../services/notificar');
 
+// varredura 2026-09 · RHP-02: este `router.use` e so o PISO (nivel 2 = entrar no
+// modulo). O nivel de cada acao vai POR ROTA abaixo, nunca aqui. Regua:
+//   leitura (GET)            -> herda o piso 2
+//   criar/editar             -> 3
+//   aprovar/rejeitar compra, mandar NF pro financeiro, importar a planilha de
+//   compras, e QUALQUER delete (nota, fornecedor, pedido, item, compra) -> 4
+// varredura 2026-09 · RHP-02: o teto deste modulo e 4, MEDIDO em
+// cargo_modulo_permissao: quem opera logistica (`Lider Op`, `Lider Log`,
+// `Assist Log`, `Assist Op`) tem 4; so `Dir Estrat` e `Dev` tem 5, e nenhum dos
+// dois OPERA. Entao nivel 5 aqui nao e "mais rigor", e desligar a acao pra equipe
+// inteira — e os botoes de apagar sao renderizados sem gate de front, o que
+// viraria 403 em botao visivel. Por isso nao existe rota 5 neste arquivo.
 router.use(authenticate, authorizeModule('logistica'));
 
 // Upload do scan de nota fiscal (foto ou PDF)
@@ -165,7 +177,8 @@ router.get('/fornecedores', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar fornecedores' }); }
 });
 
-router.post('/fornecedores', async (req, res) => {
+// varredura 2026-09 · RHP-02: cadastrar fornecedor e escrita (3) — era o piso 2.
+router.post('/fornecedores', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const { razao_social, nome_fantasia, cnpj, email, telefone, contato, categoria, endereco, observacoes } = req.body;
     if (!razao_social) return res.status(400).json({ error: 'Razão social é obrigatória' });
@@ -177,7 +190,8 @@ router.post('/fornecedores', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao criar fornecedor' }); }
 });
 
-router.put('/fornecedores/:id', async (req, res) => {
+// varredura 2026-09 · RHP-02: editar fornecedor e escrita (3) — era o piso 2.
+router.put('/fornecedores/:id', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const { razao_social, nome_fantasia, cnpj, email, telefone, contato, categoria, endereco, ativo, observacoes } = req.body;
     const { data, error } = await supabase.from('log_fornecedores')
@@ -188,7 +202,14 @@ router.put('/fornecedores/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar fornecedor' }); }
 });
 
-router.delete('/fornecedores/:id', async (req, res) => {
+// varredura 2026-09 · RHP-02: DELETE duro, sem trilha, do cadastro que comprova a
+// compra. E o par do DELETE /notas/:id no achado (apagar a nota e o fornecedor que
+// a lastreiam). Pra tirar de circulacao sem apagar existe `ativo`.
+// ⚠️ Nivel 4, NAO 5: medido em 04/09, o teto real de quem OPERA logistica e 4
+// (Lider Op, Lider Log, Assist Log, Assist Op) — 5 so existe pra `Dir Estrat` e
+// `Dev`, que nao mexem no cadastro. Pedir 5 aqui nao "endurece": tira a rota da
+// mao de todo mundo que usa a tela e o botao passa a dar 403 pra 100% dos casos.
+router.delete('/fornecedores/:id', authorizeModule('logistica', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('log_fornecedores').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -214,7 +235,8 @@ async function gravarEnriq(id, patch, status) {
 // chama em loop até restam=0. Marca enriquecimento_status pra não reprocessar e
 // pra sinalizar os "nao_encontrado" (ação manual). Lote pequeno + delay = gentil
 // com o rate limit da Receita; em 429 para o lote e devolve rateLimited.
-router.post('/fornecedores/enriquecer-incompletos', async (req, res) => {
+// varredura 2026-09 · RHP-02: grava no cadastro (e gasta IA) -> escrita 3.
+router.post('/fornecedores/enriquecer-incompletos', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const incompleto = (f) => !f.cnpj || !f.endereco || !f.telefone;
     const { data: forns } = await supabase.from('log_fornecedores').select('*').eq('ativo', true);
@@ -236,7 +258,8 @@ router.post('/fornecedores/enriquecer-incompletos', async (req, res) => {
   } catch (e) { console.error('[LOG] enriquecer lote:', e); res.status(500).json({ error: 'Erro ao enriquecer fornecedores' }); }
 });
 
-router.post('/fornecedores/:id/enriquecer', async (req, res) => {
+// varredura 2026-09 · RHP-02: grava no cadastro (e gasta IA) -> escrita 3.
+router.post('/fornecedores/:id/enriquecer', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const { data: forn } = await supabase.from('log_fornecedores').select('*').eq('id', req.params.id).maybeSingle();
     if (!forn) return res.status(404).json({ error: 'Fornecedor não encontrado' });
@@ -267,7 +290,8 @@ router.get('/pedidos', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar pedidos' }); }
 });
 
-router.post('/pedidos', async (req, res) => {
+// varredura 2026-09 · RHP-02: criar pedido e escrita (3) — era o piso 2.
+router.post('/pedidos', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const { solicitacao_id, fornecedor_id, descricao, valor_total, data_prevista, codigo_rastreio, transportadora } = req.body;
     if (!fornecedor_id || !descricao || !valor_total) return res.status(400).json({ error: 'Fornecedor, descrição e valor são obrigatórios' });
@@ -279,7 +303,9 @@ router.post('/pedidos', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao criar pedido' }); }
 });
 
-router.put('/pedidos/:id', async (req, res) => {
+// varredura 2026-09 · RHP-02: editar pedido (e disparar o WhatsApp de status) e
+// escrita (3) — era o piso 2.
+router.put('/pedidos/:id', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const { descricao, valor_total, data_prevista, status, codigo_rastreio, transportadora } = req.body;
     const { data: antigo } = await supabase.from('log_pedidos').select('status, solicitacao_id').eq('id', req.params.id).maybeSingle();
@@ -339,7 +365,9 @@ router.put('/pedidos/:id', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar pedido' }); }
 });
 
-router.delete('/pedidos/:id', async (req, res) => {
+// varredura 2026-09 · RHP-02: DELETE duro de registro operacional -> nivel 4
+// (mesma regua do patrimonio.js, que ja exige 4 pra deletar).
+router.delete('/pedidos/:id', authorizeModule('logistica', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('log_pedidos').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -348,7 +376,8 @@ router.delete('/pedidos/:id', async (req, res) => {
 });
 
 // ── RECEBIMENTOS ───────────────────────────────────────────
-router.post('/pedidos/:id/recebimento', async (req, res) => {
+// varredura 2026-09 · RHP-02: registrar recebimento e escrita (3) — era o piso 2.
+router.post('/pedidos/:id/recebimento', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const { observacoes, status } = req.body;
     const { data, error } = await supabase.from('log_recebimentos')
@@ -393,7 +422,9 @@ router.get('/notas/aux/categorias', async (req, res) => {
 });
 
 // Escanear nota fiscal: upload (foto/PDF) → IA extrai → sugere categoria → cria a nota
-router.post('/notas/escanear', uploadNf.single('arquivo'), async (req, res) => {
+// varredura 2026-09 · RHP-02: escrita 3. O guard vem ANTES do multer pra nao
+// receber 15 MB de quem nao pode escrever.
+router.post('/notas/escanear', authorizeModule('logistica', 3), uploadNf.single('arquivo'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
 
@@ -479,7 +510,8 @@ router.post('/notas/escanear', uploadNf.single('arquivo'), async (req, res) => {
 // daí o teto por requisição.
 const MAX_XML_POR_LOTE = 25;
 
-router.post('/notas/importar-xml', async (req, res) => {
+// varredura 2026-09 · RHP-02: cria nota fiscal no sistema -> escrita 3.
+router.post('/notas/importar-xml', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const arquivos = Array.isArray(req.body?.arquivos) ? req.body.arquivos : [];
     if (!arquivos.length) return res.status(400).json({ error: 'Nenhum XML enviado.' });
@@ -598,7 +630,8 @@ router.post('/notas/importar-xml', async (req, res) => {
 // arquivo para existir. Ver `utils/nfeArquivo`.
 const MAX_PDF_POR_LOTE = 6; // PDF em base64 infla ~33% · corpo do Express é 1 MB
 
-router.post('/notas/importar-danfe', async (req, res) => {
+// varredura 2026-09 · RHP-02: cria nota fiscal no sistema -> escrita 3.
+router.post('/notas/importar-danfe', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const arquivos = Array.isArray(req.body?.arquivos) ? req.body.arquivos : [];
     if (!arquivos.length) return res.status(400).json({ error: 'Nenhum PDF enviado.' });
@@ -707,7 +740,8 @@ router.get('/notas/:id/danfe', async (req, res) => {
   }
 });
 
-router.post('/notas', async (req, res) => {
+// varredura 2026-09 · RHP-02: criar nota fiscal e escrita (3) — era o piso 2.
+router.post('/notas', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const { numero, serie, fornecedor_id, pedido_id, valor, data_emissao, chave_acesso, emitente_nome, emitente_cnpj, descricao, observacoes, storage_path } = req.body;
     if (!numero) return res.status(400).json({ error: 'Número da nota é obrigatório' });
@@ -720,7 +754,8 @@ router.post('/notas', async (req, res) => {
 });
 
 // Edição (revisão dos dados extraídos) · bloqueada depois de lançada
-router.put('/notas/:id', async (req, res) => {
+// varredura 2026-09 · RHP-02: revisar a nota antes do lancamento e escrita (3).
+router.put('/notas/:id', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const { data: atual, error: errAtual } = await supabase.from('log_notas_fiscais')
       .select('id, status').eq('id', req.params.id).single();
@@ -744,7 +779,9 @@ router.put('/notas/:id', async (req, res) => {
 
 // Enviar pro financeiro lançar (notifica a equipe do financeiro ·
 // area_solicitacoes_responsaveis decide QUEM, não este comentário)
-router.post('/notas/:id/enviar-financeiro', async (req, res) => {
+// varredura 2026-09 · RHP-02: manda a nota pro financeiro LANCAR (dinheiro saindo)
+// e notifica a equipe -> nivel 4, o mesmo de aprovar compra. Era o piso 2.
+router.post('/notas/:id/enviar-financeiro', authorizeModule('logistica', 4), async (req, res) => {
   try {
     const { data: nota, error: errNota } = await supabase.from('log_notas_fiscais')
       .select('*').eq('id', req.params.id).single();
@@ -785,7 +822,12 @@ router.post('/notas/:id/enviar-financeiro', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao enviar nota pro financeiro' }); }
 });
 
-router.delete('/notas/:id', async (req, res) => {
+// varredura 2026-09 · RHP-02: DELETE duro da COMPROVACAO fiscal, sem trilha ->
+// nivel 4. E o coracao do achado: no piso 2, quem aprovava a compra apagava a nota
+// que a comprova. (A nota ja lancada segue bloqueada logo abaixo.)
+// ⚠️ Nivel 4, NAO 5, pelo mesmo motivo do DELETE /fornecedores/:id: ninguem que
+// OPERA logistica tem 5 (teto medido = 4), entao 5 seria fechar a rota pra todos.
+router.delete('/notas/:id', authorizeModule('logistica', 4), async (req, res) => {
   try {
     const { data: nota } = await supabase.from('log_notas_fiscais')
       .select('id, status').eq('id', req.params.id).maybeSingle();
@@ -906,7 +948,13 @@ router.get('/compras/aux/compradores', async (req, res) => {
 });
 
 // Importar a planilha de compras (.xlsx)
-router.post('/compras/importar', uploadPlanilha.single('arquivo'), async (req, res) => {
+// varredura 2026-09 · RHP-02: a planilha NAO entra mais aprovada — cada linha nasce
+// `pendente` (services/comprasImporter.js) e passa pelo /aprovar, um a um. O nivel
+// segue 4 por OUTRO motivo: e insercao em MASSA no ledger, chaveada por hash
+// (`import_chave`), que ninguem desfaz linha a linha depois. 4 e o teto real de quem
+// opera o modulo, entao a rota continua alcancavel pela equipe.
+// Guard antes do multer pra nao receber 25 MB de quem nao pode importar.
+router.post('/compras/importar', authorizeModule('logistica', 4), uploadPlanilha.single('arquivo'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Nenhuma planilha enviada' });
     const resumo = await importarComprasPlanilha(req.file.buffer, req.user.userId);
@@ -915,7 +963,9 @@ router.post('/compras/importar', uploadPlanilha.single('arquivo'), async (req, r
 });
 
 // Escanear nota da compra (foto/PDF) → IA extrai → fila de aprovação do Pery
-router.post('/compras/escanear', uploadNf.single('arquivo'), async (req, res) => {
+// varredura 2026-09 · RHP-02: escrita 3 — o scan entra `pendente`, quem libera e o
+// /aprovar (4). Guard antes do multer pra nao receber 15 MB de quem nao escreve.
+router.post('/compras/escanear', authorizeModule('logistica', 3), uploadNf.single('arquivo'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
     const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp', 'application/pdf': 'pdf' }[req.file.mimetype] || 'bin';
@@ -996,7 +1046,8 @@ router.get('/compras/:id/sugestoes-vinculo', async (req, res) => {
 });
 
 // Vincular a compra a uma saída do balanço (confirmação manual)
-router.post('/compras/:id/vincular', async (req, res) => {
+// varredura 2026-09 · RHP-02: conciliar compra x saida do balanco e escrita (3).
+router.post('/compras/:id/vincular', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const { fin_transacao_id, score } = req.body;
     if (!fin_transacao_id) return res.status(400).json({ error: 'Informe a saída a vincular' });
@@ -1027,7 +1078,8 @@ router.post('/compras/:id/vincular', async (req, res) => {
   } catch (e) { console.error('[LOG] vincular compra:', e); res.status(500).json({ error: 'Erro ao vincular compra' }); }
 });
 
-router.post('/compras/:id/desvincular', async (req, res) => {
+// varredura 2026-09 · RHP-02: desfazer a conciliacao e escrita (3).
+router.post('/compras/:id/desvincular', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const { data, error } = await supabase.from('log_compras')
       .update({ fin_transacao_id: null, vinculo_status: 'nao_vinculada', vinculo_score: null, vinculo_em: null, vinculo_por: null })
@@ -1039,8 +1091,42 @@ router.post('/compras/:id/desvincular', async (req, res) => {
 });
 
 // Aprovar (Pery confere o scan e libera) · aceita correções no body
-router.post('/compras/:id/aprovar', async (req, res) => {
+// varredura 2026-09 · RHP-02: aprovar compra e o controle financeiro do modulo —
+// nivel 4 (aprovador), nao o piso 2 de quem so consulta o catalogo.
+router.post('/compras/:id/aprovar', authorizeModule('logistica', 4), async (req, res) => {
   try {
+    // varredura 2026-09 · RHP-02: segregacao de funcoes — ninguem aprova a compra
+    // que ele mesmo registrou. `created_by` e profiles.id, o mesmo req.user.userId.
+    // ⚠️ `comprador_id` aponta pra rh_funcionarios (nao pra profiles) e `comprador`
+    // e texto livre — nenhum dos dois da pra comparar com o usuario logado aqui,
+    // entao a trava possivel e a de quem REGISTROU.
+    // ⚠️⚠️ A trava PRECISA ter saida: o fluxo principal da tela e escanear-e-aprovar
+    // na MESMA sessao (LogisticaCompras.jsx: `escanear` -> modal "Conferir e
+    // aprovar"), e sem escape ela mataria o caminho normal de quem opera sozinho.
+    // Quem tem a alcada de decidir por cima passa: admin, super-admin e diretoria
+    // geral (`profiles.is_diretoria_geral`, resolvido no authenticate).
+    const podeAprovarProprio = req.user?.is_super_admin === true
+      || req.user?.role === 'admin'
+      || req.user?.is_diretoria_geral === true;
+    const { data: alvo } = await supabase.from('log_compras')
+      .select('id, created_by, origem_registro').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!alvo) return res.status(404).json({ error: 'Compra não encontrada' });
+    // varredura 2026-09 · RHP-02: a planilha e ISENTA da segregacao. Quem importa
+    // nao e quem comprou — o importador so materializa no ledger compras feitas por
+    // outros, e ele vira `created_by` das centenas de linhas. Sem esta isencao, a
+    // operacao que importa fica impedida de aprovar TUDO que acabou de importar, e
+    // a fila trava. O `scan` e o `manual` continuam sob a trava, porque ali quem
+    // registra e quem comprou.
+    const registroProprio = alvo.created_by && alvo.created_by === req.user.userId
+      && alvo.origem_registro !== 'planilha';
+    if (!podeAprovarProprio && registroProprio) {
+      // varredura 2026-09 · RHP-02: 403 seco vira beco sem saida — a mensagem diz o
+      // que fazer (pedir a outro aprovador) e que a compra fica pendente, nao perdida.
+      return res.status(403).json({
+        error: 'Você registrou esta compra, então a aprovação precisa ser de outra pessoa (segregação de funções). Ela fica pendente na fila — peça a outro aprovador da logística ou à diretoria para conferir e liberar.',
+        codigo: 'aprovacao_proprio_registro',
+      });
+    }
     const update = { ...pickCompra(req.body || {}), status_aprovacao: 'aprovada', aprovada_em: new Date().toISOString(), aprovada_por: req.user.userId, rejeitada_motivo: null };
     if (!update.fornecedor_id && update.fornecedor) update.fornecedor_id = await resolverFornecedor({ nome: update.fornecedor });
     const { data, error } = await supabase.from('log_compras')
@@ -1051,7 +1137,8 @@ router.post('/compras/:id/aprovar', async (req, res) => {
   } catch (e) { console.error('[LOG] aprovar compra:', e); res.status(500).json({ error: 'Erro ao aprovar compra' }); }
 });
 
-router.post('/compras/:id/rejeitar', async (req, res) => {
+// varredura 2026-09 · RHP-02: rejeitar e o outro lado da aprovacao -> nivel 4.
+router.post('/compras/:id/rejeitar', authorizeModule('logistica', 4), async (req, res) => {
   try {
     const { motivo } = req.body || {};
     const { data, error } = await supabase.from('log_compras')
@@ -1064,13 +1151,18 @@ router.post('/compras/:id/rejeitar', async (req, res) => {
 });
 
 // Criar compra manual
-router.post('/compras', async (req, res) => {
+// varredura 2026-09 · RHP-02: registrar compra manual e escrita (3) — era o piso 2.
+router.post('/compras', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const payload = pickCompra(req.body || {});
     if (!payload.fornecedor && payload.valor == null) return res.status(400).json({ error: 'Informe ao menos fornecedor ou valor' });
     if (!payload.fornecedor_id && payload.fornecedor) payload.fornecedor_id = await resolverFornecedor({ nome: payload.fornecedor });
     payload.origem_registro = payload.origem_registro || 'manual';
-    payload.status_aprovacao = req.body?.status_aprovacao === 'pendente' ? 'pendente' : 'aprovada';
+    // varredura 2026-09 · RHP-02: registro manual NUNCA nasce aprovado. O corpo da
+    // requisicao deixou de decidir isso — a aprovacao passa SEMPRE pelo /aprovar,
+    // que e onde o `created_by` decide (segregacao de funcoes). Deixar nascer
+    // 'aprovada' era o contorno perfeito da trava: bastava um POST direto.
+    payload.status_aprovacao = 'pendente';
     payload.created_by = req.user.userId;
     const { data, error } = await supabase.from('log_compras')
       .insert(payload).select(COMPRA_SELECT).single();
@@ -1082,7 +1174,9 @@ router.post('/compras', async (req, res) => {
 });
 
 // Editar compra
-router.put('/compras/:id', async (req, res) => {
+// varredura 2026-09 · RHP-02: editar compra e escrita (3). `status_aprovacao` NAO
+// esta em COMPRA_CAMPOS, entao esta rota nao aprova nada — o gate segue no /aprovar.
+router.put('/compras/:id', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const payload = pickCompra(req.body || {});
     if (!Object.keys(payload).length) return res.status(400).json({ error: 'Nada para atualizar' });
@@ -1096,7 +1190,10 @@ router.put('/compras/:id', async (req, res) => {
 });
 
 // Excluir (soft-delete)
-router.delete('/compras/:id', async (req, res) => {
+// varredura 2026-09 · RHP-02: nivel 4 (e nao 5) porque aqui e SOFT-delete com
+// trilha (`app_soft_delete` guarda quem apagou) — a alternativa que a auditoria
+// aceita no lugar do 5.
+router.delete('/compras/:id', authorizeModule('logistica', 4), async (req, res) => {
   try {
     const { error } = await supabase.rpc('app_soft_delete', {
       p_table_name: 'log_compras', p_row_id: req.params.id, p_deleted_by: req.user.userId ?? null,
@@ -1118,7 +1215,8 @@ router.get('/pedidos/:id/itens', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar itens do pedido' }); }
 });
 
-router.post('/pedidos/:id/itens', async (req, res) => {
+// varredura 2026-09 · RHP-02: adicionar item ao pedido e escrita (3).
+router.post('/pedidos/:id/itens', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const { descricao, quantidade, unidade, valor_unitario } = req.body;
     if (!descricao || !quantidade) return res.status(400).json({ error: 'Descrição e quantidade são obrigatórios' });
@@ -1130,7 +1228,9 @@ router.post('/pedidos/:id/itens', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao adicionar item ao pedido' }); }
 });
 
-router.delete('/itens/:id', async (req, res) => {
+// varredura 2026-09 · RHP-02: DELETE duro de linha de pedido -> nivel 4, igual ao
+// DELETE do pedido pai (nao adianta blindar o pedido e deixar as linhas abertas).
+router.delete('/itens/:id', authorizeModule('logistica', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('log_pedido_itens').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -1163,7 +1263,8 @@ router.get('/estoque/produtos', async (req, res) => {
 });
 
 // POST /estoque/produtos
-router.post('/estoque/produtos', async (req, res) => {
+// varredura 2026-09 · RHP-02: criar produto do catalogo e escrita (3).
+router.post('/estoque/produtos', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const { nome, categoria, subtipo_infra, unidade, valor_unitario, quantidade_minima, controla_validade, observacoes } = req.body || {};
     if (!nome || !nome.trim()) return res.status(400).json({ error: 'Nome é obrigatório.' });
@@ -1179,7 +1280,8 @@ router.post('/estoque/produtos', async (req, res) => {
 });
 
 // PATCH /estoque/produtos/:id
-router.patch('/estoque/produtos/:id', async (req, res) => {
+// varredura 2026-09 · RHP-02: editar produto do catalogo e escrita (3).
+router.patch('/estoque/produtos/:id', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const up = {};
     for (const k of ['nome', 'categoria', 'subtipo_infra', 'unidade', 'observacoes']) if (k in (req.body || {})) up[k] = req.body[k];
@@ -1194,7 +1296,11 @@ router.patch('/estoque/produtos/:id', async (req, res) => {
 });
 
 // DELETE /estoque/produtos/:id · desativa (ledger preservado · ativo=false)
-router.delete('/estoque/produtos/:id', async (req, res) => {
+// varredura 2026-09 · RHP-02: fica em 3 (nao 5) porque isto NAO apaga nada — grava
+// `ativo: false`, reversivel, e o mesmo efeito ja e possivel pelo PATCH acima
+// (`ativo`), que e 3. Exigir mais aqui seria teatro: o caminho de baixo continua
+// aberto. O razao (log_estoque_movimentacoes) e preservado.
+router.delete('/estoque/produtos/:id', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const { error } = await supabase.from('log_estoque_produtos').update({ ativo: false }).eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -1222,7 +1328,8 @@ router.get('/estoque/movimentacoes', async (req, res) => {
 // POST /estoque/movimentacoes · 1 ou vários (inventário/recebimento)
 // body: { movimentos: [{produto_id, tipo, quantidade, validade?, area_destino?, evento_id?, motivo?}] } OU objeto único.
 // entrada/saída = magnitude (>0) · ajuste = delta com sinal (corrige contagem).
-router.post('/estoque/movimentacoes', async (req, res) => {
+// varredura 2026-09 · RHP-02: lancar no razao do estoque e escrita (3).
+router.post('/estoque/movimentacoes', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const lista = Array.isArray(req.body?.movimentos) ? req.body.movimentos : [req.body];
     if (!lista.length) return res.status(400).json({ error: 'Nenhum movimento informado.' });
@@ -1310,7 +1417,8 @@ router.get('/estoque/consumo', async (req, res) => {
 
 // POST /estoque/gerar-compra · cria UMA solicitação de compra a partir dos produtos
 // a repor selecionados (ponte estoque → compras · entra na fila do Amaury, fluxo ML).
-router.post('/estoque/gerar-compra', async (req, res) => {
+// varredura 2026-09 · RHP-02: abre solicitacao de compra na fila -> escrita 3.
+router.post('/estoque/gerar-compra', authorizeModule('logistica', 3), async (req, res) => {
   try {
     const ids = Array.isArray(req.body?.produto_ids) ? req.body.produto_ids : [];
     if (!ids.length) return res.status(400).json({ error: 'Selecione ao menos um produto.' });
