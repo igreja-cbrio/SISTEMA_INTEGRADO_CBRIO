@@ -16,7 +16,7 @@
 ## Backend
 - `backend/routes/comunicacao.js`
 Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
-<details><summary>Endpoints (33)</summary>
+<details><summary>Endpoints (34)</summary>
 - `DELETE /api/comunicacao/agendamentos/:id`
 - `GET /api/comunicacao/agendamentos`
 - `GET /api/comunicacao/atendentes`
@@ -28,6 +28,7 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `GET /api/comunicacao/conversas/:id/sugestao-grupo`
 - `GET /api/comunicacao/cron/agendamentos`
 - `GET /api/comunicacao/custo`
+- `GET /api/comunicacao/dashboard`
 - `GET /api/comunicacao/envios`
 - `GET /api/comunicacao/envios/resumo`
 - `GET /api/comunicacao/equipe`
@@ -56,10 +57,13 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 
 - `backend/utils/appError.js`
 - `backend/utils/botIaRegras.js`
+- `backend/utils/comunicacaoDashboard.js`
 - `backend/utils/cronAuth.js`
 - `backend/utils/equipeAtendimento.js`
+- `backend/utils/janelaPeriodo.js`
 - `backend/utils/sentry.js`
 - `backend/utils/supabase.js`
+- `backend/utils/whatsappModulo.js`
 
 **Serviços**
 
@@ -85,6 +89,7 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `wa_agendamentos`
 - `wa_atendentes`
 - `wa_bot_areas`
+- `wa_conversas`
 - `wa_equipe_atendimento`
 - `wa_mensagens`
 - `wa_numeros`
