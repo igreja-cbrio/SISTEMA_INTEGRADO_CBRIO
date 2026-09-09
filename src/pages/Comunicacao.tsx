@@ -30,6 +30,8 @@ import ContatosTab from '../components/comunicacao/ContatosTab';
 import BotIaAreas from '../components/comunicacao/BotIaAreas';
 import EquipeAtendimento from '../components/comunicacao/EquipeAtendimento';
 import DashboardComunicacao from '../components/comunicacao/DashboardComunicacao';
+import Agendados, { type Agendamento } from '../components/comunicacao/Agendados';
+import NovoEnvioModal from '../components/comunicacao/NovoEnvioModal';
 
 const C = { primary: '#00B39D' };
 
@@ -62,6 +64,8 @@ const brl = (v: number) => `R$ ${(Number(v) || 0).toFixed(2)}`;
 function Dashboard() { return <DashboardComunicacao />; }
 
 // ═══ ENVIOS (absorveu a aba Erros · decisão do Marcos 13/08) ═════════
+// Desde 09/09/2026 (F3) este é o HISTÓRICO (vista "Enviados") da aba fundida
+// `Envios`, definida logo abaixo da seção PROGRAMADAS.
 // Um histórico só: o status diz se foi ou se deu errado, o filtro recorta,
 // e a falha terminal tem o Reenviar na própria linha.
 type Envio = {
@@ -82,7 +86,7 @@ function SeloStatus({ e }: { e: Envio }) {
   selos.unshift(<Badge key="s" variant={e.status === 'erro' ? 'destructive' : 'secondary'} style={cor}>{e.status}</Badge>);
   return <div className="flex flex-wrap gap-1">{selos}</div>;
 }
-function Envios({ podeReenviar }: { podeReenviar: boolean }) {
+function HistoricoEnvios({ podeReenviar }: { podeReenviar: boolean }) {
   const [filtros, setFiltros] = useState({ status: '', contexto: '', telefone: '', de: '', ate: '' });
   const [aplicados, setAplicados] = useState(filtros);
   const [offset, setOffset] = useState(0);
@@ -204,157 +208,44 @@ function Envios({ podeReenviar }: { podeReenviar: boolean }) {
   );
 }
 
-// ═══ PROGRAMADAS (agendamentos) ══════════════════════════════════════
-type Agendamento = {
-  id: string; nome: string; template_nome?: string | null; texto?: string | null;
-  params?: string[]; audiencia?: { tipo: string; telefones?: string[] };
-  quando?: string | null; recorrencia?: string | null; dia_semana?: number | null;
-  dia_mes?: number | null; hora?: string | null; ativo?: boolean; ultimo_disparo?: string | null;
-};
+// ═══ ENVIOS · a aba fundida (Enviados · Agendados · Automáticos) (F3 · 09/09/2026) ═══
+// Decisão do Marcos (08/09): Envios e Disparos viraram UMA aba com três vistas
+// e um botão "Novo envio" (agora · agendar · repetir). As programadas moram em
+// components/comunicacao/Agendados.tsx e o formulário em NovoEnvioModal.tsx —
+// a prévia e o custo vêm do servidor (POST /comunicacao/envios/previa).
+// DIAS_SEMANA fica aqui porque o componente Atendentes (dormente) ainda o usa.
 const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-const AGEND_VAZIO = { nome: '', template_nome: '', texto: '', params: '', recorrencia: 'unica', dia_semana: '1', dia_mes: '1', hora: '09:00', quando: '', telefones: '' };
-
-function Programadas({ podeEscrever, podeExcluir }: { podeEscrever: boolean; podeExcluir: boolean }) {
-  const [lista, setLista] = useState<Agendamento[] | null>(null);
-  const [erro, setErro] = useState(false);
-  const [form, setForm] = useState({ ...AGEND_VAZIO });
-  const [editId, setEditId] = useState<string | null>(null);
-  const [salvando, setSalvando] = useState(false);
-
-  const carregar = useCallback(() => {
-    setErro(false);
-    comunicacao.agendamentos.list().then((r: Agendamento[]) => setLista(r || [])).catch(() => { setLista([]); setErro(true); });
-  }, []);
-  useEffect(() => { carregar(); }, [carregar]);
-
-  function resetar() { setForm({ ...AGEND_VAZIO }); setEditId(null); }
-  function editar(a: Agendamento) {
-    setEditId(a.id);
-    setForm({
-      nome: a.nome || '', template_nome: a.template_nome || '', texto: a.texto || '',
-      params: (a.params || []).join(', '),
-      recorrencia: a.quando ? 'unica' : (a.recorrencia || 'unica'),
-      dia_semana: String(a.dia_semana ?? 1), dia_mes: String(a.dia_mes ?? 1),
-      hora: a.hora ? String(a.hora).slice(0, 5) : '09:00',
-      quando: a.quando ? String(a.quando).slice(0, 16) : '',
-      telefones: (a.audiencia?.telefones || []).join('\n'),
-    });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  async function salvar() {
-    const telefones = form.telefones.split('\n').map((t) => t.replace(/\D/g, '')).filter(Boolean);
-    if (!form.nome.trim()) { toast.error('Informe o nome.'); return; }
-    if (!form.template_nome.trim() && !form.texto.trim()) { toast.error('Informe o template ou o texto.'); return; }
-    if (telefones.length === 0) { toast.error('Informe ao menos um telefone na audiência.'); return; }
-    const body: Record<string, unknown> = {
-      nome: form.nome.trim(),
-      template_nome: form.template_nome.trim() || null,
-      texto: form.texto.trim() || null,
-      params: form.params.split(',').map((p) => p.trim()).filter(Boolean),
-      audiencia: { tipo: 'telefones', telefones },
-    };
-    if (form.recorrencia === 'unica') {
-      if (!form.quando) { toast.error('Informe a data/hora do disparo único.'); return; }
-      body.quando = new Date(form.quando).toISOString();
-      body.recorrencia = null;
-    } else {
-      body.recorrencia = form.recorrencia;
-      body.hora = form.hora;
-      body.quando = null;
-      if (form.recorrencia === 'semanal') body.dia_semana = Number(form.dia_semana);
-      if (form.recorrencia === 'mensal') body.dia_mes = Number(form.dia_mes);
-    }
-    setSalvando(true);
-    try {
-      if (editId) { await comunicacao.agendamentos.atualizar(editId, body); toast.success('Programada atualizada'); }
-      else { await comunicacao.agendamentos.criar(body); toast.success('Programada criada'); }
-      resetar(); carregar();
-    } catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao salvar'); }
-    finally { setSalvando(false); }
-  }
-  async function toggleAtivo(a: Agendamento) {
-    try { await comunicacao.agendamentos.atualizar(a.id, { ativo: !a.ativo }); carregar(); }
-    catch (e: unknown) { toast.error((e as Error)?.message || 'Erro'); }
-  }
-  async function remover(id: string) {
-    if (!window.confirm('Excluir esta programada?')) return;
-    try { await comunicacao.agendamentos.remover(id); if (editId === id) resetar(); carregar(); }
-    catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao excluir'); }
-  }
-  function descrRecorrencia(a: Agendamento) {
-    if (a.quando) return `Única · ${fmtData(a.quando)}`;
-    if (a.recorrencia === 'diaria') return `Diária · ${a.hora || '09:00'}`;
-    if (a.recorrencia === 'semanal') return `Semanal · ${DIAS_SEMANA[a.dia_semana ?? 0]} ${a.hora || ''}`;
-    if (a.recorrencia === 'mensal') return `Mensal · dia ${a.dia_mes} ${a.hora || ''}`;
-    return '—';
-  }
-
+type VistaEnvios = 'enviados' | 'agendados' | 'automaticos';
+const DESCRICAO_VISTA: Record<VistaEnvios, string> = {
+  enviados: 'Tudo que saiu (ou tentou sair) pela fila, de todos os módulos — o status diz se foi, e a falha tem o Reenviar na linha.',
+  agendados: 'Envios com data ou recorrência que você cria e edita, mais o histórico do que já saiu por aqui.',
+  automaticos: 'O que o sistema manda sozinho por gatilho — leitura; cada um é operado no módulo dono.',
+};
+function Envios({ podeReenviar, podeEscrever, podeExcluir, vistaInicial }: {
+  podeReenviar: boolean; podeEscrever: boolean; podeExcluir: boolean; vistaInicial?: VistaEnvios;
+}) {
+  const [vista, setVista] = useState<VistaEnvios>(vistaInicial || 'enviados');
+  const [modal, setModal] = useState<{ aberto: boolean; editar: Agendamento | null }>({ aberto: false, editar: null });
+  const [refresh, setRefresh] = useState(0);
+  useEffect(() => { if (vistaInicial) setVista(vistaInicial); }, [vistaInicial]);
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_380px]">
-      <div className="space-y-3">
-        {erro ? <ErroBox msg="Falha ao listar programadas." onRetry={carregar} />
-          : lista === null ? <Spinner />
-          : lista.length === 0 ? <Card className="p-8 text-center text-sm text-muted-foreground">Nenhuma programada. {podeEscrever ? 'Crie ao lado. →' : ''}</Card>
-          : lista.map((a) => (
-            <Card key={a.id} className="p-4">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold">{a.nome}</span>
-                    <Badge variant={a.ativo ? 'default' : 'secondary'}>{a.ativo ? 'ativa' : 'pausada'}</Badge>
-                  </div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">{descrRecorrencia(a)} · {a.audiencia?.telefones?.length || 0} destinatários</div>
-                  <div className="mt-1 text-xs">{a.template_nome ? <Badge variant="outline">template: {a.template_nome}</Badge> : <span className="line-clamp-2 text-muted-foreground">{a.texto}</span>}</div>
-                </div>
-                <div className="flex shrink-0 gap-1">
-                  <button title={a.ativo ? 'Pausar' : 'Ativar'} disabled={!podeEscrever} onClick={() => toggleAtivo(a)} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"><Power className="h-4 w-4" /></button>
-                  <button title="Editar" disabled={!podeEscrever} onClick={() => editar(a)} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-primary disabled:opacity-40"><Pencil className="h-4 w-4" /></button>
-                  <button title="Excluir" disabled={!podeExcluir} onClick={() => remover(a.id)} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-40"><Trash2 className="h-4 w-4" /></button>
-                </div>
-              </div>
-            </Card>
-          ))}
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant={vista === 'enviados' ? 'default' : 'outline'} className="gap-1.5" onClick={() => setVista('enviados')}><Send className="h-3.5 w-3.5" />Enviados</Button>
+          <Button size="sm" variant={vista === 'agendados' ? 'default' : 'outline'} className="gap-1.5" onClick={() => setVista('agendados')}><CalendarClock className="h-3.5 w-3.5" />Agendados</Button>
+          <Button size="sm" variant={vista === 'automaticos' ? 'default' : 'outline'} className="gap-1.5" onClick={() => setVista('automaticos')}><Repeat className="h-3.5 w-3.5" />Automáticos</Button>
+        </div>
+        <Button size="sm" className="gap-1.5" disabled={!podeEscrever} title={podeEscrever ? 'Enviar agora, agendar ou repetir' : 'Exige nível 3 no módulo'} onClick={() => setModal({ aberto: true, editar: null })}>
+          <Plus className="h-4 w-4" />Novo envio
+        </Button>
       </div>
-      <Card className="space-y-3 self-start p-4">
-        <p className="flex items-center gap-1.5 text-sm font-semibold"><CalendarClock className="h-4 w-4 text-primary" />{editId ? 'Editar programada' : 'Nova programada'}</p>
-        <Input placeholder="Nome" value={form.nome} onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))} disabled={!podeEscrever} />
-        <Input placeholder="Template (nome exato · opcional)" value={form.template_nome} onChange={(e) => setForm((f) => ({ ...f, template_nome: e.target.value }))} disabled={!podeEscrever} />
-        <textarea placeholder="Texto (se não usar template)" rows={3} value={form.texto} onChange={(e) => setForm((f) => ({ ...f, texto: e.target.value }))} disabled={!podeEscrever}
-          className="w-full resize-none rounded-lg border border-border bg-background p-2 text-sm outline-none focus:border-primary disabled:opacity-50" />
-        <Input placeholder="Params do template (separados por vírgula)" value={form.params} onChange={(e) => setForm((f) => ({ ...f, params: e.target.value }))} disabled={!podeEscrever} />
-        <div className="grid grid-cols-2 gap-2">
-          <Select value={form.recorrencia} onValueChange={(v) => setForm((f) => ({ ...f, recorrencia: v }))} >
-            <SelectTrigger className="h-9" disabled={!podeEscrever}><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="unica">Única</SelectItem>
-              <SelectItem value="diaria">Diária</SelectItem>
-              <SelectItem value="semanal">Semanal</SelectItem>
-              <SelectItem value="mensal">Mensal</SelectItem>
-            </SelectContent>
-          </Select>
-          {form.recorrencia === 'unica' ? (
-            <Input type="datetime-local" value={form.quando} onChange={(e) => setForm((f) => ({ ...f, quando: e.target.value }))} disabled={!podeEscrever} className="h-9" />
-          ) : (
-            <Input type="time" value={form.hora} onChange={(e) => setForm((f) => ({ ...f, hora: e.target.value }))} disabled={!podeEscrever} className="h-9" />
-          )}
-        </div>
-        {form.recorrencia === 'semanal' && (
-          <Select value={form.dia_semana} onValueChange={(v) => setForm((f) => ({ ...f, dia_semana: v }))}>
-            <SelectTrigger className="h-9" disabled={!podeEscrever}><SelectValue /></SelectTrigger>
-            <SelectContent>{DIAS_SEMANA.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}</SelectContent>
-          </Select>
-        )}
-        {form.recorrencia === 'mensal' && (
-          <Input type="number" min={1} max={31} placeholder="Dia do mês" value={form.dia_mes} onChange={(e) => setForm((f) => ({ ...f, dia_mes: e.target.value }))} disabled={!podeEscrever} className="h-9" />
-        )}
-        <textarea placeholder="Audiência — um telefone por linha" rows={5} value={form.telefones} onChange={(e) => setForm((f) => ({ ...f, telefones: e.target.value }))} disabled={!podeEscrever}
-          className="w-full resize-none rounded-lg border border-border bg-background p-2 font-mono text-xs outline-none focus:border-primary disabled:opacity-50" />
-        <div className="flex gap-2">
-          {editId && <Button variant="outline" className="flex-1" onClick={resetar}>Cancelar</Button>}
-          <Button className="flex-1 gap-1.5" disabled={!podeEscrever || salvando} onClick={salvar}>{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}{editId ? 'Salvar' : 'Criar'}</Button>
-        </div>
-      </Card>
+      <p className="text-xs text-muted-foreground">{DESCRICAO_VISTA[vista]}</p>
+      {vista === 'enviados' && <HistoricoEnvios key={refresh} podeReenviar={podeReenviar} />}
+      {vista === 'agendados' && <Agendados podeEscrever={podeEscrever} podeExcluir={podeExcluir} refreshKey={refresh} onEditar={(a) => setModal({ aberto: true, editar: a })} />}
+      {vista === 'automaticos' && <Automaticas podeEscrever={podeEscrever} />}
+      <NovoEnvioModal aberto={modal.aberto} editar={modal.editar} onFechar={() => setModal({ aberto: false, editar: null })}
+        onSalvo={(destino) => { setModal({ aberto: false, editar: null }); setRefresh((r) => r + 1); setVista(destino); }} />
     </div>
   );
 }
@@ -903,10 +794,10 @@ function Automaticas({ podeEscrever = false }: { podeEscrever?: boolean }) {
 // Disparos = Programadas ∪ Automáticas (um filtro) · Erros entrou em Envios
 // (coluna de status + reenviar na linha) · Templates/Números/Atendentes/
 // Tarifas viraram sub-abas de Configurações.
-const TABS = ['dashboard', 'conversas', 'envios', 'disparos', 'contatos', 'bot', 'config'];
+const TABS = ['dashboard', 'conversas', 'envios', 'contatos', 'bot', 'config'];
 // Deep-links antigos (?tab=programadas etc.) caem na aba nova certa.
 const TAB_LEGADO: Record<string, string> = {
-  programadas: 'disparos', automaticas: 'disparos', erros: 'envios',
+  programadas: 'envios', automaticas: 'envios', disparos: 'envios', erros: 'envios', // Disparos fundida em Envios (09/09/2026)
   templates: 'config', numeros: 'config',
   atendentes: 'bot', // Atendentes virou Bot → Equipe (08/09/2026)
 };
@@ -916,6 +807,11 @@ export default function Comunicacao() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab') || 'dashboard';
   const tabUrl = TAB_LEGADO[tabParam] || tabParam;
+  // Vista da aba Envios (F3): ?vista= ou os deep-links das abas que ela absorveu.
+  const vistaParam = searchParams.get('vista');
+  const vistaEnvios: VistaEnvios | undefined = tabParam === 'automaticas' ? 'automaticos'
+    : (tabParam === 'programadas' || tabParam === 'disparos') ? 'agendados'
+    : (vistaParam === 'agendados' || vistaParam === 'automaticos' || vistaParam === 'enviados') ? vistaParam : undefined;
 
   const nivel = getAccessLevel(['comunicacao']);
   const podeNvl3 = nivel >= 3;
@@ -946,7 +842,6 @@ export default function Comunicacao() {
           <TabsTrigger value="dashboard"><BarChart3 className="mr-1.5 h-3.5 w-3.5" />Dashboard</TabsTrigger>
           <TabsTrigger value="conversas"><Inbox className="mr-1.5 h-3.5 w-3.5" />Conversas</TabsTrigger>
           <TabsTrigger value="envios"><Send className="mr-1.5 h-3.5 w-3.5" />Envios</TabsTrigger>
-          <TabsTrigger value="disparos"><CalendarClock className="mr-1.5 h-3.5 w-3.5" />Disparos</TabsTrigger>
           <TabsTrigger value="contatos"><BookUser className="mr-1.5 h-3.5 w-3.5" />Contatos</TabsTrigger>
           {podeBot && <TabsTrigger value="bot"><Bot className="mr-1.5 h-3.5 w-3.5" />Bot</TabsTrigger>}
           <TabsTrigger value="config"><Settings className="mr-1.5 h-3.5 w-3.5" />Configurações</TabsTrigger>
@@ -955,8 +850,7 @@ export default function Comunicacao() {
         <TabsContent value="dashboard"><Dashboard /></TabsContent>
         {/* Chat: renderiza o default de Conversas.tsx (sub-abas Conversas/Mensagens prontas · o Painel saiu em 08/09/2026). */}
         <TabsContent value="conversas"><Conversas /></TabsContent>
-        <TabsContent value="envios"><Envios podeReenviar={podeNvl3} /></TabsContent>
-        <TabsContent value="disparos"><Disparos podeEscrever={podeNvl3} podeExcluir={podeNvl4} /></TabsContent>
+        <TabsContent value="envios"><Envios podeReenviar={podeNvl3} podeEscrever={podeNvl3} podeExcluir={podeNvl4} vistaInicial={vistaEnvios} /></TabsContent>
         <TabsContent value="contatos"><ContatosTab podeGerirLideres={podeBot} /></TabsContent>
         {podeBot && <TabsContent value="bot"><BotAdmin podeEscrever={podeNvl3} /></TabsContent>}
         <TabsContent value="config">
@@ -967,32 +861,9 @@ export default function Comunicacao() {
   );
 }
 
-// ═══ DISPAROS (Programadas ∪ Automáticas · decisão do Marcos 13/08) ═══
-// Uma aba só, com um filtro: "Agendadas" (as programadas de sempre, editáveis)
-// × "Automáticas" (o inventário read-only do que o sistema manda por gatilho).
-function Disparos({ podeEscrever, podeExcluir }: { podeEscrever: boolean; podeExcluir: boolean }) {
-  const [tipo, setTipo] = useState<'agendadas' | 'automaticas'>('agendadas');
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant={tipo === 'agendadas' ? 'default' : 'outline'} className="gap-1.5" onClick={() => setTipo('agendadas')}>
-          <CalendarClock className="h-3.5 w-3.5" />Agendadas
-        </Button>
-        <Button size="sm" variant={tipo === 'automaticas' ? 'default' : 'outline'} className="gap-1.5" onClick={() => setTipo('automaticas')}>
-          <Repeat className="h-3.5 w-3.5" />Automáticas
-        </Button>
-        <span className="text-xs text-muted-foreground">
-          {tipo === 'agendadas'
-            ? 'Disparos com data/recorrência que VOCÊ cria e edita.'
-            : 'O que o sistema manda sozinho por gatilho — leitura; cada um é operado no módulo dono.'}
-        </span>
-      </div>
-      {tipo === 'agendadas'
-        ? <Programadas podeEscrever={podeEscrever} podeExcluir={podeExcluir} />
-        : <Automaticas podeEscrever={podeEscrever} />}
-    </div>
-  );
-}
+// ═══ DISPAROS → fundida em ENVIOS (F3 · 09/09/2026) ═══
+// "Agendadas" virou a vista Agendados e "Automáticas" a vista Automáticos da
+// aba Envios. Os deep-links ?tab=disparos|programadas|automaticas caem lá.
 
 // ═══ CONFIGURAÇÕES (Templates · Números · Tarifas) ═══
 // Atendentes SAIU daqui em 08/09/2026 (Marcos: "atendentes longe do fluxo do

@@ -4025,6 +4025,11 @@ export const comunicacao = {
       return get(`/comunicacao/envios${qs ? `?${qs}` : ''}`);
     },
     resumo: (dias = 30) => get(`/comunicacao/envios/resumo?dias=${dias}`),
+    // Novo envio (F3 · 09/09/2026): prévia (destinatários válidos, corpo
+    // preenchido, custo estimado, avisos) e "enviar agora" (entra na FILA; quem
+    // entrega é o cron horário). Agendado/recorrente seguem em `agendamentos`.
+    previa: (body) => post('/comunicacao/envios/previa', body),
+    agora: (body) => post('/comunicacao/envios/agora', body),
   },
   custo: (meses = 6) => get(`/comunicacao/custo?meses=${meses}`),
   // Dashboard do módulo (F2 · 09/09/2026): quem espera resposta, mensagens por

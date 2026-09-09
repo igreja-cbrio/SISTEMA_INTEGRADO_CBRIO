@@ -20,6 +20,8 @@ const { captureHandledException } = require('../utils/sentry');
 const DASH = require('../utils/comunicacaoDashboard');
 const { resolverJanelaPeriodo, rotuloJanela } = require('../utils/janelaPeriodo');
 const { diaBrt } = require('../utils/whatsappModulo');
+// Novo envio (F3 · 09/09/2026): destinatários, prévia, custo e validação — régua pura
+const NOVO = require('../utils/novoEnvio');
 
 function communicationError(error, publicMessage) {
   return new AppError(error?.message || publicMessage, {
@@ -648,6 +650,142 @@ router.get('/automaticas', async (req, res, next) => {
   } catch (e) {
     console.error('[comunicacao] automaticas', e.message);
     next(communicationError(e, 'Erro ao carregar os disparos automáticos.'));
+  }
+});
+
+// ── NOVO ENVIO (F3 do redesenho · 09/09/2026) ──────────────────────────────
+// Pedido do Marcos: fundir Envios + Disparos e ter um "Novo envio" (agora ·
+// agendado · recorrência) com PRÉVIA e CUSTO ESTIMADO antes de sair. A conta
+// mora em utils/novoEnvio (pura, no gate); aqui só se lê o catálogo de
+// templates e as tarifas. Agendado e recorrente continuam entrando pelo
+// POST /agendamentos (mesma tabela, mesmo cron horário). "Agora" entra na FILA
+// (whatsapp_envios) — quem ENTREGA é o cron horário da fila, com retry e o teto
+// de 2 por telefone por rodada; a tela DIZ isso em vez de prometer "enviado".
+async function templateDoCatalogo(nome) {
+  if (!nome) return null;
+  const { data, error } = await supabase.from('wa_templates')
+    .select('nome, idioma, categoria, status_meta, params_body, exemplo, componentes, ativo')
+    .eq('nome', String(nome)).order('idioma').limit(1);
+  if (error) throw error;
+  return (data && data[0]) || null;
+}
+// O corpo vem do componente BODY que a Meta devolveu no sync; `exemplo` é o
+// fallback (é o mesmo texto, renderizado no sync).
+function corpoDoTemplate(t) {
+  if (!t) return '';
+  const comps = Array.isArray(t.componentes) ? t.componentes : [];
+  const body = comps.find(c => c && String(c.type || '').toUpperCase() === 'BODY');
+  return String((body && body.text) || t.exemplo || '');
+}
+async function tarifasPorCategoria() {
+  const { data, error } = await supabase.from('wa_tarifas').select('categoria, tarifa');
+  if (error) throw error;
+  const m = {};
+  for (const t of data || []) m[String(t.categoria || '').toLowerCase()] = Number(t.tarifa) || 0;
+  return m;
+}
+async function montarPreviaEnvio(b) {
+  const dest = NOVO.normalizarDestinatarios(b.destinatarios);
+  const templateNome = String(b.template_nome || '').trim();
+  const tipo = templateNome ? 'template' : 'texto';
+  const tpl = tipo === 'template' ? await templateDoCatalogo(templateNome) : null;
+  const params = (Array.isArray(b.params) ? b.params : []).map(p => String(p ?? ''));
+  const corpo = tipo === 'template' ? corpoDoTemplate(tpl) : String(b.texto || '');
+  const previa = NOVO.renderizarCorpo(corpo, params);
+  const tarifas = await tarifasPorCategoria();
+  const templateEncontrado = tipo !== 'template' || !!tpl;
+  const custo = NOVO.custoEstimado({ quantidade: dest.validos.length, tipo, categoria: tpl ? tpl.categoria : null, tarifas });
+  const avisos = NOVO.avisos({ quantidade: dest.validos.length, tipo, categoria: tpl ? tpl.categoria : null, statusMeta: tpl ? tpl.status_meta : null, templateEncontrado });
+  return { dest, tipo, templateNome, tpl, templateEncontrado, params, corpo, previa, custo, avisos };
+}
+
+router.post('/envios/previa', async (req, res, next) => {
+  try {
+    const p = await montarPreviaEnvio(req.body || {});
+    res.json({
+      destinatarios: {
+        validos: p.dest.validos.length,
+        lista: p.dest.validos, // já normalizada · é ela que o agendamento grava
+        invalidos: p.dest.invalidos.slice(0, 50),
+        invalidos_total: p.dest.invalidos.length,
+        duplicados: p.dest.duplicados,
+      },
+      tipo: p.tipo,
+      template: p.tpl ? { nome: p.tpl.nome, categoria: p.tpl.categoria, status_meta: p.tpl.status_meta, params_body: p.tpl.params_body } : null,
+      template_encontrado: p.templateEncontrado,
+      params: NOVO.conferirParams(p.tpl ? p.tpl.params_body : null, p.params),
+      previa: p.previa,
+      custo: p.custo,
+      avisos: p.avisos.map(codigo => ({ codigo, texto: NOVO.textoAviso(codigo) })),
+    });
+  } catch (e) {
+    console.error('[comunicacao] envios/previa:', e.message);
+    next(communicationError(e, 'Erro ao montar a prévia do envio.'));
+  }
+});
+
+router.post('/envios/agora', authorizeModule('comunicacao', 3), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const agora = Date.now();
+    const p = await montarPreviaEnvio(b);
+    const v = NOVO.validarNovoEnvio({
+      modo: 'agora', destinatarios: p.dest.validos, template_nome: p.templateNome, texto: b.texto, params: p.params,
+      params_body: p.tpl ? p.tpl.params_body : null, templateEncontrado: p.templateEncontrado, agoraMs: agora,
+    });
+    if (!v.ok) return res.status(400).json({ error: v.erros.map(NOVO.textoErro).join(' · '), erros: v.erros });
+    // Freio: quem envia repete a contagem que leu na prévia (o mesmo freio dos
+    // disparos em massa dos grupos e do censo). Contagem divergente = a lista
+    // mudou depois da prévia, ou ninguém leu.
+    const confirmada = Number(b.confirmar_quantidade);
+    if (confirmada !== p.dest.validos.length) {
+      return res.status(409).json({
+        error: `A quantidade confirmada (${Number.isFinite(confirmada) ? confirmada : '—'}) não bate com os ${p.dest.validos.length} telefones válidos. Releia a prévia e confirme de novo.`,
+        codigo: 'contagem_divergente', validos: p.dest.validos.length,
+      });
+    }
+    const nome = String(b.nome || '').trim() || NOVO.nomePadrao({ agoraMs: agora, tipo: p.tipo, template: p.templateNome });
+    // 1 · o registro do disparo manual — na MESMA tabela das programadas: é o
+    //     histórico que a vista Agendados mostra ("Manual · enviado em…").
+    const { data: ag, error: errAg } = await supabase.from('wa_agendamentos').insert({
+      nome,
+      template_nome: p.tipo === 'template' ? p.templateNome : null,
+      texto: p.tipo === 'texto' ? String(b.texto) : null,
+      params: p.params,
+      audiencia: { tipo: 'telefones', telefones: p.dest.validos },
+      quando: new Date(agora).toISOString(),
+      recorrencia: null,
+      ativo: false,
+      criado_por: req.user?.userId || req.user?.id || null,
+    }).select('id').single();
+    if (errAg) throw errAg;
+    // 2 · a fila. Só GRAVA; quem entrega é o cron horário (retry/backoff, 2 por
+    //     telefone por rodada — a nota de qualidade do número decide o tier).
+    const itens = p.dest.validos.map(tel => ({
+      telefone: tel,
+      template: p.tipo === 'template' ? p.templateNome : undefined,
+      texto: p.tipo === 'texto' ? String(b.texto) : undefined,
+      params: p.params,
+      contexto: 'comunicacao.envio_manual',
+      refId: ag.id,
+    }));
+    const r = await enfileirarLote(itens);
+    if (!r.queued) {
+      // Envio que não enviou ninguém NÃO vira sucesso (lição do disparo do censo,
+      // 05/08): desfaz o registro e diz o motivo com todas as letras.
+      await supabase.from('wa_agendamentos').delete().eq('id', ag.id);
+      const motivo = r.motivo === 'disabled'
+        ? 'O envio de WhatsApp está desligado neste ambiente (credenciais/WHATSAPP_ENABLED). Nada saiu.'
+        : r.motivo === 'template_rejeitado_na_meta'
+          ? 'A Meta rejeitou ou pausou este template — nada foi enfileirado.'
+          : `Nada foi enfileirado (${r.motivo || 'motivo desconhecido'}).`;
+      return res.status(409).json({ error: motivo, codigo: r.motivo || 'nada_enfileirado', bloqueados_template: r.bloqueados_template || 0 });
+    }
+    await supabase.from('wa_agendamentos').update({ ultimo_disparo: new Date().toISOString() }).eq('id', ag.id);
+    res.status(201).json({ ok: true, agendamento_id: ag.id, na_fila: r.queued, total: p.dest.validos.length, bloqueados_template: r.bloqueados_template || 0 });
+  } catch (e) {
+    console.error('[comunicacao] envios/agora:', e.message);
+    next(communicationError(e, 'Erro ao enviar agora.'));
   }
 });
 

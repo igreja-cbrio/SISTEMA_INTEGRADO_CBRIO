@@ -4122,6 +4122,81 @@ que sobrou como regra viva:
 - ⚠️ O **e2e do Next** foi atualizado pro contrato mas **não foi EXECUTADO**
   (exige app rodando + cria inscrição real).
 
+## ⚠️ Comunicação · ENVIOS fundido (Enviados · Agendados · Automáticos) + "Novo envio" (2026-09-09 · SEM migration)
+
+Fase 3 do redesenho pedido pelo Marcos em 08/09. As abas **Envios** e
+**Disparos** viraram UMA aba **Envios** com três vistas — **Enviados** (o
+histórico da fila, intacto) · **Agendados** (programadas + o que já saiu por
+aqui) · **Automáticos** (o inventário read-only, com os interruptores) — e um
+botão **Novo envio** (agora · agendar · repetir) com **prévia** e **custo
+estimado** antes de sair.
+
+⚠️ Medido antes de escrever: **`wa_agendamentos` tinha 0 linhas e nenhum envio
+com `contexto comunicacao.*` em 90 dias** — as programadas nunca foram usadas;
+não havia legado a preservar. As duas telas antigas (`Programadas`, `Disparos`)
+saíram do `Comunicacao.tsx`; `HistoricoEnvios` é o componente de antes com outro
+nome.
+
+### Onde mora
+
+| peça | arquivo |
+|---|---|
+| régua PURA (no gate · `src/test/novoEnvio.test.ts`, 13 casos · **10 mutantes RODADOS e mortos**) | `backend/utils/novoEnvio.js` |
+| `POST /comunicacao/envios/previa` (qualquer nível · só lê catálogo e tarifas) · `POST /comunicacao/envios/agora` (nível 3) | `backend/routes/comunicacao.js` |
+| vista **Agendados** (lista · pausar · editar · excluir) | `src/components/comunicacao/Agendados.tsx` |
+| o modal **Novo envio** | `src/components/comunicacao/NovoEnvioModal.tsx` |
+| a aba (chips + botão) · deep-links `?tab=envios&vista=` | `src/pages/Comunicacao.tsx` |
+
+### ⚠️⚠️ As leis
+
+- **"Agora" NÃO envia — ENFILEIRA.** `enfileirarLote` só grava em
+  `whatsapp_envios`; quem entrega é o cron horário da fila, com retry/backoff e
+  o teto de **2 por telefone por rodada**. A tela diz *"entraram na fila · saem
+  na próxima rodada (a cada hora)"*, nunca "enviado". Prometer entrega aqui
+  seria a caixa verde do censo com zero envio.
+- **Envio que não enfileirou ninguém NÃO vira sucesso**: `queued = 0` → **409**
+  com o motivo (fila desligada · template bloqueado na Meta) e o registro do
+  disparo é DESFEITO. Lição de 05/08.
+- **Freio de leitura**: quem envia agora **digita a quantidade** que a prévia
+  mostrou, e o servidor compara com os válidos que ELE contou
+  (`confirmar_quantidade`) — divergiu, 409. É o mesmo freio dos disparos em
+  massa dos grupos e do censo.
+- **A prévia é do SERVIDOR, e é a MESMA régua que valida.** Destinatários
+  normalizados pro formato da fila (DDD + número; o `55` do país só sai quando
+  sobra telefone inteiro — **DDD 55 é Santa Maria/RS**), **repetidos e inválidos
+  DECLARADOS** ("colei 50, saíram 47" não pode ser mistério), corpo do template
+  com os `{{n}}` preenchidos (**o que falta fica escrito**, como as variáveis do
+  inbox), custo = **N × tarifa da categoria** (`wa_tarifas`: marketing 0,35 ·
+  utility 0,04 · service 0). **Sem tarifa conhecida o custo é `null`, nunca
+  R$ 0,00** — "de graça" com fatura depois.
+- **Avisos que não bloqueiam, mas declaram**: acima de **200** destinatários (o
+  tier de 250/24h da Meta — o resto sai no dia seguinte, e a fila desiste em
+  36h) · texto livre (só alcança quem escreveu nas últimas 24h) · template não
+  aprovado/desconhecido/sem status no espelho · **MARKETING exige opt-in**.
+- **O envio manual grava em `wa_agendamentos`** (`quando = agora`,
+  `ativo = false`, `ultimo_disparo`) — é o histórico da vista Agendados
+  ("enviado agora"); as linhas da fila levam `contexto = comunicacao.envio_manual`
+  e `ref_id` = esse registro. Tabela nova pra isso seria uma 2ª verdade sobre
+  "o que saiu por aqui".
+- **`whatsappModulo.MAPA` ganhou `comunicacao`**: falha de entrega de envio
+  manual/programada avisa o módulo Comunicação (antes caía no padrão
+  `integracao`, sem dono). `SLUGS_REAIS` do teste ganhou o slug.
+  ⚠️ E **`whatsappOrigem.ROTULOS` ganhou os rótulos** (`comunicacao.envio_manual`,
+  `comunicacao.agendamento`): o guard `src/test/whatsappOrigem.test.ts` exige
+  rótulo para TODO prefixo do MAPA — foi ele que pegou a ausência na suíte
+  completa (243 verdes, 1 vermelho), depois de tsc, build, gate e mutantes
+  passarem. Contexto novo na fila entra nos DOIS arquivos.
+- Agendado e recorrente seguem no `POST/PUT /agendamentos` (mesma tabela, mesmo
+  `/cron/agendamentos`, mesmo teto de 500). Editar um agendamento abre o mesmo
+  modal; "enviado agora" não se edita (só some).
+- **Deep-links**: `?tab=disparos|programadas|automaticas` caem em Envios na
+  vista certa; `?tab=envios&vista=agendados|automaticos|enviados`. O interruptor
+  dos disparos automáticos fica em **Comunicação → Envios → Automáticos** (as
+  menções antigas a "Disparos → Automáticas" neste arquivo foram atualizadas —
+  é o MESMO switch, `disparos_off`).
+- Exclusão **sem `window.confirm`**: confirmação inline em dois cliques — diálogo
+  nativo trava automação de navegador e não é o padrão da casa.
+
 ## ⚠️ Comunicação · DASHBOARD do módulo (2026-09-09 · SEM migration)
 
 Fase 2 do redesenho pedido pelo Marcos em 08/09 (*"o dashboard está muito
@@ -14948,7 +15023,7 @@ criar o terceiro caso.
 
 **O que passou a existir:** o disparo entrou no catálogo
 (`comunicacaoAutomaticas.js`, id **`escala_vespera`**), então ganhou o switch em
-**Comunicação → Disparos → Automáticas** — desliga na hora (cache de 60s), sem
+**Comunicação → Envios → Automáticos** — desliga na hora (cache de 60s), sem
 redeploy, e religa igual. O freio é o `disparos_off` que já existia; só faltava
 este disparo (e o resumo Kids, que **continua sem interruptor**).
 
@@ -15937,7 +16012,7 @@ canonicalizado por `canonizarBairro` — lei de 24/08).
   `test:disparo-interruptor` travando a tríade) e **NASCEU DESLIGADO em
   produção** (id em `whatsapp_config.disparos_off`, aplicado e conferido em
   01/09): decisão do Marcos — só liga quando o número oficial da igreja entrar
-  na plataforma, pelo switch em Comunicação → Disparos → Automáticas (sem PR).
+  na plataforma, pelo switch em Comunicação → Envios → Automáticos (sem PR).
   O template ele mesmo cria na Meta.
   ⚠️⚠️ **E é GATED NO OPT-IN da tela 1**: o classificador da Meta acusou o texto
   como MARKETING ("boas-vindas" está na lista de exemplos de Marketing deles),
@@ -16275,7 +16350,7 @@ depositou em espécie). Sem caminho de veto a barrinha superestima e ninguém co
   mesmo e-mail receberia 4 cópias do mesmo pedido de doação.
 - ⚠️ **O interruptor é REAL**: os dois disparos entraram no catálogo
   (`comunicacaoAutomaticas` · ids `campanha_semanal` e `campanha_agradecimento`),
-  então ganharam switch em **Comunicação → Disparos → Automáticas**. O gate trava a
+  então ganharam switch em **Comunicação → Envios → Automáticos**. O gate trava a
   divergência remetente × catálogo — é o que impede criar o terceiro
   `wa_templates.ativo` (interruptor de mentira).
 - ⚠️ O agradecimento **NÃO declara `envTemplate`** no catálogo de propósito: o
