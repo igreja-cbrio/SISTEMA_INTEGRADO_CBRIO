@@ -8873,6 +8873,29 @@ um filtro de local da inscrição (todos, E-Inscrição e Sistema)"*.
   `checkout_externo_url`. Entra no "Mostrando X de Y" e nas mensagens de vazio.
   Régua: `casaOrigem(i, filtro)` = `origem === 'e_inscricao'` × o resto.
 
+### 3ª rodada (09/09) — o LOTE que a pessoa comprou, na pessoa + filtro
+
+Marcos: *"deve ter escrito na pessoa que lote ela comprou, e podemos colocar um
+filtro disso também"*. O lote nunca foi gravado na inscrição (só em
+`pag_cobrancas.metadata.lote`), então é DERIVADO na leitura:
+
+- **`lotesEvento.loteDaInscricao(lotes, insc, posicao)`** — 3 fontes, nesta ordem:
+  `dados.e_inscricao.categoria` (plataforma externa · régua de LÁ) → `valor_cobrado_centavos`
+  casando com a tabela (o que a pessoa PAGOU vence a posição: importar com
+  `created_at` antigo desloca posições, não o cobrado) → posição na ordem
+  `(created_at, id)` entre vivas não-canceladas (isenta/bolsa/sem pagar).
+  **`anexarLoteNasInscricoes(lotes, lista, {completo})`** anexa `lote: {nome, indice,
+  valor_centavos, fonte}`; em página parcial (app, `limit>0`) não há posição.
+  Gate: `src/test/lotesEvento.test.ts` (+6 casos).
+- `lerInscritosDoEvento` lê `insc_eventos.lotes` (best-effort) e anexa em TODO
+  leitor (tela, app, CSV). Evento sem lotes → `lote: null` e nada aparece.
+- Tela: etiqueta violeta "Lote N" na linha do card, na tabela (coluna Lote) e no
+  cabeçalho da ficha (tooltip diz a fonte) · select **"Lote"** com contagens (+ "Sem
+  lote") · coluna "Lote" no CSV.
+- Conferido no banco do retiro: 24 `plataforma` + 7 `valor` (830) + 3 `posicao`
+  (isentos Kevyn/Arthur + Antonio, cujo `valor_cobrado` segue NULL até o backfill
+  `_reparo_inscricoes_valor_vinculo.cjs`) = 34, todos Lote 1.
+
 ### ⚠️⚠️ Lotes NÃO foram editados — e não devem ser
 
 A inscrição importada é linha viva não-cancelada ⇒ **JÁ ocupa posição** na régua do
