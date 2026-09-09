@@ -8853,6 +8853,26 @@ Quem paga CARTÃO sai da nossa página pro E-Inscrição ANTES de existir inscri
   (`INSCRITOS_COLS` ganhou `origem`); a ficha mostra o bloco "Pago no E-Inscrição"
   (bruto · líquido · código · lote de lá) no lugar do bloco de pagamento nosso.
 
+### 2ª rodada (09/09 · mesma tarde) — Arrecadado = TOTAL · tabela · filtro de origem
+
+Marcos: *"coloque em Arrecadado o valor total, fica melhor … duas possibilidades de
+visualização, 1 mais detalhada como a atual e a segunda como uma tabela … e adicione
+um filtro de local da inscrição (todos, E-Inscrição e Sistema)"*.
+
+- **Tile "Arrecadado" = `por_plataforma.total_centavos`** (Pix pago aqui + líquido
+  do E-Inscrição) quando há inscrição externa; sem externa continua
+  `arrecadado_centavos`. O card "Por plataforma" segue como detalhe da soma.
+- **Dois modos da lista** (botões Detalhado × Tabela, lembrado em
+  `localStorage['cbrio.inscricoes.modoLista']`): cards = o de sempre;
+  **`TabelaInscritos`** = uma linha por pessoa (nome+código, idade·sexo, telefone,
+  "Onde se inscreveu", `PagamentoCelula` (isenta · bolsa · E-Inscrição pago lá ·
+  estado da cobrança nossa), inscrita em, lixeira). Seleção em lote funciona nos
+  dois modos; "Recolher todos" só aparece nos cards. Clique na linha abre a ficha.
+- **Filtro "Onde se inscreveu"** (todos · Sistema/Pix · E-Inscrição/cartão) com
+  contagens do evento inteiro; só aparece em evento com inscrição externa ou
+  `checkout_externo_url`. Entra no "Mostrando X de Y" e nas mensagens de vazio.
+  Régua: `casaOrigem(i, filtro)` = `origem === 'e_inscricao'` × o resto.
+
 ### ⚠️⚠️ Lotes NÃO foram editados — e não devem ser
 
 A inscrição importada é linha viva não-cancelada ⇒ **JÁ ocupa posição** na régua do

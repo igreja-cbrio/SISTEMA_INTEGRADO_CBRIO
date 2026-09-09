@@ -16,7 +16,7 @@ import {
   ArrowLeft, CalendarDays, Clock, MapPin, Users, Gift, Link2, MessageCircle,
   QrCode, Pencil, Trash2, Loader2, Search, ExternalLink, Ticket, Megaphone,
   ChevronDown, ChevronUp, ChevronsDownUp, ChevronsUpDown, Download, Repeat,
-  Printer, CreditCard, ScanLine, Paperclip, Lock } from 'lucide-react';
+  Printer, CreditCard, ScanLine, Paperclip, Lock, List, Table } from 'lucide-react';
 import QrLinkDialog from '../components/QrLinkDialog';
 import { EventoModal } from './Inscricoes';
 import { idadeEmAnos, faixaLabel, sexoLabel } from '../lib/faixaEtaria';
@@ -75,6 +75,146 @@ function EInscricaoBadge({ inscricao, tamanho = 'xs' }: { inscricao: any; tamanh
   );
 }
 
+/** Filtro "onde se inscreveu": aqui (Pix) × plataforma externa (cartão). */
+type OrigemFiltro = 'todos' | 'sistema' | 'e_inscricao';
+const casaOrigem = (i: any, f: OrigemFiltro) =>
+  f === 'todos' ? true : f === 'e_inscricao' ? ehEInscricao(i) : !ehEInscricao(i);
+
+/** Modo de visualização da lista: cards detalhados (padrão) ou tabela compacta. */
+type ModoLista = 'cards' | 'tabela';
+const MODO_LISTA_KEY = 'cbrio.inscricoes.modoLista';
+function lerModoLista(): ModoLista {
+  try { return localStorage.getItem(MODO_LISTA_KEY) === 'tabela' ? 'tabela' : 'cards'; } catch { return 'cards'; }
+}
+
+/** Pagamento numa célula só: isenta · bolsa · E-Inscrição (pago lá) · estado da cobrança nossa. */
+function PagamentoCelula({ i }: { i: any }) {
+  if (i.bolsa_tipo === 'integral') return <span className="rounded-full bg-primary/15 text-primary text-[11px] font-medium px-2 py-0.5">isenta</span>;
+  const e = i.dados?.e_inscricao;
+  if (ehEInscricao(i)) {
+    return (
+      <span className="inline-flex items-center gap-1.5 flex-wrap">
+        <span className="rounded-full bg-emerald-500/15 text-emerald-600 text-[11px] font-medium px-2 py-0.5">pago</span>
+        <span className="text-xs text-muted-foreground">
+          {e?.forma_pagamento ? (METODO_LABEL[e.forma_pagamento] || e.forma_pagamento) : 'cartão'}{e?.parcelas > 1 ? ` ${e.parcelas}x` : ''}
+        </span>
+        <span className="text-xs tabular-nums" title={e?.valor_bruto_centavos != null ? `Bruto ${brl(e.valor_bruto_centavos)} · líquido após a taxa da plataforma` : undefined}>
+          {brl(i.valor_cobrado_centavos)}
+        </span>
+      </span>
+    );
+  }
+  const pg = i.pagamento;
+  if (!pg?.status_pagamento) return <span className="text-xs text-muted-foreground">—</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5 flex-wrap">
+      <span className={`rounded-full text-[11px] font-medium px-2 py-0.5 ${PAG_BADGE[pg.status_pagamento] || 'bg-foreground/10 text-muted-foreground'}`}>
+        {PAG_LABEL[pg.status_pagamento] || pg.status_pagamento}
+      </span>
+      {pg.metodo && <span className="text-xs text-muted-foreground">{METODO_LABEL[pg.metodo] || pg.metodo}{pg.parcelas_total > 1 ? ` ${pg.parcelas_total}x` : ''}</span>}
+      {i.bolsa_tipo === 'parcial' && <span className="rounded-full bg-primary/15 text-primary text-[11px] font-medium px-2 py-0.5">bolsa</span>}
+      <span className="text-xs tabular-nums">{brl(i.valor_cobrado_centavos ?? pg.valor_pago_centavos ?? pg.valor_centavos)}</span>
+    </span>
+  );
+}
+
+/**
+ * Lista em TABELA — o mesmo recorte dos cards, uma linha por pessoa, só o
+ * essencial: nome, idade/sexo, contato, onde se inscreveu, pagamento e quando.
+ * Respostas do formulário e bloco do responsável ficam pra ficha (clique na
+ * linha) e pros cards. Pedido do Marcos (09/09/2026).
+ */
+function TabelaInscritos({ inscritos, ev, podeEditar, selecionadas, alternarSelecao, onAbrir, onExcluir, premiosGanhos }: {
+  inscritos: any[]; ev: any; podeEditar: boolean; selecionadas: Set<string>;
+  alternarSelecao: (id: string) => void; onAbrir: (i: any) => void; onExcluir: (i: any) => void;
+  premiosGanhos: (id: string) => any[];
+}) {
+  const temExterno = inscritos.some(ehEInscricao) || !!ev?.checkout_externo_url;
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-foreground/[0.03]">
+            {podeEditar && <th className="w-8 px-2 py-2" />}
+            <th className="text-left px-3 py-2 font-medium">Nome</th>
+            <th className="text-left px-3 py-2 font-medium whitespace-nowrap">Idade · sexo</th>
+            <th className="text-left px-3 py-2 font-medium">Telefone</th>
+            {temExterno && <th className="text-left px-3 py-2 font-medium whitespace-nowrap">Onde se inscreveu</th>}
+            {ev?.pagamento_ativo && <th className="text-left px-3 py-2 font-medium">Pagamento</th>}
+            <th className="text-left px-3 py-2 font-medium whitespace-nowrap">Inscrita em</th>
+            <th className="w-8 px-2 py-2" />
+          </tr>
+        </thead>
+        <tbody>
+          {inscritos.map((i: any) => {
+            const cancelada = i.status === 'cancelada';
+            const ganhos = premiosGanhos(i.id);
+            const idade = idadeEmAnos(i.data_nascimento);
+            return (
+              <tr key={i.id} onClick={() => onAbrir(i)}
+                className={`border-t border-border/60 cursor-pointer transition-colors ${cancelada ? 'opacity-60' : ''} ${
+                  selecionadas.has(i.id) ? 'bg-primary/10' : 'hover:bg-primary/5'}`}>
+                {podeEditar && (
+                  <td className="px-2 py-1.5">
+                    <input type="checkbox" checked={selecionadas.has(i.id)}
+                      onClick={e => e.stopPropagation()} onChange={() => alternarSelecao(i.id)}
+                      title="Selecionar para excluir" className="h-4 w-4 accent-[#00B39D] cursor-pointer" />
+                  </td>
+                )}
+                <td className="px-3 py-1.5 min-w-[12rem]">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {i.numero_sorte != null && (
+                      <span className="rounded-full bg-primary/15 text-primary text-[11px] font-bold px-1.5 py-0.5 tabular-nums">Nº {i.numero_sorte}</span>
+                    )}
+                    <span className="font-medium">{i.nome_completo}</span>
+                    {i.codigo && <span className="text-[11px] font-mono text-muted-foreground" title="Código da inscrição">{i.codigo}</span>}
+                    {cancelada && <span className="rounded-full bg-red-500/10 text-red-600 text-[11px] font-medium px-2 py-0.5">cancelada</span>}
+                    {i.responsavel && <span className="text-[11px] text-amber-600 font-medium" title={`Responsável: ${i.responsavel.nome}`}>menor</span>}
+                    {ganhos.length > 0 && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 text-amber-600 text-[11px] font-semibold px-2 py-0.5">
+                        <Gift className="h-3 w-3" /> {ganhos.length > 1 ? `${ganhos.length} prêmios` : (ganhos[0].premio || 'Prêmio')}
+                      </span>
+                    )}
+                  </div>
+                </td>
+                <td className="px-3 py-1.5 whitespace-nowrap text-xs text-muted-foreground tabular-nums">
+                  {idade != null ? `${idade} anos` : '—'}{i.sexo ? ` · ${sexoLabel(i.sexo)}` : ''}
+                </td>
+                <td className="px-3 py-1.5 whitespace-nowrap">
+                  {i.telefone ? (
+                    <a href={`https://wa.me/55${String(i.telefone).replace(/\D/g, '')}`} target="_blank" rel="noreferrer"
+                      onClick={e => e.stopPropagation()} title="Enviar WhatsApp"
+                      className="inline-flex items-center gap-1 text-xs text-emerald-600 hover:text-emerald-700">
+                      <MessageCircle className="h-3.5 w-3.5" /> {i.telefone}
+                    </a>
+                  ) : <span className="text-xs text-muted-foreground">—</span>}
+                </td>
+                {temExterno && (
+                  <td className="px-3 py-1.5 whitespace-nowrap">
+                    {ehEInscricao(i)
+                      ? <EInscricaoBadge inscricao={i} />
+                      : <span className="inline-flex items-center rounded-full bg-primary/10 text-primary text-[11px] font-medium px-2 py-0.5">Sistema{i.pagamento?.metodo ? ` · ${METODO_LABEL[i.pagamento.metodo] || i.pagamento.metodo}` : ''}</span>}
+                  </td>
+                )}
+                {ev?.pagamento_ativo && <td className="px-3 py-1.5"><PagamentoCelula i={i} /></td>}
+                <td className="px-3 py-1.5 whitespace-nowrap text-xs text-muted-foreground tabular-nums">
+                  {i.created_at ? new Date(i.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
+                </td>
+                <td className="px-2 py-1.5">
+                  <button onClick={e => { e.stopPropagation(); onExcluir(i); }} title="Excluir inscrição"
+                    className="p-1 rounded-md text-muted-foreground hover:text-red-600 hover:bg-red-500/10 transition-colors">
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 /** Um número do placar. `dica` vira tooltip — o rótulo curto não cabe a régua. */
 function PlacarTile({ label, valor, cor, dica }: { label: string; valor: any; cor?: string; dica?: string }) {
   return (
@@ -107,6 +247,11 @@ export default function InscricaoEventoDetalhe() {
   const [busca, setBusca] = useState('');
   // { [key do campo]: valor cru escolhido } · vazio = não filtra por ele
   const [filtrosCampo, setFiltrosCampo] = useState<Record<string, string>>({});
+  // Onde se inscreveu (todos · sistema/Pix · E-Inscrição/cartão) e o modo da
+  // lista (cards detalhados × tabela). O modo fica lembrado no navegador.
+  const [origemFiltro, setOrigemFiltro] = useState<OrigemFiltro>('todos');
+  const [modoLista, setModoListaState] = useState<ModoLista>(lerModoLista);
+  const setModoLista = (m: ModoLista) => { setModoListaState(m); try { localStorage.setItem(MODO_LISTA_KEY, m); } catch { /* sem storage, segue */ } };
   const [inscSel, setInscSel] = useState<any>(null);
   // Cards recolhidos (só a linha principal) — melhora a visualização com
   // muitas inscrições. Set com os ids recolhidos + botão recolher/expandir todos.
@@ -172,7 +317,8 @@ export default function InscricaoEventoDetalhe() {
   const filtrosAtivos = contarFiltrosAtivos(filtrosCampo);
 
   const inscritos = useMemo(() => {
-    const porCampo = aplicarFiltroCampos(ev?.inscritos || [], filtrosCampo);
+    const porCampo = aplicarFiltroCampos(ev?.inscritos || [], filtrosCampo)
+      .filter((i: any) => casaOrigem(i, origemFiltro));
     const q = busca.trim().toLowerCase();
     if (!q) return porCampo;
     return porCampo.filter((i: any) =>
@@ -180,7 +326,16 @@ export default function InscricaoEventoDetalhe() {
       || String(i.telefone || '').includes(q.replace(/\D/g, '') || ' ')
       || String(i.numero_sorte || '') === q,
     );
-  }, [ev, busca, filtrosCampo]);
+  }, [ev, busca, filtrosCampo, origemFiltro]);
+  // Contagens do filtro de origem sobre o evento INTEIRO (mesma régua dos
+  // filtros por campo: número que muda com a busca não ajuda a escolher).
+  const contagemOrigem = useMemo(() => {
+    const todos = ev?.inscritos || [];
+    const externo = todos.filter(ehEInscricao).length;
+    return { todos: todos.length, externo, sistema: todos.length - externo };
+  }, [ev]);
+  const mostraFiltroOrigem = contagemOrigem.externo > 0 || !!ev?.checkout_externo_url;
+  const filtroOrigemAtivo = origemFiltro !== 'todos';
 
   const premiosGanhos = (inscricaoId: string) =>
     (ev?.sorteios || []).filter((s: any) => s.inscricao_id === inscricaoId);
@@ -559,11 +714,17 @@ export default function InscricaoEventoDetalhe() {
           {ev.pagamento_ativo && (
             <PlacarTile
               label="Arrecadado"
-              valor={resumo.arrecadado_centavos == null
-                ? '—'
-                : (resumo.arrecadado_centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+              // TOTAL das duas plataformas (pedido do Marcos, 09/09): Pix pago
+              // aqui + líquido do E-Inscrição. Sem inscrição externa é o Pix só.
+              valor={(() => {
+                const pp = resumo.por_plataforma;
+                const total = pp && pp.externo?.inscritos > 0 ? pp.total_centavos : resumo.arrecadado_centavos;
+                return total == null ? '—' : (total / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+              })()}
               cor="text-primary"
-              dica="Soma das inscrições PAGAS. É acompanhamento do evento — o caixa recebe o repasse do provedor, lançado no Financeiro."
+              dica={resumo.por_plataforma?.externo?.inscritos > 0
+                ? 'Total: Pix pago aqui + valor LÍQUIDO do E-Inscrição (taxa da plataforma já descontada). O detalhe por plataforma está logo abaixo.'
+                : 'Soma das inscrições PAGAS. É acompanhamento do evento — o caixa recebe o repasse do provedor, lançado no Financeiro.'}
             />
           )}
           {ev.checkin_ativo && (
@@ -596,7 +757,7 @@ export default function InscricaoEventoDetalhe() {
 
       {/* Por PLATAFORMA — o retiro vende em dois lugares: Pix aqui e cartão no
           E-Inscrição (importado com o valor LÍQUIDO, taxa da plataforma já
-          descontada). O "Arrecadado" acima é só o que passou pelo nosso Pix. */}
+          descontada). O "Arrecadado" acima é a soma dos dois; aqui é o detalhe. */}
       {resumo?.por_plataforma && resumo.por_plataforma.externo?.inscritos > 0 && (
         <Card className="glass-solid p-3">
           <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">Por plataforma</div>
@@ -688,7 +849,19 @@ export default function InscricaoEventoDetalhe() {
                   <Download className="h-3.5 w-3.5 mr-1" /> Exportar CSV
                 </Button>
               )}
-              {(() => {
+              {/* Duas visualizações: cards detalhados (respostas, responsável)
+                  × tabela compacta (uma linha por pessoa). */}
+              <div className="inline-flex rounded-md border border-border overflow-hidden h-8" role="group" aria-label="Modo de visualização">
+                <button type="button" onClick={() => setModoLista('cards')} title="Detalhado: um card por pessoa, com as respostas"
+                  className={`px-2.5 inline-flex items-center gap-1 text-xs ${modoLista === 'cards' ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground hover:bg-foreground/5'}`}>
+                  <List className="h-3.5 w-3.5" /> Detalhado
+                </button>
+                <button type="button" onClick={() => setModoLista('tabela')} title="Tabela: uma linha por pessoa, só o essencial"
+                  className={`px-2.5 inline-flex items-center gap-1 text-xs border-l border-border ${modoLista === 'tabela' ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground hover:bg-foreground/5'}`}>
+                  <Table className="h-3.5 w-3.5" /> Tabela
+                </button>
+              </div>
+              {modoLista === 'cards' && (() => {
                 const todosRecolhidos = (ev.inscritos || []).length > 0 && (ev.inscritos || []).every((i: any) => recolhidos.has(i.id));
                 return (
                   <Button size="sm" variant="outline" className="h-8"
@@ -699,6 +872,21 @@ export default function InscricaoEventoDetalhe() {
                   </Button>
                 );
               })()}
+              {/* Onde se inscreveu — só faz sentido em evento com plataforma
+                  externa (cartão no E-Inscrição × Pix aqui). */}
+              {mostraFiltroOrigem && (
+                <select
+                  value={origemFiltro}
+                  onChange={e => setOrigemFiltro(e.target.value as OrigemFiltro)}
+                  title="Onde se inscreveu"
+                  aria-label="Onde se inscreveu"
+                  className={`h-8 rounded-md border bg-[var(--cbrio-input-bg)] text-sm px-2 max-w-[15rem] ${filtroOrigemAtivo ? 'border-primary text-primary' : 'border-border'}`}
+                >
+                  <option value="todos">Onde se inscreveu · todos ({contagemOrigem.todos})</option>
+                  <option value="sistema">Sistema · Pix ({contagemOrigem.sistema})</option>
+                  <option value="e_inscricao">E-Inscrição · cartão ({contagemOrigem.externo})</option>
+                </select>
+              )}
               {/* Um filtro por campo de escolha do formulário deste evento. */}
               {camposFiltro.map(c => (
                 <select
@@ -735,7 +923,7 @@ export default function InscricaoEventoDetalhe() {
           )}
           {/* Quantos o recorte atual mostra — sem isso o filtro muda a lista e
               não diz o tamanho do resultado, que é o número que a pessoa quer. */}
-          {(filtrosAtivos > 0 || busca.trim()) && (ev.inscritos || []).length > 0 && (
+          {(filtrosAtivos > 0 || filtroOrigemAtivo || busca.trim()) && (ev.inscritos || []).length > 0 && (
             <p className="text-xs text-muted-foreground">
               Mostrando <strong className="text-foreground">{inscritos.length}</strong> de {(ev.inscritos || []).length} inscritos.
             </p>
@@ -770,12 +958,16 @@ export default function InscricaoEventoDetalhe() {
           <p className="text-sm text-muted-foreground py-4 text-center">Ninguém se inscreveu ainda.</p>
         ) : inscritos.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">
-            {filtrosAtivos > 0 && busca.trim()
+            {(filtrosAtivos > 0 || filtroOrigemAtivo) && busca.trim()
               ? 'Nenhum inscrito bate com o filtro e a busca.'
-              : filtrosAtivos > 0
+              : (filtrosAtivos > 0 || filtroOrigemAtivo)
                 ? 'Nenhum inscrito neste filtro.'
                 : 'Nenhum inscrito bate com a busca.'}
           </p>
+        ) : modoLista === 'tabela' ? (
+          <TabelaInscritos inscritos={inscritos} ev={ev} podeEditar={podeEditar}
+            selecionadas={selecionadas} alternarSelecao={alternarSelecao}
+            onAbrir={setInscSel} onExcluir={excluirInscrito} premiosGanhos={premiosGanhos} />
         ) : (
           <div className="space-y-2">
             {inscritos.map((i: any) => {
