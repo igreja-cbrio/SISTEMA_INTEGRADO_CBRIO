@@ -79,6 +79,24 @@ async function podeAprovarMembresia(req, res, next) {
   } catch (e) { return res.status(500).json({ error: 'Erro ao checar permissão' }); }
 }
 
+// varredura 2026-09: B05 · quem DECIDE a fila também precisa LER a fila.
+// Aprovar entra por área ("Integração") ou por `membresia_aprovadores`; ler entrava só pela
+// matriz de módulo. Trocar um pelo outro deixaria o aprovador legítimo com 403 na lista e o
+// botão de aprovar funcionando — duas réguas para o mesmo fluxo. Aqui elas se somam:
+// primeiro o dono da decisão, depois a matriz.
+function podeVerFilaCadastros(nivel) {
+  const guardMatriz = authorizeModule('membros', nivel);
+  return async function (req, res, next) {
+    if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
+    try {
+      if (await usuarioPodeAprovarMembresia(req)) return next();
+    } catch (e) {
+      console.error('[membresia] checagem de aprovador falhou, caindo na matriz:', e.message);
+    }
+    return guardMatriz(req, res, next);
+  };
+}
+
 // GET /api/membresia/cadastros/pode-aprovar — o front usa pra mostrar os botões
 router.get('/cadastros/pode-aprovar', async (req, res) => {
   try { res.json({ pode: await usuarioPodeAprovarMembresia(req) }); }
@@ -4055,7 +4073,8 @@ function parseCanaisCenso(raw) {
 // ── Cadastros pendentes (fila de aprovação do formulário público) ──
 
 // GET /api/membresia/cadastros — lista cadastros pendentes (filtro por status)
-router.get('/cadastros', async (req, res) => {
+// varredura 2026-09: B05 GET /cadastros sem guard (780 cadastros com CPF/telefone/endereco a qualquer autenticado) — nivel 2 de 'membros' e a mesma regua de leitura nominal de pessoa.
+router.get('/cadastros', podeVerFilaCadastros(2), async (req, res) => {
   try {
     const { status } = req.query;
     // duplicado_de e membro referenciam mem_membros — nomeamos os embeds pela FK.
@@ -4082,7 +4101,8 @@ router.get('/cadastros', async (req, res) => {
 // 1001ª submissão os contadores CONGELAVAM em silêncio — e o censo passa de
 // 1000 no primeiro domingo. Nenhuma linha é transferida aqui.
 const STATUS_CADASTRO = ['pendente', 'aprovado', 'rejeitado', 'duplicado', 'aplicado'];
-router.get('/cadastros/kpis', async (req, res) => {
+// varredura 2026-09: B05 KPIs de cadastros sem guard — agregado sem PII fica no nivel 1 de 'membros'.
+router.get('/cadastros/kpis', podeVerFilaCadastros(1), async (req, res) => {
   try {
     const counts = {};
     const resultados = await Promise.all(STATUS_CADASTRO.map(async (status) => {
@@ -4511,7 +4531,8 @@ router.post('/cadastros/:id/rejeitar', podeAprovarMembresia, async (req, res) =>
 });
 
 // PATCH /api/membresia/cadastros/:id — atualiza observações/duplicado_de
-router.patch('/cadastros/:id', async (req, res) => {
+// varredura 2026-09: B05 PATCH /cadastros/:id sem guard (qualquer autenticado reescrevia observacoes/duplicado_de_id da fila) — mesmo guard de aprovar/rejeitar.
+router.patch('/cadastros/:id', podeAprovarMembresia, async (req, res) => {
   try {
     const { id } = req.params;
     const { observacoes, duplicado_de_id } = req.body || {};

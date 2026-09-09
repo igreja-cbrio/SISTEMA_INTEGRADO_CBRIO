@@ -115,9 +115,21 @@ router.get('/lookup', authorizeModule('membros', 1), async (req, res) => {
 // Body: { cpf, email, telefone, nome, status? }
 // Usado por rotas que querem garantir mem_membros antes de seguir.
 // ---------------------------------------------------------------------------
-router.post('/find-or-create', async (req, res) => {
+router.post('/find-or-create', authorizeModule('membros', 3), async (req, res) => { // varredura 2026-09: B06 rota de ESCRITA em mem_membros só com authenticate — nível 3 porque cria pessoa (o GET irmão é 1)
   try {
-    const r = await findOrCreateMembro(req.body || {});
+    const b = req.body || {};
+    // varredura 2026-09: B06 whitelist explícita — repassar req.body cru deixava o chamador alimentar `extra` direto no insert
+    const r = await findOrCreateMembro({
+      cpf: b.cpf,
+      email: b.email,
+      telefone: b.telefone,
+      nome: b.nome,
+      dataNascimento: b.dataNascimento,
+      genero: b.genero,
+      status: b.status,
+      origem: b.origem,
+      origemId: b.origemId, // procedência do match (vai pra observação de identidade); não alimenta insert livre como `extra`
+    });
     res.json(r);
   } catch (e) {
     console.error('pessoas find-or-create:', e.message);

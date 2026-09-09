@@ -8,7 +8,7 @@
 // ============================================================================
 
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorizeModule } = require('../middleware/auth'); // varredura 2026-09: B04 — precisa do guard de matriz pra fechar o drilldown nominal do NSM
 const { supabase } = require('../utils/supabase');
 
 router.use(authenticate);
@@ -1271,7 +1271,7 @@ async function nsmSinaisCohorte(pessoas) {
 // Resposta: totais do recorte (total_*) + totais da lista filtrada (match_*),
 // pros cards da UI acompanharem o filtro ativo.
 // ----------------------------------------------------------------------------
-router.get('/nsm/pessoas', async (req, res) => {
+router.get('/nsm/pessoas', authorizeModule('painel', 2), async (req, res) => { // varredura 2026-09: B04 — lista nominal (nome/telefone/CPF) de convertidos exigia só authenticate; 'painel' -> ['painel-cbrio'] existe no ROUTE_MODULE_MAP
   try {
     const segmento = String(req.query.segmento || 'central').toLowerCase();
     const janelaRaw = String(req.query.janela || '60').toLowerCase();
