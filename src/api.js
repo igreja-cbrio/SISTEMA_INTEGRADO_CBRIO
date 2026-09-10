@@ -3206,8 +3206,16 @@ export const cadastroPublico = {
     if (!res.ok) return { ok: false };
     return res.json();
   },
-  lookupCpf: async (cpf) => {
-    const res = await fetch(`${API}/public/membresia/lookup-cpf?cpf=${encodeURIComponent(cpf)}`);
+  // varredura 2026-09: PUB-02 — a rota passou a exigir CPF **+ data de
+  // nascimento** (só o CPF fazia esta porta responder "esta pessoa está na base
+  // da CBRio?" pra quem tivesse uma lista de CPFs na mão). Quem chamar sem o
+  // nascimento recebe SEMPRE `{found:false}` — era o que estava matando o
+  // cartão de reconhecimento do formulário público pra 100% dos usuários.
+  // ⚠️ O nascimento é `YYYY-MM-DD` e é COMPARADO no servidor: mandar vazio não
+  // é "buscar sem filtro", é receber a recusa neutra.
+  lookupCpf: async (cpf, dataNascimento) => {
+    const qs = `cpf=${encodeURIComponent(cpf)}&data_nascimento=${encodeURIComponent(dataNascimento || '')}`;
+    const res = await fetch(`${API}/public/membresia/lookup-cpf?${qs}`);
     if (!res.ok) return { found: false };
     return res.json();
   },

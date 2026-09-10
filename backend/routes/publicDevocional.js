@@ -13,6 +13,9 @@
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
+// varredura 2026-09: PUB-01 — a busca do auth user por e-mail é PAGINADA e vive
+// num lugar só (utils/authUsers.js), compartilhada com publicMembresia.js.
+const { acharAuthUserPorEmail } = require('../utils/authUsers');
 
 const publicLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -72,8 +75,12 @@ router.post('/login', publicLimiter, async (req, res) => {
 
     // 2) Achar auth user
     let authUserId = null;
-    const { data: { users } } = await supabase.auth.admin.listUsers();
-    const existing = users?.find(u => (u.email || '').toLowerCase() === rawEmail);
+    // varredura 2026-09: PUB-01 — `listUsers()` SEM paginação lia só a 1ª página
+    // (50 no supabase-js 2.x) e não enxergava ~155 dos 205 usuários: quem JÁ
+    // TINHA conta mas estava fora dela caía no ramo de CRIAR e o login morria
+    // com "user already registered" — porta fechada pra quem tem direito de
+    // entrar. Mesmo helper da porta da membresia, uma régua só.
+    const existing = await acharAuthUserPorEmail(rawEmail);
     if (existing) {
       authUserId = existing.id;
     } else {
