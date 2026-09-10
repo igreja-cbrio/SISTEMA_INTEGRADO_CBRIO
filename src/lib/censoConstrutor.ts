@@ -36,6 +36,10 @@ export type Pergunta = {
   permite_nao_se_aplica?: boolean;
   /** Campo do cadastro que esta pergunta preenche (ex.: 'telefone'). */
   preenche_de?: string;
+  /** Tipo `busca`: nome do catálogo servido por `/catalogo/:nome`. */
+  catalogo?: string;
+  /** Tipo `busca`: aceita valor fora do catálogo. Verdadeiro por padrão. */
+  permite_outro?: boolean;
 };
 
 const COM_OPCOES = ['opcao_unica', 'multipla'];
@@ -53,6 +57,26 @@ export function trocarTipoPergunta(p: Pergunta, tipo: string): Pergunta {
     id: p.id, tipo, texto: p.texto, descricao: p.descricao,
     obrigatoria: p.obrigatoria, mostrar_se: p.mostrar_se, sensivel: p.sensivel,
   };
+  // ⚠️⚠️ `preenche_de` SOBREVIVE À TROCA DE TIPO (achado de 10/09/2026).
+  // Ele é o DESTINO da resposta no cadastro da pessoa, não um detalhe de
+  // formato: é o que faz o censo preencher CPF, nascimento, bairro, telefone.
+  // Antes ele era descartado aqui, e o efeito era mudo — a pergunta continuava
+  // no ar, a pessoa continuava respondendo, e o dado simplesmente parava de
+  // chegar ao cadastro. Medido: **10 das 32 perguntas** do censo vivo têm
+  // `preenche_de` (cpf, nascimento, nome, estado_civil, cep, cidade, bairro,
+  // telefone, email, escolaridade). É a mesma família do CPF do censo que
+  // ficou 4 dias sendo descartado em silêncio (04/08).
+  // ⚠️ Quem valida se o destino faz sentido para o tipo novo é o servidor
+  // (`preenche_de` é conferido contra o catálogo em `censoPerguntas.js`):
+  // preservar aqui não força nada, só para de JOGAR FORA.
+  if (p.preenche_de) limpo.preenche_de = p.preenche_de;
+  // Idem para a busca em catálogo: sem estes dois, trocar o tipo para `busca`
+  // e voltar deixa a pergunta sem catálogo, e o salvar quebra com 400
+  // "catálogo não existe" — configuração perdida sem aviso.
+  if (tipo === 'busca') {
+    if (p.catalogo) limpo.catalogo = p.catalogo;
+    if (p.permite_outro !== undefined) limpo.permite_outro = p.permite_outro;
+  }
   if (COM_OPCOES.includes(tipo)) {
     limpo.opcoes = p.opcoes?.length ? p.opcoes : ['Opção 1', 'Opção 2'];
     const neutras = p.opcoes_neutras?.filter((n) => limpo.opcoes?.includes(n));
