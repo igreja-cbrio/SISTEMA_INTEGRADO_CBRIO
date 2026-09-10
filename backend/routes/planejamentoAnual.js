@@ -16,6 +16,7 @@ const { authenticate, authorizeModule, isSuperAdminEmail } = require('../middlew
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const PA = require('../services/planejamentoAnualRegras');
+const PAInsights = require('../services/planejamentoAnualInsights');
 
 const MOD = 'planejamento-anual';
 
@@ -260,6 +261,8 @@ router.post('/propostas', authorizeModule(MOD, 2), async (req, res) => {
     hora_inicio: b.hora_inicio || null,
     hora_fim: b.hora_fim || null,
     local_id: b.local_id,
+    locais_adicionais_ids: Array.isArray(b.locais_adicionais_ids) ? b.locais_adicionais_ids : [],
+    local_fora_detalhe: b.local_fora_detalhe || null,
     publico_alvo: b.publico_alvo || null,
     descricao: b.descricao || null,
     alcance_pct: b.alcance_pct ?? null,
@@ -321,7 +324,8 @@ router.put('/propostas/:id', authorizeModule(MOD, 2), async (req, res) => {
   const permitidos = [
     'nome', 'natureza', 'area', 'lider_id', 'preenchido_por_id', 'data_inicio', 'precisao_inicio',
     'multi_dia', 'data_fim', 'precisao_fim', 'recorrencia', 'dia_semana', 'hora_inicio', 'hora_fim',
-    'local_id', 'publico_alvo', 'descricao', 'alcance_pct', 'publico_considerado', 'pertencimento',
+    'local_id', 'locais_adicionais_ids', 'local_fora_detalhe',
+    'publico_alvo', 'descricao', 'alcance_pct', 'publico_considerado', 'pertencimento',
     'valores', 'visao_explique', 'impacto', 'custo', 'tem_arrecadacao', 'arrecadacao_prevista',
   ];
   const patch = {};
@@ -613,7 +617,8 @@ router.post('/propostas/:id/retificar', authorizeModule(MOD, 2), async (req, res
 
   const permitidos = [
     'nome', 'data_inicio', 'precisao_inicio', 'multi_dia', 'data_fim', 'precisao_fim',
-    'recorrencia', 'dia_semana', 'hora_inicio', 'hora_fim', 'local_id', 'publico_alvo',
+    'recorrencia', 'dia_semana', 'hora_inicio', 'hora_fim', 'local_id',
+    'locais_adicionais_ids', 'local_fora_detalhe', 'publico_alvo',
     'descricao', 'alcance_pct', 'publico_considerado', 'pertencimento', 'valores',
     'visao_explique', 'impacto', 'custo', 'tem_arrecadacao', 'arrecadacao_prevista',
   ];
@@ -761,6 +766,27 @@ router.delete('/ciclos/:id/conflitos/aceites/:aceiteId', authorizeModule(MOD, 1)
     .delete().eq('id', req.params.aceiteId).eq('ciclo_id', req.params.id);
   if (error) return res.status(500).json({ error: 'Erro ao reabrir o conflito' });
   res.json({ ok: true });
+});
+
+// Insights de IA (aba somente-leitura): conflitos de data/espaço (régua
+// pura, sem IA) + propostas parecidas/candidatas a mesclar (Claude Haiku,
+// best-effort). Mesma régua de visibilidade de CONTEÚDO das propostas
+// (decisão do Diego 2026-08-27): proponente vê a própria, mas esta aba
+// cruza propostas de todo o ciclo — só diretoria/Pastor/super-admin.
+router.get('/ciclos/:id/insights', authorizeModule(MOD, 1), async (req, res) => {
+  const ciclo = await carregarCiclo(req.params.id);
+  if (!ciclo) return res.status(404).json({ error: 'Ciclo não encontrado' });
+  if (!(ehDiretoria(req) || await ehPastorOuSuper(req))) {
+    return res.status(403).json({ error: 'Os insights de IA são visíveis só para a diretoria e o Pastor presidente' });
+  }
+  try {
+    const ctx = await contextoCalendario(ciclo.id);
+    const insights = await PAInsights.montarInsights(ctx);
+    res.json(insights);
+  } catch (e) {
+    console.error('[planejamento-anual] erro ao montar insights:', e.message);
+    res.status(500).json({ error: 'Erro ao montar os insights' });
+  }
 });
 
 const CAMPOS_DIVERGENCIA = ['data_inicio', 'precisao_inicio', 'hora_inicio', 'hora_fim', 'recorrencia', 'dia_semana'];

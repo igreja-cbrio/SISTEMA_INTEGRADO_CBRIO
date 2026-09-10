@@ -10,10 +10,19 @@ import {
 const FORM_VAZIO = {
   nome: '', natureza: 'evento', area: '', lider_id: '', mes_inicio: '', dia_inicio: '',
   multi_dia: false, mes_fim: '', dia_fim: '', recorrencia: 'unica', dia_semana: '',
-  hora_inicio: '', hora_fim: '', local_id: '', publico_alvo: '', descricao: '',
+  hora_inicio: '', hora_fim: '', local_id: '', mais_de_um_local: false, locais_adicionais_ids: [],
+  local_fora_detalhe: '', publico_alvo: '', descricao: '',
   alcance_pct: '', publico_considerado: 'igreja_inteira', pertencimento: '',
   valores: [], visao_explique: '', impacto: '', custo: '', tem_arrecadacao: false, arrecadacao_prevista: '',
 };
+
+const NOME_LOCAL_FORA = 'Fora da igreja';
+
+function algumLocalEhFora(f, locais) {
+  const nomePor = (id) => (locais || []).find((l) => l.id === id)?.nome;
+  if (nomePor(f.local_id) === NOME_LOCAL_FORA) return true;
+  return (f.locais_adicionais_ids || []).some((id) => nomePor(id) === NOME_LOCAL_FORA);
+}
 
 function paraCorpo(f, cicloId) {
   const dataInicio = f.dia_inicio || (f.mes_inicio ? `${f.mes_inicio}-01` : null);
@@ -29,7 +38,10 @@ function paraCorpo(f, cicloId) {
     recorrencia: f.recorrencia,
     dia_semana: f.dia_semana === '' ? null : Number(f.dia_semana),
     hora_inicio: f.hora_inicio || null, hora_fim: f.hora_fim || null,
-    local_id: f.local_id || null, publico_alvo: f.publico_alvo || null, descricao: f.descricao || null,
+    local_id: f.local_id || null,
+    locais_adicionais_ids: f.mais_de_um_local ? (f.locais_adicionais_ids || []).filter(Boolean) : [],
+    local_fora_detalhe: f.local_fora_detalhe || null,
+    publico_alvo: f.publico_alvo || null, descricao: f.descricao || null,
     alcance_pct: f.alcance_pct === '' ? null : Number(f.alcance_pct),
     publico_considerado: f.publico_considerado,
     pertencimento: f.pertencimento || null,
@@ -54,7 +66,11 @@ function deProposta(p) {
     dia_semana: p.dia_semana == null ? '' : String(p.dia_semana),
     hora_inicio: p.hora_inicio ? String(p.hora_inicio).slice(0, 5) : '',
     hora_fim: p.hora_fim ? String(p.hora_fim).slice(0, 5) : '',
-    local_id: p.local_id || '', publico_alvo: p.publico_alvo || '', descricao: p.descricao || '',
+    local_id: p.local_id || '',
+    mais_de_um_local: Array.isArray(p.locais_adicionais_ids) && p.locais_adicionais_ids.length > 0,
+    locais_adicionais_ids: Array.isArray(p.locais_adicionais_ids) ? p.locais_adicionais_ids : [],
+    local_fora_detalhe: p.local_fora_detalhe || '',
+    publico_alvo: p.publico_alvo || '', descricao: p.descricao || '',
     alcance_pct: p.alcance_pct == null ? '' : String(p.alcance_pct),
     publico_considerado: p.publico_considerado || 'igreja_inteira',
     pertencimento: p.pertencimento || '',
@@ -233,6 +249,43 @@ export default function PropostasTab({ ciclo, constantes, locais, areas, recarre
             </div>
             <div><span style={label}>Público-alvo</span><input style={input} value={form.publico_alvo} onChange={(e) => set('publico_alvo', e.target.value)} /></div>
           </div>
+
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.t2 }}>
+            <input
+              type="checkbox"
+              checked={form.mais_de_um_local}
+              onChange={(e) => {
+                const marcado = e.target.checked;
+                set('mais_de_um_local', marcado);
+                if (!marcado) set('locais_adicionais_ids', []);
+              }}
+            />
+            O evento acontece em mais de um local
+          </label>
+          {form.mais_de_um_local && (
+            <div>
+              <span style={label}>Local adicional</span>
+              <select
+                style={input}
+                value={form.locais_adicionais_ids[0] || ''}
+                onChange={(e) => set('locais_adicionais_ids', e.target.value ? [e.target.value] : [])}
+              >
+                <option value="">Selecione…</option>
+                {locais.filter((l) => l.id !== form.local_id).map((l) => <option key={l.id} value={l.id}>{l.nome}</option>)}
+              </select>
+            </div>
+          )}
+          {algumLocalEhFora(form, locais) && (
+            <div>
+              <span style={label}>Aonde será o evento fora da igreja? *</span>
+              <input
+                style={input}
+                placeholder="Endereço ou descrição do local"
+                value={form.local_fora_detalhe}
+                onChange={(e) => set('local_fora_detalhe', e.target.value)}
+              />
+            </div>
+          )}
 
           <div>
             <span style={label}>Descrição</span>
