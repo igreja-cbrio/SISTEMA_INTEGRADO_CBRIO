@@ -261,6 +261,23 @@ function CheckboxField({ id, checked, onChange, label }) {
   );
 }
 
+// varredura 2026-09: PUB-01 — MARCADOR de "esta pessoa quer conta de acesso".
+// ⚠️ NÃO é senha e ninguém nunca vai digitá-lo: o servidor parou de gravar
+// senha vinda desta porta anônima (`createUser` sem `password`) e passou a
+// mandar magic link. Só que o gatilho que ele lê pra decidir "criar conta?"
+// continua sendo o campo `senha` do corpo — então mandamos um valor OPACO e
+// ALEATÓRIO, que satisfaz a régua de tamanho do servidor sem que exista uma
+// credencial escolhida por quem chama (nem uma constante que, numa eventual
+// regressão do backend, viraria a MESMA senha conhecida pra todo mundo).
+// ⏳ DÍVIDA: o certo é o backend trocar esse gatilho por um `criar_acesso: true`
+// explícito e parar de olhar pra `senha` — fora do alcance deste arquivo.
+function marcadorPedidoDeAcesso() {
+  try {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return `acesso-${crypto.randomUUID()}`;
+  } catch { /* contexto sem crypto — cai no fallback abaixo */ }
+  return `acesso-${Math.random().toString(36).slice(2)}${Date.now().toString(36)}`;
+}
+
 export default function CadastroMembresia() {
   const { C } = usePublicTheme();
   const navigate = useNavigate();
@@ -288,7 +305,9 @@ export default function CadastroMembresia() {
   const [currentStep, setCurrentStep] = useState(0);
   const [form, setForm] = useState({
     nome: '', sobrenome: '', cpf: prefCpf ? mascaraCpf(prefCpf) : '', email: '', confirmar_email: '', telefone: '',
-    senha: '', confirmar_senha: '',
+    // varredura 2026-09: PUB-01 — `senha`/`confirmar_senha` saíram do estado:
+    // esta porta não coleta mais credencial (o servidor descartava a que era
+    // digitada aqui, e o login seguinte falhava em silêncio).
     // ⚠️ `genero` passou a ser coletado aqui em 04/08. Estava faltando: o
     // Contrato de Inscrição exige sexo em toda porta de pessoa, e sem ele um
     // cadastro novo por este formulário nunca ficava completo — então nunca
@@ -481,9 +500,18 @@ export default function CadastroMembresia() {
   };
 
   // Debounce: 600ms após parar de digitar CPF, se CPF for valido, faz lookup
+  // varredura 2026-09: PUB-02 — o reconhecimento agora exige CPF **E** data de
+  // nascimento. A rota parou de responder só com o CPF (o CPF sozinho estava
+  // dizendo a qualquer um se a pessoa está na base de uma igreja) e devolve a
+  // MESMA recusa neutra quando falta o nascimento — então buscar sem ele não é
+  // "buscar cedo", é queimar a consulta e nunca mostrar o cartão.
+  // ⚠️ `data_nascimento` entra nas dependências: sem isso o efeito não rodava
+  // de novo quando a pessoa preenchesse o nascimento e o cartão ficava morto.
   useEffect(() => {
     const cpf = form.cpf;
-    if (!cpfValido(cpf)) {
+    const nascimento = form.data_nascimento;
+    // varredura 2026-09: PUB-02 — só chama com os DOIS preenchidos.
+    if (!cpfValido(cpf) || !/^\d{4}-\d{2}-\d{2}$/.test(nascimento || '')) {
       setCpfLookup(null);
       setCpfChecando(false);
       return undefined;
@@ -491,7 +519,7 @@ export default function CadastroMembresia() {
     setCpfChecando(true);
     const t = setTimeout(async () => {
       try {
-        const r = await cadastroPublico.lookupCpf(soDigitos(cpf));
+        const r = await cadastroPublico.lookupCpf(soDigitos(cpf), nascimento);
         setCpfLookup(r);
       } catch {
         setCpfLookup(null);
@@ -500,7 +528,7 @@ export default function CadastroMembresia() {
       }
     }, 600);
     return () => clearTimeout(t);
-  }, [form.cpf]);
+  }, [form.cpf, form.data_nascimento]);
 
   // Debounce: 700ms após parar de digitar nome/telefone — busca cadastro
   // pre-existente (novo convertido importado, etc.) por primeiro nome +
@@ -559,21 +587,31 @@ export default function CadastroMembresia() {
   const isStepValid = () => {
     switch (currentStep) {
       case 0:
-        return form.nome.trim() !== '' && form.sobrenome.trim() !== '' && soDigitos(form.telefone).length >= 10 && cpfValido(form.cpf);
+        // varredura 2026-09: PUB-02 — o nascimento passou a ser exigido AQUI (o
+        // campo mudou pro passo 0, ao lado do CPF). Sem isso o passo avançaria
+        // com o campo vazio na tela, e a régua diria "pode seguir" olhando um
+        // campo que a pessoa está vendo em branco.
+        return form.nome.trim() !== '' && form.sobrenome.trim() !== '' && soDigitos(form.telefone).length >= 10 && cpfValido(form.cpf) && !!form.data_nascimento;
       case 1:
-        // Passo Informações (+ bairro). Obrigatórios: nascimento e e-mail
-        // (2026-07-23 · antes o e-mail só era exigido no devocional). Bairro,
-        // estado civil e profissão são opcionais.
-        if (!form.data_nascimento) return false;
+        // Passo Informações (+ bairro). Obrigatórios: e-mail (2026-07-23 · antes
+        // só era exigido no devocional) e sexo. Bairro, estado civil e profissão
+        // são opcionais.
+        // varredura 2026-09: PUB-02 — o nascimento saiu daqui; quem o exige é o
+        // passo 0, onde o campo passou a viver. Exigir nos dois travaria este
+        // passo por um campo que não está nesta tela.
         // ⚠️ Sexo OBRIGATÓRIO (Matheus · 05/08: "em todos os formulários").
         // Ontem o campo entrou na tela mas não travava nada — `required` no
         // SelectField é decoração, quem bloqueia é esta função.
         if (!['masculino', 'feminino'].includes(form.genero)) return false;
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return false;
         if (fromDevocional) {
+          // varredura 2026-09: PUB-01 — as travas de senha SAÍRAM. O servidor
+          // parou de aceitar senha escolhida por chamador anônimo (era conta de
+          // outra pessoa entregue por CPF), então bloquear o passo por um campo
+          // que o servidor descarta é exigir o que não serve pra nada. O
+          // e-mail confirmado FICA: é ele que recebe o link de acesso, e um
+          // dígito errado manda o acesso da pessoa pro endereço de ninguém.
           if (form.email.trim().toLowerCase() !== form.confirmar_email.trim().toLowerCase()) return false;
-          if (!form.senha || form.senha.length < 6) return false;
-          if (form.senha !== form.confirmar_senha) return false;
         }
         return true;
       case 2:
@@ -595,9 +633,7 @@ export default function CadastroMembresia() {
       if (form.email.trim().toLowerCase() !== form.confirmar_email.trim().toLowerCase()) {
         return 'Os emails informados não conferem.';
       }
-      if (!form.senha) return 'Crie uma senha de acesso.';
-      if (form.senha.length < 6) return 'A senha precisa ter ao menos 6 caracteres.';
-      if (form.senha !== form.confirmar_senha) return 'As senhas não conferem.';
+      // varredura 2026-09: PUB-01 — sem senha nesta porta (ver isStepValid).
     }
     // ⚠️ Exige COMPLETO, não "preenchido": CEP pela metade entra parecendo
     // endereço e o mapa da Membresia não posiciona a pessoa. O servidor
@@ -652,7 +688,7 @@ export default function CadastroMembresia() {
         setFotoUploading(false);
       }
 
-      const { sobrenome, confirmar_email, confirmar_senha, ...rest } = form;
+      const { sobrenome, confirmar_email, ...rest } = form;
       const bairroFinal = bairroSel.trim() || null;
       const resp = await cadastroPublico.enviar({
         ...rest,
@@ -676,24 +712,17 @@ export default function CadastroMembresia() {
         familia_sugerida_id: familiaId || null,
         foto_url,
         match_membro_id: matchConfirmado || null,
-        senha: form.senha || undefined,
+        // varredura 2026-09: PUB-01 — pede a conta de acesso só no fluxo que
+        // realmente a oferece (`?from=devocional`), e com um marcador opaco no
+        // lugar da senha que a pessoa digitava. Ver `marcadorPedidoDeAcesso`.
+        senha: fromDevocional ? marcadorPedidoDeAcesso() : undefined,
       });
 
-      // Se veio do /devocional/login e a conta foi criada com sucesso,
-      // tenta entrar direto e levar pro devocional do dia.
-      if (fromDevocional && resp?.account_created && form.email && form.senha) {
-        try {
-          const { supabase } = await import('../../supabaseClient');
-          const { error: signErr } = await supabase.auth.signInWithPassword({
-            email: form.email.trim().toLowerCase(),
-            password: form.senha,
-          });
-          if (!signErr) {
-            window.location.href = '/devocional';
-            return;
-          }
-        } catch { /* fallback: tela de sucesso normal */ }
-      }
+      // varredura 2026-09: PUB-01 — o `signInWithPassword` SAIU. Ele tentava
+      // entrar com a senha que o servidor tinha acabado de jogar fora: falhava
+      // sempre, o `catch` engolia o erro e a pessoa caía na tela de sucesso
+      // achando que já tinha acesso. A entrada agora é o link que chega no
+      // e-mail (o servidor dispara), e é isso que a tela de sucesso promete.
       if (ehCenso) setCensoAtualizado(!!resp?.censo_atualizado);
       setSent(true);
     } catch (err) {
@@ -809,6 +838,37 @@ export default function CadastroMembresia() {
                   : 'Obrigado por participar do censo. Em breve nossa equipe entrará em contato com você.')
                 : 'Obrigado por se conectar com a CBRio. Em breve nossa equipe entrará em contato com você.'}
             </p>
+
+            {/*
+              varredura 2026-09: PUB-01 — a tela dizia "sucesso" e mandava a pessoa
+              embora achando que já podia entrar com a senha que digitou (o login
+              silencioso falhava sempre). O texto passou a apontar o caminho real do
+              acesso: link no e-mail, sem senha.
+              ⚠️ E NÃO AFIRMA NO PASSADO QUE ENVIAMOS. O backend chama
+              `supabase.auth.admin.generateLink({type:'magiclink'})` e DESCARTA o link
+              devolvido, sem entregar a ninguém — o /devocional/login que já roda em
+              produção faz exatamente o mesmo e ainda loga "Magic link enviado". Dizer
+              "enviamos" seria afirmar uma entrega que não dá pra provar daqui, e a
+              pessoa ficaria esperando um e-mail que talvez não exista. O texto descreve
+              COMO o acesso funciona e dá caminho de saída quando nada chegar — verdade
+              nos dois casos, com ou sem o envio de fato acontecendo.
+              ⚠️ SEM `!ehCenso`: quem chega por `?from=devocional` manda o marcador de
+              pedido de acesso SEMPRE (ver `senha: fromDevocional ? ... : undefined`),
+              então o backend cria conta também quando é censo. Com a guarda antiga
+              esse cruzamento ganhava conta e NENHUMA instrução — e como não há mais
+              senha, a pessoa saía sem saber por onde entrar. O texto é hedgeado ("se
+              não chegar, fale com a nossa equipe"), então serve também aos caminhos em
+              que nenhum link chegou a ser gerado.
+            */}
+            {fromDevocional && (
+              <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
+                <strong style={{ color: C.text }}>O acesso ao devocional é por link no e-mail.</strong>
+                {' '}Não há senha pra digitar: quando o link chegar em{' '}
+                <strong style={{ color: C.text }}>{form.email.trim()}</strong>, é só clicar nele pra entrar.
+                Confira também a caixa de spam — e, se não chegar, fale com a nossa equipe
+                que a gente libera seu acesso.
+              </p>
+            )}
 
             {fromTotem ? (
               /* Modo totem: o QR do membro sai na hora (sem repedir CPF/nascimento)
@@ -991,9 +1051,23 @@ export default function CadastroMembresia() {
                     <Field id="nome" label={rotulo('Nome', 'nome')} value={form.nome} onChange={set('nome')} required autoComplete="given-name" maxLength={100} />
                     <Field id="sobrenome" label={rotulo('Sobrenome', 'nome')} value={form.sobrenome} onChange={set('sobrenome')} required autoComplete="family-name" maxLength={100} />
                   </Row>
+                  {/*
+                    varredura 2026-09: PUB-02 — o nascimento SUBIU pro passo 0, ao lado
+                    do CPF, porque desde a guarda nova os dois formam UMA prova só (a
+                    rota de reconhecimento exige os dois). Com o nascimento no passo 1,
+                    o efeito só disparava depois que a pessoa já tinha saído desta tela
+                    — e o cartão "Bem-vindo(a) de volta" é desenhado AQUI, então só quem
+                    VOLTAVA um passo chegava a vê-lo. Pedir juntos é o que faz o
+                    reconhecimento acontecer no caminho natural.
+                  */}
                   <Row>
                     <Field id="cpf" label={rotulo('CPF', 'cpf')} value={form.cpf} onChange={setMasked('cpf', mascaraCpf)} required inputMode="numeric" maxLength={14} />
-                    <Field id="telefone" label={rotulo('Celular / WhatsApp', 'telefone')} value={form.telefone} onChange={setMasked('telefone', mascaraTelefone)} required autoComplete="tel" inputMode="tel" maxLength={16} />
+                    <div style={{ marginBottom: 20, flex: 1 }}>
+                      <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>
+                        {rotulo('Data de nascimento', 'nascimento')} <span style={{ color: '#ef4444' }}>*</span>
+                      </label>
+                      <BirthDatePicker value={form.data_nascimento} onChange={(v) => setForm((f) => ({ ...f, data_nascimento: v }))} />
+                    </div>
                   </Row>
                   {cpfChecando && (
                     <div style={{ marginTop: -10, marginBottom: 14, fontSize: 12, color: 'var(--cbrio-text3)' }}>
@@ -1030,6 +1104,17 @@ export default function CadastroMembresia() {
                       </div>
                     </div>
                   )}
+
+                  {/*
+                    varredura 2026-09: PUB-02 — o telefone desceu pra depois do cartão
+                    de reconhecimento: o par CPF+nascimento é a prova, e o cartão tem
+                    que ficar colado nele. Aqui o telefone também fica vizinho do match
+                    por nome+telefone, que é o bloco logo abaixo.
+                  */}
+                  <Row>
+                    <Field id="telefone" label={rotulo('Celular / WhatsApp', 'telefone')} value={form.telefone} onChange={setMasked('telefone', mascaraTelefone)} required autoComplete="tel" inputMode="tel" maxLength={16} />
+                    <div style={{ flex: 1 }} />
+                  </Row>
 
                   {/* Match por nome + telefone — reconhece novos convertidos */}
                   {nomeTelChecando && !matchConfirmado && !matchDescartado && (
@@ -1133,13 +1218,14 @@ export default function CadastroMembresia() {
                       </p>
                     </div>
                   )}
+                  {/*
+                    varredura 2026-09: PUB-02 — a data de nascimento SAIU daqui (subiu
+                    pro passo 0, ao lado do CPF). O e-mail herdou a linha e o sexo veio
+                    do par de baixo: duas linhas pela metade, uma atrás da outra, é
+                    buraco de layout — e o espaçador solto do sexo deixou de ser
+                    necessário.
+                  */}
                   <Row>
-                    <div style={{ marginBottom: 20, flex: 1 }}>
-                      <label style={{ display: 'block', fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>
-                        {rotulo('Data de nascimento', 'nascimento')} <span style={{ color: '#ef4444' }}>*</span>
-                      </label>
-                      <BirthDatePicker value={form.data_nascimento} onChange={(v) => setForm((f) => ({ ...f, data_nascimento: v }))} />
-                    </div>
                     <Field
                       id="email"
                       type="email"
@@ -1150,9 +1236,6 @@ export default function CadastroMembresia() {
                       maxLength={200}
                       required
                     />
-                  </Row>
-
-                  <Row>
                     <SelectField
                       id="genero"
                       label={`${rotulo('Sexo', 'genero')} *`}
@@ -1161,7 +1244,6 @@ export default function CadastroMembresia() {
                       options={SEXO_OPTS}
                       required
                     />
-                    <div style={{ flex: 1 }} />
                   </Row>
 
                   {fromDevocional && (
@@ -1188,28 +1270,29 @@ export default function CadastroMembresia() {
                           required
                         />
                       </Row>
-                      <Row>
-                        <Field
-                          id="senha"
-                          type="password"
-                          label="Senha * (min 6 caracteres)"
-                          value={form.senha}
-                          onChange={set('senha')}
-                          autoComplete="new-password"
-                          maxLength={72}
-                          required
-                        />
-                        <Field
-                          id="confirmar_senha"
-                          type="password"
-                          label="Confirmar senha *"
-                          value={form.confirmar_senha}
-                          onChange={set('confirmar_senha')}
-                          autoComplete="new-password"
-                          maxLength={72}
-                          required
-                        />
-                      </Row>
+                      {/*
+                        varredura 2026-09: PUB-01 — o par "Senha *"/"Confirmar senha *"
+                        SAIU daqui. A tela exigia as duas, bloqueava o passo e o envio
+                        sem elas, e o servidor descartava a senha logo em seguida (numa
+                        porta sem login, senha escolhida pelo chamador era o caminho
+                        que entregava a conta de outra pessoa). O login que vinha
+                        depois falhava sempre e a pessoa saía achando que tinha acesso.
+                        No lugar, a tela diz a verdade do que vai acontecer: o acesso
+                        chega por link no e-mail confirmado acima.
+                        ⚠️ E AQUI TAMBÉM NÃO SE PROMETE ENTREGA. O texto que entrou no
+                        lugar da senha dizia "Enviaremos um link de acesso para esse
+                        e-mail" — a MESMA afirmação de entrega que a tela de sucesso
+                        (comentário do bloco `fromDevocional` lá em cima) evita de
+                        propósito, por não dar pra provar daqui. Pior neste ponto: há
+                        três caminhos em que o `generateLink` nem chega a rodar — balde
+                        de tentativas estourado por e-mail alvo, conta que JÁ existia e
+                        `createUser` que falhou. As duas pontas ficam com a mesma régua:
+                        descrever COMO o acesso funciona, sem afirmar um envio.
+                      */}
+                      <div style={{ fontSize: 12, color: 'var(--cbrio-text3)', lineHeight: 1.5 }}>
+                        <strong style={{ color: 'var(--cbrio-text)' }}>Você não precisa criar senha.</strong>
+                        {' '}O acesso é por link no e-mail. Confira o endereço com atenção.
+                      </div>
                     </div>
                   )}
 
