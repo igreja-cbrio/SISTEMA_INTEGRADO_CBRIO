@@ -74,7 +74,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **165** arquivos, **153** com teste.
+`backend/utils/` tem **166** arquivos, **154** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -115,6 +115,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/capacidadeCulto.js` | `src/test/capacidadeCulto.test.ts` |
 | `backend/utils/censoCampoCadastro.js` | `src/test/censoCampoCadastro.test.ts` |
 | `backend/utils/censoConvite.js` | `src/test/censoConvite.test.ts` |
+| `backend/utils/censoIaFiltro.js` | `src/test/censoIaSemPii.test.ts` |
 | `backend/utils/censoPerguntas.js` | `src/test/censoFormEspelho.test.ts` `src/test/censoPerguntas.test.ts` `src/test/censoQuestionario2026.test.ts` |
 | `backend/utils/censoPrefill.js` | `src/test/censoPrefill.test.ts` `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/censoRespostaToken.js` | `src/test/censoRespostaToken.test.ts` |
