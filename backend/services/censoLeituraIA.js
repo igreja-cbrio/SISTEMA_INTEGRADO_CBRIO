@@ -29,14 +29,19 @@
 //  não é coleta — o censo funciona sem ela.
 // ════════════════════════════════════════════════════════════════════════════
 const Anthropic = require('@anthropic-ai/sdk');
+// ⚠️ A régua de O QUE PODE SAIR mora em `utils/` (puro, sem o SDK) porque é ela
+// que entra no gate de deploy — `backend/` tem árvore de dependências própria e
+// o CI só instala a da raiz. Aqui só re-exportamos.
+const {
+  TIPOS_PARA_IA, ehTextoDeOpiniao, prepararMaterial,
+  MAX_TEXTOS_POR_PERGUNTA, MAX_CHARS_POR_TEXTO,
+} = require('../utils/censoIaFiltro');
 
 // Síntese de texto aberto é a tarefa mais difícil do sistema. Não economize aqui.
 const MODEL = 'claude-opus-5';
 
 // Teto de material por leitura. Não é limite de contexto (Opus 5 tem 1M) — é
 // limite de custo e de honestidade: acima disso a síntese vira média de médias.
-const MAX_TEXTOS_POR_PERGUNTA = 400;
-const MAX_CHARS_POR_TEXTO = 600;
 
 const SYSTEM = `Você lê as respostas abertas de um censo de uma igreja evangélica no Rio de Janeiro e escreve uma síntese para a liderança decidir o que fazer.
 
@@ -117,29 +122,6 @@ const ESQUEMA = {
  * @param {Array} itens - linhas { pergunta_id, pergunta_texto, valor_texto, sensivel }
  * @returns {{ blocos: Array, total_textos: number, truncadas: Array }}
  */
-function prepararMaterial(itens) {
-  const porPergunta = new Map();
-  for (const i of itens || []) {
-    // O bloco sensível não entra. Nunca. (Guarda redundante: o SQL já filtra —
-    // duas guardas porque uma refatoração futura pode mexer só numa.)
-    if (i?.sensivel === true) continue;
-    const t = String(i?.valor_texto || '').trim();
-    if (t.length < 3) continue;                 // "ok", "-", vazio: não é opinião
-    const k = i.pergunta_id;
-    if (!porPergunta.has(k)) {
-      porPergunta.set(k, { pergunta_id: k, pergunta_texto: i.pergunta_texto || k, textos: [], total: 0 });
-    }
-    const b = porPergunta.get(k);
-    b.total += 1;
-    if (b.textos.length < MAX_TEXTOS_POR_PERGUNTA) b.textos.push(t.slice(0, MAX_CHARS_POR_TEXTO));
-  }
-  const blocos = [...porPergunta.values()].filter((b) => b.textos.length > 0);
-  const truncadas = blocos
-    .filter((b) => b.total > b.textos.length)
-    .map((b) => ({ pergunta_id: b.pergunta_id, lidas: b.textos.length, total: b.total }));
-  return { blocos, total_textos: blocos.reduce((s, b) => s + b.textos.length, 0), truncadas };
-}
-
 /**
  * Lê as respostas abertas e devolve a síntese, ou null.
  *
@@ -188,4 +170,6 @@ async function lerRespostasAbertas(itens, { agora } = {}) {
   };
 }
 
-module.exports = { lerRespostasAbertas, prepararMaterial, MODEL, ESQUEMA, MAX_TEXTOS_POR_PERGUNTA };
+module.exports = {
+  ehTextoDeOpiniao,
+  TIPOS_PARA_IA, lerRespostasAbertas, prepararMaterial, MODEL, ESQUEMA, MAX_TEXTOS_POR_PERGUNTA };

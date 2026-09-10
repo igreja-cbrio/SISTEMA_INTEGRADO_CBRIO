@@ -43,6 +43,12 @@ const TIPO_LABEL: Record<string, string> = {
   sim_nao: 'Sim / Não',
   opcao_unica: 'Escolha única',
   multipla: 'Escolha múltipla',
+  // ⚠️ `busca` existe no backend (tipo com catálogo + escape digitado) e não
+  // estava aqui: a pergunta "Qual era a igreja?" renderizava com o Select de
+  // tipo VAZIO, e quem mexesse nele perdia `catalogo`/`permite_outro`. Entra
+  // no rótulo para ser legível e editável; criar do zero pela tela ainda exige
+  // escolher o catálogo, que é trabalho de outra leva.
+  busca: 'Lista com busca (catálogo)',
 };
 const COM_OPCOES = ['opcao_unica', 'multipla'];
 const ESCALAS = ['escala_5', 'estrelas_5'];

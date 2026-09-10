@@ -18,7 +18,7 @@ const {
 const { requireCron } = require('../utils/cronAuth');
 const { acharMembroGuardado } = require('../services/membroMatch');
 const { reconciliarCenso } = require('../services/censoReconciliar');
-const { lerRespostasAbertas } = require('../services/censoLeituraIA');
+const { lerRespostasAbertas, TIPOS_PARA_IA } = require('../services/censoLeituraIA');
 
 // ⚠️ AQUI EM CIMA, e não junto do handler: `const` NÃO é hoisted (TDZ), e o
 // cron abaixo a usa. Deixada lá embaixo, a linha do cron estouraria
@@ -962,15 +962,25 @@ router.post('/ia', authorizeModule('censo', 4), async (req, res) => {
     }
 
     // Só respostas de pergunta ABERTA e NÃO sensível, e só de resposta concluída.
-    // O filtro do sensível é no SQL (e há uma segunda guarda no serviço): o bloco 6
-    // foi coletado com a promessa de virar estatística, não contexto de modelo.
+    // O bloco 6 foi coletado com a promessa de virar estatística, não contexto
+    // de modelo.
+    //
+    // ⚠️⚠️ O `.in('tipo', ...)` É A GUARDA QUE FALTAVA (10/09/2026). Este
+    // comentário dizia "pergunta ABERTA" desde sempre e **nada checava o
+    // tipo**: `cpf`, `nome`, `telefone`, `email`, `cep`, `cidade` e `bairro`
+    // são `texto_curto`, gravam em `valor_texto` e não são sensíveis — medido,
+    // 161 itens de PII iam para a Anthropic a cada clique no botão.
+    // `tipo` é selecionado porque a segunda guarda (no serviço) depende dele:
+    // sem a coluna, `ehTextoDeOpiniao` recebe `undefined` e — fail-closed —
+    // descartaria tudo, deixando a leitura vazia sem ninguém entender por quê.
     const { data: itens, error } = await supabase
       .from('cen_resposta_item')
-      .select('pergunta_id, pergunta_texto, valor_texto, sensivel, cen_resposta!inner(pesquisa_id, concluida_em, deleted_at)')
+      .select('pergunta_id, pergunta_texto, tipo, valor_texto, sensivel, cen_resposta!inner(pesquisa_id, concluida_em, deleted_at)')
       .eq('cen_resposta.pesquisa_id', pesquisaId)
       .not('cen_resposta.concluida_em', 'is', null)
       .is('cen_resposta.deleted_at', null)
       .eq('sensivel', false)
+      .in('tipo', [...TIPOS_PARA_IA])
       .not('valor_texto', 'is', null)
       .limit(20000);
     if (error) throw error;
