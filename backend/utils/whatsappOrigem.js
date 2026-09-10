@@ -48,6 +48,7 @@ const ROTULOS = [
   ['grupos.fallback_template', 'Grupos · aviso do bot'],
   ['membresia.cadastro_confirmado', 'Membresia · confirmação de cadastro'],
   ['cuidados.devocional_diario', 'Devocional · devocional do dia'],
+  ['cuidados.visitante_pesquisa_obrigado', 'Visitantes · agradecimento da pesquisa'],
   ['cuidados.visitante_pesquisa', 'Visitantes · pesquisa de satisfação'],
   ['cuidados', 'Cuidado pastoral'],
   ['kids.retirada_codigo', 'Kids · código de retirada'],

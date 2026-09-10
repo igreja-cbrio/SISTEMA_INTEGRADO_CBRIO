@@ -21,16 +21,23 @@
 //  exige que remetente × catálogo × PATCH concordem neste id.
 //
 //  TEMPLATE: `visitante_pesquisa_satisfacao` (env WHATSAPP_TEMPLATE_VISITANTE_PESQUISA
-//  só como override) · {{1}} primeiro nome · {{2}} link da pesquisa NO CORPO
-//  (link como variável de body, nunca botão de URL — é o que mantém UTILITY).
-//  ⚠️ O template precisa ser criado/aprovado na Meta — é tarefa de GENTE.
+//  só como override) · {{1}} primeiro nome · **5 botões de resposta rápida**
+//  ("1 · Ruim" … "5 · Excelente" · utils/respostaPesquisaVisitante.BOTOES_NOTA).
+//  A pessoa TOCA no botão e a nota chega pelo webhook (context.id = o wamid
+//  desta mensagem → whatsapp_envios.message_id → ref_id = visita); o texto que
+//  ela mandar em seguida vira o comentário. Decisão do Marcos (10/09): sem
+//  link — o link `/visitante/avaliar/<token>` continua existindo só como
+//  caminho manual. ⚠️ O template precisa ser criado/aprovado na Meta — é
+//  tarefa de GENTE.
 // ════════════════════════════════════════════════════════════════════════════
 const { supabase } = require('../utils/supabase');
 const { pesquisaDevida, primeiroNome } = require('../utils/visitanteRegras');
-const { montarLinkPesquisa } = require('../utils/visitanteToken');
 
 const DISPARO_ID = 'visitante_pesquisa';
 const CONTEXTO = 'cuidados.visitante_pesquisa';
+// O "obrigado" depois da nota sai pela fila como TEXTO com este contexto, pra o
+// wamid dele ficar em whatsapp_envios e o comentário poder responder a ele.
+const CONTEXTO_OBRIGADO = 'cuidados.visitante_pesquisa_obrigado';
 const TEMPLATE = process.env.WHATSAPP_TEMPLATE_VISITANTE_PESQUISA || 'visitante_pesquisa_satisfacao';
 const TETO_POR_RODADA = 100;
 
@@ -52,7 +59,7 @@ async function horasDosCultos(ids) {
  * pode cair por causa de um satélite.
  */
 async function enviarPesquisasDevidas({ agora = new Date() } = {}) {
-  const resumo = { enviadas: 0, aguardando: 0, expiradas: 0, sem_link: 0, desligado: false, erro: null };
+  const resumo = { enviadas: 0, aguardando: 0, expiradas: 0, desligado: false, erro: null };
   try {
     const { disparoDesligado } = require('./comunicacaoDisparosOff');
     if (await disparoDesligado(DISPARO_ID)) { resumo.desligado = true; return resumo; }
@@ -99,9 +106,6 @@ async function enviarPesquisasDevidas({ agora = new Date() } = {}) {
       }
       if (destino !== 'enviar') continue;
 
-      const link = montarLinkPesquisa(v.id);
-      if (!link) { resumo.sem_link += 1; continue; } // fail-closed sem segredo · fica pra próxima rodada
-
       // Carimbo ANTES de enfileirar, condicionado: duas rodadas concorrentes
       // disputam a mesma linha e só uma passa.
       const { data: marcada } = await supabase.from('vis_visitas')
@@ -114,7 +118,7 @@ async function enviarPesquisasDevidas({ agora = new Date() } = {}) {
         // digits-only (DDD+número), como o totem grava: quem põe o 55 é o remetente (waSender.normalizarTelefone).
         telefone: v.telefone,
         template: TEMPLATE,
-        params: [primeiroNome(v.nome), link],
+        params: [primeiroNome(v.nome)],
         contexto: CONTEXTO,
         refId: v.id,
       });
@@ -147,4 +151,4 @@ async function publicoPesquisaVisitante() {
   };
 }
 
-module.exports = { DISPARO_ID, CONTEXTO, TEMPLATE, enviarPesquisasDevidas, publicoPesquisaVisitante };
+module.exports = { DISPARO_ID, CONTEXTO, CONTEXTO_OBRIGADO, TEMPLATE, enviarPesquisasDevidas, publicoPesquisaVisitante };

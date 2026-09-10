@@ -600,7 +600,7 @@ const CATALOGO = [
     nome: 'Pesquisa de satisfação do visitante (depois do culto)',
     quando: 'Horário · na rodada seguinte ao fim do culto (início + 2h30; sem culto, registro + 2h) · validade 72h',
     regra: 'Quem registrou a visita pelo QR dos cartazes (/visitante) E marcou o opt-in de WhatsApp. '
-      + '1 mensagem por visita, com o link assinado da pesquisa (1 a 5 + comentário). '
+      + '1 mensagem por visita, com 5 botões de resposta rápida (1 a 5); o texto que a pessoa mandar depois vira o comentário. '
       + 'Depois de 72h a pesquisa não sai mais (fora de hora).',
     fonte: 'GET /api/public/grupos/cron/whatsapp-fila → services/visitantePesquisa.js',
     contexto: 'cuidados.visitante_pesquisa',
