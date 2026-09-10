@@ -154,9 +154,23 @@ protegido, ANTES do `processarFila` pra sair na mesma rodada). **Sem cron novo**
   (`.is(null)`) — duas rodadas concorrentes, uma passa.
 - **Template `visitante_pesquisa_satisfacao`** (env
   `WHATSAPP_TEMPLATE_VISITANTE_PESQUISA` só override) · `{{1}}` 1º nome ·
-  `{{2}}` **link no CORPO** (variável, não botão — mantém UTILITY) →
-  `/visitante/avaliar/<token>`. Telefone vai digits-only (quem põe o 55 é o
-  remetente).
+  **5 botões de resposta rápida** (`1 · Ruim` … `5 · Excelente`,
+  `utils/respostaPesquisaVisitante.BOTOES_NOTA`). Telefone vai digits-only
+  (quem põe o 55 é o remetente).
+- ⚠️⚠️ **A RESPOSTA CHEGA PELO PRÓPRIO WHATSAPP (10/09 · Marcos: "não quero
+  que a pessoa clique em link")**: `services/visitantePesquisaResposta.js`,
+  ligado no webhook logo DEPOIS do handler da escala. O elo é o `context.id`
+  → `whatsapp_envios.message_id` → `ref_id` = visita (o mesmo desenho da
+  escala). Passo 1: botão/dígito sozinho → `pesquisa_nota` (UPDATE condicionado,
+  a 1ª vale) + agradecimento por TEXTO pela FILA com contexto
+  `cuidados.visitante_pesquisa_obrigado` (pra o wamid ficar em
+  whatsapp_envios). Passo 2: texto respondendo ao template OU ao obrigado →
+  `pesquisa_comentario` (acrescenta se já houver). Sem `context.id` só a NOTA é
+  aceita, e só com EXATAMENTE UM disparo em 72h pra aquele telefone —
+  comentário sem contexto seria capturar conversa alheia. Opt-out tem
+  prioridade. Régua pura em `utils/respostaPesquisaVisitante.js` (no gate):
+  "cheguei 5 minutos atrasado" NÃO é nota. O link `/visitante/avaliar/<token>`
+  segue existindo como caminho manual.
 - **Token HMAC da VISITA** (`utils/visitanteToken.js`, namespace
   `visitante-pesquisa:`, fail-closed, sem expiração — a validade é da rota). É o
   que faz a resposta saber QUEM respondeu (o `nps_pesquisas.link_publico_token`
@@ -209,10 +223,9 @@ café na cafeteria não é da área ministerial.
 ### ⏳ Pendente de GENTE (sem isto a pesquisa não sai)
 
 1. **Aplicar a migration** `20260909120000` (SQL colado na conversa).
-2. **Criar o template `visitante_pesquisa_satisfacao` na Meta** (UTILITY · pt_BR ·
-   `{{1}}` nome · `{{2}}` link no corpo) — sugestão: *"Oi, {{1}}! Que alegria
-   receber você hoje na CBRio. Pode nos contar em 10 segundos como foi sua
-   visita? {{2}}"*.
+2. **Criar o template `visitante_pesquisa_satisfacao` na Meta** (MARKETING · pt_BR ·
+   `{{1}}` nome · **5 quick-replies** com os textos EXATOS de `BOTOES_NOTA`) —
+   o corpo pode ser quente; o que a régua lê é o dígito inicial do botão.
 3. **Ligar o switch** `visitante_pesquisa` em Comunicação → Envios → Automáticos.
 4. **Imprimir os cartazes** pela aba Cartazes (QR) de `/visitantes` — ou gerar
    QR dinâmico por local em Links e QR (os 5 destinos já estão no catálogo).

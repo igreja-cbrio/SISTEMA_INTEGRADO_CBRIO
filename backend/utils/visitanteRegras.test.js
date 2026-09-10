@@ -104,10 +104,35 @@ assert.equal(R.primeiroNome(''), 'Olá');
   if (antesCron) process.env.CRON_SECRET = antesCron;
 }
 
+// ── resposta pelo WhatsApp · botão/dígito vira nota · texto vira comentário ──
+{
+  const P = require('./respostaPesquisaVisitante');
+  assert.equal(P.BOTOES_NOTA.length, 5);
+  for (const b of P.BOTOES_NOTA) assert.ok(b.length <= 25, `botão "${b}" passa de 25 chars (limite da Meta)`);
+  P.BOTOES_NOTA.forEach((b, i) => assert.equal(P.interpretarNotaVisitante(b), i + 1, `botão "${b}" → ${i + 1}`));
+  assert.equal(P.interpretarNotaVisitante('5'), 5);
+  assert.equal(P.interpretarNotaVisitante(' 3. '), 3);
+  assert.equal(P.interpretarNotaVisitante('nota 4'), 4);
+  assert.equal(P.interpretarNotaVisitante('⭐⭐⭐⭐'), 4);
+  assert.equal(P.interpretarNotaVisitante('2 estrelas'), 2);
+  assert.equal(P.interpretarNotaVisitante('6'), null, 'fora de 1..5');
+  assert.equal(P.interpretarNotaVisitante('0'), null);
+  assert.equal(P.interpretarNotaVisitante('cheguei 5 minutos atrasado'), null, 'dígito no meio da frase não é nota');
+  assert.equal(P.interpretarNotaVisitante('5 minutos'), null);
+  assert.equal(P.interpretarNotaVisitante('adorei, nota 10'), null);
+  assert.equal(P.ehComentario('Adorei o louvor, muito acolhedor'), true);
+  assert.equal(P.ehComentario('5 · Excelente'), false, 'botão não é comentário');
+  assert.equal(P.ehComentario('4'), false);
+  assert.equal(P.ehComentario('👍'), false, 'só emoji não é comentário');
+  assert.match(P.textoObrigado('Ana', 5), /Ana/);
+  assert.match(P.textoObrigado('Ana', 2), /melhorar/i);
+  assert.ok(P.textoObrigado('', 4).length > 10);
+}
+
 // ── Guarda estática: utils/ não pode puxar Supabase (o gate roda sem node_modules) ──
 const fs = require('node:fs');
 const path = require('node:path');
-for (const f of ['visitanteRegras.js', 'visitanteToken.js']) {
+for (const f of ['visitanteRegras.js', 'visitanteToken.js', 'respostaPesquisaVisitante.js']) {
   const src = fs.readFileSync(path.join(__dirname, f), 'utf8');
   assert.ok(!/require\(['"]\.\.\/utils\/supabase|require\(['"]\.\/supabase|@supabase/.test(src), `${f} não pode carregar Supabase`);
 }

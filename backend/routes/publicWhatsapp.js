@@ -179,6 +179,13 @@ async function processarEvento(req) {
             return false;
           });
           if (assumida) continue;
+          // Pesquisa do VISITANTE (10/09/2026): botão 1–5 do template ou o texto
+          // que vira comentário — se identifica pelo context.id ou pelo único
+          // disparo recente. Devolve false quando não é dela.
+          const assumiuVisitante = await require('../services/visitantePesquisaResposta')
+            .processarRespostaVisitante(m, { enviarTexto, normalizarTelefone })
+            .catch(err => { console.error('[whatsapp webhook] pesquisa do visitante:', err.message); return false; });
+          if (assumiuVisitante) continue;
         }
         if (!institucional) {
           await inboxDireto(m, pnid).catch(err =>
