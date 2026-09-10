@@ -104,7 +104,7 @@ conferir.
 | `/admin/grupos/temporadas` | `src/pages/admin/TemporadasGrupos` | sim |
 | `/suporte` | `src/pages/public/Suporte` | sim |
 
-## Arquivos de rota que nenhum módulo reivindica (75)
+## Arquivos de rota que nenhum módulo reivindica (74)
 
 - `backend/routes/agentTasks.js`
 - `backend/routes/agenteBatismoNext.js`
@@ -123,7 +123,6 @@ conferir.
 - `backend/routes/dadosBrutos.js`
 - `backend/routes/dashboard.js`
 - `backend/routes/dashboardSemanal.js`
-- `backend/routes/devocionais.js`
 - `backend/routes/devocionalMembro.js`
 - `backend/routes/devocionalPlanos.js`
 - `backend/routes/encaminhamentos.js`

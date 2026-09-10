@@ -12,7 +12,7 @@
 ## Backend
 - `backend/routes/permissoes.js`
 Guard: `authorizeModule('permissoes', 4)`
-<details><summary>Endpoints (17)</summary>
+<details><summary>Endpoints (18)</summary>
 - `DELETE /api/permissoes/usuario/:id/modulo/:moduloId`
 - `GET /api/permissoes/cargo/:id`
 - `GET /api/permissoes/colaboradores`
@@ -26,6 +26,7 @@ Guard: `authorizeModule('permissoes', 4)`
 - `POST /api/permissoes/usuario`
 - `PUT /api/permissoes/matriz/celula`
 - `PUT /api/permissoes/usuario/:id/areas`
+- `PUT /api/permissoes/usuario/:id/ativo`
 - `PUT /api/permissoes/usuario/:id/cargo`
 - `PUT /api/permissoes/usuario/:id/email`
 - `PUT /api/permissoes/usuario/:id/modulo`

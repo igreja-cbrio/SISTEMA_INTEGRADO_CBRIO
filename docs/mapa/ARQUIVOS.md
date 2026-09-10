@@ -44,7 +44,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/dashboard.js` | rota backend | — | `/api/dashboard` |
 | `backend/routes/dashboardSemanal.js` | rota backend | — | `/api/dashboard-semanal` |
 | `backend/routes/destaques.js` | rota backend | marketing | `/api/destaques` |
-| `backend/routes/devocionais.js` | rota backend | — | `/api/devocionais` |
+| `backend/routes/devocionais.js` | rota backend | devocionais | `/api/devocionais` |
 | `backend/routes/devocionalMembro.js` | rota backend | — | `/api/devocional-membro` |
 | `backend/routes/devocionalPlanos.js` | rota backend | — | `/api/devocional-planos` |
 | `backend/routes/encaminhamentos.js` | rota backend | — | `/api/encaminhamentos` |

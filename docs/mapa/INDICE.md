@@ -26,6 +26,7 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **comunicacao** | `/comunicacao` | `comunicacao.js` | [comunicacao](comunicacao.md) |
 | **conversas** | — | `waInbox.js` | [conversas](conversas.md) |
 | **cuidados** | `/ministerial/cuidados` | `cuidados.js` `nextConvite.js` | [cuidados](cuidados.md) |
+| **devocionais** | — | `devocionais.js` | [devocionais](devocionais.md) |
 | **eventos-externos** | — | `eventosExternos.js` | [eventos-externos](eventos-externos.md) |
 | **events** | — | `events.js` | [events](events.md) |
 | **expansao** | `/expansao` | — | [expansao](expansao.md) |
@@ -223,7 +224,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/sexoDeclarado.js` | `src/test/sexoDeclarado.test.ts` |
 | `backend/utils/solicitacaoStatusLabel.js` | — |
 | `backend/utils/storagePath.js` | `src/test/storagePath.test.ts` |
-| `backend/utils/supabase.js` | `src/test/anexosLogArquivos.test.ts` `src/test/appIdentidadePreencher.test.ts` `src/test/censoJaRespondeu.test.ts` `src/test/fetchFalhaDb.test.ts` `src/test/importSupabase.test.ts` `src/test/jornadaPiiGuard.test.ts` `src/test/lote2RotasComGate.test.ts` `src/test/lote3RotasComGate.test.ts` `src/test/nextGuardNivel.test.ts` `src/test/notificarRegraPorTipo.test.ts` `src/test/npsNomeTurma.test.ts` `src/test/pagamentosReemissao.test.ts` `src/test/portasPublicasPii.test.ts` `src/test/routeModuleMap.test.ts` |
+| `backend/utils/supabase.js` | `src/test/anexosLogArquivos.test.ts` `src/test/appIdentidadePreencher.test.ts` `src/test/censoJaRespondeu.test.ts` `src/test/fetchFalhaDb.test.ts` `src/test/importSupabase.test.ts` `src/test/jornadaPiiGuard.test.ts` `src/test/lote2RotasComGate.test.ts` `src/test/lote3RotasComGate.test.ts` `src/test/lote6RotasComGate.test.ts` `src/test/nextGuardNivel.test.ts` `src/test/notificarRegraPorTipo.test.ts` `src/test/npsNomeTurma.test.ts` `src/test/pagamentosReemissao.test.ts` `src/test/portasPublicasPii.test.ts` `src/test/routeModuleMap.test.ts` |
 | `backend/utils/supervisorArea.js` | `backend/services/supervisorSubarea.test.js` `src/test/supervisorArea.test.ts` |
 | `backend/utils/suporteApp.js` | `src/test/suporteApp.test.ts` |
 | `backend/utils/telefoneVoluntario.js` | `src/test/telefoneVoluntario.test.ts` |
