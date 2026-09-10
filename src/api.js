@@ -4773,3 +4773,40 @@ export const onboardingPublico = {
   get: (token) => get(`/public/rh-onboarding/${encodeURIComponent(token)}`),
   salvar: (token, dados) => post(`/public/rh-onboarding/${encodeURIComponent(token)}`, dados),
 };
+
+
+// ── Visitantes (09/09/2026) · porta pública /visitante + módulo /visitantes ──
+// Público (sem auth): registro da visita + pesquisa de satisfação por token.
+export const visitantePublico = {
+  contexto: (local) => fetch(`${API}/public/visitante/contexto${local ? `?local=${encodeURIComponent(local)}` : ''}`)
+    .then(r => r.json()),
+  registrar: (data) => fetch(`${API}/public/visitante`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+  }).then(async r => {
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(j.error || 'Erro'); e.campo = j.campo; e.status = r.status; throw e; }
+    return j;
+  }),
+  avaliacao: (token) => fetch(`${API}/public/visitante/avaliar/${encodeURIComponent(token)}`)
+    .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'Link inválido'); return j; }),
+  avaliar: (token, data) => fetch(`${API}/public/visitante/avaliar/${encodeURIComponent(token)}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+  }).then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+};
+
+// Módulo interno (auth · módulo `visitantes`; as rotas /cuidados/* usam o guard de cuidados).
+export const visitantes = {
+  listar: (params) => get('/visitantes' + (params ? '?' + new URLSearchParams(params) : '')),
+  resumo: (params) => get('/visitantes/resumo' + (params ? '?' + new URLSearchParams(params) : '')),
+  locais: () => get('/visitantes/locais'),
+  obter: (id) => get(`/visitantes/${id}`),
+  atualizar: (id, data) => patch(`/visitantes/${id}`, data),
+  remover: (id) => del(`/visitantes/${id}`),
+  voucher: {
+    consultar: (codigo) => get(`/visitantes/voucher/${encodeURIComponent(codigo)}`),
+    resgatar: (codigo) => post(`/visitantes/voucher/${encodeURIComponent(codigo)}/resgatar`, {}),
+  },
+  // ponte com Próximos passos (tela de Cuidados)
+  cuidados: (params) => get('/visitantes/cuidados' + (params ? '?' + new URLSearchParams(params) : '')),
+  atualizarCuidados: (id, data) => patch(`/visitantes/cuidados/${id}`, data),
+};

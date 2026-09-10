@@ -16,13 +16,15 @@
 ## Backend
 - `backend/routes/cuidados.js`
 - `backend/routes/nextConvite.js`
+- `backend/routes/visitantes.js`
 Guard: `authorizeModule('cuidados', 1 | 2 | 3)`
-<details><summary>Endpoints (34)</summary>
+<details><summary>Endpoints (44)</summary>
 - `DELETE /api/cuidados/atendimento-comentarios/:id`
 - `DELETE /api/cuidados/convertidos/:id`
 - `DELETE /api/cuidados/pedidos/:id`
 - `DELETE /api/cuidados/responsaveis/:id`
 - `DELETE /api/cuidados/visitas/:id`
+- `DELETE /api/visitantes/:id`
 - `GET /api/cuidados/agregado`
 - `GET /api/cuidados/atendimentos/:refTipo/:refId/comentarios`
 - `GET /api/cuidados/buscar-membro`
@@ -35,9 +37,17 @@ Guard: `authorizeModule('cuidados', 1 | 2 | 3)`
 - `GET /api/cuidados/visitas-pendentes`
 - `GET /api/next-convite/config`
 - `GET /api/next-convite/pendentes`
+- `GET /api/visitantes`
+- `GET /api/visitantes/:id`
+- `GET /api/visitantes/cuidados`
+- `GET /api/visitantes/locais`
+- `GET /api/visitantes/resumo`
+- `GET /api/visitantes/voucher/:codigo`
 - `PATCH /api/cuidados/convertidos/:id`
 - `PATCH /api/cuidados/pedidos/:id`
 - `PATCH /api/cuidados/visitas/:id`
+- `PATCH /api/visitantes/:id`
+- `PATCH /api/visitantes/cuidados/:id`
 - `POST /api/cuidados/agregado`
 - `POST /api/cuidados/atendimentos/:refTipo/:refId/comentarios`
 - `POST /api/cuidados/convertidos/:id/agendar-encontro`
@@ -51,6 +61,7 @@ Guard: `authorizeModule('cuidados', 1 | 2 | 3)`
 - `POST /api/cuidados/visitas`
 - `POST /api/next-convite/enviar`
 - `POST /api/next-convite/marcar`
+- `POST /api/visitantes/voucher/:codigo/resgatar`
 - `PUT /api/next-convite/config`
 </details>
 
@@ -94,6 +105,7 @@ Guard: `authorizeModule('cuidados', 1 | 2 | 3)`
 - `next_matriculas`
 - `profiles`
 - `usuarios`
+- `vis_visitas`
 
 **RPCs**
 

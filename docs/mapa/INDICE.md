@@ -60,6 +60,7 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **rh** | — | `events.js` `painelRh.js` | [rh](rh.md) |
 | **santander** | — | `santander.js` | [santander](santander.md) |
 | **totem-membro** | `/totem` | — | [totem-membro](totem-membro.md) |
+| **visitantes** | — | `visitantes.js` | [visitantes](visitantes.md) |
 | **voluntariado** | — | `agenteVoluntariado.js` `volEmails.js` | [voluntariado](voluntariado.md) |
 | **whatsapp-admin** | — | `whatsapp.js` | [whatsapp-admin](whatsapp-admin.md) |
 | **wifi** | — | `wifi.js` | [wifi](wifi.md) |
@@ -72,7 +73,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **161** arquivos, **151** com teste.
+`backend/utils/` tem **163** arquivos, **151** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -231,6 +232,8 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/vigenciaTipoCulto.js` | `src/test/vigenciaTipoCulto.test.ts` |
 | `backend/utils/vinculoMlSolicitacao.js` | `src/test/vinculoMlSolicitacao.test.ts` |
 | `backend/utils/vinculosDuplicados.js` | `src/test/vinculosDuplicados.test.ts` |
+| `backend/utils/visitanteRegras.js` | — |
+| `backend/utils/visitanteToken.js` | — |
 | `backend/utils/volCobertura.js` | `src/test/volCobertura.test.ts` |
 | `backend/utils/volDisponibilidade.js` | `src/test/volDisponibilidade.test.ts` |
 | `backend/utils/volIntegradoEm.js` | `src/test/volIntegradoEm.test.ts` |
