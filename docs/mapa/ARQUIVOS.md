@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-415 arquivos.
+416 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -158,6 +158,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/apresentacaoHorario.js` | régua pura | — | `src/test/apresentacaoHorario.test.ts` |
 | `backend/utils/assuntoGrupoConversa.js` | régua pura | — | `src/test/assuntoGrupoConversa.test.ts` |
 | `backend/utils/atividadeVoluntario.js` | régua pura | — | `src/test/atividadeVoluntario.test.ts` |
+| `backend/utils/authUsers.js` | régua pura | — | `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/avisoAgregado.js` | régua pura | — | `src/test/avisoAgregado.test.ts` |
 | `backend/utils/avisoComprovante.js` | régua pura | — | `src/test/avisoComprovante.test.ts` |
 | `backend/utils/avisoEscala.js` | régua pura | — | `src/test/avisoEscala.test.ts` |
@@ -191,7 +192,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/cotaMeta.js` | régua pura | — | `src/test/cotaMeta.test.ts` |
 | `backend/utils/cpf.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/criancaApresentacao.js` | régua pura | — | `src/test/cultoApresentacao.test.ts` |
-| `backend/utils/cronAuth.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/cronAuth.js` | régua pura | — | `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/cultoJanela.js` | régua pura | — | `src/test/cultoJanela.test.ts` |
 | `backend/utils/cultoToken.js` | régua pura | — | `src/test/checkinAutoatendimento.test.ts` |
 | `backend/utils/cursorLote.js` | régua pura | — | `src/test/cursorLote.test.ts` |
