@@ -91,6 +91,139 @@ Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
 leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
 membro via `membro_id`.
 
+## ⚠️⚠️ VISITANTES · a porta pública `/visitante` (QR nos cartazes · voucher · pesquisa) (2026-09-09 · migration `20260909120000`)
+
+Pedido do Marcos: *"o número de visitantes é importante para nós e nós não
+contamos mais eles. Vamos criar muitos locais aqui na igreja (lounge, banheiro,
+estacionamento, dentro do templo) com QR code… a pessoa preenche nome, telefone
+e CPF (só pra não pegar duas vezes), recebe o voucher da cafeteria, ao final do
+culto recebe uma mini pesquisa de satisfação no WhatsApp (1 a 5 + comentário),
+e vai para a lista de Próximos passos etiquetada como visitante."*
+
+### ⚠️⚠️ A DECISÃO DE MODELO: tabela PRÓPRIA (`vis_visitas`), NUNCA `cui_convertidos` com tag
+
+`cui_convertidos` é o **DENOMINADOR da NSM** (`recalcular_nsm` · "convertidos da
+coorte, 90d") e a base de contagem de convertidos em kpiAutoCollector, painel,
+next e online — **21 arquivos** leem a tabela. Pôr o visitante lá com etiqueta
+derrubaria o NSM e inflaria "decisões" em todo relatório que não filtrasse a
+tag; e a lei do módulo já dizia desde 25/06 que *"convertido nasce SEMPRE do
+culto, nunca no Cuidados"*. Então:
+
+- **A PESSOA** nasce pelo matcher canônico (`fn_link_or_create_membro` por RPC,
+  `p_status_inicial='visitante'`, `p_fonte='visitante_qr'`) — Contrato de porta,
+  CPF é chave forte. `vis_visitas.membro_id` tem **FK** (lei nº 10). Falha do
+  matcher **não derruba a visita** (a pessoa está no hall esperando o código);
+  a linha fica com `membro_id` nulo e a tela declara.
+- **A VISITA** vive em `vis_visitas` (PII · `deleted_at` + whitelist por UNION ·
+  RLS por `current_user_module_level('visitantes')` **ou** `cuidados`).
+- **Próximos passos MOSTRA as duas fontes**: `Cuidados.tsx` lê
+  `GET /api/visitantes/cuidados` (guard `cuidados ≥ 1`) em estado PRÓPRIO
+  (`visitantesPP`) e junta na TABELA — **os 4 cards do topo, a jornada e o
+  `cardsResumo` seguem só sobre convertidos**. Status de 1º contato e responsável
+  gravam em `vis_visitas` (`PATCH /api/visitantes/cuidados/:id`), com o mesmo
+  vocabulário (`CONTATO_FEITO`). Filtro **"Só visitantes"**; "Sem direcionamento"
+  e "Atrasados na jornada" não os incluem (são perguntas sobre convertidos).
+
+### O voucher · 1 por CPF, na vida
+
+`voucher_status`: `emitido` → `resgatado` (balcão) · `repetido` = este CPF já
+recebeu numa visita anterior (visita registrada, **sem código**). Código de 6
+chars no alfabeto do totem (sem O/0/I/1 — a pessoa DITA no balcão), UNIQUE
+parcial entre os vivos.
+- ⚠️ **Idempotência de quiosque por (CPF, dia BRT)**: reescanear outro cartaz ou
+  dar refresh devolve a MESMA visita e o MESMO código.
+- ⚠️ **Resgate é UPDATE CONDICIONADO** (`.eq('voucher_status','emitido')`): dois
+  toques = um café. O 409 vem com quando/quem já retirou — a tela distingue de
+  "não existe".
+- O balcão é a aba **Resgatar voucher** de `/visitantes` (nível 2). Consultar é
+  nível 1.
+
+### A pesquisa · DEPOIS do culto, pela fila, com interruptor REAL
+
+`services/visitantePesquisa.js` · `enviarPesquisasDevidas()` roda **de CARONA
+no cron horário da fila** (`/api/public/grupos/cron/whatsapp-fila`, bloco
+protegido, ANTES do `processarFila` pra sair na mesma rodada). **Sem cron novo**
+(o `vercel.json` está no teto de crons do plano).
+- **QUANDO** é régua PURA (`utils/visitanteRegras.pesquisaDevida`, no gate):
+  início do culto **+2h30** (culto de 11:30 → sai na rodada das 14:00); sem
+  culto, registro **+2h**; registro depois do culto conta do registro +30 min.
+  **Validade 72h** — depois disso vira `expirada` (pesquisa fora de hora).
+  ⚠️ Dia BRT + hora BRT convertidos para instante; o culto de domingo 19:00 vira
+  o dia UTC e continua certo (tem teste).
+- **Dedup = `pesquisa_enviada_em` carimbado ANTES de enfileirar, condicionado**
+  (`.is(null)`) — duas rodadas concorrentes, uma passa.
+- **Template `visitante_pesquisa_satisfacao`** (env
+  `WHATSAPP_TEMPLATE_VISITANTE_PESQUISA` só override) · `{{1}}` 1º nome ·
+  `{{2}}` **link no CORPO** (variável, não botão — mantém UTILITY) →
+  `/visitante/avaliar/<token>`. Telefone vai digits-only (quem põe o 55 é o
+  remetente).
+- **Token HMAC da VISITA** (`utils/visitanteToken.js`, namespace
+  `visitante-pesquisa:`, fail-closed, sem expiração — a validade é da rota). É o
+  que faz a resposta saber QUEM respondeu (o `nps_pesquisas.link_publico_token`
+  é por PESQUISA, todo mundo receberia o mesmo link). Namespace testado contra o
+  token da decisão com o mesmo segredo.
+- ⚠️⚠️ **Nasce DESLIGADO**: id `visitante_pesquisa` em
+  `whatsapp_config.disparos_off` pela migration. Liga em **Comunicação → Envios
+  → Automáticos** quando o template estiver aprovado na Meta. A tríade remetente
+  × catálogo × PATCH está no `test:disparo-interruptor`.
+- Resposta (`POST /api/public/visitante/avaliar/:token`) vale **uma vez**
+  (`.is('pesquisa_respondida_em', null)`); a 2ª devolve `ja_respondida`.
+
+### Onde mora
+
+| peça | arquivo |
+|---|---|
+| régua PURA (validação · CPF DV · aceite `=== true` · `LOCAIS` fechados · voucher · hora da pesquisa) · **gate `test:visitante`** (8 mutantes RODADOS e mortos) | `backend/utils/visitanteRegras.js` (+ `.test.js`) |
+| token da pesquisa | `backend/utils/visitanteToken.js` |
+| porta pública (`/api/public/visitante` · montada ANTES do publicLimiter + `skip()`) | `backend/routes/publicVisitante.js` |
+| módulo (`/api/visitantes` · lista · resumo · voucher · `/cuidados/*` · ficha · soft-delete) | `backend/routes/visitantes.js` |
+| envio da pesquisa + público do catálogo | `backend/services/visitantePesquisa.js` |
+| tela pública do QR · tela da pesquisa | `src/pages/public/VisitantePublico.tsx` · `VisitanteAvaliar.tsx` |
+| tela do módulo (Resgatar voucher · Visitas · Cartazes/QR) | `src/pages/Visitantes.tsx` |
+| catálogo dos cartazes (5 entradas · `chamada_qr` = texto do cartaz) | `routes/links.js` `OUTROS_FORMULARIOS` |
+
+Registro do módulo (checklist cumprido): `modulos` + matriz copiada de
+`cuidados` (migration) · `ROUTE_MODULE_MAP['visitantes']` · `NAV_ITEMS`
+(Ministerial, `module: 'visitantes'`) · `PAGES` da ⌘K · rota com `ModuleGuard` ·
+`MODULOS` do NotificacaoRegras · RLS · `whatsappOrigem.ROTULOS`
+(`cuidados.visitante_pesquisa`; o `MAPA` já cobre pelo prefixo `cuidados`).
+⚠️ `/visitantes` é módulo **comum** no `menuAccess` (não é `area`): quem resgata
+café na cafeteria não é da área ministerial.
+
+### ⚠️ Leis desta porta
+
+- **Consentimento ANTES da escrita** (id pré-gerado), porta `visitante` no
+  CHECK de `inscricao_consentimentos` por **patch dinâmico da lista viva**. O
+  item `whatsapp` é gravado mesmo quando a pessoa diz não. Textos próprios (o
+  CPF "só pra não emitir o voucher duas vezes" está escrito no aceite).
+- **Opt-in SÓ LIGA, nunca desliga** em `mem_membros` (lei de 05/08).
+- **Local desconhecido cai em `outro`, nunca recusa**; lista FECHADA no servidor
+  (lei de 24/08). Não há prefixo curto (`/v/:x`) de propósito — `/c/:token` e
+  `/e/:token` já existem e o React Router faz o primeiro vencer.
+- **`nota_media` é `null` sem resposta, nunca 0.**
+- Fora do escopo, declarado: resposta da pesquisa por **quick-reply** direto no
+  WhatsApp (só o link, por enquanto) · aviso à equipe por visita (seria 1 aviso
+  × 16 admins por pessoa; a fila é Próximos passos) · Fase 2 = direcionar
+  visitante pra Next/grupos a partir da linha.
+
+### ⏳ Pendente de GENTE (sem isto a pesquisa não sai)
+
+1. **Aplicar a migration** `20260909120000` (SQL colado na conversa).
+2. **Criar o template `visitante_pesquisa_satisfacao` na Meta** (UTILITY · pt_BR ·
+   `{{1}}` nome · `{{2}}` link no corpo) — sugestão: *"Oi, {{1}}! Que alegria
+   receber você hoje na CBRio. Pode nos contar em 10 segundos como foi sua
+   visita? {{2}}"*.
+3. **Ligar o switch** `visitante_pesquisa` em Comunicação → Envios → Automáticos.
+4. **Imprimir os cartazes** pela aba Cartazes (QR) de `/visitantes` — ou gerar
+   QR dinâmico por local em Links e QR (os 5 destinos já estão no catálogo).
+5. **Dar nível 2 em `visitantes`** a quem fica no balcão da cafeteria
+   (`/admin/permissoes` · a matriz nasceu copiada de `cuidados`).
+
+⚠️ **NÃO medido em produção**: sonda read-only conferiu `mem_membros.status`
+(`visitante` existe), `disparos_off`, colunas de `cui_convertidos` e do ledger de
+consentimento — nada foi escrito no banco nesta sessão. O primeiro registro real
+é o teste ponta a ponta.
+
 ## ⚠️⚠️ APRESENTAÇÃO DE CRIANÇAS · o CULTO da família, a FICHA e o nome dobrado (2026-09-08 · migration `20260908150000`)
 
 Pedido do Marcos (via Milena, no Kids): *"não aparece o horário que as crianças
