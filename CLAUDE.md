@@ -170,6 +170,22 @@ protegido, ANTES do `processarFila` pra sair na mesma rodada). **Sem cron novo**
   "unused"); a amarração é o `context.id` ⇒ `whatsapp_envios.message_id`, com
   fallback no único disparo em 72h. Botão quick-reply/dígito/texto continuam
   aceitos (fallback).
+- ⚠️⚠️ **A META BLOQUEIA A PUBLICAÇÃO DE FLOWS NESTA WABA (medido em 10/09/2026)**:
+  `POST /{flow_id}/publish` responde **`139000 / 4233020 · Blocked by
+  Integrity · is_transient: false`** — o MESMO erro dos 2 Flows do bot desde
+  junho. E **não é saúde de envio**: `health_status` de FLOW, WABA, BUSINESS,
+  APP e NÚMERO vieram todos `AVAILABLE` no mesmo minuto (script read-only
+  `backend/scripts/_flows_health.js`), WABA `APPROVED`, negócio `verified`,
+  JSON sem `validation_errors`. Não é JSON, não é versão, não é endpoint (Flow
+  sem `data_api_version` não exige endpoint/chave pública — a resposta do
+  suporte da Meta sobre isso era pro outro tipo de Flow). Nada do nosso lado
+  destrava. **Decisão do Marcos (10/09): a pesquisa SAI POR BOTÕES de resposta
+  rápida enquanto a Meta não libera** (template Marketing · `{{1}}` nome ·
+  botões cujo texto COMEÇA pelo dígito, ex. `5 · Excelente` · `4 · Bom` ·
+  `2 · Pode melhorar`, ou os 5 de `BOTOES_NOTA`) — o webhook já aceita as duas
+  formas, então a troca pro Flow depois é só de template. Chamado aberto na Meta
+  (fbtrace `ASQ8CJ76Dqk5nrAdsRck9S1`). O Flow `1052512134431371` fica em DRAFT
+  na conta, pronto pra publicar quando liberarem.
 - ⚠️⚠️ **A RESPOSTA CHEGA PELO PRÓPRIO WHATSAPP (10/09 · Marcos: "não quero
   que a pessoa clique em link")**: `services/visitantePesquisaResposta.js`,
   ligado no webhook logo DEPOIS do handler da escala. O elo é o `context.id`
@@ -239,9 +255,11 @@ café na cafeteria não é da área ministerial.
 2. **Criar o FLOW na Meta** (colar `backend/whatsapp-flows/visitante-avaliacao.json`,
    publicar) **e o template `visitante_pesquisa_satisfacao`** (MARKETING · pt_BR ·
    `{{1}}` nome · botão do tipo **Fluxo** "Avaliar minha visita" → tela
-   `AVALIACAO`, ação `navigate`). ⚠️ Em junho a publicação de Flows esteve
-   travada por integridade nesta WABA — se travar de novo, o fallback é o
-   template com 3 quick-replies (a régua já aceita).
+   `AVALIACAO`, ação `navigate`). ⚠️⚠️ **BLOQUEADO pela Meta em 10/09**
+   (`139000/4233020`, ver acima) ⇒ **por ora o template é com QUICK-REPLIES**
+   (texto do botão começando pelo dígito da nota). O Flow segue em DRAFT na
+   conta; quando a Meta liberar, publicar e criar o template `_v2` a partir da
+   página do Flow.
 3. **Ligar o switch** `visitante_pesquisa` em Comunicação → Envios → Automáticos.
 4. **Imprimir os cartazes** pela aba Cartazes (QR) de `/visitantes` — ou gerar
    QR dinâmico por local em Links e QR (os 5 destinos já estão no catálogo).
