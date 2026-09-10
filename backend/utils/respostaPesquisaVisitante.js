@@ -53,4 +53,28 @@ function textoObrigado(primeiroNome, nota) {
   return `Obrigado pela sinceridade, ${nome} 🙏 Sua nota ${nota} nos ajuda a melhorar. Se puder contar o que faltou, é só responder esta mensagem — a gente lê tudo.`;
 }
 
-module.exports = { BOTOES_NOTA, interpretarNotaVisitante, ehComentario, textoObrigado };
+/**
+ * A resposta do FORMULÁRIO (WhatsApp Flow · botão "Avaliar minha visita" do
+ * template · backend/whatsapp-flows/visitante-avaliacao.json). O `response_json`
+ * do `nfm_reply` chega como STRING com `{ nota: "1".."5", comentario?, flow_token }`.
+ * Devolve `{ nota, comentario }` ou null quando não é a nossa resposta.
+ *
+ * ⚠️ Aceita objeto OU string (o webhook entrega string; o teste passa objeto).
+ * ⚠️ `nota` fora de 1..5 (ou ausente) ⇒ null — o Flow exige a nota, então
+ *    resposta sem nota não é deste formulário.
+ */
+function interpretarRespostaFlowVisitante(responseJson) {
+  let obj = responseJson;
+  if (typeof obj === 'string') {
+    try { obj = JSON.parse(obj); } catch { return null; }
+  }
+  if (!obj || typeof obj !== 'object') return null;
+  const n = Number(obj.nota);
+  if (!Number.isInteger(n) || n < 1 || n > 5) return null;
+  const c = String(obj.comentario ?? '').trim().slice(0, 1000);
+  return { nota: n, comentario: c || null };
+}
+
+module.exports = {
+  BOTOES_NOTA, interpretarNotaVisitante, ehComentario, textoObrigado, interpretarRespostaFlowVisitante,
+};

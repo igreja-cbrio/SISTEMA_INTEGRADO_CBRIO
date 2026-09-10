@@ -22,7 +22,9 @@
 const { supabase } = require('../utils/supabase');
 const { semFalhar } = require('../utils/semFalhar');
 const { textoDaResposta, wamidRespondido } = require('../utils/respostaEscala');
-const { interpretarNotaVisitante, ehComentario, textoObrigado } = require('../utils/respostaPesquisaVisitante');
+const {
+  interpretarNotaVisitante, ehComentario, textoObrigado, interpretarRespostaFlowVisitante,
+} = require('../utils/respostaPesquisaVisitante');
 const { primeiroNome } = require('../utils/visitanteRegras');
 const { CONTEXTO, CONTEXTO_OBRIGADO } = require('./visitantePesquisa');
 
@@ -61,6 +63,59 @@ async function envioPorWamid(wamid) {
  */
 async function processarRespostaVisitante(m, { enviarTexto, normalizarTelefone }) {
   const wamid = wamidRespondido(m);
+
+  // ── O FORMULÁRIO (WhatsApp Flow · botão "Avaliar minha visita") ──────────────
+  // ⚠️ Tem que rodar ANTES do `processarFlowReply` do webhook, que DESCARTA todo
+  // nfm_reply (a coleta por Flow do bot foi aposentada em 13/08). A resposta do
+  // Flow traz nota + comentário de uma vez.
+  if (m.type === 'interactive' && m.interactive?.type === 'nfm_reply') {
+    const resp = interpretarRespostaFlowVisitante(m.interactive.nfm_reply?.response_json);
+    if (!resp) return false; // não é o nosso formulário
+    const envio = wamid ? await envioPorWamid(wamid) : await envioUnicoRecente(m.from);
+    if (!envio) return false;
+    const messageId = m.id;
+    const telefone = normalizarTelefone(m.from);
+    const { data: jaVisto } = await supabase.from('whatsapp_coletas')
+      .select('id').eq('whatsapp_message_id', messageId).maybeSingle();
+    if (jaVisto) return true;
+    const { data: visita } = await supabase.from('vis_visitas')
+      .select('id, nome, telefone, pesquisa_nota, pesquisa_comentario')
+      .eq('id', envio.ref_id).is('deleted_at', null).maybeSingle();
+    if (!visita) return false;
+    const nome = primeiroNome(visita.nome);
+    await semFalhar(supabase.from('whatsapp_coletas').insert({
+      whatsapp_message_id: messageId, telefone, status: 'ignorado',
+      raw_text: `[visitante·flow] nota ${resp.nota}${resp.comentario ? `: ${resp.comentario}` : ''}`.slice(0, 500),
+    }), '[visitante-pesquisa]');
+    if (visita.pesquisa_nota != null) {
+      // 2º envio do formulário: a 1ª nota vale; comentário novo é acrescentado.
+      if (resp.comentario) {
+        const novo = visita.pesquisa_comentario
+          ? `${visita.pesquisa_comentario}\n${resp.comentario}`.slice(0, 1000) : resp.comentario;
+        await supabase.from('vis_visitas').update({ pesquisa_comentario: novo }).eq('id', visita.id);
+      }
+      await enviarTexto(telefone, `Sua avaliação já estava registrada, ${nome}. Obrigado! 💚`).catch(() => {});
+      return true;
+    }
+    const agora = new Date().toISOString();
+    const patch = { pesquisa_nota: resp.nota, pesquisa_respondida_em: agora, pesquisa_status: 'respondida' };
+    if (resp.comentario) patch.pesquisa_comentario = resp.comentario;
+    const { data: gravou } = await supabase.from('vis_visitas').update(patch)
+      .eq('id', visita.id).is('pesquisa_nota', null).select('id');
+    if (!gravou?.length) return true; // corrida: outra entrega gravou antes
+    try {
+      const { enfileirar } = require('./whatsappFila');
+      await enfileirar({ telefone: visita.telefone || telefone,
+        texto: resp.comentario
+          ? `Recebemos, ${nome}! 💚 Obrigado pela nota ${resp.nota} e por contar como foi. Esperamos te ver de novo!`
+          : textoObrigado(nome, resp.nota),
+        contexto: CONTEXTO_OBRIGADO, refId: visita.id });
+    } catch (e) {
+      await enviarTexto(telefone, textoObrigado(nome, resp.nota)).catch(() => {});
+    }
+    return true;
+  }
+
   const bruto = textoDaResposta(m);
   if (!bruto) return false;
 

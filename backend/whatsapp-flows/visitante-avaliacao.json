@@ -1,0 +1,61 @@
+{
+  "version": "7.0",
+  "screens": [
+    {
+      "id": "AVALIACAO",
+      "title": "Como foi sua visita?",
+      "terminal": true,
+      "success": true,
+      "layout": {
+        "type": "SingleColumnLayout",
+        "children": [
+          {
+            "type": "TextHeading",
+            "text": "Que bom ter você na CBRio!"
+          },
+          {
+            "type": "TextBody",
+            "text": "Leva 10 segundos e ajuda a gente a receber ainda melhor quem chega pela primeira vez."
+          },
+          {
+            "type": "Form",
+            "name": "form_avaliacao",
+            "children": [
+              {
+                "type": "RadioButtonsGroup",
+                "name": "nota",
+                "label": "Sua nota para a visita de hoje",
+                "required": true,
+                "data-source": [
+                  { "id": "5", "title": "⭐⭐⭐⭐⭐  Excelente" },
+                  { "id": "4", "title": "⭐⭐⭐⭐  Bom" },
+                  { "id": "3", "title": "⭐⭐⭐  Ok" },
+                  { "id": "2", "title": "⭐⭐  Fraco" },
+                  { "id": "1", "title": "⭐  Ruim" }
+                ]
+              },
+              {
+                "type": "TextArea",
+                "name": "comentario",
+                "label": "Quer contar algo? (opcional)",
+                "required": false,
+                "max-length": 600
+              },
+              {
+                "type": "Footer",
+                "label": "Enviar",
+                "on-click-action": {
+                  "name": "complete",
+                  "payload": {
+                    "nota": "${form.nota}",
+                    "comentario": "${form.comentario}"
+                  }
+                }
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

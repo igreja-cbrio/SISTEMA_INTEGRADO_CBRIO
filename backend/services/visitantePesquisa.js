@@ -21,14 +21,16 @@
 //  exige que remetente × catálogo × PATCH concordem neste id.
 //
 //  TEMPLATE: `visitante_pesquisa_satisfacao` (env WHATSAPP_TEMPLATE_VISITANTE_PESQUISA
-//  só como override) · {{1}} primeiro nome · **5 botões de resposta rápida**
-//  ("1 · Ruim" … "5 · Excelente" · utils/respostaPesquisaVisitante.BOTOES_NOTA).
-//  A pessoa TOCA no botão e a nota chega pelo webhook (context.id = o wamid
-//  desta mensagem → whatsapp_envios.message_id → ref_id = visita); o texto que
-//  ela mandar em seguida vira o comentário. Decisão do Marcos (10/09): sem
-//  link — o link `/visitante/avaliar/<token>` continua existindo só como
-//  caminho manual. ⚠️ O template precisa ser criado/aprovado na Meta — é
-//  tarefa de GENTE.
+//  só como override) · {{1}} primeiro nome · **UM botão de FLUXO** ("Avaliar
+//  minha visita") que abre o formulário nativo do WhatsApp
+//  (backend/whatsapp-flows/visitante-avaliacao.json · estrelas 1–5 + comentário).
+//  A resposta chega pelo webhook como nfm_reply (context.id = o wamid desta
+//  mensagem → whatsapp_envios.message_id → ref_id = visita) e é tratada em
+//  services/visitantePesquisaResposta.js — que também aceita botão/dígito/texto
+//  (o desenho de quick-reply de 10/09 segue valendo como fallback). Decisão do
+//  Marcos (10/09): sem link. ⚠️ Template + Flow precisam ser criados/aprovados
+//  na Meta — é tarefa de GENTE. O envio NÃO manda `components` do botão
+//  (botão de Flow estático · flow_token fica "unused"); a amarração é o context.id.
 // ════════════════════════════════════════════════════════════════════════════
 const { supabase } = require('../utils/supabase');
 const { pesquisaDevida, primeiroNome } = require('../utils/visitanteRegras');
