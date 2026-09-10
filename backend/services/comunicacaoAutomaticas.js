@@ -412,6 +412,16 @@ async function publicoConvertidoBoasVindas() {
   };
 }
 
+/**
+ * ESPELHO de services/visitantePesquisa.enviarPesquisasDevidas: visitas com opt-in
+ * de WhatsApp e sem pesquisa enviada, nas últimas 72h (a validade da régua).
+ * A contagem sai do PRÓPRIO serviço (publicoPesquisaVisitante) — uma régua só.
+ */
+async function publicoVisitantePesquisa() {
+  const { publicoPesquisaVisitante } = require('./visitantePesquisa');
+  return publicoPesquisaVisitante();
+}
+
 async function publicoCampanhaAgradecimento() {
   const { data: campanhas } = await supabase.from('camp_campanhas')
     .select('id, nome, digito, data_inicio, data_fim')
@@ -584,6 +594,23 @@ const CATALOGO = [
     },
     tabelaPropria: 'camp_agradecimentos',
     publico: publicoCampanhaAgradecimento,
+  },
+  {
+    id: 'visitante_pesquisa',
+    nome: 'Pesquisa de satisfação do visitante (depois do culto)',
+    quando: 'Horário · na rodada seguinte ao fim do culto (início + 2h30; sem culto, registro + 2h) · validade 72h',
+    regra: 'Quem registrou a visita pelo QR dos cartazes (/visitante) E marcou o opt-in de WhatsApp. '
+      + '1 mensagem por visita, com o link assinado da pesquisa (1 a 5 + comentário). '
+      + 'Depois de 72h a pesquisa não sai mais (fora de hora).',
+    fonte: 'GET /api/public/grupos/cron/whatsapp-fila → services/visitantePesquisa.js',
+    contexto: 'cuidados.visitante_pesquisa',
+    // Nome do template FIXO no código (`visitante_pesquisa_satisfacao` · env
+    // WHATSAPP_TEMPLATE_VISITANTE_PESQUISA só como override) — mesma decisão do
+    // convertido_boas_vindas: declarar envTemplate pintaria de vermelho um disparo configurado.
+    envTemplate: null,
+    // ⚠️ Nasce DESLIGADO (migration 20260909120000 põe o id em disparos_off):
+    // liga pelo switch desta tela quando o template estiver aprovado na Meta.
+    publico: publicoVisitantePesquisa,
   },
 ];
 

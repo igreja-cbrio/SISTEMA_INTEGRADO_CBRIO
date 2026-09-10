@@ -2,7 +2,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { hrefConversa } from '@/lib/conversas';
-import { cuidados as cuidadosApi } from '../../api';
+import { cuidados as cuidadosApi, visitantes as visitantesApi } from '../../api';
 import KpiTaticoOficial from '../../components/kpi/KpiTaticoOficial';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
@@ -738,6 +738,37 @@ function ConvertidoModal({
           <Button variant="outline" onClick={tentarFechar}>Cancelar</Button>
           <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : editing ? 'Salvar' : 'Registrar'}</Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Ficha curta do VISITANTE (porta /visitante) dentro de Próximos passos. Só leitura;
+ *  o que se edita aqui (status e responsável) é pela própria linha da tabela. */
+function VisitanteDetailDialog({ visitante, onClose }: { visitante: any | null; onClose: () => void }) {
+  const v = visitante;
+  const LOCAL: Record<string, string> = { lounge: 'Lounge', banheiro: 'Banheiro', estacionamento: 'Estacionamento', templo: 'Templo', outro: 'sem local' };
+  const VOUCHER: Record<string, string> = { emitido: 'a retirar', resgatado: 'retirado', repetido: 'já tinha (visita anterior)' };
+  return (
+    <Dialog open={!!v} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {v?.nome}
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#a855f720', color: '#a855f7', border: '1px solid #a855f740' }}>Visitante</span>
+          </DialogTitle>
+        </DialogHeader>
+        {v && (
+          <div className="space-y-2 text-sm">
+            <p><span className="text-muted-foreground">WhatsApp:</span> {v.telefone || '—'}</p>
+            <p><span className="text-muted-foreground">Culto:</span> {v.culto_nome || '—'} · {v.data_culto ? String(v.data_culto).split('-').reverse().join('/') : '—'}</p>
+            <p><span className="text-muted-foreground">Cartaz:</span> {LOCAL[v.local] || v.local || '—'}</p>
+            <p><span className="text-muted-foreground">Voucher da cafeteria:</span> {VOUCHER[v.voucher_status] || v.voucher_status || '—'}</p>
+            <p><span className="text-muted-foreground">Pesquisa:</span> {v.pesquisa_nota ? <><strong>{v.pesquisa_nota}</strong>/5{v.pesquisa_comentario ? <> · “{v.pesquisa_comentario}”</> : null}</> : 'sem resposta'}</p>
+            {!v.membro_id && <p className="text-xs text-amber-600">A pessoa não foi ligada a um cadastro (o matcher não resolveu) — conferir em Entradas.</p>}
+            <p className="text-xs text-muted-foreground pt-2">Registrada pela porta pública /visitante. A lista completa, o resgate do voucher e os QR dos cartazes ficam em <Link to="/visitantes" className="underline">Visitantes</Link>.</p>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -1994,16 +2025,23 @@ export default function Cuidados() {
   const [trilhaVersion, setTrilhaVersion] = useState(0);
   const [convertTags, setConvertTags] = useState<string[]>([]);
   const [convertSearch, setConvertSearch] = useState('');
-  const [convertFilter, setConvertFilter] = useState<'todos' | 'sem_responsavel' | 'sem_direcionamento' | 'atrasados'>('todos');
+  const [convertFilter, setConvertFilter] = useState<'todos' | 'sem_responsavel' | 'sem_direcionamento' | 'atrasados' | 'visitantes'>('todos');
+  // VISITANTES (09/09/2026): a porta /visitante entra em Próximos passos como linha ETIQUETADA.
+  // ⚠️ Vive em estado PRÓPRIO, fora de `convertidos`: os 4 cards do topo e a jornada são
+  // sobre CONVERTIDOS (e cui_convertidos é o denominador da NSM) — visitante não entra ali.
+  const [visitantesPP, setVisitantesPP] = useState<any[]>([]);
+  const [detailVisitante, setDetailVisitante] = useState<any | null>(null);
   const [convertFilterStatus, setConvertFilterStatus] = useState<string>(''); // primeiro_contato_status ('' = todos · 'sem' = sem status)
   const [convertPeriodo, setConvertPeriodo] = useState<string>('tudo'); // 30/60/90/180/365/tudo (por data_culto)
 
   async function loadAll() {
-    const [c, jd] = await Promise.all([
+    const [c, jd, vis] = await Promise.all([
       cuidadosApi.convertidos.list().catch(() => []),
       cuidadosApi.jornadaConvertidos().catch(() => null),
+      // best-effort: sem o módulo/endpoint, a lista de convertidos segue inteira
+      visitantesApi.cuidados({ dias: 365 }).catch(() => []),
     ]);
-    setConvertidos(c); setJornadaData(jd);
+    setConvertidos(c); setJornadaData(jd); setVisitantesPP(Array.isArray(vis) ? vis : []);
     // Recarrega as séries do dashboard após mudanças nos dados
     setVisitasVersion(v => v + 1);
   }
@@ -2091,6 +2129,26 @@ export default function Cuidados() {
     }
   }
 
+  // ── visitantes: os mesmos dois campos, gravados em vis_visitas (rota /visitantes/cuidados) ──
+  async function setPcStatusVisitante(visitaId: string, value: string) {
+    const v = value || null;
+    const anterior = visitantesPP;
+    const cur: any = visitantesPP.find((x: any) => x.visita_id === visitaId);
+    const patch: any = { primeiro_contato_status: v };
+    if (v && CONTATO_FEITO.has(v)) { if (!cur?.primeiro_contato_em) patch.primeiro_contato_em = new Date().toISOString(); }
+    else patch.primeiro_contato_em = null;
+    setVisitantesPP(prev => prev.map((x: any) => x.visita_id === visitaId ? { ...x, ...patch } : x));
+    try { await visitantesApi.atualizarCuidados(visitaId, patch); }
+    catch (e: any) { setVisitantesPP(anterior); toast.error(`Não foi possível salvar o status: ${e.message}`); }
+  }
+  async function setResponsavelVisitante(visitaId: string, value: string) {
+    const v = value || null;
+    const anterior = visitantesPP;
+    setVisitantesPP(prev => prev.map((x: any) => x.visita_id === visitaId ? { ...x, responsavel_atendimento: v } : x));
+    try { await visitantesApi.atualizarCuidados(visitaId, { responsavel_atendimento: v }); }
+    catch (e: any) { setVisitantesPP(anterior); toast.error(`Não foi possível salvar o responsável: ${e.message}`); }
+  }
+
   // Responsável do atendimento (otimista · texto · lista fixa na UI)
   async function setResponsavel(id: string, value: string) {
     const v = value || null;
@@ -2148,6 +2206,31 @@ export default function Cuidados() {
       return true;
     });
   }, [convertidos, convertSearch, convertFilter, convertFilterStatus, convertPeriodoCorte, jMap]);
+
+  // Visitantes na MESMA tabela: entram em "Todos", "Sem responsável" e "Só visitantes".
+  // "Sem direcionamento" e "Atrasados na jornada" são perguntas sobre convertidos.
+  const visitantesFiltrados = useMemo(() => {
+    if (!['todos', 'sem_responsavel', 'visitantes'].includes(convertFilter)) return [] as any[];
+    const q = convertSearch.trim().toLowerCase();
+    return visitantesPP.filter((c: any) => {
+      if (convertFilter === 'sem_responsavel' && c.responsavel_atendimento) return false;
+      if (convertFilterStatus) {
+        if (convertFilterStatus === 'sem') { if (c.primeiro_contato_status) return false; }
+        else if (c.primeiro_contato_status !== convertFilterStatus) return false;
+      }
+      if (convertPeriodoCorte && (c.data_culto || '') < convertPeriodoCorte) return false;
+      if (q) {
+        const hay = `${c.nome || ''} ${c.telefone || ''} ${c.observacoes || ''} visitante`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [visitantesPP, convertSearch, convertFilter, convertFilterStatus, convertPeriodoCorte]);
+  const linhasTabela = useMemo(() => {
+    const todas = convertFilter === 'visitantes' ? visitantesFiltrados : [...convertidosFiltrados, ...visitantesFiltrados];
+    // mesma ordem da lista original: culto mais recente primeiro
+    return convertFilter === 'visitantes' ? todas : [...todas].sort((a: any, b: any) => (b.data_culto || '') < (a.data_culto || '') ? -1 : (b.data_culto || '') > (a.data_culto || '') ? 1 : 0);
+  }, [convertidosFiltrados, visitantesFiltrados, convertFilter]);
 
   // Resumo dos 4 cards · AO VIVO do estado (atualiza ao mexer no dropdown) e respeitando
   // o PERÍODO selecionado. DOIS denominadores (decisão Marcos · 2026-06-30):
@@ -2460,6 +2543,7 @@ export default function Cuidados() {
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm text-muted-foreground">
               <strong className="text-foreground">{convertidos.length}</strong> convertidos
+              {visitantesPP.length > 0 && <> · <strong className="text-foreground">{visitantesPP.length}</strong> visitantes (porta /visitante)</>}
             </div>
             {/* Convertido nasce SEMPRE do culto (princípio · 25/06): "Novo
                 convertido" leva pra Integração registrar a decisão no culto —
@@ -2499,6 +2583,7 @@ export default function Cuidados() {
                 <SelectItem value="sem_responsavel">Sem responsável</SelectItem>
                 <SelectItem value="sem_direcionamento">Sem direcionamento</SelectItem>
                 <SelectItem value="atrasados">Atrasados na jornada</SelectItem>
+                <SelectItem value="visitantes">Só visitantes</SelectItem>
               </SelectContent>
             </Select>
             <Select value={convertFilterStatus || '__all'} onValueChange={(v: any) => setConvertFilterStatus(v === '__all' ? '' : v)}>
@@ -2543,17 +2628,17 @@ export default function Cuidados() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {convertidosFiltrados.length === 0 ? (
+                {linhasTabela.length === 0 ? (
                   <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">
-                    {convertidos.length === 0 ? 'Nenhum convertido.' : 'Nenhum resultado nos filtros atuais.'}
+                    {convertidos.length === 0 && visitantesPP.length === 0 ? 'Nenhum convertido.' : 'Nenhum resultado nos filtros atuais.'}
                   </TableCell></TableRow>
-                ) : convertidosFiltrados.map(c => {
+                ) : linhasTabela.map(c => {
                   return (
                     <TableRow key={c.id}>
                       <TableCell className="font-medium">
                         <button
                           type="button"
-                          onClick={() => setDetailConvert(c)}
+                          onClick={() => (c._visitante ? setDetailVisitante(c) : setDetailConvert(c))}
                           className="text-left hover:text-primary transition-colors"
                         >
                           <div className="underline-offset-2 hover:underline flex items-center gap-1.5 flex-wrap">
@@ -2568,7 +2653,7 @@ export default function Cuidados() {
                         {podeEditarCuidados ? (
                           <select
                             value={c.primeiro_contato_status || ''}
-                            onChange={e => setPcStatus(c.id, e.target.value)}
+                            onChange={e => (c._visitante ? setPcStatusVisitante(c.visita_id, e.target.value) : setPcStatus(c.id, e.target.value))}
                             onClick={e => e.stopPropagation()}
                             className="h-8 rounded-md border border-border bg-background text-xs px-1.5 max-w-[160px]"
                             title="Status do primeiro contato"
@@ -2591,7 +2676,7 @@ export default function Cuidados() {
                         {podeEditarCuidados ? (
                           <select
                             value={c.responsavel_atendimento || ''}
-                            onChange={e => setResponsavel(c.id, e.target.value)}
+                            onChange={e => (c._visitante ? setResponsavelVisitante(c.visita_id, e.target.value) : setResponsavel(c.id, e.target.value))}
                             onClick={e => e.stopPropagation()}
                             className="h-8 rounded-md border border-border bg-background text-xs px-1.5 max-w-[150px]"
                             title="Responsável do atendimento"
@@ -2618,7 +2703,9 @@ export default function Cuidados() {
                         )}
                       </TableCell>
                       <TableCell>
-                        {podeEditarCuidados ? (
+                        {c._visitante ? (
+                          <span className="text-xs text-muted-foreground" title="Visitante: o direcionamento (Next, batismo, grupos) começa depois do 1º contato">—</span>
+                        ) : podeEditarCuidados ? (
                           <select
                             value={c.direcionamento || ''}
                             onChange={e => setDirecionamento(c.id, e.target.value)}
@@ -2658,8 +2745,8 @@ export default function Cuidados() {
                             O culto em si (Quarta/AMI/Bridge/Sede) é a bolha ao lado do nome.
                             As TAGS continuam existindo (modal de edição + detalhe) — só a coluna saiu. */}
                         {(() => {
-                          const { origem } = cultoDoConvertido(c);
-                          const cor = origem === 'Online' ? '#3b82f6' : '#00B39D';
+                          const origem = c._visitante ? 'Visitante' : cultoDoConvertido(c).origem;
+                          const cor = c._visitante ? '#a855f7' : origem === 'Online' ? '#3b82f6' : '#00B39D';
                           return (
                             <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap"
                               style={{ background: cor + '20', color: cor, border: `1px solid ${cor}40` }}>
@@ -2673,7 +2760,9 @@ export default function Cuidados() {
                           const tel = String(c.telefone || '').replace(/\D/g, '');
                           if (!tel) return null;
                           const primeiro = String(c.nome || '').trim().split(/\s+/)[0] || '';
-                          const msg = `Olá ${primeiro}! Aqui é da CBRio 🙏 Que alegria te ver no culto e na decisão que você tomou! Queremos te acompanhar nos próximos passos — podemos conversar?`;
+                          const msg = c._visitante
+                            ? `Olá ${primeiro}! Aqui é da CBRio 🙏 Que alegria receber você no culto! Como foi sua visita? Estamos por aqui pra qualquer coisa.`
+                            : `Olá ${primeiro}! Aqui é da CBRio 🙏 Que alegria te ver no culto e na decisão que você tomou! Queremos te acompanhar nos próximos passos — podemos conversar?`;
                           return (
                             <Link
                               to={hrefConversa(`55${tel}`, msg)}
@@ -2685,7 +2774,7 @@ export default function Cuidados() {
                             </Link>
                           );
                         })()}
-                        {podeEditarCuidados && (
+                        {podeEditarCuidados && !c._visitante && (
                           <>
                             <Button variant="ghost" size="sm" onClick={() => { setEditConvert(c); setModalConvert(true); }}>Editar</Button>
                             <Button variant="ghost" size="sm" onClick={async () => { if (confirm('Remover?')) { await cuidadosApi.convertidos.remove(c.id); loadAll(); } }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
@@ -2728,6 +2817,7 @@ export default function Cuidados() {
         allTags={convertTags}
         initial={editConvert}
       />
+      <VisitanteDetailDialog visitante={detailVisitante} onClose={() => setDetailVisitante(null)} />
       <ConvertidoDetailDialog
         convertido={detailConvert}
         onClose={() => setDetailConvert(null)}
