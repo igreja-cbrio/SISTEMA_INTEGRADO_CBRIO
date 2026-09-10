@@ -4,8 +4,12 @@ import { resolve } from 'node:path';
 import { readFileSync } from 'node:fs';
 
 const req = createRequire(import.meta.url);
+// ⚠️ Importa do MÓDULO PURO, nunca do serviço: `censoLeituraIA.js` faz
+// `require('@anthropic-ai/sdk')`, que vive em `backend/package.json` — e o CI
+// só roda `npm ci` na raiz. Importar do serviço deixa o gate VERDE na máquina
+// (que tem backend/node_modules) e VERMELHO no CI. Aconteceu neste PR.
 const { ehTextoDeOpiniao, prepararMaterial, TIPOS_PARA_IA } =
-  req(resolve(__dirname, '../../backend/services/censoLeituraIA.js'));
+  req(resolve(__dirname, '../../backend/utils/censoIaFiltro.js'));
 
 /**
  * Guarda do que sai do censo para a IA.
@@ -104,5 +108,31 @@ describe('censo · a rota /ia filtra tipo no SQL', () => {
     expect(bloco).toContain("cen_resposta_item");
     expect(bloco).toContain(".in('tipo'");
     expect(bloco).toContain('TIPOS_PARA_IA');
+  });
+});
+
+// ⚠️⚠️ GUARDA DA ARMADILHA QUE ESTOUROU NESTE PR: a régua tem que ficar num
+// módulo que o gate consiga carregar. `backend/` tem árvore de dependências
+// PRÓPRIA (`@anthropic-ai/sdk` está em `backend/package.json`) e o CI só roda
+// `npm ci` na raiz. Se alguém mover a régua de volta para o serviço, o teste
+// verde na máquina vira vermelho no CI — e pior, quem symlinkar
+// `backend/node_modules` na worktree não vê.
+describe('censo · a régua da IA não pode depender da árvore de backend/', () => {
+  it('censoIaFiltro.js não faz require de pacote externo nem de services/', () => {
+    const src = readFileSync(resolve(__dirname, '../../backend/utils/censoIaFiltro.js'), 'utf8');
+    const limpo = src
+      .split('\n')
+      .map((l) => l.replace(/\/\*.*?\*\//g, ''))
+      .map((l) => l.replace(/(^|[^:])\/\/[^\n]*/, '$1'))
+      .join('\n');
+    const requires = [...limpo.matchAll(/require\(\s*['"]([^'"]+)['"]\s*\)/g)].map((m) => m[1]);
+    expect(requires.filter((r) => !r.startsWith('.'))).toEqual([]);   // nada de pacote
+    expect(requires.filter((r) => r.includes('services/'))).toEqual([]);
+  });
+
+  it('o serviço RE-EXPORTA a régua (nenhum chamador precisou mudar)', () => {
+    const src = readFileSync(resolve(__dirname, '../../backend/services/censoLeituraIA.js'), 'utf8');
+    expect(src).toContain("require('../utils/censoIaFiltro')");
+    expect(src).toContain('ehTextoDeOpiniao');
   });
 });
