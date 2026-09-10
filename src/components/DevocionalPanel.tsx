@@ -57,6 +57,10 @@ export default function DevocionalPanel() {
 
   const [historico, setHistorico] = useState<Devocional[]>([]);
   const [loadingHist, setLoadingHist] = useState(true);
+  // varredura 2026-09: A04 — antes, falha do histórico caía num `.catch(() => {})` e o bloco
+  // ficava vazio, indistinguível de "nunca registrei nada". Lista vazia e lista que NÃO CARREGOU
+  // não podem ter a mesma cara: sem este estado, quem tomava 403 achava que a tela quebrou.
+  const [erroHist, setErroHist] = useState<string | null>(null);
 
   useEffect(() => { if (bibleId) localStorage.setItem(LS_BIBLE, bibleId); }, [bibleId]);
   useEffect(() => { if (bookId) localStorage.setItem(LS_BOOK, bookId); }, [bookId]);
@@ -122,13 +126,24 @@ export default function DevocionalPanel() {
       .finally(() => setMembroSearched(true));
   }, [profile?.email, membroSearched]);
 
+  // varredura 2026-09: A04 — este painel é "MEUS devocionais": sem `membro_id` a chamada virava
+  // `GET /devocionais` da lista GERAL (histórico devocional NOMINAL de todo mundo), que agora
+  // exige nível 2. Quem tem cuidados nível 1 tomava 403, o `.catch(() => {})` engolia, e o bloco
+  // "Devocionais recentes" ficava em branco PARA SEMPRE — sem spinner, sem motivo, parecendo bug.
+  // Não há o que pedir sem dono: quando o profile não resolve pra um membro, não se chama a rota.
   const loadHistorico = useCallback(() => {
+    setErroHist(null);
+    if (!membro?.id) {
+      setHistorico([]);
+      setLoadingHist(false);
+      setErroHist('Seu login ainda não está vinculado a um membro, então não há devocionais seus para listar. Avise a equipe para cadastrar seu e-mail.');
+      return;
+    }
     setLoadingHist(true);
-    const params: any = { limit: 20 };
-    if (membro?.id) params.membro_id = membro.id;
-    devApi.list(params)
+    devApi.list({ limit: 20, membro_id: membro.id })
       .then((r: any) => setHistorico(r?.data || []))
-      .catch(() => {})
+      // varredura 2026-09: A04 — `e.message` é o texto que o servidor devolveu (api.js:146-152).
+      .catch((e: any) => { setHistorico([]); setErroHist(e?.message || 'Não foi possível carregar seus devocionais.'); })
       .finally(() => setLoadingHist(false));
   }, [membro?.id]);
 
@@ -309,6 +324,12 @@ export default function DevocionalPanel() {
           <div className="space-y-2">
             <Skeleton className="h-12 w-full" />
             <Skeleton className="h-12 w-full" />
+          </div>
+        ) : erroHist ? (
+          /* varredura 2026-09: A04 — estado de erro CURTO no lugar do branco mudo. Mesma pintura
+             do aviso de Bíblias logo acima, pra ser lido como "não carregou", não como "não tem". */
+          <div className="rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive">
+            {erroHist}
           </div>
         ) : historico.length === 0 ? (
           <p className="text-sm text-muted-foreground">Nenhum devocional registrado ainda.</p>

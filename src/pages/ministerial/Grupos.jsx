@@ -534,7 +534,10 @@ export default function Grupos() {
       setSelectedGrupo(null);
       setDetailData(null);
       loadList();
-    } catch { toast.error('Erro ao desativar'); }
+      // varredura 2026-09: G02 — `catch {}` SEM binding descartava `e.message`: a coordenação
+      // via só "Erro ao desativar" e nunca o motivo que o servidor devolveu. Mesmo padrão do
+      // `handleSave` deste arquivo (`e.message || fallback`).
+    } catch (e) { toast.error(e.message || 'Erro ao desativar'); }
   };
 
   const handleReativar = async () => {
@@ -544,7 +547,12 @@ export default function Grupos() {
       toast.success('Grupo reativado');
       loadDetail(detailData.id);
       loadList();
-    } catch { toast.error('Erro ao reativar'); }
+      // varredura 2026-09: G02 — este é o botão que MAIS precisa do texto do servidor: reativar
+      // manda o PUT /api/grupos com a linha inteira, e o PUT agora recusa 400 quando
+      // `aceitando_inscricoes` está ligado sem `lider_id` ("defina o líder ou desmarque
+      // aceitando inscrições"). Com o `catch {}` mudo, a explicação era jogada fora e o grupo
+      // parecia simplesmente não reativar.
+    } catch (e) { toast.error(e.message || 'Erro ao reativar'); }
   };
 
   const handleAddMembro = async (membroId) => {

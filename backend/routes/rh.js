@@ -8,6 +8,7 @@ const { enqueueSync } = require('../services/cerebroSync');
 const { chamarModelo: organogramaIA } = require('../services/organogramaIA');
 const { aplicarCobertura, encerrarCobertura } = require('../services/cobertura');
 const rhOnboardingEnvios = require('../services/rhOnboardingEnvios');
+const { escapePostgrestValue } = require('../utils/sanitize'); // varredura 2026-09: RHP-11 — `_` e `%` sao curinga no ilike do PostgREST
 const { caminhoNoBucket, aplicarAssinaturas } = require('../utils/storagePath'); // varredura 2026-09: RHP-01 documento de RG servido por URL pública — precisa derivar o caminho e assinar na leitura
 
 const uploadMw = multer({
@@ -1600,10 +1601,54 @@ router.post('/funcionarios/:id/ferias', async (req, res) => {
   }
 });
 
+// varredura 2026-09: RHP-11 — espelho em JS de `user_is_lider_de(funcionario_id)`
+// (migration 20260521200000): casa o e-mail do logado com `rh_funcionarios` (ativo e
+// não apagado, igual `current_user_funcionario_id()`) e compara com o `gestor_id` do
+// dono da linha de férias.
+async function ehGestorDaFerias(req, feriasId) {
+  const email = (req.user?.email || '').trim();
+  if (!email || !feriasId) return false;
+  const { data: linha } = await supabase.from('rh_ferias_licencas')
+    .select('funcionario_id').eq('id', feriasId).maybeSingle();
+  if (!linha?.funcionario_id) return false;
+  const { data: alvo } = await supabase.from('rh_funcionarios')
+    .select('gestor_id').eq('id', linha.funcionario_id).maybeSingle();
+  if (!alvo?.gestor_id) return false;
+  const { data: eu } = await supabase.from('rh_funcionarios')
+    // varredura 2026-09: RHP-11 — e-mail CRU no `ilike` deixa de espelhar a RLS: a
+    // funcao SQL que esta linha copia (`user_is_lider_de`, migration
+    // 20260521200000_onda2_rls_financeiro_rh.sql:38-40) compara
+    // `LOWER(f.email) = LOWER(au.email)` — igualdade EXATA. Sem escapar, `_` e `%`
+    // viram curinga e um e-mail com underscore casa com quem nao devia.
+    .select('id').ilike('email', escapePostgrestValue(email)).eq('status', 'ativo').is('deleted_at', null).limit(1).maybeSingle();
+  return !!eu?.id && String(eu.id) === String(alvo.gestor_id);
+}
+
+// varredura 2026-09: RHP-11 — decidir férias/licença rodava em nível 2 (herdado do
+// `router.use`) e as 53 aprovações estão sem `aprovado_por`. A régua do banco pra
+// UPDATE (`rh_ferias_licencas_update`) é `user_is_lider_de(funcionario_id) OR nível
+// rh >= 3`, mas ela nunca vale nesta rota: o backend fala com o Supabase por
+// service_role e passa por cima da RLS. Aqui as duas réguas SOMAM (a LEI do
+// `podeVerFilaCadastros`): o gestor direto do funcionário OU a matriz em nível 3 —
+// gatear só pela matriz daria 403 no gestor legítimo, que é justamente quem o banco
+// autoriza a aprovar. Trava POR ROTA, nunca `router.use`.
+function podeDecidirFerias() {
+  const guardMatriz = authorizeModule('rh', 3);
+  return async function (req, res, next) {
+    if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
+    try {
+      if (await ehGestorDaFerias(req, req.params.id)) return next();
+    } catch (e) {
+      console.error('[RH] checagem de gestor falhou, caindo na matriz:', e.message);
+    }
+    return guardMatriz(req, res, next);
+  };
+}
+
 // PATCH /api/rh/ferias/:id — aprovar/rejeitar e/ou editar o período
 // (data_inicio/data_fim/tipo/observacoes/substituto_id · edição sem status
 // não mexe no fluxo de aprovação nem dispara cobertura/notificação)
-router.patch('/ferias/:id', async (req, res) => {
+router.patch('/ferias/:id', podeDecidirFerias(), async (req, res) => {
   try {
     const { status, data_inicio, data_fim, tipo, observacoes, substituto_id } = req.body || {};
     const temStatus = status !== undefined;
@@ -1612,7 +1657,13 @@ router.patch('/ferias/:id', async (req, res) => {
     }
 
     const patch = {};
-    if (temStatus) { patch.status = status; patch.aprovado_por = req.user.userId; }
+    // varredura 2026-09: RHP-11 — 'aprovado' nunca pode sair daqui sem responsável (as 53 linhas históricas estão com aprovado_por NULL e não provam quem autorizou); o decisor vem do TOKEN, nunca do body.
+    if (temStatus) {
+      const decisor = req.user?.userId || req.user?.id || null;
+      if (!decisor) return res.status(401).json({ error: 'Não autenticado' });
+      patch.status = status;
+      patch.aprovado_por = decisor;
+    }
     if (data_inicio !== undefined) patch.data_inicio = data_inicio;
     if (data_fim !== undefined) patch.data_fim = data_fim;
     if (tipo !== undefined) patch.tipo = tipo;

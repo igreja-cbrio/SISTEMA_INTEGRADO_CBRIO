@@ -194,7 +194,11 @@ async function buscarGruposInscriveis({ categoria, bairro, temporada } = {}) {
     .eq('ativo', true)
     .is('deleted_at', null) // soft-deletado some do form (a temporada aberta não o esconde)
     .eq('aceitando_inscricoes', true) // líder pode ter parado de receber pedidos
-    .neq('modo_inscricao', 'fechado'); // por convite do líder — nunca aparece
+    .neq('modo_inscricao', 'fechado') // por convite do líder — nunca aparece
+    // varredura 2026-09: G02 grupo ativo SEM lider_id aparecia no formulário — sem dono não há quem receba o aviso nem o link de aprovação, e o pedido cai num buraco.
+    // ⚠️ Vale pro form público (/buscar) E pro app (/app-inscricao): é a régua ÚNICA. Grupo sem líder volta a aparecer no minuto em que a coordenação definir o líder na tela do /grupos.
+    // ⚠️ O deep-link ?grupo=<id> (GET /:id) e o POST /inscrever NÃO passam por aqui de propósito: quem tem o link do líder continua entrando, e a rede de segurança do gruposAvisoApp escala o pedido órfão.
+    .not('lider_id', 'is', null);
   // Por padrão mostra so grupos com status que aceitam novos (ativo + novo + a_confirmar)
   query = query.in('status_temporada', ['ativo', 'novo', 'a_confirmar']);
   if (categoria) query = query.eq('categoria', categoria);

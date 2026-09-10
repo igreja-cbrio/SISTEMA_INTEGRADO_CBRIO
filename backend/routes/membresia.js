@@ -1003,7 +1003,9 @@ router.get('/membros/:id/timeline', authorizeModule('membros', 1), async (req, r
       supabase.from('mem_trilha_valores').select('etapa, concluida, data_conclusao, created_at').eq('membro_id', id),
       supabase.from('mem_grupo_membros').select('entrou_em, saiu_em, motivo_saida, grupo:mem_grupos(nome)').eq('membro_id', id),
       supabase.from('mem_contribuicoes').select('tipo, valor, data, campanha').eq('membro_id', id).is('deleted_at', null).order('data', { ascending: false }).limit(200),
-      supabase.from('mem_devocionais').select('tipo, data_devocional, topico').eq('membro_id', id).order('data_devocional', { ascending: false }).limit(200),
+      // varredura 2026-09: A04 — o DELETE de mem_devocionais virou soft-delete; sem `deleted_at`
+      // o devocional apagado continuava na ficha da pessoa (o vizinho mem_contribuicoes já filtra).
+      supabase.from('mem_devocionais').select('tipo, data_devocional, topico').eq('membro_id', id).is('deleted_at', null).order('data_devocional', { ascending: false }).limit(200),
       supabase.from('next_inscricoes').select('created_at, check_in_at, evento:next_eventos(titulo)').eq('membro_id', id).limit(50),
       supabase.from('batismo_inscricoes').select('created_at, data_batismo, status').eq('membro_id', id).limit(20),
       supabase.from('cui_jornada180').select('data_encontro, etapa, presente').eq('membro_id', id).limit(50),
