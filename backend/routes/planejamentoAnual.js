@@ -261,6 +261,8 @@ router.post('/propostas', authorizeModule(MOD, 2), async (req, res) => {
     hora_inicio: b.hora_inicio || null,
     hora_fim: b.hora_fim || null,
     local_id: b.local_id,
+    locais_adicionais_ids: Array.isArray(b.locais_adicionais_ids) ? b.locais_adicionais_ids : [],
+    local_fora_detalhe: b.local_fora_detalhe || null,
     publico_alvo: b.publico_alvo || null,
     descricao: b.descricao || null,
     alcance_pct: b.alcance_pct ?? null,
@@ -322,7 +324,8 @@ router.put('/propostas/:id', authorizeModule(MOD, 2), async (req, res) => {
   const permitidos = [
     'nome', 'natureza', 'area', 'lider_id', 'preenchido_por_id', 'data_inicio', 'precisao_inicio',
     'multi_dia', 'data_fim', 'precisao_fim', 'recorrencia', 'dia_semana', 'hora_inicio', 'hora_fim',
-    'local_id', 'publico_alvo', 'descricao', 'alcance_pct', 'publico_considerado', 'pertencimento',
+    'local_id', 'locais_adicionais_ids', 'local_fora_detalhe',
+    'publico_alvo', 'descricao', 'alcance_pct', 'publico_considerado', 'pertencimento',
     'valores', 'visao_explique', 'impacto', 'custo', 'tem_arrecadacao', 'arrecadacao_prevista',
   ];
   const patch = {};
@@ -614,7 +617,8 @@ router.post('/propostas/:id/retificar', authorizeModule(MOD, 2), async (req, res
 
   const permitidos = [
     'nome', 'data_inicio', 'precisao_inicio', 'multi_dia', 'data_fim', 'precisao_fim',
-    'recorrencia', 'dia_semana', 'hora_inicio', 'hora_fim', 'local_id', 'publico_alvo',
+    'recorrencia', 'dia_semana', 'hora_inicio', 'hora_fim', 'local_id',
+    'locais_adicionais_ids', 'local_fora_detalhe', 'publico_alvo',
     'descricao', 'alcance_pct', 'publico_considerado', 'pertencimento', 'valores',
     'visao_explique', 'impacto', 'custo', 'tem_arrecadacao', 'arrecadacao_prevista',
   ];
