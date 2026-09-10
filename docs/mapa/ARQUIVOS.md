@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-409 arquivos.
+415 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -110,6 +110,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/publicNext.js` | rota backend | — | `/api/public/next` |
 | `backend/routes/publicNps.js` | rota backend | — | `/api/public/nps` |
 | `backend/routes/publicRhOnboarding.js` | rota backend | — | `/api/public/rh-onboarding` |
+| `backend/routes/publicVisitante.js` | rota backend | — | `/api/public/visitante` |
 | `backend/routes/publicVolEmail.js` | rota backend | — | `/api/public/vol-email` |
 | `backend/routes/publicVoluntariado.js` | rota backend | — | `/api/public/voluntariado` |
 | `backend/routes/publicWhatsapp.js` | rota backend | — | `/api/whatsapp/webhook` |
@@ -132,6 +133,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/totem.js` | rota backend | — | `/api/totem` |
 | `backend/routes/totemKids.js` | rota backend | kids | `/api/totem-kids` |
 | `backend/routes/tutorial.js` | rota backend | — | `/api/tutorial` |
+| `backend/routes/visitantes.js` | rota backend | cuidados | `/api/visitantes` |
 | `backend/routes/volEmails.js` | rota backend | voluntariado | `(não montado)` |
 | `backend/routes/voluntariado-sync.js` | rota backend | voluntariado | `/api/voluntariado` |
 | `backend/routes/voluntariado.js` | rota backend | membresia | `/api/voluntariado` |
@@ -294,6 +296,8 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/vigenciaTipoCulto.js` | régua pura | — | `src/test/vigenciaTipoCulto.test.ts` |
 | `backend/utils/vinculoMlSolicitacao.js` | régua pura | — | `src/test/vinculoMlSolicitacao.test.ts` |
 | `backend/utils/vinculosDuplicados.js` | régua pura | — | `src/test/vinculosDuplicados.test.ts` |
+| `backend/utils/visitanteRegras.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/visitanteToken.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/volCobertura.js` | régua pura | — | `src/test/volCobertura.test.ts` |
 | `backend/utils/volDisponibilidade.js` | régua pura | — | `src/test/volDisponibilidade.test.ts` |
 | `backend/utils/volIntegradoEm.js` | régua pura | — | `src/test/volIntegradoEm.test.ts` |
@@ -420,6 +424,8 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/public/QuemSomos` | tela ERP | — | `/novosite/quem-somos` |
 | `src/pages/public/Suporte` | tela ERP | — | `/suporte` |
 | `src/pages/public/Suporte` | tela ERP | — | `/suporte` |
+| `src/pages/public/VisitanteAvaliar` | tela ERP | — | `/visitante/avaliar/:token` |
+| `src/pages/public/VisitantePublico` | tela ERP | — | `/visitante` |
 | `src/pages/public/WalletPage` | tela ERP | — | `/wallet` |
 | `src/pages/RevisaoDetalhe` | tela ERP | — | `/revisao/:tipo/:id` |
 | `src/pages/RevisaoEstrategica` | tela ERP | — | `/revisao` |

@@ -20,7 +20,7 @@ nenhum módulo reivindica são exatamente os candidatos a esse buraco.
 guard (públicas, totens, `/perfil`). Significa que ninguém decidiu — vale
 conferir.
 
-## Telas sem ModuleGuard (77)
+## Telas sem ModuleGuard (79)
 
 | rota | arquivo | pública? |
 |---|---|---|
@@ -49,6 +49,8 @@ conferir.
 | `/next/direcionar/:token` | `src/pages/public/NextDirecionar` | sim |
 | `/inscricao-voluntariado` | `src/pages/public/InscricaoVoluntariado` | sim |
 | `/decisao` | `src/pages/public/DecisaoOnline` | sim |
+| `/visitante` | `src/pages/public/VisitantePublico` | sim |
+| `/visitante/avaliar/:token` | `src/pages/public/VisitanteAvaliar` | sim |
 | `/decisao/:token` | `src/pages/public/DecisaoOnline` | sim |
 | `/c/:token` | `src/pages/public/DecisaoCulto` | sim |
 | `/ec/:token` | `src/pages/public/EventoCheckin` | sim |
@@ -102,7 +104,7 @@ conferir.
 | `/admin/grupos/temporadas` | `src/pages/admin/TemporadasGrupos` | sim |
 | `/suporte` | `src/pages/public/Suporte` | sim |
 
-## Arquivos de rota que nenhum módulo reivindica (74)
+## Arquivos de rota que nenhum módulo reivindica (75)
 
 - `backend/routes/agentTasks.js`
 - `backend/routes/agenteBatismoNext.js`
@@ -158,6 +160,7 @@ conferir.
 - `backend/routes/publicNext.js`
 - `backend/routes/publicNps.js`
 - `backend/routes/publicRhOnboarding.js`
+- `backend/routes/publicVisitante.js`
 - `backend/routes/publicVolEmail.js`
 - `backend/routes/publicVoluntariado.js`
 - `backend/routes/publicWhatsapp.js`
