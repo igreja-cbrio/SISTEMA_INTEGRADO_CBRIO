@@ -67,6 +67,10 @@ app.use(rateLimit({
     // estas portas existem pra resolver. Limiters próprios nos dois routers.
     || req.path.startsWith('/api/public/decisao-culto')
     || req.path.startsWith('/api/public/decisao-online')
+    // VISITANTE (09/09/2026): QR nos cartazes do hall/estacionamento/banheiro —
+    // a igreja inteira atrás do mesmo NAT no intervalo do culto. Limiter
+    // próprio em routes/publicVisitante.js.
+    || req.path.startsWith('/api/public/visitante')
     // Doação: a tela de pagamento faz POLLING do status, então sob o teto por IP
     // a pessoa tomaria 429 no meio do próprio pagamento — e a igreja inteira sai
     // por 1 IP no culto. Limiter próprio em routes/publicGenerosidade.js.
@@ -238,6 +242,9 @@ app.use('/api/public/generosidade', require('./routes/publicGenerosidade'));
 // vivem nos dois routers.
 app.use('/api/public/decisao-culto', require('./routes/publicDecisaoCulto'));
 app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
+// Porta do VISITANTE (QR nos cartazes · voucher da cafeteria · pesquisa) —
+// ANTES do publicLimiter estrito e no skip() do global, pelo mesmo motivo.
+app.use('/api/public/visitante', require('./routes/publicVisitante'));
 // ⚠️ CAMPANHAS montada ANTES do publicLimiter estrito: a barrinha de progresso
 // vai para as TELAS LATERAIS DO CULTO e faz polling, com a igreja inteira atrás
 // do mesmo NAT — sob 30/15min por IP ela congelaria no meio do lançamento, e
@@ -280,6 +287,7 @@ app.use('/api/kpis', require('./routes/kpis'));
 app.use('/api/online', require('./routes/online'));
 app.use('/api/wifi', require('./routes/wifi'));
 app.use('/api/cuidados', require('./routes/cuidados'));
+app.use('/api/visitantes', require('./routes/visitantes')); // porta /visitante · voucher · ponte c/ Próximos passos
 app.use('/api/next-convite', require('./routes/nextConvite'));
 app.use('/api/wa-inbox', require('./routes/waInbox'));
 app.use('/api/agente-primeiro-contato', require('./routes/agentePrimeiroContato'));

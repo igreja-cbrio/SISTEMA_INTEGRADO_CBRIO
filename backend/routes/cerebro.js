@@ -4,9 +4,13 @@ const { getGraphToken } = require('../services/storageService');
 const { processarFila } = require('../services/cerebroProcessor');
 const { processSyncFila, upsertNoteForEntity, getSupportedEntityTypes } = require('../services/cerebroSync');
 const { authenticate, authorize, authorizeModule } = require('../middleware/auth');
-const { isAuthorizedCron } = require('../utils/cronAuth');
+const { isAuthorizedCron, safeEqual } = require('../utils/cronAuth');
 
-const CRON_SECRET = process.env.CRON_SECRET;
+// varredura 2026-09: PUB-03 (CRON_SECRET era o clientState do Graph) — o segredo-mãe de 16 crons e 10 fluxos de link público era ENTREGUE ao tenant Microsoft na criação da subscription, e o fallback `'cbrio-cerebro'` é literal público (sem CRON_SECRET, qualquer um adivinha e dispara Graph delta + Haiku pela rota pública /webhook, que não tem authenticate).
+// Agora o clientState é env PRÓPRIA e aleatória: GRAPH_CLIENT_STATE (gere com `openssl rand -hex 32`).
+// ⚠️ TRANSIÇÃO: as subscriptions JÁ criadas no Graph ecoam o CRON_SECRET antigo. Enquanto elas existirem ele continua ACEITO na verificação, mas nunca mais é ENVIADO. Depois de definir GRAPH_CLIENT_STATE e RECRIAR as subscriptions (apagar as linhas `sub_<driveId>` de cerebro_config e chamar POST /api/cerebro/subscriptions), tirar o CRON_SECRET de CLIENT_STATES_ACEITOS e rotacionar o CRON_SECRET.
+const GRAPH_CLIENT_STATE = process.env.GRAPH_CLIENT_STATE || null; // varredura 2026-09: PUB-03 — sem fallback literal; ausente = não cria subscription nova (ver POST /subscriptions).
+const CLIENT_STATES_ACEITOS = [GRAPH_CLIENT_STATE, process.env.CRON_SECRET].filter(Boolean); // varredura 2026-09: PUB-03 — aceita o antigo só até as subscriptions serem recriadas.
 const HUB_SITE_ID = 'infracbrio.sharepoint.com,04b50f10-ea32-40ba-84bd-44a3b38ee2a7,94fe6af6-f064-455d-afc5-67a377f5e82c';
 
 const EXTENSOES = new Set(['pdf', 'xlsx', 'csv', 'docx', 'pptx', 'txt', 'md', 'json', 'png', 'jpg', 'jpeg']);
@@ -32,12 +36,17 @@ router.post('/webhook', async (req, res) => {
     const notifications = req.body?.value || [];
     console.log(`[CEREBRO WEBHOOK] ${notifications.length} notificacao(es) recebida(s)`);
 
-    const expectedClientState = CRON_SECRET || 'cbrio-cerebro';
+    // varredura 2026-09: PUB-03 — fail-closed: sem nenhum clientState conhecido, nada é processado (antes o fallback literal deixava qualquer um disparar).
+    if (!CLIENT_STATES_ACEITOS.length) {
+      console.error('[CEREBRO WEBHOOK] GRAPH_CLIENT_STATE ausente — notificacoes descartadas (fail-closed)');
+      return;
+    }
     for (const notif of notifications) {
       // Anti-forja: o Graph ecoa o clientState que setamos ao criar a subscription
       // (ver POST /subscriptions). Ignora notificação sem o segredo certo (evita
       // disparo de processamento caro — Graph delta + Haiku — por quem chuta a URL).
-      if (notif.clientState !== expectedClientState) continue;
+      // varredura 2026-09: PUB-03 — comparação timing-safe (safeEqual de utils/cronAuth), sem fallback literal.
+      if (!CLIENT_STATES_ACEITOS.some((esperado) => safeEqual(notif.clientState, esperado))) continue;
       const resource = notif.resource || '';
       // resource format: drives/{driveId}/root
       const driveMatch = resource.match(/drives\/([^\/]+)/);
@@ -73,6 +82,13 @@ router.post('/subscriptions', async (req, res) => {
     return res.status(401).json({ erro: 'Nao autorizado' });
   }
 
+  // varredura 2026-09: PUB-03 — a guarda de GRAPH_CLIENT_STATE ausente NÃO mora aqui.
+  // Este handler é também o RENOVADOR (o cron diário bate nele e o laço abaixo faz o
+  // PATCH de expiração). Barrar o handler inteiro parava a renovação e as subscriptions
+  // do Graph EXPIRAVAM em ≤29 dias — o Cérebro pararia de receber notificação sem
+  // ninguém perceber. A guarda está imediatamente antes do POST de CRIAÇÃO, que é o
+  // único ponto que precisa mandar o clientState para o tenant Microsoft.
+
   try {
     const token = await getGraphToken();
     const { data: cfg } = await supabase.from('cerebro_config').select('valor').eq('chave', 'bibliotecas_monitoradas').single();
@@ -104,6 +120,15 @@ router.post('/subscriptions', async (req, res) => {
         } catch {}
       }
 
+      // varredura 2026-09: PUB-03 — sem GRAPH_CLIENT_STATE não CRIAMOS subscription: o
+      // fallback antigo mandava o CRON_SECRET (ou a string pública 'cbrio-cerebro') para
+      // o tenant Microsoft. Só a criação para; a renovação acima já rodou. O drive sai na
+      // resposta como `skipped` COM o motivo — nunca some em silêncio.
+      if (!GRAPH_CLIENT_STATE) {
+        results.push({ drive: drive.name, action: 'skipped', motivo: 'GRAPH_CLIENT_STATE nao configurada — defina uma string aleatoria propria (openssl rand -hex 32) para criar subscriptions novas.' });
+        continue;
+      }
+
       // Criar nova subscription
       const subRes = await fetch('https://graph.microsoft.com/v1.0/subscriptions', {
         method: 'POST',
@@ -113,7 +138,7 @@ router.post('/subscriptions', async (req, res) => {
           notificationUrl,
           resource: `/drives/${drive.id}/root`,
           expirationDateTime: expiration,
-          clientState: CRON_SECRET || 'cbrio-cerebro',
+          clientState: GRAPH_CLIENT_STATE, // varredura 2026-09: PUB-03 — env própria; o CRON_SECRET nunca mais sai daqui para o tenant Microsoft.
         })
       });
       const subData = await subRes.json();

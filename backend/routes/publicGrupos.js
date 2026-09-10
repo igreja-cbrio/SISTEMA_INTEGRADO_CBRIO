@@ -3092,7 +3092,20 @@ router.get('/cron/frequencia-mensal', requireCron, async (req, res) => {
 // Cron horário; gated por CRON_SECRET (fail-closed).
 async function cronWhatsappFila(req, res) {
   try {
+    // CARONA (09/09/2026): a pesquisa de satisfação do VISITANTE é enfileirada
+    // aqui, ANTES do processarFila, pra sair na mesma rodada. Bloco protegido:
+    // falhar não pode derrubar a fila, que é o trabalho principal deste cron.
+    // Sem cron novo — o vercel.json está no teto de crons do plano.
+    let pesquisas = null;
+    try {
+      const { enviarPesquisasDevidas } = require('../services/visitantePesquisa');
+      pesquisas = await enviarPesquisasDevidas();
+    } catch (e) {
+      console.error('[whatsapp-fila cron] pesquisa do visitante:', e.message);
+      pesquisas = { erro: e.message };
+    }
     const r = await processarFila();
+    r.visitante_pesquisa = pesquisas;
     console.log('[whatsapp-fila cron]', JSON.stringify(r));
     res.json({ ok: true, ...r });
   } catch (e) {

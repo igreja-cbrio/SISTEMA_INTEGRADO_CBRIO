@@ -68,4 +68,21 @@ const itemTotem = CATALOGO.find((i) => i.id === TOTEM_ID);
 assert.ok(membresiaSrc.includes(`contexto: '${itemTotem.contexto}'`),
   `o contexto do catálogo ("${itemTotem.contexto}") tem que ser o que o remetente grava na fila — sem isso o histórico do item vem vazio`);
 
+// ── O remetente da PESQUISA DO VISITANTE (09/09) · checagem por TEXTO ───────
+// services/visitantePesquisa.js carrega o Supabase, então a conferência é
+// estática, como a do totem.
+const VISITANTE_ID = 'visitante_pesquisa';
+const visitanteSrc = semComentarios(
+  fs.readFileSync(path.join(__dirname, 'visitantePesquisa.js'), 'utf8'),
+);
+assert.ok(visitanteSrc.includes(`const DISPARO_ID = '${VISITANTE_ID}'`),
+  `services/visitantePesquisa.js não declara DISPARO_ID = '${VISITANTE_ID}'`);
+assert.ok(visitanteSrc.includes('disparoDesligado(DISPARO_ID)'),
+  'o remetente da pesquisa do visitante não consulta disparoDesligado(DISPARO_ID) — o switch não desligaria nada');
+assert.ok(IDS_CATALOGO.includes(VISITANTE_ID),
+  `"${VISITANTE_ID}" não está no catálogo (${IDS_CATALOGO.join(', ')}) — o switch não apareceria na tela`);
+const itemVisitante = CATALOGO.find((i) => i.id === VISITANTE_ID);
+assert.ok(visitanteSrc.includes(`const CONTEXTO = '${itemVisitante.contexto}'`),
+  `o contexto do catálogo ("${itemVisitante.contexto}") tem que ser o que o remetente grava na fila`);
+
 console.log('disparoInterruptor: OK');

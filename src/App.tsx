@@ -430,6 +430,10 @@ const InscricaoTotens = lazyWithRetry(() => import('./pages/InscricaoTotens'));
 // algumas horas e foi removida no mesmo dia.
 const NextDirecionar = lazyWithRetry(() => import('./pages/public/NextDirecionar'));
 const DecisaoOnline = lazyWithRetry(() => import('./pages/public/DecisaoOnline'));
+// Porta do VISITANTE (09/09/2026): QR nos cartazes → voucher da cafeteria → pesquisa por token.
+const VisitantePublico = lazyWithRetry(() => import('./pages/public/VisitantePublico'));
+const VisitanteAvaliar = lazyWithRetry(() => import('./pages/public/VisitanteAvaliar'));
+const Visitantes = lazyWithRetry(() => import('./pages/Visitantes'));
 const DecisaoCulto = lazyWithRetry(() => import('./pages/public/DecisaoCulto'));
 const InscricaoVoluntariado = lazyWithRetry(() => import('./pages/public/InscricaoVoluntariado'));
 // /admin/cultura, /kpis, /kpis/guia, /painel-kpis foram substituidos pelo /painel
@@ -702,6 +706,11 @@ function AppRoutes() {
       <Route path="/next/direcionar/:token" element={<Suspense fallback={<Loading />}><NextDirecionar /></Suspense>} />
       <Route path="/inscricao-voluntariado" element={<Suspense fallback={<Loading />}><InscricaoVoluntariado /></Suspense>} />
       <Route path="/decisao" element={<Suspense fallback={<Loading />}><DecisaoOnline /></Suspense>} />
+      {/* Visitante: o QR dos cartazes (`?local=`) e a pesquisa de satisfação que chega no WhatsApp.
+          ⚠️ NÃO usar prefixo curto tipo `/v/:token` — `/c/:token` e `/e/:token` já existem e o
+          React Router faz o primeiro padrão vencer. */}
+      <Route path="/visitante" element={<Suspense fallback={<Loading />}><VisitantePublico /></Suspense>} />
+      <Route path="/visitante/avaliar/:token" element={<Suspense fallback={<Loading />}><VisitanteAvaliar /></Suspense>} />
       {/* QR gravado no vídeo: o culto vai DENTRO do token, então quem assiste um
           replay de anos atrás cai no culto certo em vez de no culto da semana
           em que ele abriu o vídeo. */}
@@ -788,6 +797,7 @@ function AppRoutes() {
         <Route path="/nps" element={<Suspense fallback={<Loading />}><Nps /></Suspense>} />
         <Route path="/censo" element={<ModuleGuard moduleSlug="censo" nivelMinimo={1}><Suspense fallback={<Loading />}><Censo /></Suspense></ModuleGuard>} />
         <Route path="/links" element={<ModuleGuard moduleSlug="links" nivelMinimo={1}><Suspense fallback={<Loading />}><Links /></Suspense></ModuleGuard>} />
+        <Route path="/visitantes" element={<ModuleGuard moduleSlug="visitantes" nivelMinimo={1}><Suspense fallback={<Loading />}><Visitantes /></Suspense></ModuleGuard>} />
         <Route path="/nps/:id/responder" element={<Suspense fallback={<Loading />}><NpsResponder /></Suspense>} />
         <Route path="/admin/rh" element={<ModuleGuard permKey="canRH"><Suspense fallback={<Loading />}><RH /></Suspense></ModuleGuard>} />
         <Route path="/admin/financeiro" element={<ModuleGuard permKey="canFinanceiro"><Suspense fallback={<Loading />}><Financeiro /></Suspense></ModuleGuard>} />

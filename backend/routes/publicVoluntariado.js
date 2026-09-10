@@ -117,6 +117,16 @@ async function lookupByCpf(cpf) {
 // ── POST /api/public/voluntariado/lookup-cpf ──────────────────────────
 // Cliente envia CPF, backend responde se já existe em algum cadastro.
 // Nunca expoe email completo — apenas mascarado para o usuário confirmar.
+//
+// ⚠️⚠️ varredura 2026-09: PUB-02 — esta resposta NÃO QUALIFICA A FONTE e NÃO
+// devolve nome. Devolvia `name` (o NOME COMPLETO: vol.full_name / func.nome /
+// membro.nome) e `type`, e `type:'colaborador'` marcava, a partir de um CPF,
+// quem são os 56 funcionários da igreja — enquanto `'membro'` respondia "está
+// na base da CBRio?", que é convicção religiosa (dado sensível, art. 5º, II da
+// LGPD). O CLAUDE.md descrevia os lookups públicos como "só primeiro nome +
+// iniciais"; este aqui nunca obedeceu. O fluxo do self-checkin não perde nada:
+// a tela só usa `found` e `hasEmail` (VolSelfCheckin.tsx:208-218) — quem
+// confirma a identidade é o `maskedEmail` e, de fato, o magic link.
 router.post('/lookup-cpf', publicLimiter, async (req, res) => {
   try {
     const { cpf, website } = req.body || {};
@@ -134,11 +144,12 @@ router.post('/lookup-cpf', publicLimiter, async (req, res) => {
 
     const hasEmail = !!result.email;
     return res.json({
+      // varredura 2026-09: PUB-02 — colapsado em `found:true`. `type` e `name`
+      // saíram: um dizia de QUAL cadastro veio (colaborador = funcionário),
+      // o outro entregava o nome completo a quem só tinha o CPF.
       found: true,
-      type: result.type,
       hasEmail,
       maskedEmail: hasEmail ? maskEmail(result.email) : null,
-      name: result.name || null,
     });
   } catch (err) {
     console.error('[PublicVol] lookup-cpf error:', err.message);

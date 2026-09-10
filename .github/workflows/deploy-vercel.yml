@@ -98,6 +98,12 @@ jobs:
       - name: Interruptor dos disparos automaticos (id casado ponta a ponta)
         run: npm run test:disparo-interruptor
 
+      # Porta do VISITANTE (09/09): validacao do formulario (CPF com DV, aceite
+      # === true, local fechado), voucher (alfabeto sem O/0/I/1), a hora certa da
+      # pesquisa depois do culto (dia BRT) e o token com namespace proprio.
+      - name: Porta do visitante (regras puras + token)
+        run: npm run test:visitante
+
       # Trava de 24/08: a politica 'ligar' do contrato de porta nao consolidava
       # CPF nem acumulava contato — 18 CPFs e 14 telefones presos na linha da
       # inscricao no Celebra 2026, com o cadastro ao lado sem CPF.

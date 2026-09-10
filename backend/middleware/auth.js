@@ -91,6 +91,9 @@ const ROUTE_MODULE_MAP = {
   // ⚠️ Escrever link é nível 4 de propósito: repontar um destino redireciona em
   // silêncio TODO cartaz já impresso. Ver `src/test/routeModuleMap.test.ts`.
   'links':        ['links'],
+  // Visitantes (09/09/2026): porta pública /visitante + voucher da cafeteria.
+  // Módulo próprio = unidade de permissão (quem resgata café não vê ficha pastoral).
+  'visitantes':   ['visitantes'],
   // Leitura de dados de PESSOA (nome/CPF/telefone) é legítima em vários módulos
   // ministeriais que trabalham com gente. Quem tem QUALQUER um destes em leitura
   // passa; quem não tem (ex.: conta só de logística/financeiro/produção/marketing,
