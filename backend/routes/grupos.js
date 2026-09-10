@@ -4214,6 +4214,12 @@ function normIdade(v) {
   return Math.max(0, Math.min(120, Math.round(n)));
 }
 
+// varredura 2026-09: G02 grupo ativo aceitando inscrição SEM lider_id — régua única das 3 portas de escrita (POST, PUT e o toggle PATCH /:id/aceitando).
+// ⚠️ Grupo SEM líder continua podendo existir (a coordenação cria antes de definir quem lidera, e o /kpis/prontidao conta isso): o que não pode é ficar
+// ACEITANDO INSCRIÇÃO sem dono — aí o pedido nasce sem ninguém pra receber o aviso, o link de aprovação nem é gerado, e a pessoa recebe "inscrição confirmada".
+// ⚠️ O form nasce com aceitando_inscricoes=true (`defaults` do GrupoModal · Grupos.jsx:2382; a caixa está na 2565), então criar grupo sem líder exige DESMARCAR a caixa — é a mensagem que este 400 devolve.
+const ERRO_ACEITANDO_SEM_LIDER = 'Grupo sem líder não pode ficar aceitando inscrições: defina o líder ou desmarque "aceitando inscrições".';
+
 // POST /api/grupos
 router.post('/', authorizeModule('grupos', 3), async (req, res) => {
   try {
@@ -4222,6 +4228,10 @@ router.post('/', authorizeModule('grupos', 3), async (req, res) => {
     const idadeMax = normIdade(d.idade_max);
     if (idadeMin != null && idadeMax != null && idadeMin > idadeMax) {
       return res.status(400).json({ error: 'Idade mínima maior que a máxima.' });
+    }
+    // varredura 2026-09: G02 aceitando_inscricoes=true com lider_id nulo — mesma expressão que o insert abaixo usa nos 2 campos, pra não divergir.
+    if ((d.aceitando_inscricoes !== false) && !(d.lider_id || null)) {
+      return res.status(400).json({ error: ERRO_ACEITANDO_SEM_LIDER, campo: 'lider_id', codigo: 'aceitando_sem_lider' });
     }
     const { data, error } = await supabase.from('mem_grupos').insert({
       nome: d.nome, categoria: d.categoria || '', area: d.area || 'sede', lider_id: d.lider_id || null,
@@ -4260,6 +4270,10 @@ router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
     if (idadeMin != null && idadeMax != null && idadeMin > idadeMax) {
       return res.status(400).json({ error: 'Idade mínima maior que a máxima.' });
     }
+    // varredura 2026-09: G02 aceitando_inscricoes=true com lider_id nulo — o PUT é update COMPLETO (o form manda a linha inteira), então d.lider_id é a palavra final.
+    if ((d.aceitando_inscricoes !== false) && !(d.lider_id || null)) {
+      return res.status(400).json({ error: ERRO_ACEITANDO_SEM_LIDER, campo: 'lider_id', codigo: 'aceitando_sem_lider' });
+    }
     const { data, error } = await supabase.from('mem_grupos').update({
       nome: d.nome, categoria: d.categoria || '', area: d.area || 'sede', lider_id: d.lider_id || null,
       local: d.local || '', endereco: d.endereco || '',
@@ -4295,6 +4309,17 @@ router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
 router.patch('/:id/aceitando', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const aceitando = req.body?.aceitando === true;
+    // varredura 2026-09: G02 o atalho "retomar inscrições" reabria grupo sem líder — mesma trava do POST/PUT, senão a régua vale em 2 portas de 3.
+    // ⚠️ Só consulta quando está LIGANDO: pausar grupo sem líder tem que continuar sendo 1 round-trip (é justamente o conserto que a coordenação vai fazer nos 4 pedidos parados).
+    if (aceitando) {
+      const { data: g } = await supabase.from('mem_grupos').select('lider_id').eq('id', req.params.id).maybeSingle();
+      // varredura 2026-09: G02 — separar os dois casos. Com `maybeSingle`, grupo
+      // INEXISTENTE vinha `null` e caia no mesmo 400, afirmando "sem lider" sobre um
+      // cadastro que nao existe — e sumindo com o 404. Sem round-trip novo: a consulta
+      // ja foi feita.
+      if (!g) return res.status(404).json({ error: 'Grupo não encontrado' });
+      if (!g.lider_id) return res.status(400).json({ error: ERRO_ACEITANDO_SEM_LIDER, campo: 'lider_id', codigo: 'aceitando_sem_lider' });
+    }
     const { data, error } = await supabase.from('mem_grupos')
       .update({ aceitando_inscricoes: aceitando })
       .eq('id', req.params.id).select('id, nome, aceitando_inscricoes').single();

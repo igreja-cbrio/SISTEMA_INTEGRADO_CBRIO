@@ -852,6 +852,60 @@ router.put('/usuario/:id/role', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// PUT /api/permissoes/usuario/:id/ativo — liga/desliga o acesso de alguém
+// varredura 2026-09: AUTH-02 — hoje existem DOIS cadastros de banimento que não
+// conversam: `profiles.active` (o único portão do requireAuth · auth.js) e
+// `auth.users.banned_until` (o GoTrue, que é onde quem opera o Auth clica). Mexer só
+// num deixa a outra porta aberta: banir no painel do Supabase não desativava o
+// profile, e desativar o profile não derruba a sessão do GoTrue. Esta rota é o gesto
+// ÚNICO — grava nos dois no mesmo request. O `banned_until` só passou a valer depois
+// da checagem nova em `auth.js` (reason: 'banned_user').
+// ⚠️ O SDK só aceita DURAÇÃO em `ban_duration` (o painel grava a data): 876000h ≈ 100
+// anos ≅ o 2999-12-31 que 2 dos 3 bans manuais já usam. 'none' desbane.
+// ⚠️ O motivo vai pra `app_audit_log` (não existe coluna de motivo em profiles e este
+// PR não cria migration) — é o que permite auditar depois por que alguém foi banido.
+router.put('/usuario/:id/ativo', async (req, res) => {
+  try {
+    const uid = req.params.id;
+    const ativo = req.body?.ativo;
+    const motivo = String(req.body?.motivo || '').trim().slice(0, 500) || null;
+    if (typeof ativo !== 'boolean') return res.status(400).json({ error: 'Informe `ativo` (true ou false).' });
+    // Anti-tiro-no-pé e separação de funções · mesma régua do /role.
+    if (bloqueiaAutoEdicao(req, null)) {
+      return res.status(403).json({ error: 'Você não pode ativar/desativar a própria conta. Peça a outro administrador.' });
+    }
+    if (!(await podeMexerNoControleDeAcesso(req))) {
+      return res.status(403).json({ error: 'Só quem tem nível 5 em Permissões (ou o time de sistemas) pode ativar/desativar uma conta.' });
+    }
+
+    const { data: antes } = await supabase.from('profiles')
+      .select('id, email, active').eq('id', uid).maybeSingle();
+    if (!antes) return res.status(404).json({ error: 'Perfil não encontrado.' });
+
+    // 1) profiles.active — o portão do requireAuth
+    const { error: upErr } = await supabase.from('profiles').update({ active: ativo }).eq('id', uid);
+    if (upErr) return res.status(400).json({ error: upErr.message });
+
+    // 2) GoTrue — ban/desban. Sem isso o refresh token segue vivo e o acesso direto
+    //    ao PostgREST continua até o access token expirar.
+    let authSincronizado = true;
+    let authDetalhe = null;
+    const { error: banErr } = await supabase.auth.admin.updateUserById(uid, { ban_duration: ativo ? 'none' : '876000h' });
+    if (banErr) {
+      authSincronizado = false;
+      authDetalhe = banErr.message;
+      console.error('[permissoes] ban/desban no Auth falhou:', banErr.message);
+    }
+
+    await auditarAcesso(req, { rowId: uid, changes: { tipo: 'profile_ativo', email: antes.email || null, active: { old: antes.active ?? null, new: ativo }, ban_sincronizado: authSincronizado, motivo } });
+    bustPermissionCaches(); // zera o cache de auth por token (60s) · o corte vale na hora
+    res.json({ success: true, ativo, auth_sincronizado: authSincronizado, detail: authDetalhe });
+  } catch (e) {
+    console.error('[permissoes] ativar/desativar:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao ativar/desativar a conta' });
+  }
+});
+
 // PUT /api/permissoes/usuario/:id/areas — set user áreas
 router.put('/usuario/:id/areas', async (req, res) => {
   try {

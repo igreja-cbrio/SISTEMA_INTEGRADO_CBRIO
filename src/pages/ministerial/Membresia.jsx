@@ -934,6 +934,11 @@ export default function Membresia() {
   const [loadingVolStatus, setLoadingVolStatus] = useState(false);
   const [indicandoServir, setIndicandoServir] = useState(false);
   const [devocionalHist, setDevocionalHist] = useState(null); // { data: [], resumo: {} }
+  // varredura 2026-09: A04 — `devocionais.byMembro` agora passa por `authorizeModule('devocionais', 2)`,
+  // e quem abre esta ficha com `membresia` nível 1 toma 403. O `.catch` engolia e a aba pintava
+  // "Nenhum check-in de devocional ainda" — afirmação sobre a VIDA de uma pessoa a partir de um
+  // erro de permissão. Lista vazia e lista que NÃO CARREGOU não podem ter a mesma cara.
+  const [devocionalErro, setDevocionalErro] = useState(null);
   const [loadingDevocional, setLoadingDevocional] = useState(false);
   const [inscHist, setInscHist] = useState(null); // { itens: [], total, por_porta }
   const [loadingInsc, setLoadingInsc] = useState(false);
@@ -979,9 +984,16 @@ export default function Membresia() {
     if (!selectedMembro?.id || activeTab !== 'devocional') return;
     let cancelado = false;
     setLoadingDevocional(true);
+    setDevocionalErro(null);
     devocionais.byMembro(selectedMembro.id)
-      .then(r => { if (!cancelado) setDevocionalHist(r); })
-      .catch(() => { if (!cancelado) setDevocionalHist({ data: [], resumo: null }); })
+      .then(r => { if (!cancelado) { setDevocionalHist(r); setDevocionalErro(null); } })
+      // varredura 2026-09: A04 — guarda o motivo em vez de fingir lista vazia. `e.message` é o
+      // texto que o servidor devolveu (api.js) — inclusive o 403 do guard de nível 2.
+      .catch(e => {
+        if (cancelado) return;
+        setDevocionalHist(null);
+        setDevocionalErro(e?.message || 'Não foi possível carregar os check-ins de devocional.');
+      })
       .finally(() => { if (!cancelado) setLoadingDevocional(false); });
     return () => { cancelado = true; };
   }, [selectedMembro?.id, activeTab]);
@@ -1205,6 +1217,7 @@ export default function Membresia() {
     setShowContribForm(false);
     setVolStatus(null);
     setDevocionalHist(null);
+    setDevocionalErro(null); // varredura 2026-09: A04 — erro da ficha anterior não pode vazar pra próxima pessoa.
     setInscHist(null);
     setWifiHist(null);
     setTimeline(null);
@@ -2933,6 +2946,13 @@ export default function Membresia() {
                   {loadingDevocional ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8, color: C.text3, fontSize: 13, padding: '24px 0', justifyContent: 'center' }}>
                       <Loader2 style={{ width: 16, height: 16 }} className="animate-spin" /> Carregando check-ins…
+                    </div>
+                  ) : devocionalErro ? (
+                    /* varredura 2026-09: A04 — estado de ERRO no lugar do vazio mudo. Sem isto, 403 do
+                       guard de devocionais (nível 2) se lia como "esta pessoa nunca fez devocional". */
+                    <div style={{ padding: 14, borderRadius: 12, background: '#f59e0b18', border: '1px solid #f59e0b40' }}>
+                      <div style={{ fontSize: 13, color: C.text, fontWeight: 600 }}>Não foi possível carregar os check-ins</div>
+                      <div style={{ fontSize: 12, color: C.text2, marginTop: 4 }}>{devocionalErro}</div>
                     </div>
                   ) : !devocionalHist || devocionalHist.data?.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: '32px 0', color: C.text3 }}>

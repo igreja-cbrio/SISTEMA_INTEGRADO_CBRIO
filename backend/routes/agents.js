@@ -957,12 +957,21 @@ router.post('/diagnosticos/resolver', authorize('admin', 'diretor'), async (req,
 });
 
 // GET /api/agents/runs — lista runs (filtros: agentType, status, limit)
-router.get('/runs', async (req, res) => {
+// varredura 2026-09: AG-01 rastro do agente legível por qualquer autenticado — o `router.use(requireDev)` acima já fecha, mas o guard por rota espelha /queue e /log e sobrevive a rota nova declarada ANTES daquela linha.
+router.get('/runs', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const { agentType, status, limit } = req.query;
+    // varredura 2026-09: AG-01 `summary`, `findings` e `config` saem CRUS daqui — são os campos
+    // onde o achado mediu CPF (6 runs). Esta rota devolve até 100 runs de uma vez e tem o MESMO
+    // gate do detalhe: redigir só o detalhe não protegeria nada, só criaria assimetria.
+    // ⚠️ Conferido antes de tirar: NENHUMA tela consome estes campos. `agents.runs`,
+    // `agents.runDetail`, `agents.runSteps`, `agents.stats` e `agents.scores` estão declarados em
+    // `src/api.js` (L1288-1298) e não têm UM chamador em `src/`, `e2e/`, `scripts/`,
+    // `agent-worker/` nem `api/` — o `sistemaApi.runs` de SistemaV1Panels.jsx:208 é outro
+    // endpoint (`sistema.runs` → `/sistema/jobs/runs`), não este.
     let q = supabase
       .from('agent_runs')
-      .select('id, agent_type, status, summary, findings, config, tokens_input, tokens_output, cost_usd, created_at, completed_at, error')
+      .select('id, agent_type, status, tokens_input, tokens_output, cost_usd, created_at, completed_at, error')
       .order('created_at', { ascending: false })
       .limit(Math.min(parseInt(limit) || 30, 100));
     if (agentType) q = q.eq('agent_type', agentType);
@@ -977,11 +986,18 @@ router.get('/runs', async (req, res) => {
 });
 
 // GET /api/agents/runs/:id — detalhe de uma run
-router.get('/runs/:id', async (req, res) => {
+// varredura 2026-09: AG-01 rastro do agente legível por qualquer autenticado — mesmo guard por rota do /queue e do /log.
+router.get('/runs/:id', authorize('admin', 'diretor'), async (req, res) => {
   try {
     if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
+    // varredura 2026-09: AG-01 `select('*')` devolvia `config`, `findings` E `summary` crus — os 3
+    // campos onde o achado mediu CPF (6 runs). Lista explícita, EXATAMENTE as mesmas colunas do
+    // /runs: as duas rotas têm o mesmo gate, então quem alcança uma alcança a outra e qualquer
+    // assimetria entre elas é teatro. Nenhuma tela consome os 3 (conferência no /runs acima).
     const { data, error } = await supabase
-      .from('agent_runs').select('*').eq('id', req.params.id).single();
+      .from('agent_runs')
+      .select('id, agent_type, status, tokens_input, tokens_output, cost_usd, created_at, completed_at, error')
+      .eq('id', req.params.id).single();
     if (error || !data) return res.status(404).json({ error: 'Run não encontrada' });
     res.json(data);
   } catch (e) {
@@ -990,7 +1006,8 @@ router.get('/runs/:id', async (req, res) => {
 });
 
 // GET /api/agents/runs/:id/steps — passos de uma run
-router.get('/runs/:id/steps', async (req, res) => {
+// varredura 2026-09: AG-01 `response_text` tem 15 CPFs válidos e 59 telefones — guard por rota, como /queue e /log.
+router.get('/runs/:id/steps', authorize('admin', 'diretor'), async (req, res) => {
   try {
     if (!isValidUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
     const { data, error } = await supabase
@@ -1022,7 +1039,8 @@ router.post('/runs/:id/cancel', authorize('admin', 'diretor'), async (req, res) 
 });
 
 // GET /api/agents/stats — totais agregados (execuções, tokens, custo)
-router.get('/stats', async (req, res) => {
+// varredura 2026-09: AG-01 custo e volume das execuções do agente — guard por rota, como /queue e /log.
+router.get('/stats', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const sinceDays = parseInt(req.query.days) || 30;
     const since = new Date(Date.now() - sinceDays * 86400000).toISOString();
@@ -1045,7 +1063,8 @@ router.get('/stats', async (req, res) => {
 });
 
 // GET /api/agents/scores — histórico de score por agent_type
-router.get('/scores', async (req, res) => {
+// varredura 2026-09: AG-01 lê `config` e `findings` das runs (só devolve contagem) — guard por rota, como /queue e /log.
+router.get('/scores', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const sinceDays = parseInt(req.query.days) || 90;
     const since = new Date(Date.now() - sinceDays * 86400000).toISOString();

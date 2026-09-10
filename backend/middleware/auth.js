@@ -64,6 +64,17 @@ const ROUTE_MODULE_MAP = {
   // 'batismo')` que os guards de ESCRITA já usam.
   'batismo-leitura': ['integracao', 'batismo'],
   'voluntariado': ['voluntariado'],
+  // varredura 2026-09 (A04) · check-in devocional (`mem_devocionais`, 43 linhas). As DUAS
+  // portas valem porque a tela tem dois donos medidos: o DevocionalAdmin/DevocionalPanel
+  // mora na aba Devocionais de Cuidados (src/pages/ministerial/Cuidados.tsx:2706) e o
+  // histórico por pessoa é lido na ficha da Membresia (Membresia.jsx:982) — gatear só por
+  // `cuidados` daria 403 numa tela que a Membresia sempre pôde abrir.
+  // ⚠️ Chave PRÓPRIA e ESTREITA de propósito: NÃO usar a chave ampla `membros` (12 módulos)
+  // — prática devocional é convicção religiosa (LGPD art. 11) e produção/marketing/logística
+  // não têm o que ver ali. Leitura NOMINAL é nível 2 (nível 1 fica só nos agregados
+  // /kpis e /stats): com nível 1 e `membresia` na lista, o atalho de `role === 'voluntario'`
+  // (auth.js:683 · exige nivelMinimo <= 1) liberaria o histórico de qualquer membro.
+  'devocionais':  ['cuidados', 'membresia'],
   'membresia':    ['membresia'],
   // Censo/pesquisas. Nível 1 = agregado; 2 = resposta nominal (mesma régua da
   // membresia). Sem esta entrada, moduleNames viria vazio e o guard cairia no
@@ -315,6 +326,43 @@ async function authenticate(req, res, next) {
       ...corpo,
       detail: error?.message || 'getUser retornou null · token pode ser de outro projeto Supabase',
     });
+  }
+
+  // varredura 2026-09: AUTH-02 `banned_until` do GoTrue era ignorado pelo sistema inteiro (0 ocorrências no repo) — banir alguém pelo painel do Supabase, que é o gesto natural de quem opera o Auth, NÃO desativava o profile e a pessoa continuava passando por aqui.
+  // ⚠️ São dois cadastros de banimento: `auth.users.banned_until` (GoTrue) e `profiles.active` (checado logo abaixo). Hoje os 3 banidos só não têm acesso por coincidência — os 3 também estão com active=false. Daqui em diante o ban do GoTrue vale sozinho.
+  //
+  // ⚠️⚠️ POR QUE `auth.admin.getUserById` E NÃO O `user` QUE O `getUser` ACABOU DE
+  // DEVOLVER — MEDIDO em produção (09/2026): `GET /auth/v1/user`, que é o endpoint
+  // que `supabase.auth.getUser(token)` chama, NÃO traz o campo `banned_until`. Ele
+  // só existe nos endpoints ADMIN (`/auth/v1/admin/users` e `/auth/v1/admin/users/:id`)
+  // e, mesmo lá, SÓ aparece quando não é nulo (conferido nos 3 banidos de verdade).
+  // A primeira versão desta trava lia `user.banned_until`: dava `undefined` sempre,
+  // `Date.parse(undefined)` é NaN e ela NUNCA disparava — inerte, e inerte em silêncio.
+  // ⚠️ CAMPO AUSENTE = NÃO BANIDO, e é o caso normal (o GoTrue omite o nulo).
+  // ⚠️ CUSTO: só no CACHE-MISS. O cache de auth por token (60s · linha ~289) responde
+  // antes daqui, então isto é ~1 chamada admin extra por usuário por minuto.
+  // ⚠️⚠️ NÃO É FAIL-CLOSED, DE PROPÓSITO: se a chamada admin falhar (rede, GoTrue fora),
+  // o login SEGUE. `profiles.active` (logo abaixo) continua sendo o portão principal, e
+  // trancar a igreja inteira num soluço do GoTrue seria estrago maior que um banido
+  // passar até o serviço voltar. O `console.warn` é alto pra isso não virar silêncio.
+  // ⚠️ O ban só é visto no próximo cache-miss: quem já estava dentro passa por até 1
+  // minuto. `bustPermissionCaches()` zera na hora, e `PUT /permissoes/usuario/:id/ativo`
+  // (permissoes.js) o chama — mas ⚠️ HOJE ESSA ROTA NÃO TEM CAMINHO PELO PRODUTO:
+  // varredura 2026-09 não achou chamador em `src/api.js` nem botão em tela nenhuma. Ou
+  // seja, banir alguém segue sendo gesto no painel do Supabase, e o corte leva até 1
+  // minuto pra valer. Ligar a tela é o que torna o "zera na hora" alcançável.
+  let banidoAte = null;
+  try {
+    const { data: contaAuth, error: erroAdmin } = await supabase.auth.admin.getUserById(user.id);
+    if (erroAdmin) throw erroAdmin;
+    banidoAte = contaAuth?.user?.banned_until || null;
+  } catch (e) {
+    console.warn('[AUTH] ⚠️ Não deu pra conferir banimento no GoTrue (seguindo só com profiles.active):', e?.message || e);
+  }
+  const banidoAteMs = banidoAte ? Date.parse(banidoAte) : NaN;
+  if (!Number.isNaN(banidoAteMs) && banidoAteMs > Date.now()) {
+    console.warn('[AUTH] Conta banida no Auth tentou entrar:', user.email, '· banned_until =', banidoAte);
+    return res.status(403).json({ error: 'Acesso suspenso', reason: 'banned_user', detail: `banned_until=${banidoAte}` });
   }
 
   // Busca perfil do usuário (role, name, área etc.)

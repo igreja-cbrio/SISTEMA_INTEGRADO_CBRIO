@@ -1219,7 +1219,10 @@ async function nsmSinaisCohorte(pessoas) {
   for (const part of nsmChunk(ids, 150)) {
     const [g, dev, j, ac, vol, con] = await Promise.all([
       supabase.from('mem_grupo_membros').select('membro_id').is('deleted_at', null).in('membro_id', part).is('saiu_em', null),
-      supabase.from('mem_devocionais').select('membro_id, data_devocional').in('membro_id', part).eq('concluida', true).not('data_devocional', 'is', null),
+      // varredura 2026-09: A04 — o DELETE de mem_devocionais virou soft-delete; sem `deleted_at`
+      // o sinal "investir" da NSM continuaria aceso pra quem apagou o devocional, enquanto os
+      // vizinhos desta mesma Promise.all (grupos, jornada180, voluntários) já filtram.
+      supabase.from('mem_devocionais').select('membro_id, data_devocional').is('deleted_at', null).in('membro_id', part).eq('concluida', true).not('data_devocional', 'is', null),
       supabase.from('cui_jornada180').select('membro_id, data_encontro, presente').is('deleted_at', null).in('membro_id', part).not('data_encontro', 'is', null),
       supabase.from('cui_acompanhamentos').select('membro_id, data_inicio').in('membro_id', part).not('data_inicio', 'is', null),
       supabase.from('mem_voluntarios').select('membro_id, desde').is('deleted_at', null).in('membro_id', part).is('ate', null).not('desde', 'is', null),
@@ -1769,6 +1772,10 @@ async function calcularSerie(valor, dado, { inicio, fim, culto, granularidade })
     const data = await fetchAllPaginado('mem_devocionais', (q) => q
       .select('data_devocional')
       .eq('concluida', true)
+      // varredura 2026-09: A04 — o DELETE de mem_devocionais virou soft-delete; sem `deleted_at`
+      // a série investir/devocionais nunca desceria: o ponto do dia continuaria contando o
+      // check-in apagado, e o /stats de devocionais.js (que filtra) mostraria outro número.
+      .is('deleted_at', null)
       .gte('data_devocional', inicio).lte('data_devocional', fim)
       .order('id'));
     (data || []).forEach(r => add(r.data_devocional, 1));

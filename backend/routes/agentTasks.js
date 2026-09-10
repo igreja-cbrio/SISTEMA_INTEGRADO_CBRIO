@@ -126,6 +126,31 @@ async function registrarEvento(tarefaId, evento, detalhe = {}, criadoPor = null)
   });
 }
 
+// varredura 2026-09: AG-05 versionar a job description não deixava trilha de QUEM trocou — `created_by` só vive na linha nova e o backend usa service_role (auth.uid() NULL ⇒ o trigger de audit não tem autor).
+// ⚠️ Vai em `app_audit_log` (imutável · só super-admin lê) e é BEST-EFFORT: falhar a trilha não pode derrubar o versionamento que já gravou.
+// ⚠️ NÃO usa `agent_task_events`: `tarefa_id` é FK NOT NULL pra `agent_tarefas`, e instrução não é tarefa.
+const MAX_TRILHA_INSTRUCAO = 8000; // teto por lado do diff — prompt longo não pode inflar o audit log
+async function registrarTrilhaInstrucao(req, { agentKey, linha, versaoAnterior, rawAnterior, rawNovo }) {
+  try {
+    const corta = (t) => (typeof t === 'string' ? t.slice(0, MAX_TRILHA_INSTRUCAO) : null);
+    await supabase.from('app_audit_log').insert({
+      table_name: 'agent_instrucoes',
+      row_id: String(linha?.id ?? `${agentKey}:v${linha?.versao ?? '?'}`),
+      action: 'INSERT',
+      user_id: req.user?.id ?? null,
+      user_email: req.user?.email ?? null,
+      changes: {
+        agent_key: agentKey,
+        versao: { old: versaoAnterior ?? null, new: linha?.versao ?? null },
+        raw_instrucoes: { old: corta(rawAnterior), new: corta(rawNovo) },
+        raw_truncado: (rawAnterior || '').length > MAX_TRILHA_INSTRUCAO || (rawNovo || '').length > MAX_TRILHA_INSTRUCAO,
+      },
+    });
+  } catch (e) {
+    console.warn('[agentTasks] trilha da instrução não gravada:', e.message);
+  }
+}
+
 async function notificarTransicao(tarefa, status) {
   try {
     await notificar({
@@ -219,9 +244,10 @@ router.put('/team/:agentKey/instrucoes', async (req, res) => {
     if (!raw && Object.keys(estruturado).length === 0) {
       return err(res, new Error('Envie as instruções (raw) ou o estruturado'));
     }
+    // varredura 2026-09: AG-05 — lê também `raw_instrucoes` da versão anterior pra a trilha guardar o diff (era só `versao`).
     const { data: last } = await supabase
       .from('agent_instrucoes')
-      .select('versao')
+      .select('versao, raw_instrucoes')
       .eq('agent_key', req.params.agentKey)
       .is('deleted_at', null)
       .order('versao', { ascending: false })
@@ -236,9 +262,19 @@ router.put('/team/:agentKey/instrucoes', async (req, res) => {
       raw_instrucoes: raw,
       estruturado,
       ativo: true,
+      // varredura 2026-09: AG-05 autor da versão — `req.user.id` é o alias de `user.id` montado no `req.user` do `authenticate` (`id: user.id, // alias amigavel`, hoje em auth.js:541 · o número anda, o rótulo não); NUNCA deixar cair pra null aqui.
       created_by: req.user.id,
     }).select().single();
     if (error) return err(res, error);
+
+    // varredura 2026-09: AG-05 trilha com diff do raw — awaited, porque o serverless congela no res.json e a trilha se perderia.
+    await registrarTrilhaInstrucao(req, {
+      agentKey: req.params.agentKey,
+      linha: data,
+      versaoAnterior: last?.versao ?? null,
+      rawAnterior: last?.raw_instrucoes ?? null,
+      rawNovo: raw,
+    });
 
     await notificar({
       modulo: 'assistente-ia',

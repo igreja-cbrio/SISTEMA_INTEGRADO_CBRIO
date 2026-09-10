@@ -327,7 +327,10 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
     const visitas = dashBucketsIntervalo(inicio, granTrend, fim).map(b => ({ periodo: b, ...(visMap.get(b) || zeroVis()) }));
 
     // ── Devocional · leitores distintos por bucket ──
-    const devoc = await fetchAll('mem_devocionais', 'membro_id, data_devocional', (q) => ateFiltro(q.gte('data_devocional', inicio), 'data_devocional'));
+    // varredura 2026-09: A04 — o DELETE de mem_devocionais virou soft-delete; sem `deleted_at`
+    // o gráfico de leitores continuava contando check-in apagado, e a mesma pessoa aparecia
+    // como leitora num painel enquanto sumia da lista do módulo de devocionais.
+    const devoc = await fetchAll('mem_devocionais', 'membro_id, data_devocional', (q) => ateFiltro(q.gte('data_devocional', inicio).is('deleted_at', null), 'data_devocional'));
     const devMap = new Map();
     for (const d of devoc) {
       const b = dashBucket(d.data_devocional, granDevoc);
