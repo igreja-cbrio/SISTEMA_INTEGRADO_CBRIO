@@ -154,9 +154,22 @@ protegido, ANTES do `processarFila` pra sair na mesma rodada). **Sem cron novo**
   (`.is(null)`) — duas rodadas concorrentes, uma passa.
 - **Template `visitante_pesquisa_satisfacao`** (env
   `WHATSAPP_TEMPLATE_VISITANTE_PESQUISA` só override) · `{{1}}` 1º nome ·
-  **5 botões de resposta rápida** (`1 · Ruim` … `5 · Excelente`,
-  `utils/respostaPesquisaVisitante.BOTOES_NOTA`). Telefone vai digits-only
-  (quem põe o 55 é o remetente).
+  **um botão de FLUXO "Avaliar minha visita"** que abre o formulário nativo
+  (`backend/whatsapp-flows/visitante-avaliacao.json` · RadioButtonsGroup com
+  estrelas 1–5 + TextArea opcional · tela terminal, `complete` com
+  `{nota, comentario}`). Decisão do Marcos (10/09, depois de ver o "ver todas as
+  opções" que 5 quick-replies produzem): formulário, não botões. Telefone vai
+  digits-only (quem põe o 55 é o remetente).
+- ⚠️⚠️ **A resposta do Flow é `nfm_reply` e o `processarFlowReply` do webhook
+  DESCARTA todo nfm_reply** (coleta do bot aposentada em 13/08). Por isso
+  `processarRespostaVisitante` roda ANTES dele no laço do webhook e trata o
+  nfm_reply primeiro (`interpretarRespostaFlowVisitante`: `nota` 1..5 obrigatória,
+  senão "não é nosso" e devolve false). Nota + comentário gravados de uma vez
+  (UPDATE condicionado · a 1ª vale; 2º envio só acrescenta comentário). O envio
+  do template NÃO manda `components` do botão (Flow estático · `flow_token`
+  "unused"); a amarração é o `context.id` ⇒ `whatsapp_envios.message_id`, com
+  fallback no único disparo em 72h. Botão quick-reply/dígito/texto continuam
+  aceitos (fallback).
 - ⚠️⚠️ **A RESPOSTA CHEGA PELO PRÓPRIO WHATSAPP (10/09 · Marcos: "não quero
   que a pessoa clique em link")**: `services/visitantePesquisaResposta.js`,
   ligado no webhook logo DEPOIS do handler da escala. O elo é o `context.id`
@@ -223,9 +236,12 @@ café na cafeteria não é da área ministerial.
 ### ⏳ Pendente de GENTE (sem isto a pesquisa não sai)
 
 1. **Aplicar a migration** `20260909120000` (SQL colado na conversa).
-2. **Criar o template `visitante_pesquisa_satisfacao` na Meta** (MARKETING · pt_BR ·
-   `{{1}}` nome · **5 quick-replies** com os textos EXATOS de `BOTOES_NOTA`) —
-   o corpo pode ser quente; o que a régua lê é o dígito inicial do botão.
+2. **Criar o FLOW na Meta** (colar `backend/whatsapp-flows/visitante-avaliacao.json`,
+   publicar) **e o template `visitante_pesquisa_satisfacao`** (MARKETING · pt_BR ·
+   `{{1}}` nome · botão do tipo **Fluxo** "Avaliar minha visita" → tela
+   `AVALIACAO`, ação `navigate`). ⚠️ Em junho a publicação de Flows esteve
+   travada por integridade nesta WABA — se travar de novo, o fallback é o
+   template com 3 quick-replies (a régua já aceita).
 3. **Ligar o switch** `visitante_pesquisa` em Comunicação → Envios → Automáticos.
 4. **Imprimir os cartazes** pela aba Cartazes (QR) de `/visitantes` — ou gerar
    QR dinâmico por local em Links e QR (os 5 destinos já estão no catálogo).

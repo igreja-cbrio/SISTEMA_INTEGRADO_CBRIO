@@ -2,6 +2,8 @@
 // Réguas puras da porta pública /visitante (09/09/2026).
 const assert = require('node:assert/strict');
 const R = require('./visitanteRegras');
+const fs = require('node:fs');
+const path = require('node:path');
 
 // ⚠️ Fuso FORÇADO: o gate roda em UTC e a régua do "culto acabou" mistura dia
 // BRT + hora BRT — teste que não força TZ não guarda nada.
@@ -127,11 +129,23 @@ assert.equal(R.primeiroNome(''), 'Olá');
   assert.match(P.textoObrigado('Ana', 5), /Ana/);
   assert.match(P.textoObrigado('Ana', 2), /melhorar/i);
   assert.ok(P.textoObrigado('', 4).length > 10);
+  // o FORMULÁRIO (Flow): response_json chega como STRING
+  assert.deepEqual(P.interpretarRespostaFlowVisitante('{"nota":"4","comentario":" Adorei o louvor ","flow_token":"unused"}'), { nota: 4, comentario: 'Adorei o louvor' });
+  assert.deepEqual(P.interpretarRespostaFlowVisitante({ nota: 5 }), { nota: 5, comentario: null });
+  assert.deepEqual(P.interpretarRespostaFlowVisitante({ nota: '2', comentario: '' }), { nota: 2, comentario: null });
+  assert.equal(P.interpretarRespostaFlowVisitante({ nota: '7' }), null, 'fora de 1..5 não é nosso');
+  assert.equal(P.interpretarRespostaFlowVisitante({ comentario: 'x' }), null, 'sem nota não é nosso');
+  assert.equal(P.interpretarRespostaFlowVisitante('{lixo'), null);
+  assert.equal(P.interpretarRespostaFlowVisitante(null), null);
+  assert.equal(P.interpretarRespostaFlowVisitante({ nota: '3', comentario: 'a'.repeat(2000) }).comentario.length, 1000, 'comentário capado em 1000');
+  // o JSON do Flow no repo é válido e os ids das opções são as notas 1..5
+  const flow = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'whatsapp-flows', 'visitante-avaliacao.json'), 'utf8'));
+  const radio = flow.screens[0].layout.children.find((c) => c.type === 'Form').children.find((c) => c.name === 'nota');
+  assert.deepEqual(radio['data-source'].map((o) => o.id).sort(), ['1', '2', '3', '4', '5']);
+  assert.equal(flow.screens[0].terminal, true);
 }
 
 // ── Guarda estática: utils/ não pode puxar Supabase (o gate roda sem node_modules) ──
-const fs = require('node:fs');
-const path = require('node:path');
 for (const f of ['visitanteRegras.js', 'visitanteToken.js', 'respostaPesquisaVisitante.js']) {
   const src = fs.readFileSync(path.join(__dirname, f), 'utf8');
   assert.ok(!/require\(['"]\.\.\/utils\/supabase|require\(['"]\.\/supabase|@supabase/.test(src), `${f} não pode carregar Supabase`);
