@@ -152,14 +152,36 @@ protegido, ANTES do `processarFila` pra sair na mesma rodada). **Sem cron novo**
   o dia UTC e continua certo (tem teste).
 - **Dedup = `pesquisa_enviada_em` carimbado ANTES de enfileirar, condicionado**
   (`.is(null)`) — duas rodadas concorrentes, uma passa.
-- **Template `visitante_pesquisa_satisfacao`** (env
-  `WHATSAPP_TEMPLATE_VISITANTE_PESQUISA` só override) · `{{1}}` 1º nome ·
-  **um botão de FLUXO "Avaliar minha visita"** que abre o formulário nativo
-  (`backend/whatsapp-flows/visitante-avaliacao.json` · RadioButtonsGroup com
-  estrelas 1–5 + TextArea opcional · tela terminal, `complete` com
-  `{nota, comentario}`). Decisão do Marcos (10/09, depois de ver o "ver todas as
-  opções" que 5 quick-replies produzem): formulário, não botões. Telefone vai
-  digits-only (quem põe o 55 é o remetente).
+- ⚠️⚠️ **Template `visitante_pesquisa_satisfacao`** (env
+  `WHATSAPP_TEMPLATE_VISITANTE_PESQUISA` só override) · MARKETING · pt_BR ·
+  **`{{1}}` 1º nome · `{{2}}` LINK**. Telefone digits-only (quem põe o 55 é o
+  remetente).
+- ⚠️⚠️ **VOLTOU A SER LINK (11/09/2026) — e a página tem CINCO CARINHAS que
+  respondem em UM TOQUE.** A trajetória, pra ninguém "consertar" de volta:
+  link (09/09) → quick-reply (10/09, *"não quero que a pessoa clique em link"*)
+  → Flow (10/09, *"depois da 2ª opção ele põe ver todas as opções"*) → **link de
+  novo (11/09)**, depois de a Meta bloquear Flows por 3 meses e de ele não
+  gostar do desenho com botões: *"não gostei da lógica com botões no whatsapp
+  não… lá 5 carinhas de muito feliz a muito triste sem legenda, só clicar mesmo
+  e comentário opcional"*.
+- ⚠️ **UM TOQUE grava a nota** (`src/pages/public/VisitanteAvaliar.tsx`): sem
+  número, sem legenda visual, sem botão de enviar. O **comentário é o 2º passo**,
+  opcional, na tela de agradecimento. Não voltar a exigir "escolha e confirme" —
+  o segundo passo é onde se perde gente, e a nota é o dado que precisamos.
+  ⚠️ "Sem legenda" é só VISUAL: cada carinha tem `aria-label`, senão a página
+  fica inutilizável em leitor de tela.
+- ⚠️ **O POST `/avaliar/:token` tem DOIS usos**: com `nota` é a resposta (vale
+  UMA vez); **só com `comentario` acrescenta depois**, condicionado a
+  `pesquisa_respondida_em IS NOT NULL` **e** `pesquisa_comentario IS NULL` —
+  comentário sem resposta anterior é RECUSADO (texto solto que ninguém sabe ler),
+  e reenvio não sobrescreve o que já veio. O GET devolve `tem_comentario`
+  booleano; ⚠️ **o TEXTO do comentário nunca sai no GET** — o link pode ter sido
+  encaminhado.
+- ⚠️⚠️ **Sem link resolvido, a pessoa é PULADA e o carimbo é DESFEITO**
+  (`pesquisa_enviada_em` volta a null, `sem_link` no resumo): template de 2
+  variáveis com 1 parâmetro é recusa da Meta, e 200 mensagens recusadas uma a
+  uma é pior que não mandar. O link vai como **variável de CORPO**, nunca botão
+  de URL.
 - ⚠️⚠️ **A resposta do Flow é `nfm_reply` e o `processarFlowReply` do webhook
   DESCARTA todo nfm_reply** (coleta do bot aposentada em 13/08). Por isso
   `processarRespostaVisitante` roda ANTES dele no laço do webhook e trata o
@@ -179,13 +201,20 @@ protegido, ANTES do `processarFila` pra sair na mesma rodada). **Sem cron novo**
   JSON sem `validation_errors`. Não é JSON, não é versão, não é endpoint (Flow
   sem `data_api_version` não exige endpoint/chave pública — a resposta do
   suporte da Meta sobre isso era pro outro tipo de Flow). Nada do nosso lado
-  destrava. **Decisão do Marcos (10/09): a pesquisa SAI POR BOTÕES de resposta
-  rápida enquanto a Meta não libera** (template Marketing · `{{1}}` nome ·
-  botões cujo texto COMEÇA pelo dígito, ex. `5 · Excelente` · `4 · Bom` ·
-  `2 · Pode melhorar`, ou os 5 de `BOTOES_NOTA`) — o webhook já aceita as duas
-  formas, então a troca pro Flow depois é só de template. Chamado aberto na Meta
-  (fbtrace `ASQ8CJ76Dqk5nrAdsRck9S1`). O Flow `1052512134431371` fica em DRAFT
-  na conta, pronto pra publicar quando liberarem.
+  destrava. ⚠️ **EM 11/09 os TRÊS canais da Meta se mostraram fechados**:
+  Direct Support (agente automático, não escala, e mandou criar campanha de
+  anúncio — requisito inventado), Fórum (*"Erro ao realizar a consulta"* em 4
+  variações, inclusive corpo de 3 linhas) e a Ferramenta de Bug (botão "Avançar"
+  morto, e **WhatsApp não aparece entre os produtos do app**). Testadas e
+  MORTAS: 2FA do portfólio · verificação em duas etapas do número (ativada pela
+  API porque a UI do WhatsApp Manager está QUEBRADA — recusa com "Erro
+  desconhecido" e a mesma chamada por API devolve `{"success":true}`) · conta de
+  anúncios com cartão · verificação de empresa. Nenhuma destravou.
+  ⇒ **Decisão do Marcos (11/09): a pesquisa sai por LINK com carinhas e a Meta
+  fica pra lá.** O Flow `1052512134431371` fica em DRAFT. Hipótese viva (thread
+  1498901451889348 do fórum): é *trust-building* sem override manual — então
+  **subir volume real de mensagem é o que pode destravar**, e publicar a pesquisa
+  é o caminho, não o contrário.
 - ⚠️⚠️ **A RESPOSTA CHEGA PELO PRÓPRIO WHATSAPP (10/09 · Marcos: "não quero
   que a pessoa clique em link")**: `services/visitantePesquisaResposta.js`,
   ligado no webhook logo DEPOIS do handler da escala. O elo é o `context.id`
@@ -225,9 +254,26 @@ protegido, ANTES do `processarFila` pra sair na mesma rodada). **Sem cron novo**
 | tela do módulo (Resgatar voucher · Visitas · Cartazes/QR) | `src/pages/Visitantes.tsx` |
 | catálogo dos cartazes (5 entradas · `chamada_qr` = texto do cartaz) | `routes/links.js` `OUTROS_FORMULARIOS` |
 
+### ⚠️⚠️ O MÓDULO FOI DESFEITO (11/09/2026 · Marcos: *"não queria isso"*)
+
+O visitante **não tem módulo próprio**. Ele vive em **Cuidados → Próximos
+passos**, etiquetado, e a ficha mostra a **carinha + nota + comentário** da
+pesquisa. Saíram: o item do menu (`NAV_ITEMS` do AppShell) e a entrada da busca
+⌘K — os dois lugares ficaram com comentário dizendo por quê.
+
+⚠️⚠️ **A rota `/visitantes` CONTINUA existindo, sem menu, e o módulo de
+permissão `visitantes` também** — não é sobra: quem fica no balcão da
+**CAFETERIA** resgata voucher e **não pode ter `cuidados`** (é lá que mora a
+fila pastoral). A cafeteria abre o endereço direto, com `visitantes` nível 2.
+A equipe usa a **aba "Visitantes" dentro do Cuidados** — MESMO componente
+(`src/components/visitantes/PainelVisitantes.tsx`, prop `embutido`).
+⚠️ No modo embutido a aba interna vive em estado LOCAL, nunca em `?tab=`: o
+Cuidados já usa esse parâmetro, e `setParams({tab})` sobrescreveria a navegação
+da tela inteira. ⚠️ Ele entra `lazy` no Cuidados porque puxa `qrcode.react`.
+
 Registro do módulo (checklist cumprido): `modulos` + matriz copiada de
-`cuidados` (migration) · `ROUTE_MODULE_MAP['visitantes']` · `NAV_ITEMS`
-(Ministerial, `module: 'visitantes'`) · `PAGES` da ⌘K · rota com `ModuleGuard` ·
+`cuidados` (migration) · `ROUTE_MODULE_MAP['visitantes']` · rota com
+`ModuleGuard` ·
 `MODULOS` do NotificacaoRegras · RLS · `whatsappOrigem.ROTULOS`
 (`cuidados.visitante_pesquisa`; o `MAPA` já cobre pelo prefixo `cuidados`).
 ⚠️ `/visitantes` é módulo **comum** no `menuAccess` (não é `area`): quem resgata
@@ -252,14 +298,10 @@ café na cafeteria não é da área ministerial.
 ### ⏳ Pendente de GENTE (sem isto a pesquisa não sai)
 
 1. **Aplicar a migration** `20260909120000` (SQL colado na conversa).
-2. **Criar o FLOW na Meta** (colar `backend/whatsapp-flows/visitante-avaliacao.json`,
-   publicar) **e o template `visitante_pesquisa_satisfacao`** (MARKETING · pt_BR ·
-   `{{1}}` nome · botão do tipo **Fluxo** "Avaliar minha visita" → tela
-   `AVALIACAO`, ação `navigate`). ⚠️⚠️ **BLOQUEADO pela Meta em 10/09**
-   (`139000/4233020`, ver acima) ⇒ **por ora o template é com QUICK-REPLIES**
-   (texto do botão começando pelo dígito da nota). O Flow segue em DRAFT na
-   conta; quando a Meta liberar, publicar e criar o template `_v2` a partir da
-   página do Flow.
+2. **Criar o template `visitante_pesquisa_satisfacao` na Meta** · MARKETING ·
+   pt_BR · **DUAS variáveis: `{{1}}` 1º nome e `{{2}}` o link**. Sem botão
+   nenhum — o link vai no corpo. ⚠️ Com 1 variável só, o envio é recusado.
+   O Flow segue em DRAFT e **não é mais o caminho** (ver o bloco do bloqueio).
 3. **Ligar o switch** `visitante_pesquisa` em Comunicação → Envios → Automáticos.
 4. **Imprimir os cartazes** pela aba Cartazes (QR) de `/visitantes` — ou gerar
    QR dinâmico por local em Links e QR (os 5 destinos já estão no catálogo).

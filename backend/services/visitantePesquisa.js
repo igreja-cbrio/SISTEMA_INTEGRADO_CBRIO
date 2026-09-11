@@ -21,19 +21,29 @@
 //  exige que remetente × catálogo × PATCH concordem neste id.
 //
 //  TEMPLATE: `visitante_pesquisa_satisfacao` (env WHATSAPP_TEMPLATE_VISITANTE_PESQUISA
-//  só como override) · {{1}} primeiro nome · **UM botão de FLUXO** ("Avaliar
-//  minha visita") que abre o formulário nativo do WhatsApp
-//  (backend/whatsapp-flows/visitante-avaliacao.json · estrelas 1–5 + comentário).
-//  A resposta chega pelo webhook como nfm_reply (context.id = o wamid desta
-//  mensagem → whatsapp_envios.message_id → ref_id = visita) e é tratada em
-//  services/visitantePesquisaResposta.js — que também aceita botão/dígito/texto
-//  (o desenho de quick-reply de 10/09 segue valendo como fallback). Decisão do
-//  Marcos (10/09): sem link. ⚠️ Template + Flow precisam ser criados/aprovados
-//  na Meta — é tarefa de GENTE. O envio NÃO manda `components` do botão
-//  (botão de Flow estático · flow_token fica "unused"); a amarração é o context.id.
+//  só como override) · MARKETING · pt_BR · **{{1}} primeiro nome · {{2}} LINK**.
+//
+//  ⚠️⚠️ VOLTOU A SER LINK (decisão do Marcos, 11/09/2026), e isso é DEFINITIVO
+//  até ele dizer o contrário. A trajetória, pra ninguém "consertar" de volta:
+//  link (09/09) → quick-reply (10/09, "não quero que clique em link") → Flow
+//  (10/09, "os 5 botões viram ver-todas-as-opções") → **link de novo (11/09)**,
+//  depois de a Meta bloquear a publicação de Flows nesta WABA por três meses
+//  (139000/4233020, com todos os health_status AVAILABLE) e de ele não gostar
+//  do desenho com botões. A página tem CINCO CARINHAS e responde em UM toque.
+//
+//  ⚠️ O link vai como VARIÁVEL DE CORPO ({{2}}), nunca como botão de URL: é o
+//  que mantém o template simples de aprovar e o que já funciona nos outros
+//  fluxos da casa (grupos). Sem link resolvido (segredo ausente) o envio é
+//  PULADO — template de 2 variáveis com 1 parâmetro é recusa da Meta, e
+//  mandar 200 mensagens pra serem recusadas uma a uma é pior que não mandar.
+//
+//  ⚠️ services/visitantePesquisaResposta.js SEGUE LIGADO como fallback: se a
+//  pessoa responder no próprio WhatsApp (dígito, "5", texto), a nota entra
+//  assim mesmo. Ele é tolerante de propósito — não removê-lo.
 // ════════════════════════════════════════════════════════════════════════════
 const { supabase } = require('../utils/supabase');
 const { pesquisaDevida, primeiroNome } = require('../utils/visitanteRegras');
+const { montarLinkPesquisa } = require('../utils/visitanteToken');
 
 const DISPARO_ID = 'visitante_pesquisa';
 const CONTEXTO = 'cuidados.visitante_pesquisa';
@@ -116,11 +126,23 @@ async function enviarPesquisasDevidas({ agora = new Date() } = {}) {
         .select('id');
       if (!marcada?.length) continue;
 
+      // ⚠️ O link é por VISITA (token HMAC). Sem segredo configurado ele vem
+      // null e a pessoa é PULADA — ver o cabeçalho. O carimbo já foi dado
+      // acima, então desmarcamos pra a próxima rodada tentar de novo.
+      const link = montarLinkPesquisa(v.id);
+      if (!link) {
+        await supabase.from('vis_visitas')
+          .update({ pesquisa_enviada_em: null, pesquisa_status: 'pendente' })
+          .eq('id', v.id).then(() => {}, () => {});
+        resumo.sem_link = (resumo.sem_link || 0) + 1;
+        continue;
+      }
+
       itens.push({
         // digits-only (DDD+número), como o totem grava: quem põe o 55 é o remetente (waSender.normalizarTelefone).
         telefone: v.telefone,
         template: TEMPLATE,
-        params: [primeiroNome(v.nome)],
+        params: [primeiroNome(v.nome), link],
         contexto: CONTEXTO,
         refId: v.id,
       });

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { hrefConversa } from '@/lib/conversas';
@@ -12,6 +12,13 @@ import AgenteBatismoNext from '../../components/AgenteBatismoNext';
 import NextConvite from '../../components/NextConvite';
 import JornadaTimeline from '../../components/jornada/JornadaTimeline';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
+// ⚠️ LAZY de propósito: o painel puxa qrcode.react (os cartazes), e quem abre
+// o Cuidados pra ver a fila pastoral não deve pagar esse chunk.
+const PainelVisitantes = lazy(() => import('../../components/visitantes/PainelVisitantes'));
+
+// As mesmas carinhas da página pública /visitante/avaliar — a ficha mostra o
+// que a pessoa efetivamente tocou, não um número que ninguém traduz.
+const CARINHA_NOTA: Record<number, string> = { 5: '\u{1F929}', 4: '\u{1F642}', 3: '\u{1F610}', 2: '\u{1F641}', 1: '\u{1F61E}' };
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -764,9 +771,17 @@ function VisitanteDetailDialog({ visitante, onClose }: { visitante: any | null; 
             <p><span className="text-muted-foreground">Culto:</span> {v.culto_nome || '—'} · {v.data_culto ? String(v.data_culto).split('-').reverse().join('/') : '—'}</p>
             <p><span className="text-muted-foreground">Cartaz:</span> {LOCAL[v.local] || v.local || '—'}</p>
             <p><span className="text-muted-foreground">Voucher da cafeteria:</span> {VOUCHER[v.voucher_status] || v.voucher_status || '—'}</p>
-            <p><span className="text-muted-foreground">Pesquisa:</span> {v.pesquisa_nota ? <><strong>{v.pesquisa_nota}</strong>/5{v.pesquisa_comentario ? <> · “{v.pesquisa_comentario}”</> : null}</> : 'sem resposta'}</p>
+            <p className="flex items-start gap-1.5">
+              <span className="text-muted-foreground">Pesquisa:</span>
+              {v.pesquisa_nota ? (
+                <span className="flex items-start gap-1.5">
+                  <span className="text-lg leading-none" title={`Nota ${v.pesquisa_nota} de 5`}>{CARINHA_NOTA[v.pesquisa_nota] || ''}</span>
+                  <span><strong>{v.pesquisa_nota}</strong>/5{v.pesquisa_comentario ? <> · “{v.pesquisa_comentario}”</> : null}</span>
+                </span>
+              ) : <span>sem resposta</span>}
+            </p>
             {!v.membro_id && <p className="text-xs text-amber-600">A pessoa não foi ligada a um cadastro (o matcher não resolveu) — conferir em Entradas.</p>}
-            <p className="text-xs text-muted-foreground pt-2">Registrada pela porta pública /visitante. A lista completa, o resgate do voucher e os QR dos cartazes ficam em <Link to="/visitantes" className="underline">Visitantes</Link>.</p>
+            <p className="text-xs text-muted-foreground pt-2">Registrada pela porta pública /visitante. O resgate do voucher e os QR dos cartazes ficam na aba <strong>Visitantes</strong>, aqui mesmo.</p>
           </div>
         )}
       </DialogContent>
@@ -2292,7 +2307,19 @@ export default function Cuidados() {
           <TabsTrigger value="convertidos">Próximos passos</TabsTrigger>
           <TabsTrigger value="devocional">Devocional</TabsTrigger>
           <TabsTrigger value="visitas">Visitas e Atendimentos</TabsTrigger>
+          <TabsTrigger value="visitantes">Visitantes</TabsTrigger>
         </TabsList>
+
+        {/* Visitantes · a porta pública /visitante. NÃO é módulo (11/09/2026):
+            quem chega pelo QR aparece em Próximos passos, etiquetado; esta aba
+            é a parte operacional — resgatar o voucher da cafeteria e imprimir
+            os cartazes. Mesmo componente que a rota /visitantes, que existe sem
+            menu pra a cafeteria (ela não pode ter o módulo cuidados). */}
+        <TabsContent value="visitantes" className="space-y-4">
+          <Suspense fallback={<p className="text-sm text-muted-foreground">Carregando…</p>}>
+            <PainelVisitantes embutido />
+          </Suspense>
+        </TabsContent>
 
         {/* Dashboard */}
         <TabsContent value="dashboard" className="space-y-5">
