@@ -190,6 +190,14 @@ não é 1 minuto).
    equivalente no `App.tsx` fica de rede de segurança.
    ⚠️ `censo.html` precisa da própria regra de `no-store` no `vercel.json`: a
    regra geral não casa caminho com ponto.
+   ⚠️⚠️ **UM IMPORT ESCONDIDO DESFAZIA METADE DO GANHO**, e só apareceu ao medir
+   o deploy: `components/ui/seletor-bairro` (a pergunta de bairro) importava
+   `cadastroPublico` de `src/api.js` e trazia supabase-js + Sentry de volta para
+   dentro do bundle público — o chunk compartilhado ainda tinha **251 KB
+   comprimidos**. O catálogo virou `bairrosPublicos()` em `lib/censoApi.js` e o
+   chunk caiu para **82 KB**; a página inteira baixa **151 KB** (era ~550 KB).
+   **LEI: numa página pública, um único `import` de `src/api.js` arrasta o ERP
+   inteiro — conferir o BUNDLE depois do deploy, não só o build local.**
 
 ### Regra operacional do domingo (não é código)
 
