@@ -29,6 +29,7 @@
     "test:alerta-culto": "node backend/services/alertaCultoPendente.test.js",
     "test:disparo-interruptor": "node backend/services/disparoInterruptor.test.js",
     "test:visitante": "node backend/utils/visitanteRegras.test.js",
+    "test:fluxo-porta": "node backend/utils/portaFluxos.test.js",
     "test:porta-ligar": "node backend/services/portaLigarEscreve.test.js",
     "test:supervisor-subarea": "node backend/services/supervisorSubarea.test.js",
     "test:checkin-janela": "node backend/services/checkinJanela.test.js",

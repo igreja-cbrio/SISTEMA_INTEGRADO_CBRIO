@@ -15,6 +15,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/ta
 // ⚠️ LAZY de propósito: o painel puxa qrcode.react (os cartazes), e quem abre
 // o Cuidados pra ver a fila pastoral não deve pagar esse chunk.
 const PainelVisitantes = lazy(() => import('../../components/visitantes/PainelVisitantes'));
+const FluxoVisitante = lazy(() => import('../../components/visitantes/FluxoVisitante'));
 
 // As mesmas carinhas da página pública /visitante/avaliar — a ficha mostra o
 // que a pessoa efetivamente tocou, não um número que ninguém traduz.
@@ -2310,7 +2311,19 @@ export default function Cuidados() {
           <TabsTrigger value="devocional">Devocional</TabsTrigger>
           <TabsTrigger value="visitas">Visitas e Atendimentos</TabsTrigger>
           <TabsTrigger value="visitantes">Visitantes</TabsTrigger>
+          <TabsTrigger value="fluxo">Fluxo da porta</TabsTrigger>
         </TabsList>
+
+        {/* FLUXO DA PORTA (11/09/2026) · "o que a igreja deve fazer com quem
+            entrou, até quando, e se foi feito". Começa com UMA porta, a do
+            visitante; a régua (utils/portaFluxos) já nasce genérica pra receber
+            convertido e Next depois. ⚠️ lazy porque a aba é pesada e quase
+            ninguém abre ela primeiro. */}
+        <TabsContent value="fluxo" className="space-y-4">
+          <Suspense fallback={<div className="text-sm text-muted-foreground">Carregando…</div>}>
+            <FluxoVisitante />
+          </Suspense>
+        </TabsContent>
 
         {/* Visitantes · a porta pública /visitante. NÃO é módulo (11/09/2026):
             quem chega pelo QR aparece em Próximos passos, etiquetado; esta aba

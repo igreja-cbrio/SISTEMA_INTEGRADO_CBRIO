@@ -4809,4 +4809,10 @@ export const visitantes = {
   // ponte com Próximos passos (tela de Cuidados)
   cuidados: (params) => get('/visitantes/cuidados' + (params ? '?' + new URLSearchParams(params) : '')),
   atualizarCuidados: (id, data) => patch(`/visitantes/cuidados/${id}`, data),
+  // FLUXO DA PORTA (11/09/2026) · o que a igreja deve fazer com quem entrou.
+  // ⚠️ O estado vem CALCULADO do servidor (utils/portaFluxos); a tela não
+  // recalcula prazo nem atraso — duas réguas divergiriam no primeiro feriado.
+  fluxo: (params) => get('/visitantes/cuidados/fluxo' + (params ? '?' + new URLSearchParams(params) : '')),
+  encerrarFluxo: (id, data) => post(`/visitantes/cuidados/${id}/desfecho`, data),
+  reabrirFluxo: (id) => del(`/visitantes/cuidados/${id}/desfecho`),
 };

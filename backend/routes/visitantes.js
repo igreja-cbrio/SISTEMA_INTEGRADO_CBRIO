@@ -16,6 +16,8 @@ const { supabase } = require('../utils/supabase');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { resolverJanelaPeriodo, rotuloJanela } = require('../utils/janelaPeriodo');
 const { LOCAIS, normalizarCodigoVoucher, NOTA_MAX } = require('../utils/visitanteRegras');
+const { fluxoDaPorta, estadoDoFluxo, adesaoDoFluxo, ENCAMINHAMENTOS, DESFECHOS } = require('../utils/portaFluxos');
+const { acoesPorRef, registrarDesfecho, apagarDesfecho } = require('../services/fluxoPortaAcoes');
 
 router.use(authenticate);
 
@@ -236,6 +238,99 @@ router.get('/cuidados', authorizeModule('cuidados', 1), async (req, res) => {
   } catch (e) {
     console.error('[visitantes GET /cuidados]', e.message);
     res.status(500).json({ error: 'Não foi possível carregar os visitantes.', detalhe: e.message });
+  }
+});
+
+// ── FLUXO DA PORTA (11/09/2026) ─────────────────────────────────────────────
+// "o que a igreja deve fazer com quem entrou, até quando, e se foi feito".
+// ⚠️ O estado NÃO vem do banco: é calculado por utils/portaFluxos a partir das
+// colunas que a visita já tem + as ações humanas em flx_acoes. Uma verdade só.
+const PORTA = 'visitante';
+
+router.get('/cuidados/fluxo', authorizeModule('cuidados', 1), async (req, res) => {
+  try {
+    const j = resolverJanelaPeriodo({ ...req.query, diasValidos: [7, 30, 90, 180, 365], diasPadrao: 30 });
+    const linhas = await lerVisitas(j);
+    const acoes = await acoesPorRef(PORTA, linhas.map((v) => v.id));
+    const agora = new Date();
+    const itens = linhas.map((v) => {
+      const estado = estadoDoFluxo({ porta: PORTA, registro: v, acoes: acoes[v.id] || {}, agora });
+      return {
+        id: v.id,
+        membro_id: v.membro_id,
+        nome: v.nome,
+        telefone: v.telefone,
+        culto: v.culto_nome ? { nome: v.culto_nome, data: v.culto_data } : null,
+        created_at: v.created_at,
+        pesquisa_nota: v.pesquisa_nota,
+        pesquisa_comentario: v.pesquisa_comentario,
+        primeiro_contato_status: v.primeiro_contato_status,
+        responsavel_atendimento: v.responsavel_atendimento,
+        fluxo: estado,
+      };
+    });
+    // ⚠️ A lista sai por URGÊNCIA, não por data: quem está atrasado primeiro, e
+    // dentro do atraso o mais antigo. Lista por data faz o atraso afundar.
+    const peso = (i) => (i.fluxo?.encerrado ? 3 : i.fluxo?.atrasadas?.length ? 0 : i.fluxo?.atual ? 1 : 2);
+    itens.sort((a, b) => peso(a) - peso(b) || String(a.created_at).localeCompare(String(b.created_at)));
+    res.json({
+      janela: { ...j, rotulo: rotuloJanela(j) },
+      catalogo: {
+        porta: PORTA,
+        label: fluxoDaPorta(PORTA).label,
+        etapas: fluxoDaPorta(PORTA).etapas.map((e) => ({
+          chave: e.chave, label: e.label, quem: e.quem,
+          depende_da_pessoa: !!e.dependeDaPessoa, encerra: !!e.encerra, prazo_dias: e.prazoDias,
+        })),
+        desfechos: DESFECHOS,
+        encaminhamentos: ENCAMINHAMENTOS,
+      },
+      adesao: adesaoDoFluxo({
+        porta: PORTA,
+        itens: linhas.map((v) => ({ registro: v, acoes: acoes[v.id] || {} })),
+        agora,
+      }),
+      itens,
+    });
+  } catch (e) {
+    console.error('[visitantes GET /cuidados/fluxo]', e.message);
+    res.status(500).json({ error: 'Não foi possível carregar o fluxo.', detalhe: e.message });
+  }
+});
+
+// Encerrar o fluxo de uma visita. Nível 3: é decisão pastoral, não leitura.
+router.post('/cuidados/:id/desfecho', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    // ⚠️ Lê a linha ANTES de escrever: flx_acoes não tem FK pra vis_visitas (a
+    // tabela é genérica), então é aqui que se garante que a visita existe e
+    // está viva. Sem isso dá pra encerrar fluxo de uma visita apagada.
+    const { data: visita, error } = await supabase.from('vis_visitas')
+      .select('id, membro_id').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (error) throw error;
+    if (!visita) return res.status(404).json({ error: 'Visita não encontrada.' });
+
+    const r = await registrarDesfecho({
+      porta: PORTA, refId: visita.id, membroId: visita.membro_id,
+      resultado: req.body?.resultado, encaminhamento: req.body?.encaminhamento,
+      observacao: req.body?.observacao, usuario: req.user,
+    });
+    if (r.erro) return res.status(400).json({ error: r.erro, campo: r.campo });
+    res.json({ ok: true, corrigida: r.corrigida, acao: r.acao });
+  } catch (e) {
+    console.error('[visitantes POST /cuidados/desfecho]', e.message);
+    res.status(500).json({ error: 'Não foi possível encerrar o fluxo.' });
+  }
+});
+
+// Desfazer o encerramento (soft-delete · a chave única é parcial e libera).
+router.delete('/cuidados/:id/desfecho', authorizeModule('cuidados', 3), async (req, res) => {
+  try {
+    const r = await apagarDesfecho({ porta: PORTA, refId: req.params.id });
+    if (r.erro) return res.status(400).json({ error: r.erro });
+    res.json({ ok: true, apagadas: r.apagadas });
+  } catch (e) {
+    console.error('[visitantes DELETE /cuidados/desfecho]', e.message);
+    res.status(500).json({ error: 'Não foi possível reabrir o fluxo.' });
   }
 });
 
