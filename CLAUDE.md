@@ -91,6 +91,116 @@ Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
 leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
 membro via `membro_id`.
 
+## ⚠️⚠️ CENSO · o domingo de 500 respostas simultâneas (2026-09-11 · SEM migration)
+
+Pergunta do Marcos: *"o censo tem os mesmos quesitos de validação que o NPS, que
+colocamos para ter acessos simultâneos? A intenção é que pelo menos 500 pessoas
+preencham de forma simultânea."*
+
+**Resposta curta: tem tudo o que o NPS tem, e mais** — idempotência por
+`envio_id`, UNIQUE de uma resposta por pessoa, cache do questionário em memória
+(20s) e o trabalho pesado (matcher + reconciliação) jogado pro cron. O NPS não
+tem nenhum dos quatro. **A única coisa que falta é FORA do código: a regra de
+bypass no Firewall da Vercel** (o NPS tem a rule "NPS público"; o censo, não —
+pendência aberta desde 04/08). A borda decide ANTES do nosso limiter, e 500
+celulares atrás de um NAT é o padrão que o challenge dela enxerga como rajada.
+⚠️ Não validar isso com curl em rajada: re-flagra o IP da igreja (mesma nota do
+NPS). Rota a liberar: **`/api/public/censo/*`** no projeto que serve
+`crmcbrio.vercel.app` (é esse host que o celular chama, não `www.cbrio.org`).
+
+**Medido em produção em 11/09** (e é o que dá o tamanho do problema real):
+GET do questionário volta `X-Vercel-Cache: HIT` em 70-90ms (as 500 aberturas do
+QR são servidas pelo CDN) · `Ratelimit-Limit` 120.000 no envio e 6.000 no lookup
+· 24 respostas vivas, 810 itens, **0 pendentes** de pós-processamento · duração
+real de preenchimento **95 a 180s** (o pedido original era "1 minuto do culto";
+não é 1 minuto).
+
+### Os 6 defeitos achados — e o que cada um era
+
+1. ⚠️⚠️ **`/prefill` disparava ~1 requisição por TECLA.** `ConfirmarIdentidade`
+   era uma `function` declarada DENTRO do `CensoPublica` e usada como
+   `<ConfirmarIdentidade />`: a cada render o React via um **tipo novo** de
+   componente, remontava e zerava o `useRef` que impedia repetir a consulta.
+   Medido no navegador em prod: **19 POSTs para 21 teclas** no campo "Nome
+   completo". Só acontecia com quem NÃO é achado na base — num censo, o grupo
+   maior. 500 pessoas passariam dos 6.000/15min do balde de lookup.
+   **LEI: componente declarado no corpo de outro componente REMONTA a cada
+   render — `useRef`/`useState` dentro dele não guardam nada.** Consertado com o
+   componente em escopo de módulo (`CaixaIdentidade`, só apresentação) + o efeito
+   no pai, com debounce de 600ms e guarda de CPF válido.
+   ⚠️ De carona, o merge do prefill virou `{...cadastro, ...digitado}`: este
+   caminho fazia o contrário e o cadastro sobrescrevia o nome que a pessoa
+   acabara de escrever. O caminho do app (token) já preservava o digitado —
+   agora os dois concordam.
+2. ⚠️⚠️ **CPF com um dígito trocado = resposta perdida EM SILÊNCIO.** O campo era
+   texto livre no cliente (sem máscara, sem dígito verificador); o servidor
+   recusa em `montarItens` com `400 {faltando:['cpf']}`; a tela dizia
+   **"Obrigado!" antes de o envio subir**; e a fila offline não retenta 400 —
+   então a resposta morria no localStorage. Provado em prod (400 com payload
+   completo) e com dado real: **1 dos 5 rascunhos vivos de 25/08 tem CPF de 11
+   dígitos inválido**. Consertado em três frentes: máscara + validação de dígito
+   no campo, `bloqueios()` cobrando VALOR ERRADO além de vazio (com o motivo
+   embaixo de cada campo e os nomes no rodapé), e o envio esperando o servidor
+   até 6s — recusa definitiva (400/404/422) volta pra tela com o formulário
+   INTACTO, 409 vira "você já respondeu", e só rede/429/5xx caem na fila.
+   **LEI: "Obrigado" só depois de saber que deu certo. E o que o servidor
+   recusaria, o formulário cobra antes.** Travado por
+   `src/test/censoFormEspelho.test.ts`, que agora testa a direção que importa —
+   *nada que o cliente aceita pode ser recusado pelo servidor* — em 200
+   combinações com valor sujo.
+3. ⚠️ **O teste de carga media 400 em 100% das pessoas desde 07/08.** Quando o
+   CPF virou obrigatório, `censo_carga.cjs` continuou escrevendo "Pessoa Numero
+   42" no campo de CPF: todo envio parava no 400 antes do insert e as "500
+   respostas" do relatório eram rascunhos. O script imprimia "✔ nenhum erro 5xx"
+   — porque 400 não é 5xx. E `acharOuCriarGuardado` (o caminho mais caro, de quem
+   não está na base) não estava no mock: `is not a function` era engolido pelo
+   try/catch da rota. **LEI: teste de carga tem que AFIRMAR o status esperado, não
+   só a ausência de 5xx** — o script agora sai com exit 1 se não vier 201 de
+   todos, e aceita `--blocos` e `--na-base`.
+   Números com o conserto (500 pessoas · questionário vivo de 3 blocos):
+   **2.500 requisições · 5 por pessoa · 10,3 idas ao banco por resposta · p95 de
+   176ms · 201 em todas.** No pior caso (13 blocos do seed): 7.500 requisições,
+   20,3 queries por resposta.
+4. ⚠️ **Falha no insert dos itens era CEGA.** `cen_resposta_item` é o que alimenta
+   TODO gráfico do módulo; se o insert falhasse, a resposta ficava com o
+   `payload` completo e zero item — pessoa invisível no relatório, sem erro
+   nenhum na tela, e o reenvio idempotente devolvia "já recebi" sem reparar.
+   Agora a falha marca a resposta como pendente com o motivo e o
+   pós-processamento **remonta os itens a partir do `payload`**
+   (`reconstruirItensSeFaltam`). Como o pós-processamento passa uma vez por toda
+   resposta concluída, a checagem cobre 100% delas sem varredura nova. O retorno
+   do cron traz `itens_reconstruidos` — **zero é o normal; > 0 é para olhar.**
+5. ⚠️ **O cadastro levava 3 horas para receber o censo.** `LOTE_MAX` era 200 por
+   pesquisa e o cron rodava de hora em hora. Agora **500** e **de 15 em 15min**
+   (`*/15` no `vercel.json`) — 500 respostas chegam ao app do membro em ~30min,
+   que era o pedido do Matheus de 29/08.
+6. ⚠️ **A página pública baixava o ERP inteiro.** Chunk de entrada medido em
+   11/09: **1.051 KB (326 KB comprimidos)** com AppShell, ícones, Radix,
+   react-query, sonner e Sentry — em cada celular que escaneia o QR. Com 500
+   pessoas no WiFi do templo o gargalo deixa de ser o servidor e passa a ser o
+   download. Agora `/censo/p/<slug>` tem **entrada própria** (`censo.html` +
+   `src/public-censo.tsx`): sem AuthProvider, sem AppShell, sem supabase-js
+   (o cliente HTTP virou `src/lib/censoApi.js`, que só faz `fetch`), com
+   `MemoryRouter` e o fundo animado (framer-motion) em `lazy`. **~180 KB
+   comprimidos contra ~380 KB.**
+   ⚠️⚠️ **A URL NÃO MUDOU** (`/censo/p/<slug>` segue no QR e no `/r/censo`): quem
+   serve o arquivo é o rewrite `"/censo/p/(.*)" → "/censo.html"` no
+   `vercel.json`. **Mexer no `vite.config.ts` (as duas entradas) sem mexer no
+   rewrite — ou o contrário — quebra a URL impressa no cartaz.** A rota
+   equivalente no `App.tsx` fica de rede de segurança.
+   ⚠️ `censo.html` precisa da própria regra de `no-store` no `vercel.json`: a
+   regra geral não casa caminho com ponto.
+
+### Regra operacional do domingo (não é código)
+
+- **Não editar o questionário durante a coleta.** O cliente valida contra a
+  versão que baixou e o servidor contra a do banco: pergunta obrigatória nova =
+  400 = resposta recusada. E mudar tipo/enunciado de pergunta já respondida
+  partia o agregado em dois (consertado pela migration `20260910150000`, já
+  aplicada — `congregava_antes` volta consolidado).
+- Validar com **celulares reais**, nunca curl em rajada.
+- O preenchimento leva **2 a 3 minutos**, não 1.
+
 ## ⚠️⚠️ VISITANTES · a porta pública `/visitante` (QR nos cartazes · voucher · pesquisa) (2026-09-09 · migration `20260909120000`)
 
 Pedido do Marcos: *"o número de visitantes é importante para nós e nós não

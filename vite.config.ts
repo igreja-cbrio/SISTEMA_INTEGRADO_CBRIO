@@ -33,6 +33,24 @@ export default defineConfig(({ mode }) => {
   },
   build: {
     sourcemap: sentryUploadEnabled ? "hidden" : false,
+    rollupOptions: {
+      // ⚠️⚠️ DUAS ENTRADAS (11/09/2026). `index.html` é o ERP; `censo.html` é a
+      // página pública do censo, montada sem AppShell, sem supabase-js, sem
+      // react-query e sem Sentry — ver `src/public-censo.tsx`.
+      //
+      // POR QUÊ: a página do censo é aberta por centenas de celulares no MESMO
+      // minuto, no WiFi de um templo cheio, e pelo SPA do ERP cada aparelho
+      // baixava o chunk de entrada inteiro (1.051 KB · 326 KB comprimidos).
+      // O servidor aguentava (p95 de 94ms com 500 pessoas no teste de carga);
+      // o download é que não.
+      //
+      // ⚠️ Quem serve `censo.html` em `/censo/p/<slug>` é o rewrite do
+      // `vercel.json`. Mexer num sem o outro quebra a URL impressa no QR.
+      input: {
+        main: path.resolve(__dirname, "index.html"),
+        censo: path.resolve(__dirname, "censo.html"),
+      },
+    },
   },
   // ⚠️⚠️ NÃO REINTRODUZIR `experimental.renderBuiltUrl` COM `?dpl=` AQUI.
   // Ligado em 21/08/2026 para o Skew Protection da Vercel, ele quebrou o

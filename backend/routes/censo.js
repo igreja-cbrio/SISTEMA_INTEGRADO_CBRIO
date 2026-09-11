@@ -13,7 +13,7 @@ const { supabase } = require('../utils/supabase');
 const { authenticate, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const {
   TIPOS, FORMATOS, CUIDADO_TIPOS, TIPOS_NUMERICOS, validarPerguntas, slugificar,
-  ordenarPorOpcoes, baseSemNeutras, ehNeutra,
+  ordenarPorOpcoes, baseSemNeutras, ehNeutra, montarItens,
 } = require('../utils/censoPerguntas');
 const { requireCron } = require('../utils/cronAuth');
 const { acharMembroGuardado } = require('../services/membroMatch');
@@ -25,7 +25,12 @@ const { lerRespostasAbertas, TIPOS_PARA_IA } = require('../services/censoLeitura
 // `ReferenceError` — e SÓ quando o cron rodasse, porque `require()` do módulo
 // carrega sem executar. Mesma classe do bug de 26/08 (`conversaRoteamento`
 // importando o supabase errado): erro que só aparece na hora.
-const LOTE_MAX = 200;
+// ⚠️ 500, não 200 (11/09/2026). Com 200 por pesquisa por rodada, um culto de
+// 500 respostas levava 3 HORAS para chegar ao cadastro e ao app do membro — e o
+// pedido do Matheus (29/08) era justamente que o dado chegasse lá. 500 cabe
+// folgado nos 300s de `maxDuration` da função (medido: ~5 idas ao banco por
+// resposta) e o cron passou a rodar de 15 em 15min, não de hora em hora.
+const LOTE_MAX = 500;
 
 // ══════════════════════════════════════════════════════════════════════════
 //  CRON · aplicar ao cadastro o que o censo coletou
@@ -64,6 +69,7 @@ router.get('/cron/pos-processar', requireCron, async (req, res) => {
     if (!ids.length) return res.json({ ok: true, pesquisas: 0, processadas: 0 });
 
     let processadas = 0; let vinculadas = 0; let conflitos = 0; let falhas = 0;
+    let itensReconstruidos = 0;
     const porPesquisa = [];
     for (const id of ids) {
       // ⚠️ Uma pesquisa que falha NÃO derruba as outras: o resultado dela vai no
@@ -75,13 +81,21 @@ router.get('/cron/pos-processar', requireCron, async (req, res) => {
         vinculadas += out.vinculadas || 0;
         conflitos += out.conflitos || 0;
         falhas += out.falhas || 0;
+        itensReconstruidos += out.itens_reconstruidos || 0;
         porPesquisa.push({ pesquisa_id: id, ...out });
       } catch (e) {
         falhas += 1;
         porPesquisa.push({ pesquisa_id: id, erro: String(e.message).slice(0, 200) });
       }
     }
-    res.json({ ok: true, pesquisas: ids.length, processadas, vinculadas, conflitos, falhas, detalhe: porPesquisa });
+    res.json({
+      ok: true, pesquisas: ids.length, processadas, vinculadas, conflitos, falhas,
+      // ⚠️ Zero aqui é o normal. Qualquer número > 0 significa que a porta
+      // pública perdeu o insert dos itens de alguém e o cron reparou — vale
+      // olhar o log, não é rotina.
+      itens_reconstruidos: itensReconstruidos,
+      detalhe: porPesquisa,
+    });
   } catch (e) {
     console.error('[censo/cron/pos-processar]', e.message);
     res.status(500).json({ error: e.message });
@@ -603,6 +617,53 @@ router.get('/pendentes', authorizeModule('censo', 2), async (req, res) => {
  * Regra de negócio virando exceção é o que faz um cron ficar vermelho por algo
  * que não é falha (pesquisa apagada, por exemplo).
  */
+/**
+ * Remonta `cen_resposta_item` de uma resposta que ficou SEM itens.
+ *
+ * ⚠️⚠️ POR QUE ISTO EXISTE (11/09/2026). O insert dos itens na porta pública
+ * era best-effort com `console.error`: se ele falhasse — e é o insert mais
+ * gordo do fluxo, ~29 linhas por pessoa — a resposta ficava no banco com o
+ * `payload` completo e ZERO linha de item. Todo gráfico do módulo lê item, não
+ * payload: a pessoa desaparecia do relatório sem nenhum sinal de erro.
+ *
+ * O `payload` é a fonte da verdade, então o item é derivado e reconstruível. O
+ * pós-processamento passa UMA VEZ por toda resposta concluída (é o que tira ela
+ * da fila), então esta checagem cobre 100% delas sem varredura nova.
+ *
+ * ⚠️ Só age quando a contagem é ZERO. Resposta com item PARCIAL não é
+ * reconstruída aqui — a UNIQUE (resposta_id, pergunta_id) recusaria o lote e o
+ * certo seria apagar e remontar, que é decisão de gente, não de cron.
+ *
+ * Devolve quantos itens gravou (0 = nada a fazer).
+ */
+async function reconstruirItensSeFaltam(resposta, perguntasValidadas) {
+  const { count, error: eConta } = await supabase
+    .from('cen_resposta_item').select('id', { count: 'exact', head: true })
+    .eq('resposta_id', resposta.id);
+  if (eConta) throw new Error(eConta.message);
+  if (count) return 0;
+
+  const { itens } = montarItens({ perguntas: perguntasValidadas, respostas: resposta.payload || {} });
+  if (!itens.length) return 0;
+
+  const porId = new Map(perguntasValidadas.map((p) => [p.id, p]));
+  const linhas = itens.map((i) => ({
+    resposta_id: resposta.id,
+    pesquisa_id: resposta.pesquisa_id,
+    pergunta_id: i.pergunta_id,
+    pergunta_texto: i.pergunta_texto,
+    tipo: i.tipo,
+    valor_texto: i.valor_texto,
+    valor_num: i.valor_num,
+    valor_opcoes: i.valor_opcoes,
+    sensivel: i.sensivel === true,
+    acao: porId.get(i.pergunta_id)?.acao === 'cuidado' ? 'cuidado' : null,
+  }));
+  const { error } = await supabase.from('cen_resposta_item').insert(linhas);
+  if (error) throw new Error(`itens_nao_reconstruidos: ${error.message}`);
+  return linhas.length;
+}
+
 async function processarPendentes(pesquisaId, limitePedido) {
     const limite = Math.min(Number(limitePedido) || LOTE_MAX, LOTE_MAX);
 
@@ -613,7 +674,7 @@ async function processarPendentes(pesquisaId, limitePedido) {
 
     const { data: fila, error: e1 } = await supabase
       .from('cen_resposta')
-      .select('id, membro_id, payload, identificado_por')
+      .select('id, pesquisa_id, membro_id, payload, identificado_por')
       .eq('pesquisa_id', pesquisaId)
       .is('pos_processado_em', null).not('concluida_em', 'is', null).is('deleted_at', null)
       .order('concluida_em', { ascending: true })
@@ -627,13 +688,26 @@ async function processarPendentes(pesquisaId, limitePedido) {
       if (p.preenche_de) campoPorPergunta.set(p.id, p.preenche_de);
     }
 
-    let vinculadas = 0; let conflitos = 0; let falhas = 0;
+    // Questionário validado UMA vez por lote: é o que `montarItens` consome na
+    // reconstrução de itens. Se o questionário estiver inválido não dá para
+    // remontar nada — e isso não pode derrubar o vínculo, que não depende dele.
+    const val = validarPerguntas(pesquisa.perguntas || []);
+    const perguntasValidadas = val.ok ? val.perguntas : null;
+
+    let vinculadas = 0; let conflitos = 0; let falhas = 0; let itensReconstruidos = 0;
     // O que o censo REALMENTE escreveu no cadastro, por campo, e o que ficou de
     // fora. Sem isso "12 processadas" não distingue "aplicou tudo" de "aplicou
     // nada" — foi o que fez o estado civil ser descartado sem ninguém notar.
     const aplicadosPorCampo = {}; const descartadosPorMotivo = {};
     for (const r of fila) {
       try {
+        // ⚠️ PRIMEIRO a rede de segurança dos itens: uma resposta sem item é
+        // invisível em todo gráfico, e esta é a única passagem garantida por
+        // resposta (depois dela a linha sai da fila).
+        if (perguntasValidadas) {
+          itensReconstruidos += await reconstruirItensSeFaltam(r, perguntasValidadas);
+        }
+
         const porCampo = {};
         for (const [pid, campo] of campoPorPergunta) {
           const v = r.payload?.[pid];
@@ -711,6 +785,7 @@ async function processarPendentes(pesquisaId, limitePedido) {
 
     return {
       processadas: fila.length, vinculadas, conflitos, falhas, restantes: restantes || 0,
+      itens_reconstruidos: itensReconstruidos,
       cadastro_aplicado: aplicadosPorCampo,
       cadastro_nao_guardado: descartadosPorMotivo,
     };

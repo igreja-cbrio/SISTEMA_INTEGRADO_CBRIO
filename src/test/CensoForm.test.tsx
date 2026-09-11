@@ -59,11 +59,37 @@ describe('CensoForm · o que a pessoa vê no culto', () => {
     expect(screen.queryByText('Você já fez ou faz terapia?')).toBeNull();
   });
 
-  it('NÃO avança com obrigatória em branco, e diz quantas faltam', () => {
+  it('NÃO avança com obrigatória em branco, e NOMEIA os campos', () => {
     montar();
     fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
-    expect(screen.getByText(/Falta/)).toBeTruthy();
+    expect(screen.getByText(/Confira \d+ campos? desta parte/)).toBeTruthy();
+    // ⚠️ Nomear é o ponto: "faltam 3 perguntas" numa parte de 12 campos manda a
+    // pessoa procurar qual. O enunciado tem que aparecer na lista de erros.
+    const aviso = screen.getByText(/Confira \d+ campos? desta parte/).parentElement!;
+    expect(aviso.textContent).toMatch(/CPF/);
+    expect(aviso.textContent).toMatch(/Precisa responder/);
     expect(screen.getByText('1 — Identificação básica')).toBeTruthy();  // ficou no lugar
+  });
+
+  // ⚠️⚠️ O TESTE DO INCIDENTE DE 11/09/2026.
+  //
+  // O campo de CPF não validava dígito verificador no cliente. Quem trocava um
+  // número passava daqui, tomava `400 {faltando:['cpf']}` no servidor — e a
+  // tela já tinha dito "Obrigado!", porque o envio era enfileirado sem esperar
+  // resposta e a fila não retenta 400. A resposta morria no aparelho.
+  it('CPF com dígito trocado NÃO avança — e diz que o CPF está inválido', () => {
+    const t = montar({ cpf: '111.111.111-11' });
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
+    const aviso = screen.getByText(/Confira \d+ campos? desta parte/).parentElement!;
+    expect(aviso.textContent).toMatch(/CPF inválido/);
+    expect(t.onEnviar).not.toHaveBeenCalled();
+  });
+
+  it('CPF válido deixa de ser cobrado', () => {
+    montar({ cpf: '529.982.247-25' });
+    fireEvent.click(screen.getByRole('button', { name: 'Continuar' }));
+    const aviso = screen.getByText(/Confira \d+ campos? desta parte/).parentElement!;
+    expect(aviso.textContent).not.toMatch(/CPF inválido/);
   });
 
   it('a condicional aparece na hora que a resposta a ativa', () => {

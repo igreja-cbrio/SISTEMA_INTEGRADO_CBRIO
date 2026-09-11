@@ -41,6 +41,14 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
   exposedHeaders: ['X-Request-ID'],
+  // ⚠️ CACHE DO PREFLIGHT (11/09/2026). O front chama a API em OUTRO host
+  // (`crmcbrio.vercel.app`), então todo POST com `Content-Type: application/json`
+  // é precedido de um OPTIONS. Sem `maxAge` o navegador cacheia por ~5s e
+  // refaz o preflight quase toda chamada: DOBRA as requisições na borda e soma
+  // um round trip no celular — no WiFi cheio de um culto isso é sentido.
+  // 24h é o teto que Chrome e Firefox respeitam. Não afeta o limiter (o OPTIONS
+  // é respondido aqui, antes dos routers).
+  maxAge: 86400,
 }));
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,

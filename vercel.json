@@ -35,7 +35,7 @@
     },
     {
       "path": "/api/censo/cron/pos-processar",
-      "schedule": "30 * * * *"
+      "schedule": "*/15 * * * *"
     },
     {
       "path": "/api/integracao/cron/gerar-cultos-recorrentes",
@@ -201,6 +201,7 @@
   "rewrites": [
     { "source": "/api/(.*)", "destination": "/api/index.js" },
     { "source": "/r/(.*)", "destination": "/api/index.js" },
+    { "source": "/censo/p/(.*)", "destination": "/censo.html" },
     { "source": "/privacidade", "destination": "/privacidade.html" },
     { "source": "/aplicativo", "destination": "/aplicativo.html" },
     { "source": "/((?!api/|r/|assets/|_vercel/).*)", "destination": "/index.html" }
@@ -227,6 +228,13 @@
     },
     {
       "source": "/index.html",
+      "headers": [
+        { "key": "Cache-Control", "value": "private, no-cache, no-store, max-age=0, must-revalidate" },
+        { "key": "Vercel-CDN-Cache-Control", "value": "no-store" }
+      ]
+    },
+    {
+      "source": "/censo.html",
       "headers": [
         { "key": "Cache-Control", "value": "private, no-cache, no-store, max-age=0, must-revalidate" },
         { "key": "Vercel-CDN-Cache-Control", "value": "no-store" }

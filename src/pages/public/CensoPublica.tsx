@@ -10,16 +10,31 @@
 // 3. IDEMPOTÊNCIA: o `envio_id` é gerado aqui e viaja em toda re-tentativa, para
 //    o servidor devolver a resposta que já existe em vez de criar outra. Sem
 //    isso o total do censo vem inflado — e número inflado é pior que faltando.
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+//
+// ⚠️⚠️ E UMA LEI NOVA (11/09/2026): **"Obrigado" só depois de saber que deu
+// certo.** A tela agradecia ANTES de o envio subir, e a fila offline não
+// retenta 400 — então resposta recusada pelo servidor (CPF com um dígito
+// trocado, por exemplo) morria no localStorage com a pessoa convicta de ter
+// respondido. Agora o envio é esperado por até 6s: recusa DEFINITIVA (400/409)
+// volta pra tela com o motivo e o formulário INTACTO; só falha de rede, 429 e
+// 5xx caem na fila — que é exatamente o que a fila existe para resolver.
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { podeAplicarRascunho, soDigitos } from '@/lib/censoRascunho';
 import { useParams, useSearchParams } from 'react-router-dom';
-import { censoPublico } from '../../api';
+// ⚠️ DIRETO de `lib/censoApi`, NUNCA de `../../api` (11/09/2026): `api.js`
+// importa o supabase-js e o Sentry e abre sessão no carregamento do módulo. Esta
+// página é pública, aberta por centenas de celulares ao mesmo tempo no culto —
+// ela não pode arrastar o ERP. Ver o cabeçalho de `lib/censoApi.js`.
+import { censoPublico } from '@/lib/censoApi';
 import type { Pergunta, Respostas } from '@/lib/censoForm';
-import { limparInvisiveis } from '@/lib/censoForm';
+import { cpfValido, limparInvisiveis } from '@/lib/censoForm';
 import CensoForm from '@/components/censo/CensoForm';
 import { PublicPaletteCtx, PublicThemeToggle, usePublicTheme } from './publicTheme';
 import { usePermitirZoom } from '@/lib/viewportZoom';
-import AnimatedBackground from './AnimatedBackground';
+// ⚠️ LAZY de propósito: o fundo animado traz o `framer-motion`, que não pode
+// estar no caminho crítico de quem abriu o QR no culto. A tela é a mesma; a
+// decoração entra quando chegar.
+const AnimatedBackground = lazy(() => import('./AnimatedBackground'));
 
 type Pesquisa = {
   slug: string; titulo: string; subtitulo?: string | null;
@@ -30,6 +45,85 @@ type Pesquisa = {
 const TEAL = '#00B39D';
 const uuid = () => (crypto.randomUUID ? crypto.randomUUID()
   : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+
+/** Quanto tempo esperamos o servidor antes de cair na fila e agradecer.
+ *  ⚠️ Teto, não promessa: no culto ninguém fica olhando spinner, mas 6s
+ *  cobrem o retry com backoff do `api.js` no caso normal. */
+const ESPERA_ENVIO_MS = 6000;
+
+type ErroHttp = { status?: number; dados?: { faltando?: string[] } };
+
+/** 409 = a pessoa já respondeu. Não é erro: é informação. */
+function ehJaRespondeu(e: unknown): boolean {
+  return (e as ErroHttp)?.status === 409;
+}
+/** O servidor recusou o CONTEÚDO. Re-enviar igual dá o mesmo resultado. */
+function ehRecusaDefinitiva(e: unknown): boolean {
+  const st = (e as ErroHttp)?.status;
+  return st === 400 || st === 404 || st === 422;
+}
+/** Traduz a recusa em algo que a pessoa possa consertar, com o NOME do campo. */
+function motivoDaRecusa(e: unknown, perguntas: Pergunta[]): { mensagem: string; campos: string[] } {
+  const ids = (e as ErroHttp)?.dados?.faltando || [];
+  const nome = (id: string) => perguntas.find((p) => p.id === id)?.texto || id;
+  return {
+    mensagem: (e instanceof Error && e.message) || 'O servidor não aceitou a resposta.',
+    campos: ids.map(nome),
+  };
+}
+
+/**
+ * A caixinha do reconhecimento por CPF + nascimento. SÓ APRESENTAÇÃO.
+ *
+ * ⚠️⚠️ ELA VIVE AQUI, FORA DO COMPONENTE DA PÁGINA, E ISSO É O CONSERTO
+ * (11/09/2026). Antes era uma `function` declarada DENTRO do `CensoPublica` e
+ * usada como `<ConfirmarIdentidade />`: a cada render o React via um TIPO NOVO
+ * de componente, **remontava** e zerava o `useRef` que impedia consultar o
+ * mesmo par CPF+nascimento duas vezes. Medido em produção: **19 POSTs no
+ * /prefill para 21 teclas digitadas** no campo "Nome completo" — e só para quem
+ * NÃO é achado na base, que num censo é justamente o grupo maior. Com 500
+ * pessoas isso passa dos 6.000/15min do balde de lookup.
+ *
+ * A busca agora é um efeito no PAI (refs estáveis) e espera a digitação PARAR.
+ *
+ * ⚠️ A resposta neutra cobre "não existe" E "nascimento não confere" — a tela
+ * não distingue os dois de propósito. Distinguir devolveria o oráculo de
+ * convicção religiosa que foi fechado em 17/08 (LGPD art. 5º, II).
+ */
+function CaixaIdentidade({ etapa, C }: {
+  etapa: 'nascimento' | 'buscando' | 'nao_achou';
+  C: ReturnType<typeof usePublicTheme>['C'];
+}) {
+  const caixa: React.CSSProperties = {
+    marginBottom: 20, padding: 14, borderRadius: 11,
+    border: `1px solid ${C.cardBorder}`, background: C.optionBg,
+  };
+  if (etapa === 'buscando') {
+    return <div style={caixa}><p style={{ fontSize: 13, color: C.text3, margin: 0 }}>Procurando seu cadastro…</p></div>;
+  }
+  if (etapa === 'nao_achou') {
+    return (
+      <div style={caixa}>
+        <p style={{ fontSize: 13, color: C.text3, margin: 0, lineHeight: 1.5 }}>
+          Não achamos um cadastro com esse CPF e essa data de nascimento — sem
+          problema, e pode ser só a data. Confira o nascimento acima; se estiver
+          certo, é só seguir: a gente cria o seu cadastro ao receber o censo.
+        </p>
+      </div>
+    );
+  }
+  return (
+    <div style={caixa}>
+      <p style={{ fontSize: 13, color: C.text2, margin: '0 0 10px', lineHeight: 1.5 }}>
+        Responda a <strong>data de nascimento</strong> logo abaixo — é a terceira
+        pergunta — e a gente traz o que já temos do seu cadastro.
+      </p>
+      <p style={{ fontSize: 12, color: C.textDim, margin: 0 }}>
+        Assim você não digita nada duas vezes.
+      </p>
+    </div>
+  );
+}
 
 export default function CensoPublica() {
   // Devolve o pinch-zoom nesta página: o index.html do sistema trava o zoom por
@@ -57,6 +151,11 @@ export default function CensoPublica() {
   const [jaRespondeu, setJaRespondeu] = useState(false);
   const [preenchido, setPreenchido] = useState(false);
   const [retomado, setRetomado] = useState(false);
+  /** Recusa DEFINITIVA do servidor (400/404/422). Insistir não resolve: quem
+   *  resolve é a pessoa corrigindo o campo, então isto vai pra tela. */
+  const [erroEnvio, setErroEnvio] = useState<{ mensagem: string; campos: string[] } | null>(null);
+  /** Etapa do reconhecimento por CPF+nascimento. ⚠️ MORA NO PAI — ver o efeito. */
+  const [etapaIdent, setEtapaIdent] = useState<'nascimento' | 'buscando' | 'nao_achou'>('nascimento');
 
   // Identidade: `?t=` (link pessoal ou app) ou o token que o /prefill devolve.
   const [identidade, setIdentidade] = useState<string | null>(searchParams.get('t'));
@@ -67,6 +166,12 @@ export default function CensoPublica() {
 
   const iniciadaEm = useRef(new Date().toISOString());
   const envioId = useRef<string>('');
+  /** Enunciados das perguntas para a fila (que roda fora do render) poder
+   *  NOMEAR o campo recusado em vez de mostrar um id. */
+  const perguntasRef = useRef<Pergunta[]>([]);
+  /** As respostas mais recentes, para callbacks assíncronos não lerem closure
+   *  velho (o prefill volta 600ms+ depois de o efeito rodar). */
+  const respostasRef = useRef<Respostas>({});
   /**
    * O rascunho lido do aparelho, AINDA NÃO aplicado.
    *
@@ -116,7 +221,15 @@ export default function CensoPublica() {
     const restante: unknown[] = [];
     for (const item of fila) {
       try { await censoPublico.responder(slug, item.payload); }   // 2xx → não re-enfileira
-      catch { restante.push(item); }
+      catch (e) {
+        // ⚠️⚠️ RECUSA DEFINITIVA SAI DA FILA. Antes tudo voltava pra fila e era
+        // retentado a cada 8s: um 400 (dado que o servidor nunca vai aceitar)
+        // virava laço infinito, e a resposta ficava presa no aparelho sem
+        // ninguém saber. Insistir só faz sentido contra rede/429/5xx.
+        if (ehJaRespondeu(e)) { setJaRespondeu(true); continue; }
+        if (ehRecusaDefinitiva(e)) { setErroEnvio(motivoDaRecusa(e, perguntasRef.current)); continue; }
+        restante.push(item);
+      }
     }
     salvarFila(restante);
     if (restante.length) setTimeout(subir, 8000);                // re-tenta até zerar
@@ -279,6 +392,70 @@ export default function CensoPublica() {
     return () => { vivo = false; };
   }, [slug, pesquisa]);
 
+  // ⚠️ AQUI EM CIMA, e não depois do JSX: `const` não é hoisted (TDZ) e o efeito
+  // de reconhecimento abaixo usa `perguntas`. Mesma classe de armadilha do
+  // `LOTE_MAX` em `routes/censo.js` — erro que só aparece quando a linha roda.
+  const perguntas = pesquisa?.perguntas || [];
+  // A fila roda fora do render e precisa dos enunciados pra nomear o campo.
+  perguntasRef.current = perguntas;
+  // O prefill volta depois do debounce: precisa das respostas de AGORA.
+  respostasRef.current = respostas;
+
+  // ── Reconhecimento do cadastro por CPF + nascimento ──────────────────────
+  //
+  // ⚠️⚠️ ESTE EFEITO MORA NO PAI DE PROPÓSITO (11/09/2026). A guarda que impede
+  // consultar o mesmo par duas vezes é um `useRef`, e ref só é estável se o
+  // componente não remontar — ver o comentário de `CaixaIdentidade`.
+  //
+  // ⚠️ Só dispara quando a digitação PARA (600ms) e só com CPF de dígito
+  // verificador válido. Os dois juntos derrubam a consulta de ~1 por tecla para
+  // 1 por pessoa: enquanto ela digita, o `clearTimeout` da limpeza cancela a
+  // anterior; CPF pela metade (ou com um dígito trocado) nem sai do aparelho.
+  //
+  // ⚠️⚠️ EXIGE OS DOIS, SEMPRE. O estágio "só o CPF" — que devolvia nome
+  // mascarado para a tela perguntar "é você?" — morreu em 17/08/2026: ele
+  // respondia, a qualquer um com um CPF na mão, se a pessoa está na base da
+  // CBRio, e estar na base de uma igreja revela CONVICÇÃO RELIGIOSA, que é dado
+  // sensível (LGPD art. 5º, II). Esta página é pública e o QR vai ao telão.
+  const parConsultado = useRef('');
+  const pCpf = perguntas.find((q) => q.formato === 'cpf');
+  const pNasc = perguntas.find((q) => q.preenche_de === 'data_nascimento');
+  const cpfDigitado = soDigitos(pCpf ? respostas[pCpf.id] : '');
+  const nascDigitado = String(pNasc ? respostas[pNasc.id] ?? '' : '');
+
+  useEffect(() => {
+    if (identidade || preenchido) return;                       // já reconhecida
+    if (cpfDigitado.length !== 11 || !/^\d{4}-\d{2}-\d{2}$/.test(nascDigitado)) return;
+    if (!cpfValido(cpfDigitado)) return;                        // o servidor diria o mesmo
+    const par = `${cpfDigitado}|${nascDigitado}`;
+    if (parConsultado.current === par) return;
+
+    const t = setTimeout(() => {
+      parConsultado.current = par;
+      setEtapaIdent('buscando');
+      censoPublico.prefill(slug, { cpf: cpfDigitado, data_nascimento: nascDigitado })
+        .then((r) => {
+          if (!r?.encontrado) { setEtapaIdent('nao_achou'); return; }
+          if (r.ja_respondeu) { setJaRespondeu(true); return; }
+          setIdentidade(r.identidade);
+          // ⚠️ O QUE A PESSOA DIGITOU VENCE (11/09/2026). Este caminho fazia o
+          // contrário — `{...respostas, ...r.valores}` — e o cadastro
+          // sobrescrevia o nome que ela acabou de escrever, sob os dedos dela.
+          // O caminho do app (token) já era assim; agora os dois concordam: o
+          // cadastro é ponto de partida, não verdade final.
+          // ⚠️ Lê do REF, não do closure: entre o efeito e a volta do servidor
+          // passam 600ms de debounce + a viagem, e nesse tempo ela digitou mais.
+          const novas = { ...(r.valores || {}), ...respostasRef.current };
+          setRespostas(novas);
+          gravarLocal(novas);
+          setPreenchido(true);
+        })
+        .catch(() => setEtapaIdent('nao_achou'));
+    }, 600);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cpfDigitado, nascDigitado, identidade, preenchido, slug]);
+
   function aoMudar(novas: Respostas) {
     setRespostas(novas);
     gravarLocal(novas);            // a cada toque, sem rede
@@ -288,11 +465,11 @@ export default function CensoPublica() {
     aplicarRascunhoSeForDono(cpfDasRespostas(novas));
   }
 
-  const perguntas = pesquisa?.perguntas || [];
 
-  function enviar() {
+  async function enviar() {
     if (!pesquisa) return;
     setEnviando(true);
+    setErroEnvio(null);
     // Um envio_id por resposta, reusado em toda re-tentativa.
     if (!envioId.current) envioId.current = uuid();
     const salvo = (() => { try { return JSON.parse(localStorage.getItem(RASCUNHO) || 'null'); } catch { return null; } })();
@@ -309,13 +486,55 @@ export default function CensoPublica() {
       retomar: salvo?.retomar,
     };
 
-    // Enfileira e agradece NA HORA. O upload roda em segundo plano — a pessoa no
-    // culto não fica olhando um spinner enquanto a borda decide responder.
+    /** Deu certo (ou vai dar, pela fila): limpa o aparelho e agradece. */
+    const agradecer = (cuidados: string[] = []) => {
+      localStorage.removeItem(RASCUNHO);
+      localStorage.removeItem(LOCAL);
+      setPronto({ cuidados });
+      setEnviando(false);
+    };
+
+    // ⚠️⚠️ ESPERA O SERVIDOR — até 6s. É a diferença entre "Obrigado" verdadeiro
+    // e "Obrigado" que esconde uma resposta recusada. O `api.js` já retenta
+    // 403/429/5xx com backoff por dentro, então o que chega aqui como erro com
+    // status é veredito, não soluço de rede.
+    const tentativa = censoPublico.responder(slug, payload)
+      .then((r: { cuidados?: string[] } | undefined) => ({ ok: true as const, r }))
+      .catch((e: unknown) => ({ ok: false as const, e }));
+    const lento = new Promise<{ lento: true }>((res) => setTimeout(() => res({ lento: true }), ESPERA_ENVIO_MS));
+    const corrida = await Promise.race([tentativa, lento]);
+
+    if ('lento' in corrida) {
+      // Rede ruim de templo cheio: a fila assume e a pessoa segue a vida. Se a
+      // requisição em voo terminar depois, o `envio_id` faz a fila receber
+      // "repetido: true" e sair sozinha.
+      salvarFila([...lerFila(), { payload }]);
+      agradecer();
+      subirFila();
+      return;
+    }
+    if (corrida.ok) { agradecer(corrida.r?.cuidados || []); return; }
+
+    const e = corrida.e;
+    if (ehJaRespondeu(e)) {
+      // Não é perda: a resposta dela já está registrada.
+      localStorage.removeItem(RASCUNHO);
+      localStorage.removeItem(LOCAL);
+      setJaRespondeu(true);
+      setEnviando(false);
+      return;
+    }
+    if (ehRecusaDefinitiva(e)) {
+      // ⚠️ NÃO limpa nada e NÃO enfileira: o formulário fica na tela, com tudo
+      // preenchido, para a pessoa corrigir o campo que o servidor apontou.
+      setErroEnvio(motivoDaRecusa(e, perguntas));
+      setEnviando(false);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    // Sobrou falha de rede / 5xx depois do backoff: é o caso da fila.
     salvarFila([...lerFila(), { payload }]);
-    localStorage.removeItem(RASCUNHO);
-    localStorage.removeItem(LOCAL);
-    setPronto({ cuidados: [] });
-    setEnviando(false);
+    agradecer();
     subirFila();
   }
 
@@ -325,6 +544,18 @@ export default function CensoPublica() {
     if (!pesquisa) return <Aviso texto="Pesquisa indisponível" tom="erro" />;
     if (jaRespondeu) {
       return <Aviso titulo="Você já respondeu" texto="Obrigado! Sua resposta está registrada." />;
+    }
+    // ⚠️⚠️ RECUSA VENCE O "OBRIGADO". Se a resposta que estava na fila voltou
+    // recusada, a tela DESDIZ o agradecimento — é feio e é honesto: a
+    // alternativa é a pessoa sair achando que respondeu.
+    if (erroEnvio && pronto) {
+      return (
+        <Aviso
+          tom="erro"
+          titulo="Sua resposta não foi registrada"
+          texto={`${erroEnvio.mensagem}${erroEnvio.campos.length ? ` Confira: ${erroEnvio.campos.join(', ')}.` : ''} Por favor, abra o QR e responda de novo.`}
+        />
+      );
     }
     if (pronto) {
       return (
@@ -336,9 +567,24 @@ export default function CensoPublica() {
     }
     return (
       <>
+        {/* Recusa do servidor com o formulário AINDA na tela: a pessoa corrige o
+            campo apontado e envia de novo, sem redigitar nada. */}
+        {erroEnvio && (
+          <div style={{
+            marginBottom: 18, padding: '12px 14px', borderRadius: 11, fontSize: 13,
+            border: '1px solid rgba(239,68,68,.45)', background: 'rgba(239,68,68,.08)', color: '#ef4444',
+            lineHeight: 1.5,
+          }}>
+            <strong>Não conseguimos registrar sua resposta.</strong> {erroEnvio.mensagem}
+            {erroEnvio.campos.length > 0 && <> Confira: <strong>{erroEnvio.campos.join(', ')}</strong>.</>}
+            {' '}Corrija e toque em enviar de novo — nada do que você preencheu foi perdido.
+          </div>
+        )}
         {/* Confirmação de identidade: dispara do CPF que a pessoa já respondeu
             como pergunta 1 — sem caixa separada pedindo CPF de novo. */}
-        {!identidade && !preenchido && <ConfirmarIdentidade />}
+        {!identidade && !preenchido && cpfDigitado.length === 11 && (
+          <CaixaIdentidade etapa={etapaIdent} C={palette} />
+        )}
         <CensoForm
           perguntas={perguntas}
           respostas={respostas}
@@ -354,12 +600,13 @@ export default function CensoPublica() {
       </>
     );
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [carregando, erro, pesquisa, pronto, jaRespondeu, respostas, enviando, consentimento, identidade, preenchido]);
+  }, [carregando, erro, pesquisa, pronto, jaRespondeu, respostas, enviando, consentimento, identidade,
+    preenchido, erroEnvio, etapaIdent, cpfDigitado, palette]);
 
   return (
     <PublicPaletteCtx.Provider value={palette}>
       <div style={{ minHeight: '100vh', background: palette.pageBg, color: palette.text, position: 'relative' }}>
-        {palette.shapes && <AnimatedBackground />}
+        {palette.shapes && <Suspense fallback={null}><AnimatedBackground /></Suspense>}
         <div style={{ position: 'relative', maxWidth: 620, margin: '0 auto', padding: '28px 18px 64px' }}>
           <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: 10 }}>
             <PublicThemeToggle emFluxo />
@@ -405,95 +652,6 @@ export default function CensoPublica() {
       </div>
     </PublicPaletteCtx.Provider>
   );
-
-  /**
-   * Reconhecimento do cadastro, a partir do CPF e do nascimento que a pessoa JÁ
-   * responde nas perguntas 1 e 3 — sem caixa separada e sem pergunta extra.
-   *
-   * ⚠️⚠️ UMA CHAMADA SÓ, E SÓ COM OS DOIS JUNTOS (17/08/2026).
-   *
-   * Antes eram duas etapas: com o CPF sozinho o servidor devolvia o nome
-   * mascarado e a tela perguntava "você é Matheus R. T.?". Aquilo respondia,
-   * a qualquer um com um CPF na mão, se a pessoa está na base da CBRio — e
-   * estar na base de uma igreja revela CONVICÇÃO RELIGIOSA, que é dado
-   * sensível (LGPD art. 5º, II). Esta página é pública, o QR é projetado no
-   * telão e o link curto é adivinhável: não havia nada entre um estranho e
-   * essa resposta.
-   *
-   * A etapa de confirmação não se perdeu de verdade — ela pedia que a pessoa
-   * confirmasse para si mesma um nome que ela já sabe. O que valia era o
-   * nascimento, e ele continua sendo pedido, agora como única prova.
-   *
-   * ⚠️ Quem não é encontrado segue normalmente: o cadastro nasce no envio.
-   */
-  function ConfirmarIdentidade() {
-    const pCpf = perguntas.find((q) => q.formato === 'cpf');
-    const pNasc = perguntas.find((q) => q.preenche_de === 'data_nascimento');
-    const cpfDigitado = String(pCpf ? respostas[pCpf.id] ?? '' : '').replace(/\D/g, '');
-    const nascDigitado = String(pNasc ? respostas[pNasc.id] ?? '' : '');
-    const temNasc = /^\d{4}-\d{2}-\d{2}$/.test(nascDigitado);
-
-    const [etapa, setEtapa] = useState<'nascimento' | 'buscando' | 'nao_achou'>('nascimento');
-    const parConsultado = useRef('');
-
-    useEffect(() => {
-      if (cpfDigitado.length !== 11 || !temNasc) return;
-      const par = `${cpfDigitado}|${nascDigitado}`;
-      if (parConsultado.current === par) return;
-      parConsultado.current = par;
-      setEtapa('buscando');
-      censoPublico.prefill(slug, { cpf: cpfDigitado, data_nascimento: nascDigitado })
-        .then((r) => {
-          // ⚠️ Resposta neutra cobre "não existe" E "nascimento não confere" —
-          // a tela não distingue os dois de propósito. Distinguir devolveria,
-          // por outro caminho, o oráculo que acabou de ser fechado.
-          if (!r?.encontrado) { setEtapa('nao_achou'); return; }
-          if (r.ja_respondeu) { setJaRespondeu(true); return; }
-          setIdentidade(r.identidade);
-          const novas: Respostas = { ...respostas, ...(r.valores || {}) };
-          setRespostas(novas);
-          gravarLocal(novas);
-          setPreenchido(true);
-        })
-        .catch(() => setEtapa('nao_achou'));
-    }, [cpfDigitado, nascDigitado, temNasc]);
-
-    if (cpfDigitado.length !== 11) return null;
-
-    const caixa: React.CSSProperties = {
-      marginBottom: 20, padding: 14, borderRadius: 11,
-      border: `1px solid ${palette.cardBorder}`, background: palette.optionBg,
-    };
-    if (etapa === 'buscando') {
-      return <div style={caixa}><p style={{ fontSize: 13, color: palette.text3, margin: 0 }}>Procurando seu cadastro…</p></div>;
-    }
-
-    if (etapa === 'nao_achou') {
-      return (
-        <div style={caixa}>
-          <p style={{ fontSize: 13, color: palette.text3, margin: 0, lineHeight: 1.5 }}>
-            Não achamos um cadastro com esse CPF e essa data de nascimento — sem
-            problema, e pode ser só a data. Confira o nascimento acima; se
-            estiver certo, é só seguir: a gente cria o seu cadastro ao receber o
-            censo.
-          </p>
-        </div>
-      );
-    }
-
-    // etapa === 'nascimento' — CPF completo, nascimento ainda não respondido
-    return (
-      <div style={caixa}>
-        <p style={{ fontSize: 13, color: palette.text2, margin: '0 0 10px', lineHeight: 1.5 }}>
-          Responda a <strong>data de nascimento</strong> logo abaixo — é a
-          terceira pergunta — e a gente traz o que já temos do seu cadastro.
-        </p>
-        <p style={{ fontSize: 12, color: palette.textDim, margin: 0 }}>
-          Assim você não digita nada duas vezes.
-        </p>
-      </div>
-    );
-  }
 
   function Aviso({ titulo, texto, tom }: { titulo?: string; texto: string; tom?: 'erro' }) {
     return (

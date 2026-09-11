@@ -713,7 +713,23 @@ router.post('/:slug/responder', submitLimiter, async (req, res) => {
     }));
     if (linhas.length) {
       const { error } = await supabase.from('cen_resposta_item').insert(linhas);
-      if (error) console.error('[PUBLIC CENSO] itens:', error.message);
+      if (error) {
+        // ⚠️⚠️ FALHA AQUI ERA CEGA (consertado em 11/09/2026). A resposta fica
+        // gravada com o `payload` inteiro, mas SEM linha em `cen_resposta_item`
+        // — e é o item que alimenta TODO gráfico do módulo. Resultado: pessoa
+        // some do relatório e ninguém nota, porque não há erro nenhum na tela.
+        // Pior: o reenvio idempotente devolve "já recebi" e nunca repara.
+        //
+        // O `payload` é a fonte da verdade, então o item é sempre reconstruível.
+        // Marcamos a resposta como PENDENTE com o motivo: o pós-processamento
+        // (cron de 15 em 15min) remonta os itens que faltam. Ver
+        // `reconstruirItensSeFaltam` em routes/censo.js.
+        console.error('[PUBLIC CENSO] itens:', error.message);
+        await supabase.from('cen_resposta').update({
+          pos_processado_em: null,
+          pos_processo_erro: `itens_nao_gravados: ${String(error.message).slice(0, 300)}`,
+        }).eq('id', respostaId);
+      }
     }
 
     // ── Gatilhos de cuidado ──
