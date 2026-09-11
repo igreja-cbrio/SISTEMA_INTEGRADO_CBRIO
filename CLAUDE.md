@@ -3216,6 +3216,21 @@ migration `20260902200000` não ter sido aplicada em produção (a RPC não exis
 com uma consulta:** `select to_regprocedure('public.fn_kids_reservar_codigos(text,uuid,integer,uuid)')`
 — se vier NULL, é a migration.
 
+**A barra passou a dizer O PORQUÊ (11/09 · `lib/motivoBloco.ts`).** O `catch` do
+`recarregarBloco` era MUDO: "essa conta não tem permissão", "o banco recusou a
+reserva" e "a internet caiu" ficavam indistinguíveis, e a única saída era ler o
+log da função na Vercel — foi por isso que a causa não foi medida. Agora cada
+causa vira uma frase com **a quem recorrer**, porque cada uma tem ação
+diferente: **403** ⇒ permissão (nível 2 em Kids), resolve no sistema · **503**
+⇒ o servidor não reservou, e a frase **carrega o `detalhe` do Postgres** (é ele
+que distingue "a função não existe" da "tabela não existe") · **401** ⇒ sessão
+do tablet expirada, resolve **logando de novo** · **sem status** ⇒ rede, e é o
+único que **não manda chamar ninguém** ("volta sozinho"), senão toda oscilação
+de wi-fi no culto vira chamado. ⚠️ O 401 do `src/api.js` chega **sem `status`**
+(é tratado antes do `if (!res.ok)`), por isso a peneira dele é por mensagem —
+mexer lá sem isso devolve o buraco. Contrato em `src/test/motivoBloco.test.ts`.
+⚠️ Nada disso TRAVA o totem, e a barra agora diz isso na primeira linha.
+
 ⚠️ **CORREÇÃO DE REGISTRO**: este arquivo diz, em pontos diferentes, que o gate
 de deploy tem 8, 10, 12, 13, 16 ou 21 scripts. Em **11/09/2026 são 22** (entrou
 `test:visitante`). **Contar no `.github/workflows/deploy-vercel.yml`, nunca
