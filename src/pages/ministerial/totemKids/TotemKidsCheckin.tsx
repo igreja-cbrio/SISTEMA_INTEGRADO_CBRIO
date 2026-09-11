@@ -23,6 +23,7 @@ import QrScanner from '@/pages/ministerial/voluntariado/components/checkin/QrSca
 import { calcIdadeMeses, formatIdade, formatIdadeShort } from './lib/idade';
 import { imprimirEtiquetas, imprimirEtiquetasLote, reimprimirEtiqueta, reimprimirEtiquetasCompletas } from './lib/imprimir';
 import * as off from './lib/offlineKids';
+import { motivoFalhaBloco } from './lib/motivoBloco';
 import { ehFalhaDeRedeOuServidor } from '@/lib/falhaDeRede';
 import DataNascimentoPicker from './DataNascimentoPicker';
 import useConfirmarSaida from '@/hooks/useConfirmarSaida';
@@ -167,6 +168,7 @@ function formatCpf(v: string): string {
 const SENHA_TOTEM = '0000';
 // Nome antigo mantido: era o PIN da dispensa de CPF (Marcos 2026-07-15).
 const DISPENSA_PIN = SENHA_TOTEM;
+
 // WhatsApp de retirada (código+QR pro responsável) OCULTO por enquanto — o envio
 // ainda não funciona e confundia no totem (Marcos 2026-07-15). Flip pra true quando
 // o disparo estiver no ar; o toggle e o envio voltam juntos.
@@ -389,6 +391,11 @@ export default function TotemKidsCheckin() {
   const [filaOffline, setFilaOffline] = useState(0);
   const [codigosOffline, setCodigosOffline] = useState(0);
   const [sincronizando, setSincronizando] = useState(false);
+  // ⚠️⚠️ POR QUE o bloco está vazio (Marcos 2026-09-11). Antes o catch era mudo
+  // e a barra só sabia dizer "0 códigos": "o servidor recusou", "essa conta não
+  // tem permissão" e "a rede caiu" ficavam indistinguíveis, e a única saída era
+  // ler o log da função na Vercel. `null` = sem falha conhecida.
+  const [motivoBloco, setMotivoBloco] = useState<string | null>(null);
 
   // ⚠️⚠️ O BLOCO É BAIXADO ENQUANTO HÁ REDE — é esse o ponto. Quem sorteia e
   // garante a unicidade do código de retirada é o SERVIDOR; o totem só
@@ -402,10 +409,17 @@ export default function TotemKidsCheckin() {
       });
       off.guardarCodigos(r?.codigos || []);
       setCodigosOffline(off.codigosDisponiveis().length);
-    } catch {
+      // ⚠️ Servidor respondeu OK e mandou lista VAZIA é outro estado: não é
+      // falha de rede nem de permissão — é o banco não ter conseguido reservar.
+      setMotivoBloco((r?.codigos || []).length ? null : 'O servidor respondeu, mas não devolveu código nenhum.');
+    } catch (e: unknown) {
       // ⚠️ Falhar aqui NÃO trava o totem: ele segue online normalmente. O que
       // não existe é a rede de segurança do offline — e a barra diz isso.
       setCodigosOffline(off.codigosDisponiveis().length);
+      setMotivoBloco(motivoFalhaBloco(e));
+      // ⚠️ Vai pro console (e daí pra telemetria): o motivo do 503 vive no log
+      // da função, e sem esta linha ninguém liga uma coisa à outra.
+      console.error('[totem-kids] não deu pra reservar o bloco offline:', e);
     }
   }, []);
 
@@ -1606,8 +1620,14 @@ export default function TotemKidsCheckin() {
                     Poucos códigos de reserva ({codigosOffline})
                   </p>
                   <p className="text-sm text-slate-500">
-                    Sem eles, o totem não consegue fazer check-in se o sistema cair.
+                    O check-in está funcionando normalmente. Sem eles, o que não existe é a
+                    reserva para o totem seguir funcionando <b>se o sistema cair</b>.
                   </p>
+                  {/* ⚠️ O PORQUÊ, quando há um. Sem esta linha a barra diz "0" e
+                      cala o motivo — foi por isso que ninguém soube explicar. */}
+                  {!!motivoBloco && (
+                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">{motivoBloco}</p>
+                  )}
                 </>
               )}
             </div>
