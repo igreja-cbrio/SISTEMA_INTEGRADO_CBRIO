@@ -115,3 +115,26 @@ export const censoPublico = {
     } catch { return false; }
   },
 };
+
+/**
+ * Catálogo de bairros do seletor (porta pública de membresia).
+ *
+ * ⚠️ MORA AQUI, e não no `api.js`, por causa do censo (11/09/2026): o
+ * `seletor-bairro` é usado pela pergunta de bairro do questionário, e por
+ * importar de `api.js` ele arrastava o `@supabase/supabase-js` e o Sentry para
+ * dentro da página pública — medido depois do deploy: o chunk compartilhado
+ * ainda tinha os dois, 251 KB comprimidos que todo celular do culto baixava.
+ *
+ * ⚠️ Falha devolve lista VAZIA em vez de lançar — o seletor degrada para campo
+ * de texto e a pessoa termina de responder. Catálogo indisponível não pode
+ * travar porta pública.
+ */
+export async function bairrosPublicos() {
+  try {
+    const res = await fetch(`${API}/public/membresia/bairros`);
+    if (!res.ok) return { bairros: [] };
+    return res.json();
+  } catch {
+    return { bairros: [] };
+  }
+}
