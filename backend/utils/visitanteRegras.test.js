@@ -109,6 +109,27 @@ assert.equal(R.primeiroNome(''), 'Olá');
 // ── resposta pelo WhatsApp · botão/dígito vira nota · texto vira comentário ──
 {
   const P = require('./respostaPesquisaVisitante');
+  // ⚠️⚠️ OS TRÊS BOTÕES DO TEMPLATE VIVO (aprovado na Meta em 11/09/2026).
+  // O texto deles NÃO começa por dígito, então quem os lê é o mapa
+  // BOTOES_TEXTO. Se este bloco ficar vermelho, a pessoa toca no botão e a
+  // nota NÃO é gravada — e o webhook responde 200, então ninguém percebe.
+  // Mudou o rótulo na Meta? Muda o mapa E estes casos, juntos.
+  assert.equal(P.BOTOES_TEXTO.length, 3, 'o template vivo tem 3 botões');
+  assert.equal(P.interpretarNotaVisitante('Amei o culto, me senti em casa'), 5);
+  assert.equal(P.interpretarNotaVisitante('Eu gostei, o culto foi bom'), 4);
+  assert.equal(P.interpretarNotaVisitante('Não gostei, poderia ser melhor'), 2);
+  // caixa e acento não podem decidir se a nota entra
+  assert.equal(P.interpretarNotaVisitante('AMEI O CULTO, ME SENTI EM CASA'), 5);
+  assert.equal(P.interpretarNotaVisitante('nao gostei, poderia ser melhor'), 2);
+  assert.equal(P.interpretarNotaVisitante('  Eu gostei, o culto foi bom  '), 4);
+  // ⚠️ frase PARECIDA não é botão: só o rótulo INTEIRO casa. Senão qualquer
+  // comentário elogioso viraria nota e o comentário se perderia.
+  assert.equal(P.interpretarNotaVisitante('o culto foi bom demais'), null);
+  assert.equal(P.interpretarNotaVisitante('amei'), null);
+  assert.equal(P.interpretarNotaVisitante('não gostei'), null);
+  // e o rótulo do botão NÃO pode ser lido como comentário
+  for (const b of P.BOTOES_TEXTO) assert.equal(P.ehComentario(b.texto), false, `"${b.texto}" é botão, não comentário`);
+
   assert.equal(P.BOTOES_NOTA.length, 5);
   for (const b of P.BOTOES_NOTA) assert.ok(b.length <= 25, `botão "${b}" passa de 25 chars (limite da Meta)`);
   P.BOTOES_NOTA.forEach((b, i) => assert.equal(P.interpretarNotaVisitante(b), i + 1, `botão "${b}" → ${i + 1}`));
@@ -127,6 +148,12 @@ assert.equal(R.primeiroNome(''), 'Olá');
   assert.equal(P.ehComentario('4'), false);
   assert.equal(P.ehComentario('👍'), false, 'só emoji não é comentário');
   assert.match(P.textoObrigado('Ana', 5), /Ana/);
+  // ⚠️ quem toca em "Amei o culto, me senti em casa" NUNCA viu número: o
+  // agradecimento não pode devolver "nota 5" e fazer ela achar que errou.
+  for (const n of [1, 2, 3, 4, 5]) {
+    assert.ok(!/\bnota\b/i.test(P.textoObrigado('Ana', n)), `nota ${n} vazou no agradecimento`);
+    assert.ok(!new RegExp(`\\b${n}\\b`).test(P.textoObrigado('Ana', n)), `o número ${n} vazou no agradecimento`);
+  }
   assert.match(P.textoObrigado('Ana', 2), /melhorar/i);
   assert.ok(P.textoObrigado('', 4).length > 10);
   // o FORMULÁRIO (Flow): response_json chega como STRING

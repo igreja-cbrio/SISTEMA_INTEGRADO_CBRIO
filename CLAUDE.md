@@ -152,18 +152,42 @@ protegido, ANTES do `processarFila` pra sair na mesma rodada). **Sem cron novo**
   o dia UTC e continua certo (tem teste).
 - **Dedup = `pesquisa_enviada_em` carimbado ANTES de enfileirar, condicionado**
   (`.is(null)`) — duas rodadas concorrentes, uma passa.
-- ⚠️⚠️ **Template `visitante_pesquisa_satisfacao`** (env
-  `WHATSAPP_TEMPLATE_VISITANTE_PESQUISA` só override) · MARKETING · pt_BR ·
-  **`{{1}}` 1º nome · `{{2}}` LINK**. Telefone digits-only (quem põe o 55 é o
+- ⚠️⚠️ **Template `visitante_pesquisa_satisfacao` · APROVADO na Meta em
+  11/09/2026** (env `WHATSAPP_TEMPLATE_VISITANTE_PESQUISA` só override) ·
+  MARKETING · pt_BR · **UMA variável (`{{1}}` 1º nome) e TRÊS BOTÕES de
+  resposta rápida**, com o texto em linguagem de gente, SEM número:
+  `Amei o culto, me senti em casa` · `Eu gostei, o culto foi bom` ·
+  `Não gostei, poderia ser melhor`. Telefone digits-only (quem põe o 55 é o
   remetente).
-- ⚠️⚠️ **VOLTOU A SER LINK (11/09/2026) — e a página tem CINCO CARINHAS que
-  respondem em UM TOQUE.** A trajetória, pra ninguém "consertar" de volta:
-  link (09/09) → quick-reply (10/09, *"não quero que a pessoa clique em link"*)
-  → Flow (10/09, *"depois da 2ª opção ele põe ver todas as opções"*) → **link de
-  novo (11/09)**, depois de a Meta bloquear Flows por 3 meses e de ele não
-  gostar do desenho com botões: *"não gostei da lógica com botões no whatsapp
-  não… lá 5 carinhas de muito feliz a muito triste sem legenda, só clicar mesmo
-  e comentário opcional"*.
+- ⚠️⚠️ **Quem traduz esses rótulos é `utils/respostaPesquisaVisitante.BOTOES_TEXTO`**
+  (casa por TEXTO, sem acento e sem caixa, ANTES de procurar dígito). Sem esse
+  mapa a pessoa toca no botão e **a nota NÃO é gravada — em silêncio**, porque o
+  webhook responde 200. ⚠️ **Mudou o rótulo na Meta, muda o mapa E os casos do
+  `test:visitante`, juntos.** 2 mutantes rodados e mortos (tirar o mapa → 3
+  vermelhos · "gostei" virando 3 → 1).
+- ⚠️ **A escala é 5 · 4 · 2, não 5 · 3 · 1**: *"eu gostei, o culto foi bom"* é
+  elogio, não neutro — em 3 ele puxaria a média e a igreja leria como morno o
+  que a pessoa disse que foi bom. **Não existe 3 neste template**, então o que
+  informa é a DISTRIBUIÇÃO, não a média.
+- ⚠️ **UMA variável no envio.** Mandar 2 params num template de 1 variável é
+  recusa da Meta, mensagem a mensagem — ninguém receberia.
+- ⚠️⚠️ **A TRAJETÓRIA DO DESENHO, pra ninguém "consertar" de volta**: link
+  (09/09) → quick-reply de 5 (10/09, *"não quero que a pessoa clique em link"*)
+  → Flow (10/09, *"depois da 2ª opção ele põe ver todas as opções"*) → link com
+  5 carinhas (11/09, *"não gostei da lógica com botões"*) → **TRÊS BOTÕES em
+  texto (11/09, o que ele efetivamente aprovou na Meta)**, porque *"ao criar o
+  template, acho que o link não vai ser tão clicado"*. Cinco mudanças em três
+  dias; o que vale é o que está na Meta.
+- ⚠️ **A página `/visitante/avaliar/<token>` com as 5 CARINHAS continua de pé
+  e funcionando, mas HOJE NINGUÉM GERA O LINK** — o disparo não manda mais
+  `{{2}}` e não há botão de "copiar link" em tela. `montarLinkPesquisa` só é
+  exercitado pelo teste. **Não apagar**: é a escala de 5 pontos inteira (o
+  template vivo só tem 3) e o caminho de quem responde fora do WhatsApp.
+  Quem for ressuscitá-la precisa de UM dos dois: link no template (volta a
+  guarda de pular quem ficou sem link) ou um botão de copiar no painel.
+- ⚠️ **O agradecimento NÃO cita o número da nota** (`textoObrigado`, com teste):
+  quem tocou em *"Amei o culto, me senti em casa"* nunca viu número — receber
+  "obrigado pela nota 5" faria a pessoa achar que respondeu outra coisa.
 - ⚠️ **UM TOQUE grava a nota** (`src/pages/public/VisitanteAvaliar.tsx`): sem
   número, sem legenda visual, sem botão de enviar. O **comentário é o 2º passo**,
   opcional, na tela de agradecimento. Não voltar a exigir "escolha e confirme" —
@@ -177,11 +201,11 @@ protegido, ANTES do `processarFila` pra sair na mesma rodada). **Sem cron novo**
   e reenvio não sobrescreve o que já veio. O GET devolve `tem_comentario`
   booleano; ⚠️ **o TEXTO do comentário nunca sai no GET** — o link pode ter sido
   encaminhado.
-- ⚠️⚠️ **Sem link resolvido, a pessoa é PULADA e o carimbo é DESFEITO**
-  (`pesquisa_enviada_em` volta a null, `sem_link` no resumo): template de 2
-  variáveis com 1 parâmetro é recusa da Meta, e 200 mensagens recusadas uma a
-  uma é pior que não mandar. O link vai como **variável de CORPO**, nunca botão
-  de URL.
+- ⚠️ **O disparo NÃO manda link** (o template aprovado não tem `{{2}}`). O
+  `montarLinkPesquisa` continua vivo pro caminho manual e pros cartazes; se um
+  dia o link voltar ao template, volta junto a guarda de pular quem ficou sem
+  ele — template de 2 variáveis com 1 parâmetro é recusa da Meta, mensagem a
+  mensagem.
 - ⚠️⚠️ **A resposta do Flow é `nfm_reply` e o `processarFlowReply` do webhook
   DESCARTA todo nfm_reply** (coleta do bot aposentada em 13/08). Por isso
   `processarRespostaVisitante` roda ANTES dele no laço do webhook e trata o
@@ -298,9 +322,9 @@ café na cafeteria não é da área ministerial.
 ### ⏳ Pendente de GENTE (sem isto a pesquisa não sai)
 
 1. **Aplicar a migration** `20260909120000` (SQL colado na conversa).
-2. **Criar o template `visitante_pesquisa_satisfacao` na Meta** · MARKETING ·
-   pt_BR · **DUAS variáveis: `{{1}}` 1º nome e `{{2}}` o link**. Sem botão
-   nenhum — o link vai no corpo. ⚠️ Com 1 variável só, o envio é recusado.
+2. ✅ **Template `visitante_pesquisa_satisfacao` CRIADO na Meta em 11/09** ·
+   MARKETING · pt_BR · 1 variável + 3 botões (ver acima). Falta só **ligar o
+   switch `visitante_pesquisa`** em Comunicação → Envios → Automáticos.
    O Flow segue em DRAFT e **não é mais o caminho** (ver o bloco do bloqueio).
 3. **Ligar o switch** `visitante_pesquisa` em Comunicação → Envios → Automáticos.
 4. **Imprimir os cartazes** pela aba Cartazes (QR) de `/visitantes` — ou gerar
