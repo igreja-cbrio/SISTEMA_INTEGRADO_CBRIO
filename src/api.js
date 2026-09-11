@@ -1,4 +1,6 @@
 import { supabase } from './supabaseClient';
+// Mesma régua de retry das portas públicas de pesquisa (censo e NPS).
+import { fetchPublicoComRetry as npsFetchRetry } from './lib/censoApi';
 import { resolveApiBaseUrl } from './lib/api-base';
 import { captureApiError } from './lib/sentry';
 
@@ -4541,92 +4543,13 @@ export const nps = {
   },
 };
 
-// Retry com backoff pras chamadas públicas do NPS (evento com pico).
-// Retenta em falha de rede e nos status de proteção de borda (403 challenge do
-// Vercel / 429 / 503) — que barram ANTES do servidor, então é seguro repetir.
-// Não retenta 400/404 (erro real de dado/pesquisa) nem estoura duplicata.
-async function npsFetchRetry(doFetch, { tentativas = 3, msg = 'Erro' } = {}) {
-  const RETRIABLE = new Set([403, 429, 502, 503, 504]);
-  let ultimo;
-  for (let i = 0; i < tentativas; i++) {
-    try {
-      const r = await doFetch();
-      if (r.ok) return await r.json().catch(() => ({}));
-      if (!RETRIABLE.has(r.status) || i === tentativas - 1) {
-        const data = await r.json().catch(() => ({}));
-        throw new Error(data.error || msg);
-      }
-      ultimo = new Error(`http_${r.status}`);
-    } catch (e) {
-      ultimo = e;
-      if (i === tentativas - 1) throw e;
-    }
-    // backoff: ~0.5s, 1.2s, 2.5s + jitter · espalha as re-tentativas do pico
-    await new Promise((res) => setTimeout(res, (500 * Math.pow(2, i)) + Math.random() * 400));
-  }
-  throw ultimo || new Error(msg);
-}
-
-// Censo · porta PÚBLICA (QR no culto, link pessoal, app do membro).
-// Reusa o `npsFetchRetry`: mesmo cenário e mesmo motivo — sob pico de culto a
-// borda do Vercel dá challenge/429 momentâneo, e perder a resposta de quem
-// preencheu 90 campos não é opção. 400/404 não são retentados (dado inválido ou
-// pesquisa fechada não melhoram com insistência).
-export const censoPublico = {
-  obter: (slug) =>
-    npsFetchRetry(
-      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}`, { headers: { 'Content-Type': 'application/json' } }),
-      { tentativas: 4, msg: 'Erro ao carregar o censo' },
-    ),
-  // Atalho opcional: quem já está na base não redigita nome/telefone/e-mail.
-  // Resposta NEUTRA por definição — não dá para saber se um CPF existe.
-  prefill: (slug, dados) =>
-    npsFetchRetry(
-      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/prefill`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados),
-      }),
-      { tentativas: 2, msg: 'Não foi possível verificar' },
-    ),
-  // Listas longas com busca. As opções NÃO vêm no questionário: 1.911 igrejas em
-  // cada abertura seria absurdo.
-  catalogo: (nome, q) =>
-    npsFetchRetry(
-      () => fetch(`${API}/public/censo/catalogo/${encodeURIComponent(nome)}?q=${encodeURIComponent(q)}`,
-        { headers: { 'Content-Type': 'application/json' } }),
-      { tentativas: 2, msg: 'Erro na busca' },
-    ),
-  parcial: (slug, dados) =>
-    npsFetchRetry(
-      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/parcial`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados),
-      }),
-      { tentativas: 2, msg: 'Não foi possível salvar' },
-    ),
-  retomar: (slug, dados) =>
-    npsFetchRetry(
-      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/retomar`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados),
-      }),
-      { tentativas: 2, msg: 'Não foi possível retomar' },
-    ),
-  responder: (slug, payload) =>
-    npsFetchRetry(
-      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/responder`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-      }),
-      { tentativas: 3, msg: 'Erro ao enviar resposta' },
-    ),
-  // Última tentativa enquanto a aba fecha. O `envio_id` no payload garante que
-  // um beacon a mais não crie resposta duplicada.
-  responderBeacon: (slug, payload) => {
-    try {
-      if (typeof navigator === 'undefined' || !navigator.sendBeacon) return false;
-      const url = `${API}/public/censo/${encodeURIComponent(slug)}/responder`;
-      const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
-      return navigator.sendBeacon(url, blob);
-    } catch { return false; }
-  },
-};
+// ⚠️ O retry das portas públicas e o cliente do censo MUDARAM DE ARQUIVO
+// (11/09/2026): vivem em `lib/censoApi.js`, que não importa supabase nem
+// Sentry. É o que permite a página pública do censo ter entrada própria
+// (`censo.html`) sem arrastar o ERP inteiro — 326 KB comprimidos que toda
+// pessoa que escaneia o QR no culto estava baixando. Aqui ficam só os
+// re-exports, para nada que já importava de `api.js` precisar mudar.
+export { censoPublico } from './lib/censoApi';
 
 export const online = {
   // Aceitações online (decisões nominais) + QRs do apelo por culto.

@@ -1,5 +1,12 @@
 // Formulário do censo: um bloco por tela, com progresso e validação por bloco.
 //
+// ⚠️⚠️ A validação cobra VAZIO **e** VALOR ERRADO (11/09/2026). Antes cobrava
+// só vazio, e o CPF com um dígito trocado passava daqui para tomar 400 no
+// servidor — depois de a tela já ter dito "Obrigado!". Cada campo mostra o
+// motivo embaixo dele e o rodapé NOMEIA os campos, em vez de dizer só quantos
+// são: "faltam 3 perguntas" numa parte de 12 campos manda a pessoa procurar.
+// A régua vive em `bloqueios()` (`src/lib/censoForm.ts`).
+//
 // A decisão de UI que mais importa aqui é NÃO pôr 93 campos numa rolagem única.
 // Bloco por tela dá três coisas de graça: a pessoa vê o fim se aproximando,
 // erra menos (valida 6 campos por vez em vez de 93 no final) e a condicional
@@ -7,7 +14,7 @@
 // simplesmente não existe.
 import { useMemo, useRef, useState } from 'react';
 import type { Pergunta, Respostas } from '@/lib/censoForm';
-import { blocosVisiveis, faltando, progresso } from '@/lib/censoForm';
+import { blocosVisiveis, bloqueios, progresso } from '@/lib/censoForm';
 import { aplicarEndereco, buscarCep, cepCompleto } from '@/lib/cepAutopreenche';
 import PerguntaCampo from './PerguntaCampo';
 import { usePublicPalette } from '@/pages/public/publicTheme';
@@ -46,11 +53,12 @@ export default function CensoForm({
   const bloco = blocos[idx];
   const ultimo = idx >= blocos.length - 1;
 
-  const faltandoNoBloco = useMemo(
-    () => (bloco ? faltando(bloco.perguntas, respostas) : []),
+  // Tudo o que barra o avanço NESTE bloco: não respondido + respondido errado.
+  const problemasNoBloco = useMemo(
+    () => (bloco ? bloqueios(bloco.perguntas, respostas) : []),
     [bloco, respostas],
   );
-  const faltandoIds = new Set(faltandoNoBloco.map((p) => p.id));
+  const motivoPorId = new Map(problemasNoBloco.map((p) => [p.id, p.motivo]));
 
   // ── CEP preenche endereço, bairro e cidade ────────────────────────────────
   // Pedido do Matheus (10/08): no culto o preenchimento é em pé, no celular,
@@ -105,7 +113,7 @@ export default function CensoForm({
   }
 
   function avancar() {
-    if (faltandoNoBloco.length) { setMostrarErros(true); return; }
+    if (problemasNoBloco.length) { setMostrarErros(true); return; }
     setMostrarErros(false);
     if (!ultimo) {
       onBlocoConcluido?.(respostas);       // checkpoint do rascunho
@@ -114,8 +122,9 @@ export default function CensoForm({
       return;
     }
     // Última rede antes de enviar: o formulário pode ter mudado de forma no
-    // caminho (a pessoa voltou e trocou uma condicional).
-    const tudo = faltando(perguntas, respostas);
+    // caminho (a pessoa voltou e trocou uma condicional) — e o erro pode estar
+    // numa parte anterior, então voltamos PARA ELA em vez de avisar de longe.
+    const tudo = bloqueios(perguntas, respostas);
     if (tudo.length) {
       const primeiro = blocos.findIndex((b) => b.perguntas.some((p) => p.id === tudo[0].id));
       setMostrarErros(true);
@@ -171,9 +180,16 @@ export default function CensoForm({
               pergunta={p}
               valor={respostas[p.id]}
               onChange={(v) => setResposta(p.id, v)}
-              faltando={mostrarErros && faltandoIds.has(p.id)}
+              faltando={mostrarErros && motivoPorId.has(p.id)}
               buscarCatalogo={buscarCatalogo}
             />
+            {/* O motivo embaixo do campo é o que faz a pessoa saber O QUE
+                corrigir — moldura vermelha sozinha só diz que algo está torto. */}
+            {mostrarErros && motivoPorId.has(p.id) && (
+              <p style={{ fontSize: 12.5, color: '#ef4444', margin: '6px 0 0', lineHeight: 1.4 }}>
+                {motivoPorId.get(p.id)}
+              </p>
+            )}
           </div>
         ))}
       </div>
@@ -193,11 +209,24 @@ export default function CensoForm({
         </div>
       )}
 
-      {mostrarErros && faltandoNoBloco.length > 0 && (
+      {mostrarErros && problemasNoBloco.length > 0 && (
+        <div style={{
+          marginTop: 16, padding: '10px 13px', borderRadius: 10, fontSize: 13,
+          border: '1px solid rgba(239,68,68,.45)', background: 'rgba(239,68,68,.08)', color: '#ef4444',
+        }}>
+          <p style={{ margin: 0, fontWeight: 600 }}>
+            {problemasNoBloco.length === 1 ? 'Confira 1 campo desta parte:' : `Confira ${problemasNoBloco.length} campos desta parte:`}
+          </p>
+          <ul style={{ margin: '6px 0 0', padding: '0 0 0 18px', lineHeight: 1.5 }}>
+            {problemasNoBloco.map((pr) => (
+              <li key={pr.id}><strong>{pr.texto}</strong> — {pr.motivo}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {mostrarErros && !problemasNoBloco.length && ultimo && !consentimento && (
         <p style={{ marginTop: 16, fontSize: 13, color: '#ef4444' }}>
-          {faltandoNoBloco.length === 1
-            ? 'Falta responder 1 pergunta desta parte.'
-            : `Faltam responder ${faltandoNoBloco.length} perguntas desta parte.`}
+          Marque o aviso de privacidade acima para enviar.
         </p>
       )}
 
