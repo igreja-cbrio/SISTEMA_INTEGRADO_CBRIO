@@ -160,15 +160,33 @@ protegido, ANTES do `processarFila` pra sair na mesma rodada). **Sem cron novo**
   `Não gostei, poderia ser melhor`. Telefone digits-only (quem põe o 55 é o
   remetente).
 - ⚠️⚠️ **Quem traduz esses rótulos é `utils/respostaPesquisaVisitante.BOTOES_TEXTO`**
-  (casa por TEXTO, sem acento e sem caixa, ANTES de procurar dígito). Sem esse
-  mapa a pessoa toca no botão e **a nota NÃO é gravada — em silêncio**, porque o
-  webhook responde 200. ⚠️ **Mudou o rótulo na Meta, muda o mapa E os casos do
-  `test:visitante`, juntos.** 2 mutantes rodados e mortos (tirar o mapa → 3
-  vermelhos · "gostei" virando 3 → 1).
-- ⚠️ **A escala é 5 · 4 · 2, não 5 · 3 · 1**: *"eu gostei, o culto foi bom"* é
-  elogio, não neutro — em 3 ele puxaria a média e a igreja leria como morno o
-  que a pessoa disse que foi bom. **Não existe 3 neste template**, então o que
-  informa é a DISTRIBUIÇÃO, não a média.
+  (casa por TEXTO INTEIRO, sem acento e sem caixa, ANTES de procurar dígito).
+  Sem esse mapa a pessoa toca no botão e **a nota NÃO é gravada — em silêncio**,
+  porque o webhook responde 200. ⚠️⚠️ **Mudou o rótulo na Meta, muda o mapa E os
+  casos do `test:visitante`, juntos** — e o mapa é também o que a gente ECOA
+  pra pessoa, então rótulo errado vira eco errado.
+- ⚠️⚠️⚠️ **A ESCALA É 1 · 2 · 3** (Marcos, 11/09: *"1 a pior, 2 a do meio, 3 a
+  maior… ai fazemos a média depois"*). **1** = `Não gostei, poderia ser melhor` ·
+  **2** = `Eu gostei, o culto foi bom` · **3** = `Amei o culto, me senti em casa`.
+  Três opções, três números, média sobre 3.
+  ⚠️⚠️ **NADA no sistema pode gravar 4 ou 5.** A porta pública, o webhook e o
+  Flow gravam na MESMA coluna (`pesquisa_nota`); duas réguas ali dentro fazem a
+  média não dizer nada. A guarda é `visitanteRegras.normalizarNota` (1..3) —
+  ⚠️ o CHECK do banco ainda aceita até 5, herança da migration de 09/09.
+  ⚠️ Quem mede: `/api/visitantes/resumo` devolve `escala_max: 3` e
+  `fora_da_escala` (linha velha fica FORA da média, mas aparece).
+- ⚠️⚠️ **O NÚMERO NUNCA É DITO À PESSOA** — nem no agradecimento, nem no "já
+  está registrada", nem no "não entendi". Ela tocou numa FRASE. O agradecimento
+  ECOA a frase escolhida (`textoObrigado` + `rotuloDaNota`) e convida ao
+  feedback livre (`CONVITE_FEEDBACK`). Tem teste e guarda estática no gate.
+- ⚠️⚠️ **O COMENTÁRIO TEM PRAZO: até a virada do dia BRT do voto, com PISO de 6h**
+  (`comentarioNaJanela` · Marcos, 11/09: *"deixar um tempo máximo, se ele
+  responder naquele dia, pegamos essa informação"*). O piso existe porque quem
+  vota às 23h no culto da noite teria minutos. **Fora da janela o serviço
+  devolve `false`** e a mensagem segue pro fluxo normal — não é mais feedback
+  do culto, é conversa. ⚠️ Carimbo faltando ⇒ janela ABERTA (bug nosso não pode
+  custar o que a visitante escreveu). ⚠️ O texto do agradecimento diz "ainda
+  hoje": **mudou a janela, muda a frase**.
 - ⚠️ **UMA variável no envio.** Mandar 2 params num template de 1 variável é
   recusa da Meta, mensagem a mensagem — ninguém receberia.
 - ⚠️⚠️ **A TRAJETÓRIA DO DESENHO, pra ninguém "consertar" de volta**: link
@@ -178,16 +196,17 @@ protegido, ANTES do `processarFila` pra sair na mesma rodada). **Sem cron novo**
   texto (11/09, o que ele efetivamente aprovou na Meta)**, porque *"ao criar o
   template, acho que o link não vai ser tão clicado"*. Cinco mudanças em três
   dias; o que vale é o que está na Meta.
-- ⚠️ **A página `/visitante/avaliar/<token>` com as 5 CARINHAS continua de pé
-  e funcionando, mas HOJE NINGUÉM GERA O LINK** — o disparo não manda mais
-  `{{2}}` e não há botão de "copiar link" em tela. `montarLinkPesquisa` só é
-  exercitado pelo teste. **Não apagar**: é a escala de 5 pontos inteira (o
-  template vivo só tem 3) e o caminho de quem responde fora do WhatsApp.
-  Quem for ressuscitá-la precisa de UM dos dois: link no template (volta a
-  guarda de pular quem ficou sem link) ou um botão de copiar no painel.
-- ⚠️ **O agradecimento NÃO cita o número da nota** (`textoObrigado`, com teste):
-  quem tocou em *"Amei o culto, me senti em casa"* nunca viu número — receber
-  "obrigado pela nota 5" faria a pessoa achar que respondeu outra coisa.
+- ⚠️ **A página `/visitante/avaliar/<token>` tem as MESMAS TRÊS opções** (3
+  carinhas · eram 5 até 11/09) e continua de pé, **mas HOJE NINGUÉM GERA O
+  LINK**: o disparo não manda `{{2}}` e não há botão de "copiar link" em tela.
+  `montarLinkPesquisa` só é exercitado pelo teste. **Não apagar**: é o caminho
+  de quem responde fora do WhatsApp. Pra ressuscitar, UM dos dois: link no
+  template (volta a guarda de pular quem ficou sem link) ou botão de copiar no
+  painel. ⚠️⚠️ **As carinhas e os botões GRAVAM NA MESMA COLUNA** — as duas
+  listas têm que andar juntas, sempre.
+- ⚠️ **O JSON do Flow também está em 1..3**, com os mesmos textos (teste casa
+  cada opção contra a régua). Ele segue em DRAFT e bloqueado; se um dia for
+  publicado em 1..5, toda resposta 4 ou 5 seria descartada em silêncio.
 - ⚠️ **UM TOQUE grava a nota** (`src/pages/public/VisitanteAvaliar.tsx`): sem
   número, sem legenda visual, sem botão de enviar. O **comentário é o 2º passo**,
   opcional, na tela de agradecimento. Não voltar a exigir "escolha e confirme" —
@@ -209,7 +228,7 @@ protegido, ANTES do `processarFila` pra sair na mesma rodada). **Sem cron novo**
 - ⚠️⚠️ **A resposta do Flow é `nfm_reply` e o `processarFlowReply` do webhook
   DESCARTA todo nfm_reply** (coleta do bot aposentada em 13/08). Por isso
   `processarRespostaVisitante` roda ANTES dele no laço do webhook e trata o
-  nfm_reply primeiro (`interpretarRespostaFlowVisitante`: `nota` 1..5 obrigatória,
+  nfm_reply primeiro (`interpretarRespostaFlowVisitante`: `nota` 1..3 obrigatória,
   senão "não é nosso" e devolve false). Nota + comentário gravados de uma vez
   (UPDATE condicionado · a 1ª vale; 2º envio só acrescenta comentário). O envio
   do template NÃO manda `components` do botão (Flow estático · `flow_token`

@@ -1,7 +1,8 @@
 // ════════════════════════════════════════════════════════════════════════════
 //  VISITANTES · a resposta da pesquisa que chega no WEBHOOK (10/09/2026)
 //
-//  O template `visitante_pesquisa_satisfacao` sai com 5 botões (1 a 5). Quando
+//  O template `visitante_pesquisa_satisfacao` sai com TRÊS botões em texto
+//  (escala 1 · 2 · 3 · ver utils/respostaPesquisaVisitante). Quando
 //  a pessoa toca, a Meta entrega `type: 'button'` com `context.id` = o wamid da
 //  NOSSA mensagem — que está em `whatsapp_envios.message_id`, com `ref_id` = a
 //  visita. É o MESMO elo que amarra a resposta da escala (respostaEscala.js).
@@ -14,6 +15,14 @@
 //   2. COMENTÁRIO — texto respondendo ao template OU ao agradecimento →
 //              `pesquisa_comentario` (só onde vazio).
 //
+//  ⚠️⚠️ O COMENTÁRIO TEM PRAZO (decisão do Marcos, 11/09/2026): vale até a
+//  virada do dia BRT do voto, com piso de 6h (`comentarioNaJanela`). Depois
+//  disso o texto NÃO é mais da pesquisa — devolvemos ao fluxo normal, porque
+//  duas semanas depois aquilo é uma conversa com a igreja, não feedback do
+//  culto. O agradecimento já avisa a pessoa ("a gente lê tudo, ainda hoje").
+//  ⚠️⚠️ NENHUMA mensagem daqui diz o NÚMERO da nota: a pessoa tocou numa
+//  frase e nunca viu número. Ver o cabeçalho de respostaPesquisaVisitante.
+//
 //  ⚠️ Sem `context.id` só agimos quando há EXATAMENTE UM disparo da pesquisa
 //  nas últimas 72h pra aquele telefone (a mesma régua de 24/08 da escala) — e
 //  só pra NOTA. Comentário sem contexto seria capturar conversa alheia.
@@ -25,7 +34,7 @@ const { textoDaResposta, wamidRespondido } = require('../utils/respostaEscala');
 const {
   interpretarNotaVisitante, ehComentario, textoObrigado, interpretarRespostaFlowVisitante,
 } = require('../utils/respostaPesquisaVisitante');
-const { primeiroNome } = require('../utils/visitanteRegras');
+const { primeiroNome, comentarioNaJanela } = require('../utils/visitanteRegras');
 const { CONTEXTO, CONTEXTO_OBRIGADO } = require('./visitantePesquisa');
 
 const JANELA_SEM_CONTEXTO_H = 72;
@@ -107,7 +116,7 @@ async function processarRespostaVisitante(m, { enviarTexto, normalizarTelefone }
       const { enfileirar } = require('./whatsappFila');
       await enfileirar({ telefone: visita.telefone || telefone,
         texto: resp.comentario
-          ? `Recebemos, ${nome}! 💚 Obrigado pela nota ${resp.nota} e por contar como foi. Esperamos te ver de novo!`
+          ? `Recebemos, ${nome}! 💚 Obrigado por responder e por contar como foi. Esperamos te ver de novo!`
           : textoObrigado(nome, resp.nota),
         contexto: CONTEXTO_OBRIGADO, refId: visita.id });
     } catch (e) {
@@ -158,13 +167,13 @@ async function processarRespostaVisitante(m, { enviarTexto, normalizarTelefone }
           .eq('id', visita.id).is('pesquisa_comentario', null);
         await registrar(`[visitante] comentário antes da nota: ${bruto}`.slice(0, 500));
         await enviarTexto(telefone,
-          `Anotado, ${nome}, obrigado! 💚 Só falta a nota: toque em um dos botões da mensagem anterior (de 1 a 5) ou responda com o número.`)
+          `Anotado, ${nome}, obrigado! 💚 Só falta uma coisa: toque em uma das três opções da mensagem anterior.`)
           .catch(() => {});
         return true;
       }
       await registrar(`[visitante] não interpretado: ${bruto}`.slice(0, 500));
       await enviarTexto(telefone,
-        'Não entendi 🙈 Toque em um dos botões da mensagem anterior (de 1 a 5) ou responda só com o número.')
+        'Não entendi 🙈 Toque em uma das três opções da mensagem anterior.')
         .catch(() => {});
       return true;
     }
@@ -195,15 +204,22 @@ async function processarRespostaVisitante(m, { enviarTexto, normalizarTelefone }
     // Exceção: outro toque de botão/dígito sozinho é repetição → confirma sem gravar.
     if (nota != null && m.type === 'button') {
       await registrar(`[visitante] nota repetida: ${bruto}`.slice(0, 500));
-      await enviarTexto(telefone, `Sua nota ${visita.pesquisa_nota} já está registrada, ${nome}. Obrigado! 💚`).catch(() => {});
+      await enviarTexto(telefone, `Sua resposta já está registrada, ${nome}. Obrigado! 💚`).catch(() => {});
       return true;
     }
     return false;
   }
   if (nota != null && !ehComentario(bruto)) {
     await registrar(`[visitante] nota repetida: ${bruto}`.slice(0, 500));
-    await enviarTexto(telefone, `Sua nota ${visita.pesquisa_nota} já está registrada, ${nome}. Obrigado! 💚`).catch(() => {});
+    await enviarTexto(telefone, `Sua resposta já está registrada, ${nome}. Obrigado! 💚`).catch(() => {});
     return true;
+  }
+
+  // ⚠️ Daqui pra baixo é COMENTÁRIO — e comentário tem PRAZO. Fora da janela
+  // devolvemos ao fluxo normal (return false): não gravamos, não respondemos
+  // como pesquisa e não engolimos a mensagem, que vira conversa comum.
+  if (!comentarioNaJanela({ respondidaEm: visita.pesquisa_respondida_em })) {
+    return false;
   }
   if (visita.pesquisa_comentario) {
     // Já comentou: acrescenta (o campo é texto, não fatia) — a 2ª mensagem não pode sumir.

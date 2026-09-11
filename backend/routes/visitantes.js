@@ -15,7 +15,7 @@ const router = express.Router();
 const { supabase } = require('../utils/supabase');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { resolverJanelaPeriodo, rotuloJanela } = require('../utils/janelaPeriodo');
-const { LOCAIS, normalizarCodigoVoucher } = require('../utils/visitanteRegras');
+const { LOCAIS, normalizarCodigoVoucher, NOTA_MAX } = require('../utils/visitanteRegras');
 
 router.use(authenticate);
 
@@ -97,8 +97,12 @@ router.get('/resumo', authorizeModule('visitantes', 1), async (req, res) => {
     const porDia = new Map();
     const pessoas = new Set();
     let emitidos = 0, resgatados = 0, repetidos = 0, optin = 0;
-    let enviadas = 0, respondidas = 0, somaNotas = 0;
-    const notas = { 1: 0, 2: 0, 3: 0, 4: 0, 5: 0 };
+    // ⚠️ A escala é 1 · 2 · 3 desde 11/09/2026. `fora_da_escala` conta o que
+    // não couber nela (linha antiga de 1..5, se houver): fica FORA da média,
+    // porque misturar duas réguas faria a média não dizer nada — mas aparece
+    // no JSON, pra ninguém perder dado em silêncio.
+    let enviadas = 0, respondidas = 0, somaNotas = 0, foraDaEscala = 0;
+    const notas = { 1: 0, 2: 0, 3: 0 };
     for (const v of linhas) {
       porLocal[v.local] = (porLocal[v.local] || 0) + 1;
       pessoas.add(v.membro_id || `cpf-${v.id}`);
@@ -110,7 +114,11 @@ router.get('/resumo', authorizeModule('visitantes', 1), async (req, res) => {
       if (v.voucher_status === 'repetido') repetidos += 1;
       if (v.whatsapp_optin) optin += 1;
       if (v.pesquisa_enviada_em && v.pesquisa_status !== 'expirada') enviadas += 1;
-      if (v.pesquisa_nota) { respondidas += 1; somaNotas += v.pesquisa_nota; notas[v.pesquisa_nota] += 1; }
+      if (v.pesquisa_nota) {
+        respondidas += 1;
+        if (notas[v.pesquisa_nota] != null) { somaNotas += v.pesquisa_nota; notas[v.pesquisa_nota] += 1; }
+        else foraDaEscala += 1;
+      }
     }
     res.json({
       janela: { ...j, rotulo: rotuloJanela(j) },
@@ -122,8 +130,11 @@ router.get('/resumo', authorizeModule('visitantes', 1), async (req, res) => {
       whatsapp_optin: optin,
       pesquisa: {
         enviadas, respondidas,
+        escala_max: NOTA_MAX,
+        fora_da_escala: foraDaEscala,
         // null, nunca 0: "ninguém respondeu" ≠ "nota média zero"
-        nota_media: respondidas ? Math.round((somaNotas / respondidas) * 10) / 10 : null,
+        nota_media: (respondidas - foraDaEscala)
+          ? Math.round((somaNotas / (respondidas - foraDaEscala)) * 10) / 10 : null,
         distribuicao: notas,
         taxa_resposta_pct: enviadas ? Math.round((respondidas / enviadas) * 100) : null,
       },

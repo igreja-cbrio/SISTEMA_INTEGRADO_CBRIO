@@ -72,10 +72,40 @@ assert.equal(R.pesquisaDevida({ ...base, registradoEm: '2026-09-13T21:50:00Z', c
 assert.equal(R.pesquisaDevida({ ...base, cultoHora: 'xx', agora: Date.parse('2026-09-13T16:40:00Z') }), 'enviar');
 
 // ── nota · 1..5 inteiro ─────────────────────────────────────────────────────
-assert.equal(R.normalizarNota('4'), 4);
+assert.equal(R.normalizarNota('3'), 3);
 assert.equal(R.normalizarNota(0), null);
+assert.equal(R.normalizarNota(4), null, 'a escala é 1..3 desde 11/09/2026');
+assert.equal(R.normalizarNota(5), null, 'a escala é 1..3 desde 11/09/2026');
 assert.equal(R.normalizarNota(6), null);
-assert.equal(R.normalizarNota(3.5), null);
+assert.equal(R.normalizarNota(2.5), null);
+assert.equal(R.NOTA_MAX, 3);
+
+// ── a JANELA DO COMENTÁRIO · "se ele responder naquele dia, pegamos" ─────────
+// ⚠️ Fecha na virada do dia BRT do voto, com piso de HORAS_MIN_COMENTARIO.
+{
+  const voto = '2026-09-13T17:30:00-03:00';            // domingo, 17h30 BRT
+  const naJanela = (quando) => R.comentarioNaJanela({ respondidaEm: voto, agora: new Date(quando) });
+  assert.equal(naJanela('2026-09-13T17:31:00-03:00'), true, 'um minuto depois');
+  assert.equal(naJanela('2026-09-13T23:59:00-03:00'), true, 'mesmo dia, quase meia-noite');
+  assert.equal(naJanela('2026-09-14T00:30:00-03:00'), false, 'virou o dia: já não é feedback do culto');
+  assert.equal(naJanela('2026-09-20T10:00:00-03:00'), false, 'uma semana depois');
+  // ⚠️ o PISO: quem vota no fim do culto da noite teria minutos de janela, e é
+  // justamente dessa pessoa que a gente mais quer ouvir.
+  const noite = '2026-09-13T23:10:00-03:00';
+  assert.equal(R.HORAS_MIN_COMENTARIO, 6);
+  assert.equal(R.comentarioNaJanela({ respondidaEm: noite, agora: new Date('2026-09-14T03:00:00-03:00') }), true,
+    'o piso de 6h estende a janela para além da meia-noite');
+  assert.equal(R.comentarioNaJanela({ respondidaEm: noite, agora: new Date('2026-09-14T06:00:00-03:00') }), false,
+    'passado o piso, fecha');
+  // ⚠️ o piso só ESTENDE: nunca encurta quem votou cedo
+  assert.equal(R.fimDaJanelaComentario('2026-09-13T08:00:00-03:00'),
+    Date.parse('2026-09-14T00:00:00-03:00'), 'voto de manhã fecha na virada, não em 8h+6h');
+  // carimbo faltando é bug NOSSO: a janela fica ABERTA, pra não perder o que a
+  // visitante escreveu.
+  assert.equal(R.comentarioNaJanela({ respondidaEm: null }), true);
+  assert.equal(R.comentarioNaJanela({ respondidaEm: 'nao-e-data' }), true);
+  assert.equal(R.comentarioNaJanela(), true);
+}
 assert.equal(R.primeiroNome('  maria clara '), 'maria');
 assert.equal(R.primeiroNome(''), 'Olá');
 
@@ -109,67 +139,102 @@ assert.equal(R.primeiroNome(''), 'Olá');
 // ── resposta pelo WhatsApp · botão/dígito vira nota · texto vira comentário ──
 {
   const P = require('./respostaPesquisaVisitante');
-  // ⚠️⚠️ OS TRÊS BOTÕES DO TEMPLATE VIVO (aprovado na Meta em 11/09/2026).
-  // O texto deles NÃO começa por dígito, então quem os lê é o mapa
-  // BOTOES_TEXTO. Se este bloco ficar vermelho, a pessoa toca no botão e a
-  // nota NÃO é gravada — e o webhook responde 200, então ninguém percebe.
-  // Mudou o rótulo na Meta? Muda o mapa E estes casos, juntos.
+  // ⚠️⚠️ OS TRÊS BOTÕES DO TEMPLATE VIVO, na escala 1 · 2 · 3 (11/09/2026).
+  // O texto deles NÃO começa por dígito, então quem os lê é BOTOES_TEXTO. Se
+  // este bloco ficar vermelho, a pessoa toca no botão e a nota NÃO é gravada —
+  // e o webhook responde 200, então ninguém percebe.
+  // ⚠️ Mudou o rótulo no WhatsApp Manager? Muda o mapa E estes casos, juntos.
   assert.equal(P.BOTOES_TEXTO.length, 3, 'o template vivo tem 3 botões');
-  assert.equal(P.interpretarNotaVisitante('Amei o culto, me senti em casa'), 5);
-  assert.equal(P.interpretarNotaVisitante('Eu gostei, o culto foi bom'), 4);
-  assert.equal(P.interpretarNotaVisitante('Não gostei, poderia ser melhor'), 2);
+  assert.equal(P.NOTA_MAX, 3);
+  assert.deepEqual(P.BOTOES_TEXTO.map((b) => b.nota), [3, 2, 1], 'do melhor pro pior');
+  assert.equal(P.interpretarNotaVisitante('Amei o culto, me senti em casa'), 3);
+  assert.equal(P.interpretarNotaVisitante('Eu gostei, o culto foi bom'), 2);
+  assert.equal(P.interpretarNotaVisitante('Não gostei, poderia ser melhor'), 1);
   // caixa e acento não podem decidir se a nota entra
-  assert.equal(P.interpretarNotaVisitante('AMEI O CULTO, ME SENTI EM CASA'), 5);
-  assert.equal(P.interpretarNotaVisitante('nao gostei, poderia ser melhor'), 2);
-  assert.equal(P.interpretarNotaVisitante('  Eu gostei, o culto foi bom  '), 4);
+  assert.equal(P.interpretarNotaVisitante('AMEI O CULTO, ME SENTI EM CASA'), 3);
+  assert.equal(P.interpretarNotaVisitante('nao gostei, poderia ser melhor'), 1);
+  assert.equal(P.interpretarNotaVisitante('  Eu gostei, o culto foi bom  '), 2);
   // ⚠️ frase PARECIDA não é botão: só o rótulo INTEIRO casa. Senão qualquer
   // comentário elogioso viraria nota e o comentário se perderia.
   assert.equal(P.interpretarNotaVisitante('o culto foi bom demais'), null);
   assert.equal(P.interpretarNotaVisitante('amei'), null);
   assert.equal(P.interpretarNotaVisitante('não gostei'), null);
   // e o rótulo do botão NÃO pode ser lido como comentário
-  for (const b of P.BOTOES_TEXTO) assert.equal(P.ehComentario(b.texto), false, `"${b.texto}" é botão, não comentário`);
+  for (const b of P.BOTOES_TEXTO) assert.equal(P.ehComentario(b.rotulo), false, `"${b.rotulo}" é botão, não comentário`);
 
-  assert.equal(P.BOTOES_NOTA.length, 5);
-  for (const b of P.BOTOES_NOTA) assert.ok(b.length <= 25, `botão "${b}" passa de 25 chars (limite da Meta)`);
-  P.BOTOES_NOTA.forEach((b, i) => assert.equal(P.interpretarNotaVisitante(b), i + 1, `botão "${b}" → ${i + 1}`));
-  assert.equal(P.interpretarNotaVisitante('5'), 5);
-  assert.equal(P.interpretarNotaVisitante(' 3. '), 3);
-  assert.equal(P.interpretarNotaVisitante('nota 4'), 4);
-  assert.equal(P.interpretarNotaVisitante('⭐⭐⭐⭐'), 4);
+  // ⚠️⚠️ NADA fora de 1..3 pode virar nota: a escala encolheu e um 4 ou 5 no
+  // banco misturaria duas réguas na mesma coluna — a média não diria mais nada.
+  assert.equal(P.interpretarNotaVisitante('3'), 3);
+  assert.equal(P.interpretarNotaVisitante(' 2. '), 2);
+  assert.equal(P.interpretarNotaVisitante('nota 1'), 1);
+  assert.equal(P.interpretarNotaVisitante('⭐⭐'), 2);
   assert.equal(P.interpretarNotaVisitante('2 estrelas'), 2);
-  assert.equal(P.interpretarNotaVisitante('6'), null, 'fora de 1..5');
+  assert.equal(P.interpretarNotaVisitante('4'), null, 'a escala vai até 3');
+  assert.equal(P.interpretarNotaVisitante('5'), null, 'a escala vai até 3');
+  assert.equal(P.interpretarNotaVisitante('⭐⭐⭐⭐⭐'), null, 'a escala vai até 3');
   assert.equal(P.interpretarNotaVisitante('0'), null);
-  assert.equal(P.interpretarNotaVisitante('cheguei 5 minutos atrasado'), null, 'dígito no meio da frase não é nota');
-  assert.equal(P.interpretarNotaVisitante('5 minutos'), null);
+  assert.equal(P.interpretarNotaVisitante('cheguei 2 minutos atrasado'), null, 'dígito no meio da frase não é nota');
+  assert.equal(P.interpretarNotaVisitante('3 minutos'), null);
   assert.equal(P.interpretarNotaVisitante('adorei, nota 10'), null);
   assert.equal(P.ehComentario('Adorei o louvor, muito acolhedor'), true);
-  assert.equal(P.ehComentario('5 · Excelente'), false, 'botão não é comentário');
-  assert.equal(P.ehComentario('4'), false);
+  assert.equal(P.ehComentario('2'), false);
   assert.equal(P.ehComentario('👍'), false, 'só emoji não é comentário');
-  assert.match(P.textoObrigado('Ana', 5), /Ana/);
-  // ⚠️ quem toca em "Amei o culto, me senti em casa" NUNCA viu número: o
-  // agradecimento não pode devolver "nota 5" e fazer ela achar que errou.
-  for (const n of [1, 2, 3, 4, 5]) {
-    assert.ok(!/\bnota\b/i.test(P.textoObrigado('Ana', n)), `nota ${n} vazou no agradecimento`);
-    assert.ok(!new RegExp(`\\b${n}\\b`).test(P.textoObrigado('Ana', n)), `o número ${n} vazou no agradecimento`);
+
+  // ── o AGRADECIMENTO ─────────────────────────────────────────────────────────
+  // ⚠️⚠️ Ecoa a FRASE escolhida e NUNCA o número: a pessoa tocou num texto e
+  // jamais viu nota nenhuma. "Obrigado pela nota 3" faria ela achar que errou.
+  for (const b of P.BOTOES_TEXTO) {
+    const t = P.textoObrigado('Ana', b.nota);
+    assert.match(t, /Ana/);
+    assert.ok(t.includes(b.rotulo), `o agradecimento da nota ${b.nota} não ecoa "${b.rotulo}"`);
+    assert.ok(!/\d/.test(t), `número vazou no agradecimento da nota ${b.nota}: ${t}`);
+    assert.ok(!/\bnota\b/i.test(t), `a palavra "nota" vazou no agradecimento: ${t}`);
+    // e o convite de feedback livre, que o Marcos pediu em 11/09
+    assert.ok(t.includes(P.CONVITE_FEEDBACK), `falta o convite de feedback na nota ${b.nota}`);
   }
-  assert.match(P.textoObrigado('Ana', 2), /melhorar/i);
-  assert.ok(P.textoObrigado('', 4).length > 10);
+  assert.ok(P.textoObrigado('', 2).length > 10);
+  assert.equal(P.rotuloDaNota(3), 'Amei o culto, me senti em casa');
+  assert.equal(P.rotuloDaNota(5), null, 'nota fora da escala não tem rótulo');
   // o FORMULÁRIO (Flow): response_json chega como STRING
-  assert.deepEqual(P.interpretarRespostaFlowVisitante('{"nota":"4","comentario":" Adorei o louvor ","flow_token":"unused"}'), { nota: 4, comentario: 'Adorei o louvor' });
-  assert.deepEqual(P.interpretarRespostaFlowVisitante({ nota: 5 }), { nota: 5, comentario: null });
+  assert.deepEqual(P.interpretarRespostaFlowVisitante('{"nota":"2","comentario":" Adorei o louvor ","flow_token":"unused"}'), { nota: 2, comentario: 'Adorei o louvor' });
+  assert.deepEqual(P.interpretarRespostaFlowVisitante({ nota: 3 }), { nota: 3, comentario: null });
   assert.deepEqual(P.interpretarRespostaFlowVisitante({ nota: '2', comentario: '' }), { nota: 2, comentario: null });
-  assert.equal(P.interpretarRespostaFlowVisitante({ nota: '7' }), null, 'fora de 1..5 não é nosso');
+  assert.equal(P.interpretarRespostaFlowVisitante({ nota: '7' }), null, 'fora de 1..3 não é nosso');
+  assert.equal(P.interpretarRespostaFlowVisitante({ nota: '5' }), null, 'a escala vai até 3');
   assert.equal(P.interpretarRespostaFlowVisitante({ comentario: 'x' }), null, 'sem nota não é nosso');
   assert.equal(P.interpretarRespostaFlowVisitante('{lixo'), null);
   assert.equal(P.interpretarRespostaFlowVisitante(null), null);
   assert.equal(P.interpretarRespostaFlowVisitante({ nota: '3', comentario: 'a'.repeat(2000) }).comentario.length, 1000, 'comentário capado em 1000');
-  // o JSON do Flow no repo é válido e os ids das opções são as notas 1..5
+  // ⚠️ O JSON do Flow (em DRAFT · a Meta bloqueia publicar) tem que ficar na
+  // MESMA escala e com os MESMOS textos dos botões: se um dia ele for
+  // publicado com 1..5, cada resposta 4 ou 5 seria descartada em silêncio.
   const flow = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'whatsapp-flows', 'visitante-avaliacao.json'), 'utf8'));
   const radio = flow.screens[0].layout.children.find((c) => c.type === 'Form').children.find((c) => c.name === 'nota');
-  assert.deepEqual(radio['data-source'].map((o) => o.id).sort(), ['1', '2', '3', '4', '5']);
+  assert.deepEqual(radio['data-source'].map((o) => o.id).sort(), ['1', '2', '3']);
+  for (const o of radio['data-source']) {
+    assert.equal(P.interpretarNotaVisitante(o.title), Number(o.id), `opção "${o.title}" do Flow não bate com a régua`);
+  }
   assert.equal(flow.screens[0].terminal, true);
+}
+
+// ── Guarda estática: a JANELA do comentário está LIGADA no serviço ─────────
+// ⚠️ A régua acima é pura e testada, mas quem a usa é o webhook — e o serviço
+// não entra no gate (precisa de Supabase). Esta guarda é o mínimo: se alguém
+// tirar a chamada, o comentário volta a ser aceito meses depois do culto.
+{
+  const svc = fs.readFileSync(path.join(__dirname, '..', 'services', 'visitantePesquisaResposta.js'), 'utf8');
+  // ⚠️ CHAMAR, não só importar: um mutante que apagou a guarda e deixou o
+  // `require` sobreviveu a um teste que só procurava o nome no arquivo.
+  assert.ok(/!comentarioNaJanela\(/.test(svc), 'visitantePesquisaResposta.js precisa CHAMAR comentarioNaJanela, não só importar');
+  assert.ok((svc.match(/comentarioNaJanela/g) || []).length >= 2, 'import + chamada');
+  // ⚠️ e NENHUMA mensagem PRA PESSOA pode citar o número da nota: ela tocou
+  // numa frase e nunca viu número nenhum. (O registro interno em
+  // whatsapp_coletas pode e deve ter o número — quem lê aquilo somos nós.)
+  for (const linha of svc.split(/\r?\n/)) {
+    if (!/enviarTexto\(|texto:/.test(linha)) continue;
+    assert.ok(!/nota \$\{|\bnotas? \d/i.test(linha), `mensagem ao visitante cita o número da nota: ${linha.trim()}`);
+    assert.ok(!/1 a 5|1 a 3/.test(linha), `mensagem ao visitante fala da escala em números: ${linha.trim()}`);
+  }
 }
 
 // ── Guarda estática: utils/ não pode puxar Supabase (o gate roda sem node_modules) ──
