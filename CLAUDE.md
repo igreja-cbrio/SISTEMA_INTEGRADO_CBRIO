@@ -199,6 +199,23 @@ não é 1 minuto).
    **LEI: numa página pública, um único `import` de `src/api.js` arrasta o ERP
    inteiro — conferir o BUNDLE depois do deploy, não só o build local.**
 
+### ⚠️⚠️ A regra do Firewall chamada "censo" NÃO é do censo de hoje (11/09)
+
+O Marcos achou uma rule existente apontando para `/api/public/membresia` e
+`/cadastro-membresia` e perguntou se ainda faziam falta — **fazem, e trocar as
+URLs quebraria o domingo.** `/api/public/membresia` não é legado do censo antigo
+(o `?censo=1` no formulário de membresia): serve `/bairros` (que **a pergunta de
+bairro do censo chama**, uma vez por pessoa), `/cadastro` (a porta de cadastro),
+`/wallet/*` (a carteirinha), os lookups e `/censo/meus-dados` (o link PESSOAL do
+convite). **A rule tem que GANHAR `/api/public/censo`, não trocar de dono.**
+
+De carona: `/bairros` saía com `max-age=0, must-revalidate` e
+`X-Vercel-Cache: MISS` — 500 pessoas = 500 invocações da função e 500 fichas no
+balde de **3.000/15min do `lookupLimiter`, compartilhado com lookup de CPF,
+família e carteirinha**. Ganhou `s-maxage=300` (só no sucesso).
+**LEI: endpoint de catálogo em porta pública é cache de BORDA, não só cache em
+memória — o cache em memória é por instância e a borda é por todo mundo.**
+
 ### Regra operacional do domingo (não é código)
 
 - **Não editar o questionário durante a coleta.** O cliente valida contra a
