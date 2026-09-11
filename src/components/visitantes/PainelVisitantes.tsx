@@ -207,7 +207,10 @@ function Visitas() {
   const tiles = resumo ? [
     { l: 'Visitas', v: resumo.visitas, s: `${resumo.pessoas_distintas} pessoas`, icon: Users, cor: ACENTO },
     { l: 'Vouchers retirados', v: resumo.voucher?.resgatados ?? 0, s: `${resumo.voucher?.emitidos ?? 0} a retirar · ${resumo.voucher?.repetidos ?? 0} já tinham`, icon: Coffee, cor: '#f59e0b' },
-    { l: 'Nota média', v: resumo.pesquisa?.nota_media == null ? '—' : resumo.pesquisa.nota_media.toFixed(1), s: resumo.pesquisa?.respondidas ? `${resumo.pesquisa.respondidas} respostas de ${resumo.pesquisa.enviadas} enviadas` : 'ninguém respondeu ainda', icon: Star, cor: '#10b981' },
+    // ⚠️ LEI DA CASA: número sempre com a janela. "2,3" sozinho seria lido como
+    // nota baixa por quem pensa em 1..5 — a escala aqui é 1 a 3.
+    // A régua vem do SERVIDOR (escala_max), pra não existir um 3 chumbado aqui.
+    { l: 'Nota média', v: resumo.pesquisa?.nota_media == null ? '—' : `${resumo.pesquisa.nota_media.toFixed(1)} de ${resumo.pesquisa.escala_max ?? 3}`, s: resumo.pesquisa?.respondidas ? `${resumo.pesquisa.respondidas} respostas de ${resumo.pesquisa.enviadas} enviadas` : 'ninguém respondeu ainda', icon: Star, cor: '#10b981' },
     { l: 'Opt-in WhatsApp', v: resumo.whatsapp_optin, s: resumo.visitas ? `${Math.round((resumo.whatsapp_optin / resumo.visitas) * 100)}% das visitas` : '—', icon: MessageSquare, cor: '#3b82f6' },
   ] : [];
 
@@ -262,7 +265,8 @@ function Visitas() {
           ))}
           {resumo.pesquisa?.respondidas > 0 && (
             <span className="px-2 py-1 rounded-full border border-border bg-card">
-              Notas · {[5, 4, 3, 2, 1].map((n) => `${n}★ ${resumo.pesquisa.distribuicao?.[n] ?? 0}`).join(' · ')}
+              Notas · {[3, 2, 1].map((n) => `${n}★ ${resumo.pesquisa.distribuicao?.[n] ?? 0}`).join(' · ')}
+              {resumo.pesquisa.fora_da_escala ? ` · ${resumo.pesquisa.fora_da_escala} fora da escala antiga` : ''}
             </span>
           )}
         </div>

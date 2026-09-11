@@ -2,8 +2,13 @@
 // Chega pelo LINK assinado que vai no WhatsApp depois do culto
 // (`/visitante/avaliar/<token>` · services/visitantePesquisa.js).
 //
-// ⚠️⚠️ DESENHO (decisão do Marcos, 11/09/2026): CINCO CARINHAS, de muito feliz
-// a muito triste, SEM legenda e SEM número — e **um toque na carinha JÁ ENVIA**.
+// ⚠️⚠️ DESENHO (decisão do Marcos, 11/09/2026): TRÊS CARINHAS, da mais feliz
+// à mais triste, SEM legenda e SEM número — e **um toque na carinha JÁ ENVIA**.
+// ⚠️⚠️ São as MESMAS TRÊS opções dos botões do WhatsApp, na mesma escala
+// 1 · 2 · 3 (`utils/respostaPesquisaVisitante.BOTOES_TEXTO`). Isso não é
+// coincidência e não pode divergir: as duas portas gravam na MESMA coluna
+// (`pesquisa_nota`), e duas réguas ali dentro fariam a média não dizer nada.
+// Eram 5 carinhas até 11/09; viraram 3 quando a escala encolheu.
 // O comentário vem DEPOIS, opcional, na tela de agradecimento. O motivo é
 // atrito: a nota é o dado que precisamos, e pedir "escolha e depois confirme"
 // perde gente no segundo passo. NÃO voltar a exigir botão de enviar pra nota.
@@ -27,11 +32,9 @@ type Dados = {
 // Da MAIS FELIZ para a MAIS TRISTE (ordem pedida pelo Marcos). O rótulo NÃO
 // aparece na tela — existe só pro leitor de tela.
 const CARINHAS = [
-  { v: 5, e: '\u{1F929}', l: 'Muito feliz' },
-  { v: 4, e: '\u{1F642}', l: 'Feliz' },
-  { v: 3, e: '\u{1F610}', l: 'Indiferente' },
-  { v: 2, e: '\u{1F641}', l: 'Triste' },
-  { v: 1, e: '\u{1F61E}', l: 'Muito triste' },
+  { v: 3, e: '\u{1F929}', l: 'Amei o culto, me senti em casa' },
+  { v: 2, e: '\u{1F642}', l: 'Eu gostei, o culto foi bom' },
+  { v: 1, e: '\u{1F641}', l: 'Não gostei, poderia ser melhor' },
 ];
 
 export default function VisitanteAvaliar() {
@@ -186,7 +189,7 @@ export default function VisitanteAvaliar() {
           É só tocar numa carinha.
         </p>
 
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6, margin: '26px 0 4px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 6, margin: '26px 0 4px' }}>
           {CARINHAS.map((c) => (
             <button key={c.v} type="button" onClick={() => escolher(c.v)}
               disabled={enviando !== null} aria-label={c.l}

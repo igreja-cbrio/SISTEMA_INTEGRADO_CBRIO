@@ -18,7 +18,9 @@ const PainelVisitantes = lazy(() => import('../../components/visitantes/PainelVi
 
 // As mesmas carinhas da página pública /visitante/avaliar — a ficha mostra o
 // que a pessoa efetivamente tocou, não um número que ninguém traduz.
-const CARINHA_NOTA: Record<number, string> = { 5: '\u{1F929}', 4: '\u{1F642}', 3: '\u{1F610}', 2: '\u{1F641}', 1: '\u{1F61E}' };
+// ⚠️ Escala 1 · 2 · 3 (as mesmas 3 opções dos botões do WhatsApp). Era 1..5
+// até 11/09/2026 — se aparecer 4 ou 5 aqui é linha da régua velha.
+const CARINHA_NOTA: Record<number, string> = { 3: '\u{1F929}', 2: '\u{1F642}', 1: '\u{1F641}' };
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -775,8 +777,8 @@ function VisitanteDetailDialog({ visitante, onClose }: { visitante: any | null; 
               <span className="text-muted-foreground">Pesquisa:</span>
               {v.pesquisa_nota ? (
                 <span className="flex items-start gap-1.5">
-                  <span className="text-lg leading-none" title={`Nota ${v.pesquisa_nota} de 5`}>{CARINHA_NOTA[v.pesquisa_nota] || ''}</span>
-                  <span><strong>{v.pesquisa_nota}</strong>/5{v.pesquisa_comentario ? <> · “{v.pesquisa_comentario}”</> : null}</span>
+                  <span className="text-lg leading-none" title={`Nota ${v.pesquisa_nota} de 3`}>{CARINHA_NOTA[v.pesquisa_nota] || ''}</span>
+                  <span><strong>{v.pesquisa_nota}</strong>/3{v.pesquisa_comentario ? <> · “{v.pesquisa_comentario}”</> : null}</span>
                 </span>
               ) : <span>sem resposta</span>}
             </p>

@@ -16,6 +16,10 @@
 //   4. pesquisaDevida     — QUANDO a pesquisa de satisfação sai: depois que o
 //                           culto acabou, nunca antes; e nunca depois de 72h,
 //                           quando ela já virou mensagem fora de hora.
+//   5. comentarioNaJanela — até quando o texto livre da pessoa ainda conta
+//                           como comentário: até a virada do dia BRT do voto
+//                           (com piso de 6h). Depois disso é conversa, e vai
+//                           pro fluxo normal.
 // ════════════════════════════════════════════════════════════════════════════
 
 const { ALFABETO } = require('./totemCerco');
@@ -38,6 +42,10 @@ const MIN_APOS_REGISTRO_SEM_CULTO = 120;
 // Depois disso a pesquisa não sai: pergunta de satisfação três dias depois é
 // mensagem fora de hora, e o opt-in foi pra "depois do culto".
 const HORAS_VALIDADE_PESQUISA = 72;
+// A escala da pesquisa: 1 (pior) · 2 (meio) · 3 (melhor). Ver normalizarNota.
+const NOTA_MAX = 3;
+// Piso da janela do comentário (ver fimDaJanelaComentario).
+const HORAS_MIN_COMENTARIO = 6;
 
 function soDigitos(s) {
   return String(s || '').replace(/\D/g, '');
@@ -174,15 +182,61 @@ function primeiroNome(nome) {
   return String(nome || '').trim().split(/\s+/)[0] || 'Olá';
 }
 
-/** Nota da pesquisa: inteiro 1..5, senão null. */
+/**
+ * Nota da pesquisa: inteiro 1..3, senão null.
+ *
+ * ⚠️⚠️ A ESCALA É 1 · 2 · 3 desde 11/09/2026 (decisão do Marcos: *"1 a pior, 2
+ * a do meio, 3 a maior… ai fazemos a média depois"*). Três botões, três
+ * números. **Nada no sistema pode gravar 4 ou 5** — isso misturaria duas
+ * réguas na mesma coluna e a média não diria mais nada.
+ * ⚠️ O CHECK do banco ainda aceita até 5 (herança da migration de 09/09): a
+ * guarda de verdade é ESTA função, por onde passam a página e a rota pública.
+ */
 function normalizarNota(n) {
   const v = Number(n);
-  return Number.isInteger(v) && v >= 1 && v <= 5 ? v : null;
+  return Number.isInteger(v) && v >= 1 && v <= NOTA_MAX ? v : null;
+}
+
+/**
+ * Até quando o texto livre da pessoa ainda é COMENTÁRIO da pesquisa (ms).
+ *
+ * Decisão do Marcos (11/09/2026): *"deixar um tempo máximo, se ele responder
+ * naquele dia, pegamos essa informação"*. Então a janela fecha na **virada do
+ * dia BRT** em que ela votou.
+ * ⚠️ Com um PISO de HORAS_MIN_COMENTARIO: quem vota às 23h no culto da noite
+ * teria 1 hora, e é justamente de quem sai do culto da noite que a gente mais
+ * quer ouvir. O piso só ESTENDE, nunca encurta.
+ */
+function fimDaJanelaComentario(respondidaEm) {
+  const t = new Date(respondidaEm).getTime();
+  if (!Number.isFinite(t)) return null;
+  // desloca pro relógio BRT (UTC−3, fixo desde 2019), acha a meia-noite
+  // seguinte daquele relógio e traz de volta pra instante UTC.
+  const brt = t - 3 * 3600 * 1000;
+  const viradaBrt = (Math.floor(brt / 86400000) + 1) * 86400000 + 3 * 3600 * 1000;
+  return Math.max(viradaBrt, t + HORAS_MIN_COMENTARIO * 3600 * 1000);
+}
+
+/**
+ * O texto que chegou agora ainda conta como comentário da pesquisa?
+ *
+ * ⚠️ Sem carimbo de resposta (`respondidaEm` nulo ou inválido) a janela é
+ * considerada ABERTA. Isso é deliberado: carimbo faltando é bug NOSSO, e
+ * perder o que a visitante escreveu por causa dele é o pior dos dois erros.
+ */
+function comentarioNaJanela({ respondidaEm, agora } = {}) {
+  if (respondidaEm == null || respondidaEm === '') return true;
+  const fim = fimDaJanelaComentario(respondidaEm);
+  if (fim == null) return true;
+  const now = agora instanceof Date ? agora.getTime() : (typeof agora === 'number' ? agora : Date.now());
+  return now <= fim;
 }
 
 module.exports = {
   LOCAIS, IDS_LOCAIS, CODIGO_LEN, MIN_APOS_CULTO, MIN_APOS_REGISTRO_SEM_CULTO, HORAS_VALIDADE_PESQUISA,
+  NOTA_MAX, HORAS_MIN_COMENTARIO,
   soDigitos, cpfValido, normalizarLocal, validarVisitante,
   gerarCodigoVoucher, normalizarCodigoVoucher,
   instanteDevido, pesquisaDevida, primeiroNome, normalizarNota,
+  fimDaJanelaComentario, comentarioNaJanela,
 };

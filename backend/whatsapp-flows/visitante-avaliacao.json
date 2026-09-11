@@ -24,14 +24,21 @@
               {
                 "type": "RadioButtonsGroup",
                 "name": "nota",
-                "label": "Sua nota para a visita de hoje",
+                "label": "Como foi sua visita de hoje?",
                 "required": true,
                 "data-source": [
-                  { "id": "5", "title": "⭐⭐⭐⭐⭐  Excelente" },
-                  { "id": "4", "title": "⭐⭐⭐⭐  Bom" },
-                  { "id": "3", "title": "⭐⭐⭐  Ok" },
-                  { "id": "2", "title": "⭐⭐  Fraco" },
-                  { "id": "1", "title": "⭐  Ruim" }
+                  {
+                    "id": "3",
+                    "title": "Amei o culto, me senti em casa"
+                  },
+                  {
+                    "id": "2",
+                    "title": "Eu gostei, o culto foi bom"
+                  },
+                  {
+                    "id": "1",
+                    "title": "Não gostei, poderia ser melhor"
+                  }
                 ]
               },
               {
