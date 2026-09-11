@@ -3119,6 +3119,108 @@ as 134 seguem sem trilha, porque não há de onde tirar autor/momento.
 `registrarResolucaoEntrada` engolir erro significa que a falha aparece só quando
 alguém for auditar.
 
+## ⚠️⚠️ TOTEM KIDS · senha ÚNICA + criança nova nasce VISITANTE (2026-09-11 · SEM migration)
+
+Dois pedidos do Marcos vendo o totem no culto: *"Colocar toda nova criança
+obrigatoriamente como visitante. Atualmente precisamos escolher essa opção e
+quase ninguém escolhe!"* + *"Unificar as senhas. Hoje são 3 senhas que o sistema
+pede. Poderia ser uma só... sobre a senha pode colocar o 000 para tudo dentro do
+módulo totem, fora dele mantemos a senha da mari e milena."*
+
+### 1 · Criança nova nasce VISITANTE — **só no TOTEM**
+
+`emptyCrianca()` do `ModalNovaCrianca` passou a nascer `visitante: true`, e o
+toggle "É visitante?" **saiu** da tela (virou nota explicando o que acontece).
+
+⚠️⚠️ **A decisão do Marcos foi "só no totem"**: a Gestão de Crianças
+(`GestaoCriancas.tsx`) **continua podendo escolher** — é lá que a liderança
+cadastra filho de membro conhecido. Conferido: aquela tela **não manda
+`visitante` no payload**, e o backend faz `ehVisitante = crianca.visitante ===
+true` ⇒ nasce frequentadora. **Nada a fazer no servidor** — forçar lá valeria
+para as duas telas e desfaria a decisão.
+
+⚠️ **É seguro porque a máquina se autocorrige** (`backend/utils/kidsVisitante.js`,
+régua de 20/08): **3 dias DISTINTOS** com check-in promovem a frequentadora
+sozinho, e o prazo de 28 dias é **RENOVADO a cada check-in**. Quem vem toda
+semana some da lista de visitante em ~2 semanas sem ninguém clicar em nada; quem
+some de vez é inativada — e **check-in reativa** (`totemKids.js` já faz
+`ativo: true` ao entrar). Nenhum caminho é irreversível.
+
+⚠️ **A relação nasce `outros`, não `amigo`**: aqui "visitante" quer dizer "ainda
+não estabelecida", não "amiga de outra família". O select continua na tela como
+**opcional** (é útil quando é amigo/primo de verdade).
+
+⚠️ **NÃO existe marcador novo**: `visitante` já era a coluna, já tem filtro na
+Gestão ("Só visitantes") e já alimenta o card "Cadastros de crianças" (31/08).
+O que mudou é o DEFAULT, não o modelo.
+
+### 2 · As TRÊS senhas viraram UMA · `SENHA_TOTEM = '0000'`
+
+| gate | antes | agora |
+|---|---|---|
+| **sair do modo totem** | PIN inventado no aparelho (`cbrio-totem-kids-pin`, ≥4 dígitos, localStorage) | `0000` |
+| **liberar check-in sem CPF** | `DISPENSA_PIN = '0000'` | igual (já era) |
+| **reimprimir etiqueta** | `0000` OU senha do Kids | igual (já era) |
+| **editar ficha da criança** | **só** a senha do Kids (bcrypt, servidor) | `0000` OU senha do Kids |
+
+**O fluxo de CRIAR PIN morreu.** Ativar o modo totem não pede mais nada — entrar
+é inofensivo; quem protege é a SAÍDA. Antes, o primeiro a ativar tinha de
+inventar um PIN que ninguém anotava e que ficava preso a um aparelho só.
+
+⚠️ **O PIN antigo do aparelho continua sendo aceito** na saída (quem já tinha um
+salvo não fica trancado), mas **nada mais o cria**.
+
+⚠️⚠️ **A senha do Kids (`kids_totem_config.edit_senha_hash`) NÃO foi tocada** e
+segue sendo a **única** aceita FORA do totem (Gestão de Crianças) e a única que
+pode trocar a si mesma (`POST /edit-senha` é nível 4). Era esse o pedido: "fora
+dele mantemos a senha da mari e milena".
+
+⚠️ **A tela de editar ficha tinha um BECO SEM SAÍDA**: enquanto a senha da
+liderança não existisse (`senhaDefinida === false`), ela só oferecia "criar
+senha" — o voluntário que sabia a senha do totem **não tinha onde digitar**. O
+campo agora aparece SEMPRE, e criar a senha do Kids virou um extra abaixo. (O
+botão também estava `disabled` até uma chamada de rede voltar; a senha do totem
+resolve local, sem rede.)
+
+⚠️ Toda a copy foi unificada para **"senha do totem"** — "PIN do supervisor" e
+"Senha do Kids" nos campos do totem eram três nomes para o que agora é uma coisa.
+
+### ⚠️⚠️ O RISCO que fica declarado (decisão do Marcos, com o dado na mão)
+
+**No check-out, o código de 4 letras da etiqueta SOZINHO libera a criança** —
+`metodo: 'codigo_digitado'` não tem segundo fator (o outro caminho,
+`responsavel_autorizado`, confere a pessoa com foto). Reimprimir etiqueta é a 2ª
+via dessa credencial, e ela **já aceitava `0000` desde 24/08** — então unificar
+**não é regressão**, mas passa a ser uma senha que todo voluntário sabe.
+
+Levado a ele com o mecanismo explicado; decisão: **manter `0000`**, porque
+etiqueta que não sai direito é evento corriqueiro e travar a 2ª via na liderança
+para a fila no meio do culto. ⚠️ Se um dia isso mudar, o gate é o
+`ModalSenhaReimpressao` — e o efeito colateral é a fila, não a segurança de
+outros fluxos.
+
+### O banner "Poucos códigos de reserva (0)" NÃO é erro
+
+É a barra de saúde do **check-in offline** (`lib/offlineKids.ts`, 02/09): o totem
+só faz check-in com o sistema fora do ar se tiver um bloco de códigos que o
+**servidor** reservou enquanto havia rede (`fn_kids_reservar_codigos` ·
+`kids_codigos_reservados` · migration `20260902200000`). Com **0 códigos**, o
+check-in ONLINE funciona **normalmente** — o que não existe é a rede de
+segurança. Por isso a barra é cinza, não vermelha.
+
+⚠️ **A causa de estar em 0 NÃO foi medida nesta sessão** (a sonda ao banco foi
+recusada pelo classificador nesta máquina). As duas hipóteses, em ordem: a
+migration `20260902200000` não ter sido aplicada em produção (a RPC não existe ⇒
+`/codigos-reservados` devolve 503 ⇒ o totem guarda lista vazia) ou o
+`authorizeModule('kids', 2)` daquela rota recusar a conta do totem. **Conferir
+com uma consulta:** `select to_regprocedure('public.fn_kids_reservar_codigos(text,uuid,integer,uuid)')`
+— se vier NULL, é a migration.
+
+⚠️ **CORREÇÃO DE REGISTRO**: este arquivo diz, em pontos diferentes, que o gate
+de deploy tem 8, 10, 12, 13, 16 ou 21 scripts. Em **11/09/2026 são 22** (entrou
+`test:visitante`). **Contar no `.github/workflows/deploy-vercel.yml`, nunca
+aqui** — cada número que este arquivo já registrou envelheceu, este inclusive.
+
 ## ⚠️ Totem · IDENTIDADE DE ESTAÇÃO (2026-08-05 · migrations `20260805130000` + `20260805130100` · PR #2291)
 
 Fase 0 do pagamento presencial em inscrições (plano completo: totem com Pix →
