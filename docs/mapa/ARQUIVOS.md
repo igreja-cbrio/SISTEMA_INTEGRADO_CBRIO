@@ -191,7 +191,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/contextoFalha.js` | régua pura | — | `src/test/fetchFalhaDb.test.ts` |
 | `backend/utils/corsPolicy.js` | régua pura | — | `backend/middleware/errorHandler.test.js` |
 | `backend/utils/cotaMeta.js` | régua pura | — | `src/test/cotaMeta.test.ts` |
-| `backend/utils/cpf.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/cpf.js` | régua pura | — | `src/test/censoFormEspelho.test.ts` |
 | `backend/utils/criancaApresentacao.js` | régua pura | — | `src/test/cultoApresentacao.test.ts` |
 | `backend/utils/cronAuth.js` | régua pura | — | `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/cultoJanela.js` | régua pura | — | `src/test/cultoJanela.test.ts` |
