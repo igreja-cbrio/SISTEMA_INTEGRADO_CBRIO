@@ -91,21 +91,52 @@ function ehComentario(bruto) {
 
 /** O convite de feedback livre, pedido pelo Marcos em 11/09. */
 const CONVITE_FEEDBACK = 'Caso tenha mais algum feedback, pode digitar aqui na mensagem — a gente lê tudo, ainda hoje.';
+/** O convite de quem teve uma experiência ruim: PERGUNTA, não "mais algum". */
+const CONVITE_O_QUE_FALTOU = 'Conta pra gente o que faltou? É só digitar aqui na mensagem — a gente lê e leva pra equipe, ainda hoje.';
 
 /**
- * O que dizer de volta depois do voto (a janela de 24h está aberta · texto grátis).
+ * O que dizer de volta depois do voto (a janela de 24h está aberta · texto
+ * grátis · sendText, NÃO template — ver o rodapé deste arquivo).
  *
- * ⚠️ Ecoa a FRASE que a pessoa escolheu e NUNCA o número — ver o cabeçalho.
+ * ⚠️ NUNCA o número — ver o cabeçalho.
+ * ⚠️⚠️ **NO VOTO RUIM (1) A GENTE NÃO REPETE A FRASE DE VOLTA.** Marcos, 11/09:
+ * *"se a pessoa apertar o não gostei fica ruim"* — e ele está certo: devolver
+ * *"Você marcou 'Não gostei, poderia ser melhor'"* a quem acabou de reclamar
+ * soa a carimbo, quase a deboche. Nos votos bons o eco CONFIRMA; no ruim quem
+ * confirma é o acolhimento ("sentimos muito"), e o convite vira PERGUNTA
+ * ("o que faltou?") em vez de "mais algum feedback" — quem reclamou já deu o
+ * feedback, o que falta é o motivo.
  * ⚠️ "ainda hoje" não é enfeite: é a janela real do comentário
- *    (`visitanteRegras.comentarioNaJanela`). Mudou a janela, muda a frase.
+ *    (`visitanteRegras.comentarioNaJanela`). Mudou a janela, muda as frases.
  */
 function textoObrigado(primeiroNome, nota) {
   const nome = String(primeiroNome || '').trim() || 'obrigado';
+  if (nota === 1) {
+    return `Obrigado pela sinceridade, ${nome} 🙏 Sentimos muito que a visita não tenha sido o que você esperava. ${CONVITE_O_QUE_FALTOU}`;
+  }
   const voto = rotuloDaNota(nota);
   const eco = voto ? ` Você marcou “${voto}”.` : '';
   if (nota >= 3) return `Que alegria, ${nome}! 💚${eco} ${CONVITE_FEEDBACK}`;
   if (nota === 2) return `Que bom, ${nome}! 💚${eco} ${CONVITE_FEEDBACK}`;
-  return `Obrigado pela sinceridade, ${nome} 🙏${eco} ${CONVITE_FEEDBACK}`;
+  // nota desconhecida (não deveria acontecer): agradece sem afirmar nada.
+  return `Obrigado por responder, ${nome}! 💚 ${CONVITE_FEEDBACK}`;
+}
+
+/**
+ * O que dizer depois que ela ESCREVEU o comentário.
+ *
+ * ⚠️⚠️ Mesmo motivo do `textoObrigado`: quem acabou de contar o que deu errado
+ * não pode receber *"Obrigado de coração 💚 Esperamos te ver de novo!"* — soa a
+ * resposta automática que não leu. Ali a gente diz o que vai FAZER com aquilo,
+ * e é verdade: a visita aparece em Cuidados → Próximos passos com a nota e o
+ * comentário na ficha.
+ */
+function textoComentarioRecebido(primeiroNome, nota) {
+  const nome = String(primeiroNome || '').trim() || 'obrigado';
+  if (nota === 1) {
+    return `Recebi, ${nome}. Obrigado por confiar e contar 🙏 Vou levar isso pra equipe que recebe quem chega — é assim que a gente melhora.`;
+  }
+  return `Anotado, ${nome}. Obrigado de coração 💚 Esperamos te ver de novo!`;
 }
 
 /**
@@ -130,7 +161,12 @@ function interpretarRespostaFlowVisitante(responseJson) {
   return { nota: n, comentario: c || null };
 }
 
+// ⚠️⚠️ NADA AQUI PRECISA DE APROVAÇÃO DA META. Estes textos saem como
+// mensagem LIVRE (`sendText`) dentro da janela de 24h que o toque da pessoa
+// abre — template só é exigido pra INICIAR conversa, que é o caso só do
+// `visitante_pesquisa_satisfacao`. Mexer nas frases daqui é grátis e imediato.
 module.exports = {
-  BOTOES_TEXTO, NOTA_MAX, CONVITE_FEEDBACK, rotuloDaNota,
-  interpretarNotaVisitante, ehComentario, textoObrigado, interpretarRespostaFlowVisitante,
+  BOTOES_TEXTO, NOTA_MAX, CONVITE_FEEDBACK, CONVITE_O_QUE_FALTOU, rotuloDaNota,
+  interpretarNotaVisitante, ehComentario, textoObrigado, textoComentarioRecebido,
+  interpretarRespostaFlowVisitante,
 };

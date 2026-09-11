@@ -181,18 +181,57 @@ assert.equal(R.primeiroNome(''), 'Olá');
   assert.equal(P.ehComentario('👍'), false, 'só emoji não é comentário');
 
   // ── o AGRADECIMENTO ─────────────────────────────────────────────────────────
-  // ⚠️⚠️ Ecoa a FRASE escolhida e NUNCA o número: a pessoa tocou num texto e
-  // jamais viu nota nenhuma. "Obrigado pela nota 3" faria ela achar que errou.
+  // ⚠️⚠️ NUNCA o número: a pessoa tocou num texto e jamais viu nota nenhuma.
+  // "Obrigado pela nota 3" faria ela achar que errou.
   for (const b of P.BOTOES_TEXTO) {
     const t = P.textoObrigado('Ana', b.nota);
     assert.match(t, /Ana/);
-    assert.ok(t.includes(b.rotulo), `o agradecimento da nota ${b.nota} não ecoa "${b.rotulo}"`);
     assert.ok(!/\d/.test(t), `número vazou no agradecimento da nota ${b.nota}: ${t}`);
     assert.ok(!/\bnota\b/i.test(t), `a palavra "nota" vazou no agradecimento: ${t}`);
-    // e o convite de feedback livre, que o Marcos pediu em 11/09
-    assert.ok(t.includes(P.CONVITE_FEEDBACK), `falta o convite de feedback na nota ${b.nota}`);
+    // ⚠️ "ainda hoje" é a JANELA do comentário dita em português. Mudou a
+    // janela (comentarioNaJanela), muda a frase — senão a gente promete uma
+    // coisa e faz outra.
+    assert.ok(/ainda hoje/.test(t), `o agradecimento da nota ${b.nota} não diz o prazo`);
+    // e sempre um convite a escrever
+    assert.ok(/digitar aqui na mensagem/.test(t), `falta o convite de feedback na nota ${b.nota}`);
+  }
+  // ⚠️⚠️ VOTO BOM: o eco CONFIRMA o que ela marcou.
+  for (const nota of [3, 2]) {
+    const t = P.textoObrigado('Ana', nota);
+    assert.ok(t.includes(P.rotuloDaNota(nota)), `o agradecimento da nota ${nota} não ecoa a frase escolhida`);
+    assert.ok(t.includes(P.CONVITE_FEEDBACK), `falta o convite padrão na nota ${nota}`);
+  }
+  // ⚠️⚠️ VOTO RUIM (1): NÃO repetir a frase de volta. Marcos, 11/09: "se a
+  // pessoa apertar o não gostei fica ruim". Devolver "Você marcou 'Não gostei,
+  // poderia ser melhor'" a quem acabou de reclamar soa a carimbo. Quem confirma
+  // ali é o acolhimento, e o convite vira PERGUNTA — ela já deu o feedback, o
+  // que falta é o motivo.
+  {
+    const t = P.textoObrigado('Ana', 1);
+    assert.ok(!t.includes(P.rotuloDaNota(1)), `o agradecimento do voto ruim repete a reclamação de volta: ${t}`);
+    assert.ok(!/n[ãa]o gostei/i.test(t), 'nem em pedaços: o "não gostei" não volta pra pessoa');
+    assert.match(t, /[Ss]entimos muito/, 'o voto ruim precisa de acolhimento, não de carimbo');
+    assert.ok(t.includes(P.CONVITE_O_QUE_FALTOU), 'o voto ruim pergunta o que faltou');
+    assert.ok(!t.includes(P.CONVITE_FEEDBACK), '"mais algum feedback" não serve pra quem já reclamou');
   }
   assert.ok(P.textoObrigado('', 2).length > 10);
+  // nota desconhecida não pode afirmar nada sobre o que ela marcou
+  {
+    const t = P.textoObrigado('Ana', null);
+    assert.ok(!/marcou/.test(t), 'sem nota conhecida não dá pra dizer o que ela marcou');
+    assert.ok(/digitar aqui na mensagem/.test(t));
+  }
+  // ── o "recebi seu comentário" também muda no voto ruim ─────────────────────
+  {
+    const bom = P.textoComentarioRecebido('Ana', 3);
+    const ruim = P.textoComentarioRecebido('Ana', 1);
+    assert.match(bom, /Ana/);
+    assert.match(ruim, /Ana/);
+    assert.notEqual(bom, ruim, 'quem contou o que deu errado não pode receber o mesmo "esperamos te ver de novo"');
+    assert.ok(!/[Ee]speramos te ver de novo/.test(ruim), 'resposta automática demais pra quem reclamou');
+    assert.ok(/equipe/.test(ruim), 'no voto ruim a gente diz o que vai FAZER com o que ela contou');
+    assert.ok(!/\d/.test(ruim) && !/\d/.test(bom), 'número não volta pra pessoa nem aqui');
+  }
   assert.equal(P.rotuloDaNota(3), 'Amei o culto, me senti em casa');
   assert.equal(P.rotuloDaNota(5), null, 'nota fora da escala não tem rótulo');
   // o FORMULÁRIO (Flow): response_json chega como STRING

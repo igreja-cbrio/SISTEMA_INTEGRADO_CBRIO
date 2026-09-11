@@ -32,7 +32,8 @@ const { supabase } = require('../utils/supabase');
 const { semFalhar } = require('../utils/semFalhar');
 const { textoDaResposta, wamidRespondido } = require('../utils/respostaEscala');
 const {
-  interpretarNotaVisitante, ehComentario, textoObrigado, interpretarRespostaFlowVisitante,
+  interpretarNotaVisitante, ehComentario, textoObrigado, textoComentarioRecebido,
+  interpretarRespostaFlowVisitante,
 } = require('../utils/respostaPesquisaVisitante');
 const { primeiroNome, comentarioNaJanela } = require('../utils/visitanteRegras');
 const { CONTEXTO, CONTEXTO_OBRIGADO } = require('./visitantePesquisa');
@@ -231,7 +232,8 @@ async function processarRespostaVisitante(m, { enviarTexto, normalizarTelefone }
       .eq('id', visita.id).is('pesquisa_comentario', null);
   }
   await registrar(`[visitante] comentário: ${bruto}`.slice(0, 500));
-  await enviarTexto(telefone, `Anotado, ${nome}. Obrigado de coração 💚 Esperamos te ver de novo!`).catch(() => {});
+  // ⚠️ O texto MUDA quando o voto foi ruim — ver textoComentarioRecebido.
+  await enviarTexto(telefone, textoComentarioRecebido(nome, visita.pesquisa_nota)).catch(() => {});
   return true;
 }
 

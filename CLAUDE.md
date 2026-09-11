@@ -176,9 +176,26 @@ protegido, ANTES do `processarFila` pra sair na mesma rodada). **Sem cron novo**
   ⚠️ Quem mede: `/api/visitantes/resumo` devolve `escala_max: 3` e
   `fora_da_escala` (linha velha fica FORA da média, mas aparece).
 - ⚠️⚠️ **O NÚMERO NUNCA É DITO À PESSOA** — nem no agradecimento, nem no "já
-  está registrada", nem no "não entendi". Ela tocou numa FRASE. O agradecimento
-  ECOA a frase escolhida (`textoObrigado` + `rotuloDaNota`) e convida ao
-  feedback livre (`CONVITE_FEEDBACK`). Tem teste e guarda estática no gate.
+  está registrada", nem no "não entendi". Ela tocou numa FRASE. Tem teste e
+  guarda estática no gate.
+- ⚠️⚠️ **O VOTO RUIM (1) NÃO LEVA A FRASE DE VOLTA** (Marcos, 11/09: *"se a
+  pessoa apertar o não gostei fica ruim"*). Nos votos 3 e 2 o eco CONFIRMA
+  (*"Você marcou …"*); no 1 devolver *"Você marcou 'Não gostei, poderia ser
+  melhor'"* soa a carimbo pra quem acabou de reclamar. Lá quem confirma é o
+  ACOLHIMENTO (*"Sentimos muito…"*) e o convite vira **pergunta**
+  (`CONVITE_O_QUE_FALTOU`: *"o que faltou?"*) em vez de *"mais algum
+  feedback"* — ela já deu o feedback, o que falta é o motivo. Teste trava as
+  duas pontas; 6 mutantes rodados e mortos.
+- ⚠️ **O `textoComentarioRecebido` segue a mesma lei**: quem acabou de contar o
+  que deu errado não recebe *"Obrigado de coração 💚 Esperamos te ver de novo!"*
+  — recebe o que a gente vai FAZER com aquilo (*"vou levar pra equipe que recebe
+  quem chega"*), e é verdade: a visita aparece em Cuidados → Próximos passos com
+  a nota e o comentário na ficha.
+- ⚠️⚠️ **NENHUM desses textos precisa de aprovação da Meta.** Saem por
+  `sendText` (tipo `texto` da `whatsappFila`) dentro da **janela de 24h que o
+  toque da pessoa abre**. Template só é exigido pra INICIAR conversa — aqui, só
+  o `visitante_pesquisa_satisfacao`. **Mexer nessas frases é grátis e entra no
+  próximo deploy**; mexer no template é revisão da Meta.
 - ⚠️⚠️ **O COMENTÁRIO TEM PRAZO: até a virada do dia BRT do voto, com PISO de 6h**
   (`comentarioNaJanela` · Marcos, 11/09: *"deixar um tempo máximo, se ele
   responder naquele dia, pegamos essa informação"*). O piso existe porque quem
