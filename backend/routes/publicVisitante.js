@@ -210,7 +210,7 @@ router.get('/avaliar/:token', limiterLeitura, async (req, res) => {
     // Recusa NEUTRA: token malformado e visita inexistente respondem igual.
     if (!id) return res.status(404).json({ error: 'Link inválido.' });
     const { data, error } = await supabase.from('vis_visitas')
-      .select('id, nome, culto_nome, culto_data, pesquisa_nota, pesquisa_respondida_em')
+      .select('id, nome, culto_nome, culto_data, pesquisa_nota, pesquisa_respondida_em, pesquisa_comentario')
       .eq('id', id).is('deleted_at', null).maybeSingle();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Link inválido.' });
@@ -220,6 +220,10 @@ router.get('/avaliar/:token', limiterLeitura, async (req, res) => {
       culto: data.culto_nome ? { nome: data.culto_nome, data: data.culto_data } : null,
       ja_respondida: !!data.pesquisa_respondida_em,
       nota: data.pesquisa_nota,
+      // A tela usa isto pra não oferecer o campo de comentário duas vezes.
+      // ⚠️ O TEXTO do comentário NÃO sai daqui — o link pode ter sido
+      // encaminhado, e devolver o que a pessoa escreveu seria vazá-lo.
+      tem_comentario: !!data.pesquisa_comentario,
     });
   } catch (e) {
     console.error('[public/visitante/avaliar GET]', e.message);
@@ -227,14 +231,34 @@ router.get('/avaliar/:token', limiterLeitura, async (req, res) => {
   }
 });
 
-// POST /avaliar/:token · { nota: 1..5, comentario? } · vale UMA vez
+// POST /avaliar/:token · DOIS usos, de propósito (desenho de 11/09/2026):
+//   · { nota: 1..5, comentario? } → a resposta. Vale UMA vez.
+//   · { comentario } SEM nota     → acrescenta o comentário DEPOIS, porque a
+//     tela envia a nota no primeiro toque e só então oferece o campo.
+// ⚠️ Comentário SEM resposta anterior é RECUSADO: visita com texto e sem nota
+// não é resposta de pesquisa, é texto solto que ninguém sabe ler.
 router.post('/avaliar/:token', limiterEscrita, async (req, res) => {
   try {
     const id = visitaDoToken(req.params.token);
     if (!id) return res.status(404).json({ error: 'Link inválido.' });
     const nota = normalizarNota(req.body?.nota);
-    if (!nota) return res.status(400).json({ error: 'Escolha uma nota de 1 a 5.', campo: 'nota' });
     const comentario = String(req.body?.comentario || '').trim().slice(0, 1000) || null;
+
+    // ── 2º passo: só o comentário, sobre uma resposta que JÁ existe ──
+    if (!nota) {
+      if (!comentario) return res.status(400).json({ error: 'Escolha uma carinha.', campo: 'nota' });
+      // Condicionado nos dois lados: exige resposta dada e comentário ainda
+      // vazio. Reenvio do mesmo formulário não sobrescreve o que já veio.
+      const { data: com, error: errCom } = await supabase.from('vis_visitas')
+        .update({ pesquisa_comentario: comentario })
+        .eq('id', id).is('deleted_at', null)
+        .not('pesquisa_respondida_em', 'is', null).is('pesquisa_comentario', null)
+        .select('id');
+      if (errCom) throw errCom;
+      // Nada atualizado = ou não respondeu ainda, ou já tinha comentário.
+      // Nos dois casos a resposta é a mesma, e é honesta: não há o que fazer.
+      return res.json({ ok: true, comentario_gravado: !!com?.length });
+    }
 
     // UPDATE condicionado: a 1ª resposta vale; a 2ª não sobrescreve.
     const { data, error } = await supabase.from('vis_visitas')

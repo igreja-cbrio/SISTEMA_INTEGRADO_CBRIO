@@ -17,7 +17,6 @@ import { CommandSearch } from '../ui/command-search';
 import { navItemAllowed } from '../../lib/menuAccess';
 import {
   Activity, ArrowRight, ArrowRightLeft, Baby, BarChart2, Bell, BellOff, BellRing, BookOpen, BrainCircuit, CalendarDays, Camera, Check, CheckCheck, ClipboardCheck, ClipboardList, Compass, DollarSign, Droplets, FileText, FolderKanban, GraduationCap, HandHelping, Heart, Landmark, LayoutDashboard, ListChecks, LogOut, Map, Megaphone, Menu as MenuIcon, MessageSquare, MonitorSmartphone, Moon, QrCode, Search, Settings, Shield, ShoppingCart, SlidersHorizontal, Sparkles, Sun, Tag, Target, TrendingUp, Truck, UserCheck, UserSearch, Users, UsersRound, Youtube, Filter,
-  Coffee,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
@@ -256,7 +255,11 @@ const NAV_ITEMS = [
           { label: 'Integração', description: 'Cultos, decisões, batismos e Next', icon: UserCheck, path: '/ministerial/integracao', module: 'integracao' },
           { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
-          { label: 'Visitantes', description: 'QR nos cartazes · voucher da cafeteria · pesquisa depois do culto', icon: Coffee, path: '/visitantes', module: 'visitantes' },
+          // ⚠️ "Visitantes" SAIU do menu em 11/09/2026 (decisão do Marcos: "não
+          // queria um módulo"). O visitante vive em Cuidados → Próximos passos,
+          // etiquetado. A rota /visitantes continua existindo SEM menu, porque a
+          // cafeteria resgata o voucher e não pode ter o módulo cuidados.
+          // Não recriar este item sem falar com ele.
           { label: 'Comunicação', description: 'Central de WhatsApp · chat, envios, templates, atendentes e relatórios', icon: MessageSquare, path: '/comunicacao', module: 'comunicacao' },
           { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos', module: 'grupos' },
           { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', module: 'voluntariado' },

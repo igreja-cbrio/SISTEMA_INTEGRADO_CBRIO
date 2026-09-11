@@ -1,7 +1,14 @@
 // Página PÚBLICA standalone · a PESQUISA DE SATISFAÇÃO do visitante.
-// Chega pelo link assinado que vai no WhatsApp depois do culto
-// (`/visitante/avaliar/<token>` · services/visitantePesquisa.js). Uma nota de
-// 1 a 5 e, se quiser, um comentário. Vale UMA vez por visita.
+// Chega pelo LINK assinado que vai no WhatsApp depois do culto
+// (`/visitante/avaliar/<token>` · services/visitantePesquisa.js).
+//
+// ⚠️⚠️ DESENHO (decisão do Marcos, 11/09/2026): CINCO CARINHAS, de muito feliz
+// a muito triste, SEM legenda e SEM número — e **um toque na carinha JÁ ENVIA**.
+// O comentário vem DEPOIS, opcional, na tela de agradecimento. O motivo é
+// atrito: a nota é o dado que precisamos, e pedir "escolha e depois confirme"
+// perde gente no segundo passo. NÃO voltar a exigir botão de enviar pra nota.
+// ⚠️ "Sem legenda" é só no VISUAL — cada botão tem `aria-label`, senão a tela
+// fica inutilizável em leitor de tela.
 //
 // ⚠️ O token identifica a VISITA (namespace próprio, HMAC) — a resposta sabe
 // quem respondeu sem pedir nada. A tela mostra só o 1º nome e o culto.
@@ -14,15 +21,17 @@ import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 type Dados = {
   ok: boolean; nome: string;
   culto: { nome: string; data: string } | null;
-  ja_respondida: boolean; nota: number | null;
+  ja_respondida: boolean; nota: number | null; tem_comentario?: boolean;
 };
 
-const NOTAS = [
-  { v: 1, e: '😞', l: 'Ruim' },
-  { v: 2, e: '😕', l: 'Fraco' },
-  { v: 3, e: '😐', l: 'Ok' },
-  { v: 4, e: '🙂', l: 'Bom' },
-  { v: 5, e: '🤩', l: 'Excelente' },
+// Da MAIS FELIZ para a MAIS TRISTE (ordem pedida pelo Marcos). O rótulo NÃO
+// aparece na tela — existe só pro leitor de tela.
+const CARINHAS = [
+  { v: 5, e: '\u{1F929}', l: 'Muito feliz' },
+  { v: 4, e: '\u{1F642}', l: 'Feliz' },
+  { v: 3, e: '\u{1F610}', l: 'Indiferente' },
+  { v: 2, e: '\u{1F641}', l: 'Triste' },
+  { v: 1, e: '\u{1F61E}', l: 'Muito triste' },
 ];
 
 export default function VisitanteAvaliar() {
@@ -31,33 +40,54 @@ export default function VisitanteAvaliar() {
   const [dados, setDados] = useState<Dados | null>(null);
   const [erroCarga, setErroCarga] = useState('');
   const [carregando, setCarregando] = useState(true);
-  const [nota, setNota] = useState<number | null>(null);
-  const [comentario, setComentario] = useState('');
-  const [enviando, setEnviando] = useState(false);
+  const [notaEnviada, setNotaEnviada] = useState<number | null>(null);
+  const [enviando, setEnviando] = useState<number | null>(null);
   const [erro, setErro] = useState('');
   const [pronto, setPronto] = useState(false);
+  const [comentario, setComentario] = useState('');
+  const [comentarioEnviado, setComentarioEnviado] = useState(false);
+  const [enviandoComentario, setEnviandoComentario] = useState(false);
+  const [comentarioJaExiste, setComentarioJaExiste] = useState(false);
 
   useEffect(() => {
     document.title = 'Como foi sua visita? · CBRio';
     if (!token) { setErroCarga('Link inválido.'); setCarregando(false); return; }
     visitantePublico.avaliacao(token)
-      .then((r: Dados) => { setDados(r); if (r.ja_respondida) setPronto(true); })
+      .then((r: Dados) => {
+        setDados(r);
+        if (r.ja_respondida) { setPronto(true); setNotaEnviada(r.nota); setComentarioJaExiste(!!r.tem_comentario); }
+      })
       .catch((e: any) => setErroCarga(e?.message || 'Link inválido.'))
       .finally(() => setCarregando(false));
   }, [token]);
 
-  async function enviar(e: React.FormEvent) {
-    e.preventDefault();
-    setErro('');
-    if (!nota) return setErro('Escolha uma nota de 1 a 5.');
-    setEnviando(true);
+  // UM TOQUE = resposta registrada.
+  async function escolher(nota: number) {
+    if (enviando !== null || pronto) return;
+    setErro(''); setEnviando(nota);
     try {
-      await visitantePublico.avaliar(token!, { nota, comentario: comentario.trim() || undefined });
+      await visitantePublico.avaliar(token!, { nota });
+      setNotaEnviada(nota);
       setPronto(true);
     } catch (err: any) {
-      setErro(err?.message || 'Não foi possível enviar agora. Tente novamente.');
+      setErro(err?.message || 'Não foi possível enviar agora. Toque de novo.');
     } finally {
-      setEnviando(false);
+      setEnviando(null);
+    }
+  }
+
+  async function enviarComentario(e: React.FormEvent) {
+    e.preventDefault();
+    const txt = comentario.trim();
+    if (!txt) return;
+    setEnviandoComentario(true); setErro('');
+    try {
+      await visitantePublico.avaliar(token!, { comentario: txt });
+      setComentarioEnviado(true);
+    } catch (err: any) {
+      setErro(err?.message || 'Não foi possível enviar o comentário.');
+    } finally {
+      setEnviandoComentario(false);
     }
   }
 
@@ -89,7 +119,7 @@ export default function VisitanteAvaliar() {
     return (
       <div style={pagina}><AnimatedBackground /><PublicThemeToggle />
         <div style={cartao}>
-          <div style={{ fontSize: 44 }}>🔗</div>
+          <div style={{ fontSize: 44 }}>{'\u{1F517}'}</div>
           <h1 style={titulo}>Este link não está mais válido</h1>
           <p style={{ fontSize: 14, color: C.text3, lineHeight: 1.6 }}>
             Se você quiser nos contar como foi sua visita, é só responder a mensagem no WhatsApp.
@@ -100,16 +130,47 @@ export default function VisitanteAvaliar() {
   }
 
   if (pronto) {
+    const carinha = CARINHAS.find((c) => c.v === notaEnviada);
     return (
       <div style={pagina}><AnimatedBackground /><PublicThemeToggle />
         <div style={cartao}>
-          <div style={{ fontSize: 52 }}>💚</div>
+          <div style={{ fontSize: 52 }}>{carinha ? carinha.e : '\u{1F49A}'}</div>
           <h1 style={titulo}>Obrigado, {dados.nome}!</h1>
           <p style={{ fontSize: 15, lineHeight: 1.6, color: 'var(--cbrio-text)' }}>
             Sua resposta chegou. Ela ajuda a gente a receber melhor quem chega pela primeira vez.
-            Esperamos te ver de novo em breve!
           </p>
-          <p style={{ fontSize: 12, color: C.text3, marginTop: 16 }}>Comunidade Batista do Rio · cbrio.com.br</p>
+
+          {!comentarioJaExiste && !comentarioEnviado ? (
+            <form onSubmit={enviarComentario} style={{ marginTop: 20 }}>
+              <textarea
+                value={comentario} onChange={(e) => setComentario(e.target.value.slice(0, 1000))}
+                placeholder="Quer contar algo? (opcional)"
+                rows={3}
+                style={{
+                  width: '100%', padding: '12px 14px', fontSize: 15, borderRadius: 12,
+                  color: 'var(--cbrio-text)', background: 'transparent', resize: 'vertical',
+                  border: `1px solid ${C.inputBorder}`, outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box',
+                }}
+              />
+              {comentario.trim() ? (
+                <button type="submit" disabled={enviandoComentario} style={{
+                  width: '100%', padding: '13px 16px', fontSize: 16, fontWeight: 700, marginTop: 10,
+                  color: '#fff', background: '#00B39D', border: 'none', borderRadius: 12,
+                  cursor: enviandoComentario ? 'wait' : 'pointer', opacity: enviandoComentario ? 0.7 : 1,
+                }}>
+                  {enviandoComentario ? 'Enviando…' : 'Enviar comentário'}
+                </button>
+              ) : null}
+            </form>
+          ) : null}
+          {comentarioEnviado ? (
+            <p style={{ fontSize: 14, color: '#00B39D', marginTop: 16, fontWeight: 600 }}>
+              {'Comentário recebido \u{1F49A}'}
+            </p>
+          ) : null}
+          {erro ? <p style={{ color: '#ef4444', fontSize: 14, marginTop: 12 }}>{erro}</p> : null}
+
+          <p style={{ fontSize: 12, color: C.text3, marginTop: 22 }}>Comunidade Batista do Rio · cbrio.com.br</p>
         </div>
       </div>
     );
@@ -122,51 +183,28 @@ export default function VisitanteAvaliar() {
         <h1 style={titulo}>{dados.nome}, como foi sua visita?</h1>
         <p style={{ fontSize: 13.5, color: C.text3, lineHeight: 1.6 }}>
           {dados.culto ? <>Sobre o <strong>{dados.culto.nome}</strong> de {String(dados.culto.data || '').split('-').reverse().join('/')}. </> : null}
-          Leva 10 segundos — e nos ajuda de verdade.
+          É só tocar numa carinha.
         </p>
 
-        <form onSubmit={enviar}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 8, margin: '22px 0 6px' }}>
-            {NOTAS.map((n) => {
-              const ativo = nota === n.v;
-              return (
-                <button key={n.v} type="button" onClick={() => setNota(n.v)}
-                  aria-pressed={ativo} aria-label={`${n.v} · ${n.l}`}
-                  style={{
-                    padding: '12px 4px 10px', borderRadius: 14, cursor: 'pointer',
-                    background: ativo ? 'rgba(0,179,157,0.16)' : 'transparent',
-                    border: `2px solid ${ativo ? '#00B39D' : C.inputBorder}`,
-                    transition: 'all .15s', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4,
-                  }}>
-                  <span style={{ fontSize: 28, lineHeight: 1 }}>{n.e}</span>
-                  <span style={{ fontSize: 15, fontWeight: 800, color: ativo ? '#00B39D' : 'var(--cbrio-text)' }}>{n.v}</span>
-                  <span style={{ fontSize: 10, color: C.text3 }}>{n.l}</span>
-                </button>
-              );
-            })}
-          </div>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5, 1fr)', gap: 6, margin: '26px 0 4px' }}>
+          {CARINHAS.map((c) => (
+            <button key={c.v} type="button" onClick={() => escolher(c.v)}
+              disabled={enviando !== null} aria-label={c.l}
+              style={{
+                padding: '14px 2px', borderRadius: 16, cursor: enviando !== null ? 'wait' : 'pointer',
+                background: 'transparent', border: `2px solid ${C.inputBorder}`,
+                transition: 'transform .12s, border-color .12s, background .12s',
+                opacity: enviando !== null && enviando !== c.v ? 0.4 : 1,
+                transform: enviando === c.v ? 'scale(1.12)' : 'none',
+                display: 'flex', alignItems: 'center', justifyContent: 'center',
+              }}>
+              <span style={{ fontSize: 'clamp(28px, 8vw, 36px)', lineHeight: 1 }}>{c.e}</span>
+            </button>
+          ))}
+        </div>
 
-          <textarea
-            value={comentario} onChange={(e) => setComentario(e.target.value.slice(0, 1000))}
-            placeholder="Quer contar algo? (opcional)"
-            rows={3}
-            style={{
-              width: '100%', marginTop: 16, padding: '12px 14px', fontSize: 15, borderRadius: 12,
-              color: 'var(--cbrio-text)', background: 'transparent', resize: 'vertical',
-              border: `1px solid ${C.inputBorder}`, outline: 'none', fontFamily: 'inherit', boxSizing: 'border-box',
-            }}
-          />
-
-          {erro && <p style={{ color: '#ef4444', fontSize: 14, marginTop: 12 }}>{erro}</p>}
-          <button type="submit" disabled={enviando} style={{
-            width: '100%', padding: '15px 16px', fontSize: 17, fontWeight: 700, marginTop: 16,
-            color: '#fff', background: '#00B39D', border: 'none', borderRadius: 12,
-            cursor: enviando ? 'wait' : 'pointer', opacity: enviando ? 0.7 : 1,
-          }}>
-            {enviando ? 'Enviando…' : 'Enviar'}
-          </button>
-        </form>
-        <p style={{ fontSize: 12, color: C.text3, marginTop: 22 }}>Comunidade Batista do Rio · cbrio.com.br</p>
+        {erro ? <p style={{ color: '#ef4444', fontSize: 14, marginTop: 14 }}>{erro}</p> : null}
+        <p style={{ fontSize: 12, color: C.text3, marginTop: 24 }}>Comunidade Batista do Rio · cbrio.com.br</p>
       </div>
     </div>
   );
