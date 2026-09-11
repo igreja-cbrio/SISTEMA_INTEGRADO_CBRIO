@@ -13,6 +13,7 @@
  *    403 → cadastro de permissão · resolve no sistema, não no totem
  *    503 → o banco recusou a reserva · quem resolve é quem cuida do sistema
  *    401 (sem status, só mensagem) → sessão expirada · resolve logando de novo
+ *    TypeError de programa → bug do totem · ESPERAR NÃO RESOLVE (lição de 11/09)
  *    sem status → rede/servidor fora · resolve sozinho quando voltar
  *  "Não deu pra buscar" manda o voluntário chamar a pessoa errada.
  *
@@ -24,6 +25,7 @@
 
 export interface FalhaBloco {
   status?: number;
+  name?: string;
   message?: string;
   /** Motivo REAL vindo do Postgres, que o backend repassa no 503. */
   detalhe?: string;
@@ -53,12 +55,21 @@ export function motivoFalhaBloco(e: unknown): string {
   if (status !== undefined) {
     return `O servidor recusou o pedido (erro ${status}). Fale com quem cuida do sistema.`;
   }
+  // ⚠️⚠️ ERRO DO PRÓPRIO TOTEM, e não da rede — a lição de 11/09. A tela chamava
+  // `totemKids.reservarCodigos` em vez de `totemKids.checkin.reservarCodigos`:
+  // um `TypeError` lançado ANTES do fetch, que ficou **9 dias** disfarçado de
+  // "espere a internet voltar" enquanto a reserva nunca era feita. Erro de
+  // programa não se resolve esperando, então não pode falar como rede.
+  const msgBruta = String(err?.message || '');
+  if (/is not a function|n[ãa]o [ée] uma fun[çc][ãa]o|is not defined|cannot read propert|of undefined|of null/i.test(msgBruta)) {
+    return `Falha no próprio totem, não na internet (${msgBruta}). Esperar não resolve — avise quem cuida do sistema.`;
+  }
+
   // ⚠️⚠️ O 401 do `src/api.js` chega AQUI SEM STATUS: aquele ramo é tratado
   // antes do `if (!res.ok)` e lança um Error só com a mensagem. Sem esta
   // peneira, sessão expirada no tablet apareceria como "espere a internet
   // voltar" — e ninguém faria a única coisa que resolve, que é logar de novo.
-  const msg = String(err?.message || '');
-  if (/sess[ãa]o|n[ãa]o autorizado|expir/i.test(msg)) {
+  if (/sess[ãa]o|n[ãa]o autorizado|expir/i.test(msgBruta)) {
     return 'A sessão deste totem expirou. Faça login de novo neste aparelho para voltar a reservar os códigos.';
   }
   // ⚠️ O resto sem status é o `fetch` que nem chegou ao servidor — e este é o

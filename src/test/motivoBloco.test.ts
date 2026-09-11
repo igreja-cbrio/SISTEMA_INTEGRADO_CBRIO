@@ -80,6 +80,30 @@ describe('motivoFalhaBloco · por que o bloco offline está vazio', () => {
     }
   });
 
+  /**
+   * ⚠️⚠️ A LIÇÃO DE 11/09: `totemKids.reservarCodigos` (faltava o `.checkin`)
+   * lançava TypeError ANTES do fetch e ficou 9 DIAS lido como "espere a
+   * internet". Bug de programa não se resolve esperando — se esta frase voltar
+   * a falar de rede, o próximo erro de código se esconde do mesmo jeito.
+   */
+  it('TypeError de programa NÃO é rede: diz que é do totem e manda avisar', () => {
+    for (const m of ['A.reservarCodigos is not a function', "Cannot read properties of undefined (reading 'x')"]) {
+      const t = motivoFalhaBloco(new TypeError(m));
+      expect(t).toMatch(/pr[óo]prio totem|falha no pr[óo]prio/i);
+      expect(t).toMatch(/avise|sistema/i);
+      // ⚠️ A frase PODE citar a internet ("não na internet") — o que ela não
+      // pode é mandar ESPERAR, que era o disfarce do bug.
+      expect(t).not.toMatch(/sozinho|internet voltar/i);
+      expect(t).toContain(m);   // o texto do erro viaja: é ele que aponta a linha
+    }
+  });
+
+  it('⚠️ "Failed to fetch" também é TypeError, e SEGUE sendo rede', () => {
+    const t = motivoFalhaBloco(new TypeError('Failed to fetch'));
+    expect(t).toMatch(/internet/i);
+    expect(t).not.toMatch(/pr[óo]prio totem/i);
+  });
+
   it('nunca devolve frase vazia', () => {
     for (const e of [null, undefined, {}, { status: 403 }, { status: 503 }, { status: 500 }]) {
       expect(motivoFalhaBloco(e).trim().length).toBeGreaterThan(20);

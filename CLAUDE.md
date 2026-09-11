@@ -3208,8 +3208,40 @@ só faz check-in com o sistema fora do ar se tiver um bloco de códigos que o
 check-in ONLINE funciona **normalmente** — o que não existe é a rede de
 segurança. Por isso a barra é cinza, não vermelha.
 
-⚠️ **A causa de estar em 0 NÃO foi medida nesta sessão** (a sonda ao banco foi
-recusada pelo classificador nesta máquina). As duas hipóteses, em ordem: a
+### ⚠️⚠️ A CAUSA, MEDIDA (11/09 · PR da chamada errada) — era BUG, não migration
+
+`TotemKidsCheckin.tsx` chamava **`totemKids.reservarCodigos`**, mas a função
+mora em **`totemKids.checkin.reservarCodigos`** (`src/api.js`). O `await` de
+`undefined` lança **`TypeError: is not a function` ANTES de qualquer fetch** —
+o pedido **nunca saiu do navegador**. Medido no totem em 11/09: zero
+requisições a `/codigos-reservados` na aba Network e o `console.error`
+apontando a linha.
+
+**As duas hipóteses antigas estão MORTAS**, checadas em produção (só leitura):
+a tabela `kids_codigos_reservados` **existe** (e está **vazia**, zero linhas
+desde 02/09) e a função `fn_kids_reservar_codigos` **existe** com a assinatura
+exata — provado mandando um parâmetro de tipo errado e recebendo `22P02` do
+Postgres, sem executar nada. **A migration `20260902200000` FOI aplicada.**
+
+⚠️⚠️ **A rede de segurança do check-in offline NUNCA foi armada** — 02/09 a
+11/09, domingos de 200+ crianças incluídos. O que se perdeu não foi check-in:
+foi a cobertura, que ninguém sabia estar ausente.
+
+⚠️ **Por que passou 9 dias:** (a) o `catch` era mudo e engolia o TypeError junto
+com queda de rede; (b) **`src/api.js` é JS e `allowJs` está DESLIGADO no
+`tsconfig.app.json`** ⇒ o módulo entra no typecheck como `any` e caminho errado
+de API **não acusa em lugar nenhum**. Guardas novas:
+`src/test/apiCaminhoReservarCodigos.test.ts` (o caminho da chamada é contrato)
+e, no `motivoBloco.ts`, TypeError de programa deixou de falar como rede —
+"falha no próprio totem, esperar não resolve".
+
+⚠️ **A lição maior:** frase de erro que fala de rede **esconde bug de código**.
+Todo `catch` que vira "tente de novo mais tarde" precisa separar o que se
+resolve sozinho do que nunca vai se resolver sozinho.
+
+⚠️ **[REGISTRO HISTÓRICO · resolvido acima]** A causa não tinha sido medida (a
+sonda ao banco foi recusada pelo classificador nesta máquina). As hipóteses da
+época, ambas descartadas em 11/09: a
 migration `20260902200000` não ter sido aplicada em produção (a RPC não existe ⇒
 `/codigos-reservados` devolve 503 ⇒ o totem guarda lista vazia) ou o
 `authorizeModule('kids', 2)` daquela rota recusar a conta do totem. **Conferir
