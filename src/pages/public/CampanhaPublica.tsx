@@ -32,6 +32,52 @@ export default function CampanhaPublica() {
   const [estado, setEstado] = useState<'carregando' | 'ok' | 'nao_encontrada' | 'erro'>('carregando');
   const timer = useRef<any>(null);
 
+  // ⚠️⚠️ A barra tinha `transition: width` e NUNCA animava: quando o fetch
+  // responde, o elemento NASCE na largura final, e transição de CSS precisa de
+  // um estado anterior JÁ PINTADO. Aqui a largura é interpolada em JS — o que
+  // conserta a entrada e mantém a barra e o NÚMERO sempre no mesmo valor (com
+  // CSS, o número saltaria pro final enquanto a barra ainda subia).
+  const [pctAnimado, setPctAnimado] = useState(0);
+  const valorRef = useRef(0);
+  const jaEntrou = useRef(false);
+  const rafRef = useRef(0);
+
+  const alvo = Math.max(0, Math.min(100, Number(c?.pct) || 0));
+
+  useEffect(() => {
+    if (estado !== 'ok') return;
+    const de = valorRef.current;
+    if (de === alvo) return;
+
+    // Entrada = 1100ms (a barra sobe do zero). Atualização do polling = 600ms,
+    // partindo do valor ANTERIOR: numa tela projetada o culto inteiro, esse
+    // deslize é o que marca a doação que acabou de entrar.
+    const entrada = !jaEntrou.current;
+    jaEntrou.current = true;
+    const dur = entrada ? 1100 : 600;
+
+    const reduz = typeof window !== 'undefined'
+      && window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+    if (reduz) {
+      valorRef.current = alvo;
+      setPctAnimado(alvo);
+      return;
+    }
+
+    let inicio = 0;
+    const passo = (t: number) => {
+      if (!inicio) inicio = t;
+      const p = Math.min(1, (t - inicio) / dur);
+      const e = 1 - Math.pow(1 - p, 3); // easeOutCubic
+      const v = de + (alvo - de) * e;
+      valorRef.current = v;
+      setPctAnimado(v);
+      if (p < 1) rafRef.current = requestAnimationFrame(passo);
+    };
+    rafRef.current = requestAnimationFrame(passo);
+    return () => cancelAnimationFrame(rafRef.current);
+  }, [alvo, estado]);
+
   useEffect(() => {
     let vivo = true;
     // ⚠️ COM a env: sem argumento a função devolve `/api` relativo, que no dev
@@ -86,7 +132,10 @@ export default function CampanhaPublica() {
   if (!c) return null;
 
   const acento = c.cor_destaque || '#00B39D';
-  const pct = Math.max(0, Math.min(100, Number(c.pct) || 0));
+  const pct = alvo;
+  // Mesmas casas decimais do valor final (tabular-nums evita o número dançar).
+  const casas = String(pct).includes('.') ? String(pct).split('.')[1].length : 0;
+  const pctTexto = pctAnimado.toFixed(casas);
 
   return (
     <div style={{
@@ -123,14 +172,13 @@ export default function CampanhaPublica() {
 
         <div style={{ height: 'clamp(14px, 2.4vw, 26px)', background: 'rgba(255,255,255,0.09)', borderRadius: 999, overflow: 'hidden' }}>
           <div style={{
-            width: `${pct}%`, height: '100%', background: acento, borderRadius: 999,
-            transition: 'width 900ms cubic-bezier(0.22, 1, 0.36, 1)',
+            width: `${pctAnimado}%`, height: '100%', background: acento, borderRadius: 999,
           }} />
         </div>
 
         <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginTop: 10, flexWrap: 'wrap' }}>
           <div style={{ fontSize: 'clamp(20px, 3.4vw, 38px)', fontWeight: 700, color: acento, fontVariantNumeric: 'tabular-nums' }}>
-            {pct}%
+            {pctTexto}%
           </div>
           {c.bateu_meta && (
             <div style={{ fontSize: 'clamp(14px, 2vw, 20px)', color: acento, alignSelf: 'flex-end' }}>
