@@ -104,6 +104,17 @@ jobs:
       - name: Porta do visitante (regras puras + token)
         run: npm run test:visitante
 
+      # FLUXO DE PORTA (11/09): o que a igreja DEVE fazer com quem entrou, ate
+      # quando, e se foi feito. Duas leis que este teste segura e que so existem
+      # porque foram medidas: (1) so e cobrado o que e dever da IGREJA — quem nao
+      # retirou o cafe nao esta em atraso com ninguem, e painel injusto para de
+      # ser olhado; (2) todo fluxo tem que FECHAR — em 90 dias o convertido teve
+      # 147/153 primeiros contatos e ZERO desfechos, porque o passo sem tela nao
+      # existe na pratica. Tambem trava o prazo em dia BRT (culto da noite nao
+      # pode escorregar um dia) e a adesao nula quando nada venceu ainda.
+      - name: Fluxo de porta (dever da igreja, prazo BRT, fechamento)
+        run: npm run test:fluxo-porta
+
       # Trava de 24/08: a politica 'ligar' do contrato de porta nao consolidava
       # CPF nem acumulava contato — 18 CPFs e 14 telefones presos na linha da
       # inscricao no Celebra 2026, com o cadastro ao lado sem CPF.

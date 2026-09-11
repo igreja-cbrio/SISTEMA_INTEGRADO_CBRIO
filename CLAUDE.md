@@ -491,6 +491,95 @@ café na cafeteria não é da área ministerial.
 consentimento — nada foi escrito no banco nesta sessão. O primeiro registro real
 é o teste ponta a ponta.
 
+## ⚠️⚠️ FLUXO DE PORTA · o que a igreja DEVE fazer com quem entrou (2026-09-11 · migration `20260911140000`)
+
+Pedido do Marcos: *"toda porta pública gera fluxos de processos a serem
+seguidos, eu queria mapear todas e colocar em algum lugar para ser avaliado se
+está sendo seguido"*. Primeira porta: **visitante**. Casa: **Cuidados → aba
+"Fluxo da porta"**.
+
+### ⚠️⚠️ A MEDIÇÃO QUE JUSTIFICA ISTO (banco de prod, 11/09, 90 dias)
+
+O convertido **já tem** um fluxo — vinte colunas soltas em `cui_convertidos`:
+
+| etapa | quantos |
+| --- | --- |
+| 1º contato feito | 147 de 153 (mediana 2 dias) |
+| encontro marcado | 0 |
+| direcionamento preenchido | 2 |
+| **desfecho (fluxo encerrado)** | **0** |
+
+⚠️⚠️ **A leitura certa disso NÃO é "a equipe não segue processo".** O passo que
+tem tela, botão e dono é cumprido em **96%**, por 10 pessoas (Wesley Ramos fez
+89). Todo passo que virou coluna sem tela é **zero**. No Next é igual: 704
+matrículas em 90 dias, **96 com contato registrado** e **237 paradas em
+"incompleto"**.
+
+### As três leis do desenho (`backend/utils/portaFluxos.js` · gate `test:fluxo-porta`)
+
+1. ⚠️⚠️ **SÓ É COBRADO O QUE É DEVER DA IGREJA.** Etapa `dependeDaPessoa` (café,
+   pesquisa) fica de fora da adesão e **nunca aparece como 'atrasado'** — vira
+   `'aguardando'`. Quem não retirou o café não está em atraso com ninguém, e
+   painel injusto para de ser olhado. **Foi o teste que pegou** este defeito: o
+   voucher vencia à meia-noite e no dia seguinte a tela acusaria a visitante.
+2. ⚠️⚠️ **ESTADO NÃO SE GUARDA, SE CALCULA.** Cada etapa aponta pra evidência que
+   JÁ existe (`voucher_status`, `pesquisa_respondida_em`, `primeiro_contato_em`)
+   ou pra uma ação em `flx_acoes`. **Não existe coluna "etapa atual"** — ela
+   seria uma segunda verdade e, no dia em que divergisse, ninguém saberia qual
+   das duas está certa.
+3. ⚠️⚠️ **FLUXO QUE NÃO FECHA NÃO É FLUXO.** Toda porta termina em `desfecho`
+   obrigatório (`encaminhada` exige destino · `sem_necessidade` · `nao_alcancada`).
+   É o que falta hoje no convertido e o que o Marcos pediu: *"se não, finaliza a
+   conversa e esse fluxo é encerrado"*.
+
+### As peças
+
+- `backend/utils/portaFluxos.js` — catálogo + régua PURA. 11 mutantes mortos.
+  ⚠️ O catálogo vive em CÓDIGO, não em tabela: mudar etapa é decisão de processo
+  e tem que passar por PR, não por alguém clicando numa tela de madrugada.
+- `supabase/migrations/20260911140000_flx_acoes_fluxo_porta.sql` — **UMA** tabela
+  (`flx_acoes`), genérica (`porta` + `ref_tipo` + `ref_id`), guardando só a ação
+  humana que fecha etapa. ⚠️ **Sem FK pra `vis_visitas`** de propósito (aponta
+  pra tabelas diferentes conforme a porta) — quem garante que a linha existe é a
+  rota, que LÊ antes de escrever. ⚠️ Índice único **PARCIAL**: soft-delete tem
+  que liberar a chave, senão desfazer um desfecho errado trancaria a etapa pra
+  sempre (lição do `uq_mem_devocionais_dia`).
+- `backend/services/fluxoPortaAcoes.js` — banco. ⚠️ Registrar duas vezes
+  **CORRIGE**, não duplica: sem isso a equipe deixa de registrar por medo de
+  errar, que é como se chega a zero desfechos.
+- `GET /visitantes/cuidados/fluxo` (cuidados 1) · `POST|DELETE
+  /visitantes/cuidados/:id/desfecho` (cuidados **3** · é decisão pastoral).
+  ⚠️ A lista sai ordenada por **URGÊNCIA**, não por data — por data o atraso
+  afunda no fim da página.
+- `src/components/visitantes/FluxoVisitante.tsx` — `lazy` na aba. ⚠️ A tela
+  **não recalcula nada**: pinta o que o servidor mandou.
+
+### ⚠️ O prazo conta em DIA BRT e vence no FIM do dia
+
+"No dia seguinte" = `prazoDias: 1` = até 23:59 de amanhã, **não** 24h depois do
+preenchimento. Prazo em hora cheia faria a equipe perder o prazo por ter ligado
+às 19h em vez das 18h. ⚠️ Culto da noite (19h BRT = 22h UTC) não pode escorregar
+um dia — tem teste.
+
+### ⚠️ `adesao_pct` é NULL quando nada venceu
+
+Percentual sobre zero é mentira com cara de número: no domingo de manhã a tela
+diria "0% de adesão" com a equipe inteira em dia.
+
+### ⏳ O que falta (nesta ordem)
+
+1. **Aplicar a migration `20260911140000`** (a conferência vem no fim do arquivo).
+2. Ligar o switch `visitante_pesquisa` e imprimir os cartazes — sem gente
+   entrando pela porta, a tela fica vazia de propósito.
+3. **Um mês rodando com uma porta só.** Se as duas etapas cobradas se
+   sustentarem, aí sim entram convertido e Next no mesmo catálogo.
+
+⚠️⚠️ **O RISCO DECLARADO, com número**: fluxo gera tarefa, e tarefa sem dono
+vira painel vermelho. Medido em 11/09 no módulo de Conversas — 119 conversas
+abertas, **103 com o último recado da pessoa há mais de 2 dias**, 79 sem dono,
+`wa_equipe_atendimento` com **0 linhas** e a última atividade do módulo em
+09/09. **Antes de ligar a segunda porta, tem que existir dono da primeira.**
+
 ## ⚠️⚠️ APRESENTAÇÃO DE CRIANÇAS · o CULTO da família, a FICHA e o nome dobrado (2026-09-08 · migration `20260908150000`)
 
 Pedido do Marcos (via Milena, no Kids): *"não aparece o horário que as crianças
