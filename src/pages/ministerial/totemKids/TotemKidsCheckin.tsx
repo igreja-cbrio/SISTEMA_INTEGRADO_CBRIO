@@ -402,7 +402,16 @@ export default function TotemKidsCheckin() {
   // consome. Pedir isto offline não funciona, e não deve funcionar.
   const recarregarBloco = useCallback(async (sessaoId?: string | null) => {
     try {
-      const r: any = await totemKids.reservarCodigos({
+      // ⚠️⚠️ `checkin.` NÃO é enfeite: a função mora em `totemKids.checkin`
+      // (`src/api.js`). Chamada em `totemKids.reservarCodigos` — como ficou de
+      // 02/09 a 11/09 — é `undefined`, e o `await` de undefined lança
+      // `TypeError: não é função` ANTES de qualquer fetch: o pedido nunca saía,
+      // a tabela `kids_codigos_reservados` ficou VAZIA desde o dia em que foi
+      // criada e a barra dizia "espere a internet voltar". `src/api.js` é JS e
+      // `allowJs` está DESLIGADO no `tsconfig.app.json` ⇒ o módulo entra como
+      // `any` e o typecheck não vê caminho errado. Quem guarda é
+      // `src/test/apiCaminhoReservarCodigos.test.ts`.
+      const r: any = await totemKids.checkin.reservarCodigos({
         estacao_ref: off.estacaoRef(),
         sessao_id: sessaoId || null,
         quantidade: 60,   // domingo tem pico de 125 simultâneos entre TODAS as estações
