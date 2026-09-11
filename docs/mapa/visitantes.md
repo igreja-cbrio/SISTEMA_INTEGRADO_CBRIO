@@ -12,16 +12,19 @@
 ## Backend
 - `backend/routes/visitantes.js`
 Guard: `authorizeModule('visitantes', 1 | 2 | 3 | 4)`
-<details><summary>Endpoints (10)</summary>
+<details><summary>Endpoints (13)</summary>
 - `DELETE /api/visitantes/:id`
+- `DELETE /api/visitantes/cuidados/:id/desfecho`
 - `GET /api/visitantes`
 - `GET /api/visitantes/:id`
 - `GET /api/visitantes/cuidados`
+- `GET /api/visitantes/cuidados/fluxo`
 - `GET /api/visitantes/locais`
 - `GET /api/visitantes/resumo`
 - `GET /api/visitantes/voucher/:codigo`
 - `PATCH /api/visitantes/:id`
 - `PATCH /api/visitantes/cuidados/:id`
+- `POST /api/visitantes/cuidados/:id/desfecho`
 - `POST /api/visitantes/voucher/:codigo/resgatar`
 </details>
 
