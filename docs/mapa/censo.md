@@ -44,6 +44,7 @@ Guard: `authorizeModule('censo', 1 | 2 | 4 | 5)`
 
 **Serviços**
 
+- `backend/services/censoConsentimentoGravar.js`
 - `backend/services/censoLeituraIA.js`
 - `backend/services/censoReconciliar.js`
 - `backend/services/membroMatch.js`
@@ -56,6 +57,7 @@ Guard: `authorizeModule('censo', 1 | 2 | 4 | 5)`
 - `cen_pesquisa`
 - `cen_resposta`
 - `cen_resposta_item`
+- `inscricao_consentimentos`
 - `mem_membros`
 - `vw_cen_cobertura`
 - `vw_cen_cuidado_fila`
