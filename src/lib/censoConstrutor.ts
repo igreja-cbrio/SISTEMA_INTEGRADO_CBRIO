@@ -30,9 +30,12 @@ export type Pergunta = {
   mostrar_se?: { pergunta: string; valores: string[] };
   /** Bloco sensível: agregado é livre, nominal só para a equipe de cuidado. */
   sensivel?: boolean;
-  /** 'cuidado' = pedido de ajuda. Vira fila, não gráfico. */
+  /** 'cuidado' = pedido de ajuda (vira fila, não gráfico).
+   *  'consentimento' = a resposta vira prova em `inscricao_consentimentos`. */
   acao?: string;
   cuidado_tipo?: string;
+  /** Com `acao: 'consentimento'`: qual consentimento esta pergunta coleta. */
+  consentimento_tipo?: string;
   permite_nao_se_aplica?: boolean;
   /** Campo do cadastro que esta pergunta preenche (ex.: 'telefone'). */
   preenche_de?: string;
@@ -91,6 +94,20 @@ export function trocarTipoPergunta(p: Pergunta, tipo: string): Pergunta {
   if (tipo === 'texto_curto') limpo.formato = p.formato;
   if (tipo === 'sim_nao' && p.acao === 'cuidado') {
     limpo.acao = 'cuidado'; limpo.cuidado_tipo = p.cuidado_tipo;
+  }
+  // ⚠️⚠️ CONSENTIMENTO SOBREVIVE À TROCA DE TIPO, e pelo mesmo motivo do
+  // `preenche_de` (achado de 10/09): ele não é detalhe de formato — é o que faz
+  // a resposta virar prova legal. Descartado aqui, a pergunta continuaria no
+  // ar, a pessoa continuaria marcando a caixa, e o consentimento simplesmente
+  // pararia de ser gravado. Sem erro, sem aviso. Foi essa falha muda que deixou
+  // 385 pessoas do censo de 12-13/09 sem consentimento nenhum.
+  //
+  // ⚠️ Sobrevive só para os tipos que produzem escolha explícita de sim/não —
+  // o servidor recusa os outros (`censoPerguntas.js`), e preservar rumo a um
+  // tipo que não passa na validação trocaria o descarte mudo por um 400 na
+  // hora de salvar.
+  if ((tipo === 'sim_nao' || tipo === 'opcao_unica') && p.acao === 'consentimento') {
+    limpo.acao = 'consentimento'; limpo.consentimento_tipo = p.consentimento_tipo;
   }
   if (tipo === 'secao') { delete limpo.obrigatoria; delete limpo.sensivel; delete limpo.mostrar_se; }
   return limpo;
