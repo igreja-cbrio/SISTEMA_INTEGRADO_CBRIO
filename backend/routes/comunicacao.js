@@ -627,6 +627,7 @@ router.get('/contatos', async (req, res) => {
       grupos: 'inscrição em grupo', grupos_lider: 'inscrição de líder',
       next: 'inscrição no Next', voluntariado: 'ficha de voluntariado',
       evento_externo: 'inscrição em evento', inscricoes: 'inscrição em evento',
+      censo: 'resposta do censo',
     };
     const porTel = new Map();
     for (const m of membros) {

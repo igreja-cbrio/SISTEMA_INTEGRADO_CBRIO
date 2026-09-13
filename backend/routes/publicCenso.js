@@ -27,6 +27,9 @@ const { casarComOpcao, loteParaBanco } = require('../utils/censoVocabulario');
 const { podeIdentificarPorCpf, camposDoCadastro } = require('../utils/censoPrefill');
 const { acharRespostaDaPessoa } = require('../services/censoJaRespondeu');
 const { acharMembroGuardado, acharOuCriarGuardado } = require('../services/membroMatch');
+const {
+  gravarConsentimentosDoCenso, ligarOptinDoCenso,
+} = require('../services/censoConsentimentoGravar');
 
 let reconciliarCenso;
 try { ({ reconciliarCenso } = require('../services/censoReconciliar')); }
@@ -749,6 +752,37 @@ router.post('/:slug/responder', submitLimiter, async (req, res) => {
       if (error) console.error('[PUBLIC CENSO] cuidado:', error.message);
     }
 
+    // ── Consentimento ─────────────────────────────────────────────────────
+    // A caixa de opt-in que o questionário passou a ter (13/09) vira prova em
+    // `inscricao_consentimentos`, porta `censo`, ancorada nesta resposta.
+    //
+    // ⚠️ `membroId` costuma ser NULL aqui: no caminho padrão o matcher só roda
+    // no pós-processamento. A prova é gravada assim mesmo — perdê-la porque a
+    // pessoa ainda não foi resolvida seria perder justamente o que não dá para
+    // pedir de novo. Quem preenche o `membro_id` e liga o opt-in depois é o
+    // pós-processamento (routes/censo.js).
+    //
+    // ⚠️⚠️ FALHA AQUI NÃO PODE SER CEGA (a lição dos itens, 11/09): marcamos a
+    // resposta como pendente com o motivo, e o cron repara. O `payload` guarda
+    // a resposta inteira, então o consentimento é sempre reconstruível.
+    let consentimentos = [];
+    try {
+      const out = await gravarConsentimentosDoCenso({
+        respostaId,
+        perguntas: v.perguntas,
+        respostas,
+        membroId,
+        userAgent: String(req.headers['user-agent'] || '').slice(0, 300) || null,
+      });
+      consentimentos = out.consentimentos;
+    } catch (e) {
+      console.error('[PUBLIC CENSO] consentimento:', e.message);
+      await supabase.from('cen_resposta').update({
+        pos_processado_em: null,
+        pos_processo_erro: `consentimento_nao_gravado: ${String(e.message).slice(0, 300)}`,
+      }).eq('id', respostaId);
+    }
+
     // ── Atualiza o cadastro ──
     // Só no modo síncrono. No modo padrão isto acontece no pós-processamento,
     // pelas MESMAS regras (`reconciliarCenso`: vazio preenche, igual no-op,
@@ -762,6 +796,11 @@ router.post('/:slug/responder', submitLimiter, async (req, res) => {
         const dados = loteParaBanco(porCampo);
         delete dados.nome;   // `nome` é chave de match e o serviço já o ignora
         cadastro = await reconciliarCenso({ membroId, matchedBy, dados, origemId: respostaId });
+        // ⚠️ O opt-in NÃO entra em `CAMPOS_CENSO` do reconciliador, e é decisão:
+        // consentimento não é campo cadastral que se preenche por igualdade
+        // ("vazio preenche, divergente vira conflito"). Ele só LIGA, nunca
+        // desliga, e por isso tem caminho próprio.
+        await ligarOptinDoCenso({ membroId, consentimentos, em: agora });
       } catch (e) { console.error('[PUBLIC CENSO] reconciliar:', e.message); }
     }
 

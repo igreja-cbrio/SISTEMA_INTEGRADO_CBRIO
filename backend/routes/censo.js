@@ -12,12 +12,15 @@ const router = express.Router();
 const { supabase } = require('../utils/supabase');
 const { authenticate, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const {
-  TIPOS, FORMATOS, CUIDADO_TIPOS, TIPOS_NUMERICOS, validarPerguntas, slugificar,
+  TIPOS, FORMATOS, CUIDADO_TIPOS, TIPOS_CONSENTIMENTO, TIPOS_NUMERICOS, validarPerguntas, slugificar,
   ordenarPorOpcoes, baseSemNeutras, ehNeutra, montarItens,
 } = require('../utils/censoPerguntas');
 const { requireCron } = require('../utils/cronAuth');
 const { acharMembroGuardado } = require('../services/membroMatch');
 const { reconciliarCenso } = require('../services/censoReconciliar');
+const {
+  PORTA: PORTA_CONSENTIMENTO, gravarConsentimentosDoCenso, ligarOptinDoCenso,
+} = require('../services/censoConsentimentoGravar');
 const { lerRespostasAbertas, TIPOS_PARA_IA } = require('../services/censoLeituraIA');
 
 // ⚠️ AQUI EM CIMA, e não junto do handler: `const` NÃO é hoisted (TDZ), e o
@@ -356,6 +359,7 @@ router.get('/aux', authorizeModule('censo', 1), async (req, res) => {
     tipos_pesquisa: TIPOS_PESQUISA,
     formatos: FORMATOS,
     cuidado_tipos: CUIDADO_TIPOS,
+    consentimento_tipos: TIPOS_CONSENTIMENTO,
     consentimento_default: CONSENTIMENTO_DEFAULT,
     nivel: getEffectiveLevel(req, 'censo'),
     // DUAS permissões distintas, e a distinção é deliberada:
@@ -674,7 +678,7 @@ async function processarPendentes(pesquisaId, limitePedido) {
 
     const { data: fila, error: e1 } = await supabase
       .from('cen_resposta')
-      .select('id, pesquisa_id, membro_id, payload, identificado_por')
+      .select('id, pesquisa_id, membro_id, payload, identificado_por, concluida_em')
       .eq('pesquisa_id', pesquisaId)
       .is('pos_processado_em', null).not('concluida_em', 'is', null).is('deleted_at', null)
       .order('concluida_em', { ascending: true })
@@ -695,6 +699,7 @@ async function processarPendentes(pesquisaId, limitePedido) {
     const perguntasValidadas = val.ok ? val.perguntas : null;
 
     let vinculadas = 0; let conflitos = 0; let falhas = 0; let itensReconstruidos = 0;
+    let optinsLigados = 0; let consentimentosGravados = 0;
     // O que o censo REALMENTE escreveu no cadastro, por campo, e o que ficou de
     // fora. Sem isso "12 processadas" não distingue "aplicou tudo" de "aplicou
     // nada" — foi o que fez o estado civil ser descartado sem ninguém notar.
@@ -748,6 +753,13 @@ async function processarPendentes(pesquisaId, limitePedido) {
             vinculadas += 1;
             // A fila de cuidado precisa saber de quem é o pedido.
             await supabase.from('cen_cuidado').update({ membro_id: membroId }).eq('resposta_id', r.id);
+            // ⚠️ O ledger de consentimento foi gravado no ENVIO, quando a
+            // pessoa ainda não era conhecida. Agora que é, a prova passa a
+            // apontar para ela — senão o consentimento existe e não tem dono,
+            // e nenhuma leitura por pessoa o encontra.
+            await supabase.from('inscricao_consentimentos')
+              .update({ membro_id: membroId })
+              .eq('porta', PORTA_CONSENTIMENTO).eq('ref_id', r.id).is('membro_id', null);
           }
         }
 
@@ -763,6 +775,28 @@ async function processarPendentes(pesquisaId, limitePedido) {
             const k = `${d.campo}:${d.motivo}`;
             descartadosPorMotivo[k] = (descartadosPorMotivo[k] || 0) + 1;
           }
+        }
+
+        // ── Consentimento: rede de segurança + opt-in ────────────────────
+        // ⚠️ Mesma família da reconstrução de itens: o envio pode ter falhado
+        // ao gravar a prova (CHECK, instabilidade), e o `payload` é a fonte da
+        // verdade — então remontamos aqui. É idempotente: só grava o que falta.
+        if (perguntasValidadas) {
+          const cons = await gravarConsentimentosDoCenso({
+            respostaId: r.id,
+            perguntas: perguntasValidadas,
+            respostas: r.payload || {},
+            membroId,
+          });
+          consentimentosGravados += cons.gravados;
+
+          // ⚠️⚠️ O opt-in só pode ser ligado AQUI no caminho padrão: é agora que
+          // a pessoa existe. A data é a da RESPOSTA, não a de hoje — carimbar
+          // "agora" moveria a prova para o dia em que o cron rodou.
+          const opt = await ligarOptinDoCenso({
+            membroId, consentimentos: cons.consentimentos, em: r.concluida_em,
+          });
+          if (opt.ligado) optinsLigados += 1;
         }
 
         await supabase.from('cen_resposta')
@@ -786,6 +820,10 @@ async function processarPendentes(pesquisaId, limitePedido) {
     return {
       processadas: fila.length, vinculadas, conflitos, falhas, restantes: restantes || 0,
       itens_reconstruidos: itensReconstruidos,
+      // ⚠️ `consentimentos_gravados` é o REPARO, não o total coletado: o comum
+      // é o envio já ter gravado. Zero aqui é o normal; > 0 é para olhar.
+      consentimentos_gravados: consentimentosGravados,
+      optins_ligados: optinsLigados,
       cadastro_aplicado: aplicadosPorCampo,
       cadastro_nao_guardado: descartadosPorMotivo,
     };
