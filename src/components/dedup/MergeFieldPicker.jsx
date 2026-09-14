@@ -28,7 +28,7 @@ const CAMPOS = [
   { key: 'email', label: 'E-mail', fmt: (v) => v || '' },
   { key: 'cpf', label: 'CPF', fmt: maskCpf },
   { key: 'data_nascimento', label: 'Nascimento', fmt: fmtData },
-  { key: 'genero', label: 'Gênero', fmt: (v) => v || '' },
+  { key: 'genero', label: 'Sexo', fmt: (v) => v || '' },   // mesmo nome do resto do sistema
 ];
 const norm = (key, v) => {
   if (v == null) return '';

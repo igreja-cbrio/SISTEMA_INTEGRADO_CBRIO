@@ -331,6 +331,44 @@ Duas travas, que se completam:
 **LEI: fusão que devolve sucesso não prova que o vínculo foi junto — quem prova
 é a conferência independente da lista de tabelas.**
 
+### ⚠️ Pergunta "Sexo" APAGADA e vocabulário unificado (14/09 · decisão do Marcos)
+
+**A pergunta saiu.** Medição que levou à decisão: das 299 respostas, **299
+batiam com o cadastro (zero divergência)** e só **2** tinham o cadastro vazio —
+ou seja, cobrava um toque de todo mundo para trazer ~nada. Os 2 foram
+preenchidos antes de apagar; **os 299 itens continuam no banco** (histórico
+intacto, só saem do formulário e do gráfico). Backup do questionário anterior em
+`scratchpad/backup_perguntas_*.json`.
+⚠️ Quem cobre gênero hoje é `mem_membros.genero`: **99% de quem respondeu** e
+**100% dos cadastros novos criados pelo censo**. Os 58% da base sem gênero são
+importação antiga e visitante de WiFi — público que não responde censo, então a
+pergunta nunca ia alcançá-los.
+⚠️ O rótulo virou **"Sexo"** no painel do censo e no comparador de fusão (a
+Membresia já usava). Duas telas com nomes diferentes para o mesmo campo fazem
+parecer que são dois dados.
+
+**Vocabulário unificado** (pedido: *"escolaridade superior e ensino superior são
+a mesma coisa"*). Varredura das 13 perguntas com lista de opções contra o que
+está gravado: só **18 respostas** fora da lista atual, em 2 perguntas.
+· ✅ **escolaridade**: a opção "Superior" virou "Superior completo", mas o mapa
+  continuou mandando a antiga para o slug `superior` enquanto a nova caía no
+  fallback `superior_completo` — **310 de um lado e 7 do outro, duas barras para
+  a mesma escolaridade**. Mapa corrigido (toda grafia de graduação → um slug só;
+  `superior_incompleto` fica separado) + `_unificar_vocabulario_censo.cjs`
+  acertou os dados.
+  ⚠️⚠️ **O VALOR VIVE EM TRÊS LUGARES e mexer em um só é pior que não mexer**:
+  `cen_resposta_item.valor_texto` (o gráfico soma), `cen_resposta.payload` (a
+  fonte que RECONSTRÓI o item — se ficar para trás, o valor antigo volta) e
+  `mem_membros.<campo>` (a ficha).
+· ❌ **faixas de idade dos filhos**: 11 respostas em rótulos antigos
+  ("6 a 12 anos", "0 a 5 anos", "18 anos ou mais") que hoje estão divididos em
+  duas ou três faixas. **NÃO convertidas de propósito** — escolher uma das novas
+  seria inventar a idade do filho de alguém.
+
+**LEI: renomear o RÓTULO de uma opção sem acertar o mapa cria vocabulário novo
+em silêncio — o dado antigo não migra sozinho, e o gráfico passa a mostrar duas
+barras que são a mesma coisa.**
+
 ### Regra operacional do domingo (não é código)
 
 - **Não editar o questionário durante a coleta.** O cliente valida contra a
