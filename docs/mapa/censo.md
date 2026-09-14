@@ -60,6 +60,7 @@ Guard: `authorizeModule('censo', 1 | 2 | 4 | 5)`
 - `cen_pesquisa`
 - `cen_resposta`
 - `cen_resposta_item`
+- `dem_bairro_geo`
 - `inscricao_consentimentos`
 - `mem_membros`
 - `vw_cen_cobertura`
