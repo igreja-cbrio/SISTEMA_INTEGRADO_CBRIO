@@ -116,7 +116,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/censoCampoCadastro.js` | `src/test/censoCampoCadastro.test.ts` |
 | `backend/utils/censoConsentimento.js` | `src/test/censoConsentimento.test.ts` |
 | `backend/utils/censoConvite.js` | `src/test/censoConvite.test.ts` |
-| `backend/utils/censoIaFiltro.js` | `src/test/censoIaSemPii.test.ts` |
+| `backend/utils/censoIaFiltro.js` | `src/test/censoIaSemPerguntaAberta.test.ts` `src/test/censoIaSemPii.test.ts` |
 | `backend/utils/censoPerguntas.js` | `src/test/censoConsentimento.test.ts` `src/test/censoFormEspelho.test.ts` `src/test/censoPerguntas.test.ts` `src/test/censoQuestionario2026.test.ts` |
 | `backend/utils/censoPrefill.js` | `src/test/censoPrefill.test.ts` `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/censoRespostaToken.js` | `src/test/censoRespostaToken.test.ts` |
