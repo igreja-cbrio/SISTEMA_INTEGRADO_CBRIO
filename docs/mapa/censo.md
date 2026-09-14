@@ -12,7 +12,7 @@
 ## Backend
 - `backend/routes/censo.js`
 Guard: `authorizeModule('censo', 1 | 2 | 4 | 5)`
-<details><summary>Endpoints (21)</summary>
+<details><summary>Endpoints (22)</summary>
 - `DELETE /api/censo/pesquisas/:id`
 - `DELETE /api/censo/respostas/:id`
 - `GET /api/censo/aux`
@@ -23,6 +23,7 @@ Guard: `authorizeModule('censo', 1 | 2 | 4 | 5)`
 - `GET /api/censo/ia`
 - `GET /api/censo/pendentes`
 - `GET /api/censo/perfil`
+- `GET /api/censo/perfil/mapa`
 - `GET /api/censo/pesquisas`
 - `GET /api/censo/pesquisas/:id`
 - `GET /api/censo/respostas`
@@ -38,8 +39,10 @@ Guard: `authorizeModule('censo', 1 | 2 | 4 | 5)`
 
 **Réguas puras (backend/utils)**
 
+- `backend/utils/censoGrafico.js`
 - `backend/utils/censoPerguntas.js`
 - `backend/utils/cronAuth.js`
+- `backend/utils/pagination.js`
 - `backend/utils/supabase.js`
 
 **Serviços**
@@ -66,6 +69,7 @@ Guard: `authorizeModule('censo', 1 | 2 | 4 | 5)`
 - `vw_cen_item_agregado`
 - `vw_cen_pesquisa_stats`
 - `vw_cen_resposta_pessoa`
+- `vw_dem_pessoa`
 
 **Namespace no front (src/api.js)**
 
