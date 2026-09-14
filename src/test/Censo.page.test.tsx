@@ -189,6 +189,30 @@ describe('página /censo', () => {
     expect(screen.getByRole('button', { name: /Gerar leitura/ })).toBeTruthy();
   });
 
+  // ⚠️⚠️ O TESTE DA ABERTURA DO MÓDULO (14/09/2026). A aba /censo foi liberada
+  // para 43 dos 46 cargos, e 9 deles entram com NÍVEL 1 (só número agregado).
+  // As rotas `/respostas` e `/cuidado` exigem nível 2 — sem filtrar as abas, a
+  // pessoa entra, clica em "Respostas" e leva 403. Abrir a porta e deixar um
+  // cômodo trancado sem aviso é pior que não abrir.
+  it('nível 1 vê só o agregado — as abas nominais não aparecem', async () => {
+    const { censo } = await import('../api');
+    vi.mocked(censo.aux).mockResolvedValueOnce({
+      tipos_pergunta: ['secao', 'texto_curto'], tipos_pesquisa: ['censo'],
+      formatos: ['texto'], cuidado_tipos: ['oracao'],
+      consentimento_default: 'aviso', nivel: 1, pode_ver_sensivel: false,
+    });
+    render(<Censo />);
+    await screen.findByText('Censo CBRio 2026');
+    // Some o que o servidor recusaria...
+    expect(screen.queryByRole('tab', { name: /Respostas/ })).toBeNull();
+    expect(screen.queryByRole('tab', { name: /Cuidado/ })).toBeNull();
+    // ...e fica tudo o que o nível 1 pode abrir de verdade.
+    expect(screen.getByRole('tab', { name: /Pesquisas/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Cobertura/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Perfil/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Leitura da IA/ })).toBeTruthy();
+  });
+
   it('quem não está na equipe de cuidado vê a explicação, não os nomes', async () => {
     render(<Censo />);
     await screen.findByText('Censo CBRio 2026');
