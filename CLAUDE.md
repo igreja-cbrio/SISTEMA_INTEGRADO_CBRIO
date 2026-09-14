@@ -14250,6 +14250,27 @@ Perda de dado real, achada de carona: o `PUT` do `CalendarioCultos.jsx` mandava
 somado a partir das pessoas nominais. O campo saiu do payload e virou
 somente-leitura, com a nota explicando de onde ele vem.
 
+#### 14/09/2026 · decisões online FORA do formulário (`decisoes_online_extra`)
+
+Marcos: "quero que fique desbloqueado para aumentar esse número além dos que
+preencheram o formulário — os que decidiram no chat". Sem voltar a corrida que
+apagava dado: `decisoes_online` **continua sendo o total oficial** (KPI ONL-13,
+dashboards, relatórios não mudam) e nasce a coluna
+**`cultos.decisoes_online_extra`** (parte MANUAL: chat, WhatsApp, ligação).
+Migration `20260914150000_decisoes_online_extra.sql` cria a coluna e o trigger
+`fn_cultos_dec_online_extra_ajusta` (BEFORE UPDATE OF decisoes_online_extra),
+que recompõe o total **por delta**: `total − extra_antigo + extra_novo`. O
+trigger do formulário (`+1` por `form_publico`) segue intocado; os dois convivem
+porque nenhum lê o valor que o outro escreve.
+- Modal do culto: duas colunas de online — **"Online · formulário"** (só
+  leitura = total − extra) e **"Online · chat e outros"** (editável). O payload
+  manda **só `decisoes_online_extra`**; `decisoes_online` continua fora.
+- `PUT /kpis/cultos/:id` aceita `decisoes_online_extra` (numérico ≥ 0).
+- Quem lança: mesmo gate da Integração (`authorizeIntegracao` = admin/diretor,
+  `kpi_areas` com `integracao`, ou nível ≥ 2 em Integração na matriz). A
+  Renata (Coord. Online) precisa de **override nível 2 em Integração** pra
+  salvar — o cargo dela dá 1.
+
 ### Os três reparos do mesmo dia (27/08, depois do Matheus testar em produção)
 
 1. ⚠️⚠️ **O diálogo do QR vazava para fora do cartão** ("tá bugado quando abre o
