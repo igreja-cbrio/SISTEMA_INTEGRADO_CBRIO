@@ -138,6 +138,7 @@ Guard: `authorizeModule('grupos', 1 | 2 | 3 | 4 | 5)`
 - `backend/services/contatoPessoa.js`
 - `backend/services/duplicidadePolicy.js`
 - `backend/services/fusaoCampos.js`
+- `backend/services/fusaoVerificacao.js`
 - `backend/services/grupoAgendaExcecao.js`
 - `backend/services/grupoAncora.js`
 - `backend/services/grupoEncontroApagar.js`

@@ -49,6 +49,7 @@ Guard: `authorizeModule('next-batismo', 1 | 2 | 3)`
 - `backend/services/duplicidadePolicy.js`
 - `backend/services/familiaPolicy.js`
 - `backend/services/fusaoCampos.js`
+- `backend/services/fusaoVerificacao.js`
 - `backend/services/identidadeProgressiva.js`
 - `backend/services/membroMatch.js`
 

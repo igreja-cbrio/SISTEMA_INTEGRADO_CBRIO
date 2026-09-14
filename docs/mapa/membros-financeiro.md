@@ -142,6 +142,7 @@ Guard: `authorizeModule('membros-financeiro', 2)`
 - `backend/services/cultoDeAgora.js`
 - `backend/services/duplicidadePolicy.js`
 - `backend/services/fusaoCampos.js`
+- `backend/services/fusaoVerificacao.js`
 - `backend/services/geoBrasil.js`
 - `backend/services/grupoPedidoEventos.js`
 - `backend/services/gruposAvisoApp.js`
