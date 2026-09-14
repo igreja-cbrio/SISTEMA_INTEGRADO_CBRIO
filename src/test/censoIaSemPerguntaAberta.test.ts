@@ -72,3 +72,34 @@ describe('⚠️⚠️ as duas guardas de privacidade continuam na consulta', ()
     expect(src).not.toMatch(/TIPOS_PARA_IA = new Set\(\[[^\]]*'texto_curto'/);
   });
 });
+
+// ⚠️⚠️ A ponte entre o campo do servidor e a tela.
+//
+// O servidor manda `sem_pergunta_aberta` no corpo do 400 e o cliente
+// (`src/api.js`) faz `Object.assign(error, err)` — os campos pousam na RAIZ do
+// erro. Ler `.corpo.sem_pergunta_aberta` compila, passa no typecheck e no
+// build, e NUNCA acha nada: o aviso ficaria mudo e a aba seguiria o beco sem
+// saída que ela veio consertar. Foi o bug real, pego antes do merge em
+// 14/09/2026. Nenhum teste de rota alcança esse tipo de erro — só este.
+describe('⚠️⚠️ a tela lê o campo onde o cliente de fato o deixa', () => {
+  const tela = () => readFileSync(join(RAIZ, 'src/components/censo/AbaLeituraIA.tsx'), 'utf8');
+
+  it('o cliente achata o corpo do erro na raiz (premissa deste teste)', () => {
+    const api = semComentarios(readFileSync(join(RAIZ, 'src/api.js'), 'utf8'));
+    expect(api, 'src/api.js parou de achatar o corpo — reveja a leitura na tela')
+      .toMatch(/Object\.assign\(error, err\)/);
+  });
+
+  it('lê da raiz do erro, não de um `.corpo` que não existe', () => {
+    const t = semComentarios(tela());
+    expect(t).toMatch(/er as \{ sem_pergunta_aberta\?: boolean \}/);
+    expect(t, 'voltou a ler `.corpo`, que o cliente nunca preenche')
+      .not.toMatch(/\bcorpo\?\.\s*sem_pergunta_aberta/);
+  });
+
+  it('e o caso vira saída para o Relatório, não texto vermelho', () => {
+    const t = tela();
+    expect(t).toMatch(/aoIrParaRelatorio/);
+    expect(t).toMatch(/Ver o relatório/);
+  });
+});

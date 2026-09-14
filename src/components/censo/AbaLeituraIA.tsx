@@ -102,8 +102,11 @@ export default function AbaLeituraIA(
       const r = await censo.ia.gerar(pesquisaId);
       setE((atual) => ({ ...(atual || {} as Estado), ...r }));
     } catch (er: unknown) {
-      const corpo = (er as { corpo?: { sem_pergunta_aberta?: boolean } })?.corpo;
-      setSemPerguntaAberta(corpo?.sem_pergunta_aberta === true);
+      // ⚠️ O cliente (`src/api.js`) faz `Object.assign(error, err)`: os campos do
+      // corpo JSON pousam na RAIZ do erro, não em `.corpo`. Ler `.corpo` aqui
+      // compila, passa no typecheck e nunca acha nada — o aviso ficaria mudo
+      // para sempre e a aba continuaria o beco que este arquivo veio consertar.
+      setSemPerguntaAberta((er as { sem_pergunta_aberta?: boolean })?.sem_pergunta_aberta === true);
       setErro(er instanceof Error ? er.message : 'A leitura falhou');
     } finally { setGerando(false); }
   }
