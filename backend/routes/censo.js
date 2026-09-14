@@ -1100,7 +1100,27 @@ router.post('/ia', authorizeModule('censo', 4), async (req, res) => {
 
     const abertos = (itens || []).filter((i) => String(i.valor_texto || '').trim().length >= 3);
     if (!abertos.length) {
-      return res.status(422).json({ error: 'Nenhuma resposta aberta para ler ainda' });
+      // ⚠️⚠️ A MENSAGEM ANTIGA ("Nenhuma resposta aberta para ler ainda") MANDAVA
+      // ESPERAR POR ALGO QUE NUNCA CHEGARIA. Medido no Censo CBRio 2026 em
+      // 13/09/2026: a pesquisa tem 34 perguntas e **nenhuma** do tipo
+      // `texto_longo` — as três que existiam ("O que você mais ama na CBRio?",
+      // "O que mais te conecta com Deus no culto?", "O que te desconecta?")
+      // saíram do formulário. 793 pessoas responderam sem serem perguntadas, e
+      // a tela dizia "ainda", sugerindo falta de volume.
+      //
+      // ⚠️ São dois casos com a MESMA cara e conserto oposto: "a pergunta não
+      // existe" (mexer no questionário) × "existe e ninguém escreveu" (esperar
+      // ou insistir na divulgação). Trocar um pelo outro custa semanas.
+      const { data: p } = await supabase
+        .from('cen_pesquisa').select('perguntas').eq('id', pesquisaId).maybeSingle();
+      const temPerguntaAberta = Array.isArray(p?.perguntas)
+        && p.perguntas.some((q) => TIPOS_PARA_IA.has(String(q?.tipo || '')));
+      return res.status(422).json({
+        error: temPerguntaAberta
+          ? 'Ainda ninguém escreveu nas perguntas abertas desta pesquisa.'
+          : 'Esta pesquisa não tem nenhuma pergunta aberta (texto longo), então não há o que ler. A leitura da IA usa só o que as pessoas escrevem com as próprias palavras — acrescente ao menos uma pergunta aberta ao questionário.',
+        sem_pergunta_aberta: !temPerguntaAberta,
+      });
     }
 
     const leitura = await lerRespostasAbertas(abertos);
