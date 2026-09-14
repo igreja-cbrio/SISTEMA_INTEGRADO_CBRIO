@@ -1161,16 +1161,34 @@ router.get('/perfil/mapa', authorizeModule('censo', 1), async (req, res) => {
     const semCadastro = total - respostas.filter((r) => r.membro_id).length;
 
     // `.in()` em lotes de 200: lista longa estoura a URL do PostgREST.
+    // ⚠️⚠️ Pede `bairro_norm`, NUNCA `lat/lng` daqui: `vw_dem_pessoa.lat` é a
+    // coordenada da PESSOA (`mem_membros.lat`), reservada para acerto de RUA e
+    // nula em 100% da base por decisão de 23/08 ("o centróide NUNCA é gravado
+    // em lat/lng da pessoa"). Ler dali faz o mapa nascer vazio, sem erro nenhum.
+    // O que a view entrega de valioso é o `bairro_norm` JÁ RESOLVIDO — com
+    // alias (as 99 pessoas da Barra Olímpica) e com `ignorar` anulado.
     const pessoas = [];
     for (let i = 0; i < ids.length; i += 200) {
       const { data, error } = await supabase
         .from('vw_dem_pessoa')
-        .select('id, bairro, bairro_norm, lat, lng')
+        .select('id, bairro, bairro_norm')
         .in('id', ids.slice(i, i + 200));
       // ⚠️ Erro PROPAGA: mapa com menos gente é pior que mapa ausente, porque
       // parece completo.
       if (error) throw error;
       pessoas.push(...(data || []));
+    }
+
+    // A COORDENADA vem do catálogo de bairros, pela chave que a view resolveu.
+    const normsUsados = [...new Set(pessoas.map((p) => p.bairro_norm).filter(Boolean))];
+    const geo = new Map();
+    for (let i = 0; i < normsUsados.length; i += 200) {
+      const { data, error } = await supabase
+        .from('dem_bairro_geo')
+        .select('bairro_norm, bairro, lat, lng')
+        .in('bairro_norm', normsUsados.slice(i, i + 200));
+      if (error) throw error;
+      for (const g of data || []) geo.set(g.bairro_norm, g);
     }
 
     const porNorm = new Map();
@@ -1180,9 +1198,10 @@ router.get('/perfil/mapa', authorizeModule('censo', 1), async (req, res) => {
     for (const p of pessoas) {
       achadas.add(p.id);
       if (!p.bairro_norm) { semBairro += 1; continue; }
-      if (p.lat == null || p.lng == null) { semCoordenada += 1; continue; }
+      const g = geo.get(p.bairro_norm);
+      if (!g || g.lat == null || g.lng == null) { semCoordenada += 1; continue; }
       const at = porNorm.get(p.bairro_norm)
-        || { bairro: p.bairro || p.bairro_norm, norm: p.bairro_norm, total: 0, lat: p.lat, lng: p.lng };
+        || { bairro: p.bairro || g.bairro || p.bairro_norm, norm: p.bairro_norm, total: 0, lat: Number(g.lat), lng: Number(g.lng) };
       at.total += 1;
       porNorm.set(p.bairro_norm, at);
     }
