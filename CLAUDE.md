@@ -272,6 +272,34 @@ duas estão certas; o que faltava era a tela dizer qual é qual.
 coleta"** — pergunta nova no meio nasce com buraco que não dá para preencher
 depois.
 
+### ⚠️ A aba Respostas pagina de 50, e a pergunta "Sexo" nasceu no 13/09 às 13h40
+
+**Paginação igual à da Membresia** (pedido do Marcos, 14/09): 50 por página com
+`Anterior · "1–50 de 812" · Próxima` embaixo. ⚠️⚠️ **A BUSCA NÃO PODE OLHAR SÓ A
+PÁGINA** — com 50 por vez, "não achei" na página 7 vira "fulano não respondeu o
+censo". Ao digitar, a aba puxa a lista inteira UMA vez e filtra com
+`contemNormalizado` (acento-insensível); buscar no servidor com `ilike` perderia
+isso ("jose" deixaria de achar "José"). Apagar resposta decrementa o TOTAL, senão
+a paginação mente na hora seguinte.
+
+⚠️ **Dois bugs de efeito que o teste pegou antes do ar** (valem como padrão):
+· estado que o próprio efeito seta NÃO pode estar nas dependências dele — o
+`setCarregandoBusca(true)` re-disparava o efeito, cuja limpeza marcava
+`vivo = false`, e a resposta chegava e era jogada fora (a trava virou `useRef`);
+· `setTodas` muda uma dependência ⇒ a limpeza roda ANTES do `.finally`, então
+desligar spinner ali não pode estar sob o guarda de `vivo` — ficava "buscando…"
+para sempre.
+
+**E a pergunta "Sexo":** o Marcos desconfiou do meu "foi alterado em 11/09" —
+**ele estava certo.** Medido no corte exato: última resposta SEM a pergunta
+13/09 **16:38:10 UTC**, primeira COM ela **16:44:13 UTC**. A pergunta entrou
+**13/09 por volta das 13h40 BRT, depois dos dois cultos de domingo** — por isso
+586 das 812 nunca a viram, e nenhuma alteração de 11/09 tem a ver com isso.
+✔ Nada foi perdido: zero resposta com valor de sexo no `payload` e sem item.
+✔ **E não faz falta para a análise**: `mem_membros.genero` cobre **99%** dos
+respondentes (808 de 818) — só 10 pessoas ficam sem gênero por via nenhuma. O
+gráfico de gênero do painel lê o CADASTRO, não a pergunta.
+
 ### Regra operacional do domingo (não é código)
 
 - **Não editar o questionário durante a coleta.** O cliente valida contra a
