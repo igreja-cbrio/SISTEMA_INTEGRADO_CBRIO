@@ -402,20 +402,31 @@ function filtrarSensiveis(itens, podeVer) {
   return (itens || []).filter((i) => i.sensivel !== true);
 }
 
+// ⚠️⚠️ DEVOLVE `total` SEPARADO DA PÁGINA (14/09/2026). O teto era 500 e o
+// cliente pedia exatamente 500: com 812 respostas, a aba dizia
+// **"500 resposta(s) concluída(s)"** e escondia 312 sem nenhum aviso. Quem lê a
+// tela não tem como saber que está vendo um pedaço — foi o Marcos que percebeu,
+// comparando com o número do painel.
+//
+// A régua: a PÁGINA é limitada (a lista tem nome e contato, não dá para mandar
+// 10 mil linhas), mas o TOTAL vem do banco por COUNT e é sempre o verdadeiro.
+// Número na tela nunca pode ser efeito colateral de paginação.
 router.get('/respostas', authorizeModule('censo', 2), async (req, res) => {
   try {
     const pesquisaId = String(req.query.pesquisa_id || '').trim();
     if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
-    const limite = Math.min(Number(req.query.limite) || 100, 500);
+    const limite = Math.min(Number(req.query.limite) || 500, 1000);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
 
-    const { data, error } = await supabase
+    const { data, error, count } = await supabase
       .from('cen_resposta')
-      .select('id, membro_id, nome_declarado, contato_declarado, canal, identificado_por, concluida_em, duracao_seg')
+      .select('id, membro_id, nome_declarado, contato_declarado, canal, identificado_por, concluida_em, duracao_seg',
+        { count: 'exact' })
       .eq('pesquisa_id', pesquisaId)
       .not('concluida_em', 'is', null)
       .is('deleted_at', null)
       .order('concluida_em', { ascending: false })
-      .limit(limite);
+      .range(offset, offset + limite - 1);
     if (error) return res.status(400).json({ error: error.message });
 
     // Nome de quem está na base vem de mem_membros; quem não casou tem só o
@@ -428,7 +439,7 @@ router.get('/respostas', authorizeModule('censo', 2), async (req, res) => {
       for (const m of membros || []) nomes.set(m.id, m.nome);
     }
 
-    res.json((data || []).map((r) => ({
+    const itens = (data || []).map((r) => ({
       id: r.id,
       nome: r.membro_id ? (nomes.get(r.membro_id) || '—') : (r.nome_declarado || 'Sem identificação'),
       na_base: !!r.membro_id,
@@ -437,7 +448,10 @@ router.get('/respostas', authorizeModule('censo', 2), async (req, res) => {
       identificado_por: r.identificado_por,
       concluida_em: r.concluida_em,
       duracao_seg: r.duracao_seg,
-    })));
+    }));
+    // ⚠️ Formato NOVO (objeto). O antigo era o array cru — quem ler este
+    // endpoint sem tratar `itens` mostra uma lista vazia, não um erro.
+    res.json({ total: count ?? itens.length, offset, limite, itens });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -969,9 +983,15 @@ router.get('/perfil', authorizeModule('censo', 1), async (req, res) => {
       // ⚠️ A lista de colunas é EXPLÍCITA: `select('*')` traria nome, profissão
       // e cidade para a memória do handler.
       fetchAllRows(
+        // ⚠️⚠️ `concluida_em NOT NULL` (14/09/2026): a view filtra só
+        // `deleted_at`, então ela devolve RASCUNHO junto. O corte demográfico
+        // somava 866 pessoas contra 812 respostas — 54 de diferença, que é
+        // exatamente o número de quem começou e não terminou. Quem lia a tela
+        // via "456 feminino + 344 masculino" e não fechava com o total.
         () => supabase.from('vw_cen_resposta_pessoa')
           .select('resposta_id, membro_id, faixa_etaria, genero, estado_civil, bairro, status_membro')
           .eq('pesquisa_id', pesquisaId)
+          .not('concluida_em', 'is', null)
           .order('resposta_id'),
         { max: TETO_DEMO },
       ),
@@ -1148,9 +1168,12 @@ router.get('/perfil/mapa', authorizeModule('censo', 1), async (req, res) => {
     if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
 
     const respostas = await fetchAllRows(
+      // ⚠️ Mesmo filtro do /perfil: sem ele o mapa conta rascunho no denominador
+      // e a cobertura por bairro sai menor do que é.
       () => supabase.from('vw_cen_resposta_pessoa')
         .select('resposta_id, membro_id')
         .eq('pesquisa_id', pesquisaId)
+        .not('concluida_em', 'is', null)
         .order('resposta_id'),
       { max: TETO_DEMO },
     );

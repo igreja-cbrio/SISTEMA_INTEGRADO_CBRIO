@@ -244,6 +244,34 @@ e levaria 403. `TABS` em `Censo.tsx` ganhou `min` espelhando o servidor.
 rota — abrir a porta e deixar um cômodo trancado sem aviso é pior que não
 abrir.** Travado por `Censo.page.test.tsx` ("nível 1 vê só o agregado").
 
+### ⚠️⚠️ DOIS NÚMEROS ERRADOS NA TELA (14/09 · achados pelo Marcos)
+
+Ele comparou a aba Respostas com o painel e estranhou. Os dois eram reais:
+
+1. **A aba dizia "500 resposta(s)" com 812 no banco.** O endpoint tinha teto de
+   500, o cliente pedia exatamente 500, e a tela contava `linhas.length` — ou
+   seja, **anunciava o tamanho da PÁGINA como se fosse o total**, escondendo 312
+   pessoas sem aviso nenhum. Agora `/censo/respostas` devolve
+   `{ total, offset, limite, itens }` com o total vindo de `count: 'exact'`, e a
+   aba mostra "812 · mostrando 500" + botão de carregar o resto.
+   ⚠️ A busca da aba filtra só o que já foi carregado — a tela diz isso, porque
+   a conclusão errada ("fulano não respondeu") é pior que o incômodo.
+   **LEI: número na tela nunca pode ser efeito colateral de paginação.**
+2. **O corte demográfico somava 866 contra 812 respostas.** `vw_cen_resposta_pessoa`
+   filtra só `deleted_at` — **rascunho entra**. Os 54 de diferença são exatamente
+   quem começou e não terminou. `/perfil` e `/perfil/mapa` passaram a filtrar
+   `concluida_em NOT NULL` (na query, não na view: mexer na view mudaria
+   semântica para todo consumidor).
+
+⚠️ **E um terceiro número que NÃO é bug:** a pergunta **"Sexo" tem ~226
+respostas** contra 812 porque ela foi **acrescentada no meio da coleta** — só
+quem respondeu depois a viu. O corte por gênero do painel (456 F / 344 M) vem do
+**cadastro** (`mem_membros.genero`), não da pergunta. São coisas diferentes e as
+duas estão certas; o que faltava era a tela dizer qual é qual.
+**Isto é a consequência viva da regra "não editar o questionário durante a
+coleta"** — pergunta nova no meio nasce com buraco que não dá para preencher
+depois.
+
 ### Regra operacional do domingo (não é código)
 
 - **Não editar o questionário durante a coleta.** O cliente valida contra a

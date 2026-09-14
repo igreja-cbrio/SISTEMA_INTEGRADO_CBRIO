@@ -352,8 +352,10 @@ export const censo = {
   // Respostas nominais (nível 2). O bloco sensível vem filtrado pelo servidor
   // para quem não está em cen_acesso_sensivel — o front só mostra que existe
   // algo oculto, nunca o conteúdo.
-  respostas: (pesquisaId, limite) =>
-    get(`/censo/respostas?pesquisa_id=${pesquisaId}${limite ? `&limite=${limite}` : ''}`),
+  // ⚠️ Devolve `{ total, offset, limite, itens }` desde 14/09/2026 — o total
+  // vem do COUNT do banco, a lista é paginada. Ver o porquê em routes/censo.js.
+  respostas: (pesquisaId, limite, offset) =>
+    get(`/censo/respostas?pesquisa_id=${pesquisaId}${limite ? `&limite=${limite}` : ''}${offset ? `&offset=${offset}` : ''}`),
   resposta: (id) => get(`/censo/respostas/${id}`),
   // Apaga a resposta de uma pessoa e a LIBERA para responder de novo (nível 4).
   // Soft-delete no servidor: a régua do "já respondeu?" filtra deleted_at.

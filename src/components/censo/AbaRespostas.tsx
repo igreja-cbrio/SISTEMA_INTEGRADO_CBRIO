@@ -87,16 +87,39 @@ export default function AbaRespostas({ pesquisaId, podeApagar }: {
   const [detalhe, setDetalhe] = useState<Detalhe | null>(null);
   const [confirmar, setConfirmar] = useState<Linha | null>(null);
   const [apagando, setApagando] = useState(false);
+  // ⚠️ O TOTAL VEM DO BANCO, não do tamanho da lista (14/09/2026). A lista é
+  // paginada em 500; contar `linhas.length` fazia a aba anunciar "500
+  // resposta(s)" com 812 no banco — e ninguém tinha como perceber.
+  const [total, setTotal] = useState<number | null>(null);
+  const [carregandoMais, setCarregandoMais] = useState(false);
 
   const carregar = useCallback(async () => {
     if (!pesquisaId) return;
-    setErro(null); setLinhas(null);
+    setErro(null); setLinhas(null); setTotal(null);
     try {
-      setLinhas(await censo.respostas(pesquisaId, 500));
+      const r = await censo.respostas(pesquisaId, 500, 0);
+      setLinhas(r.itens || []);
+      setTotal(r.total ?? (r.itens || []).length);
     } catch (e) {
       setErro((e as Error)?.message || 'Não foi possível carregar as respostas.');
     }
   }, [pesquisaId]);
+
+  /** Próxima página. ⚠️ Acumula na lista — recarregar do zero perderia o filtro
+   *  digitado e a posição da rolagem, que é onde a pessoa estava lendo. */
+  const carregarMais = useCallback(async () => {
+    if (!pesquisaId || !linhas) return;
+    setCarregandoMais(true);
+    try {
+      const r = await censo.respostas(pesquisaId, 500, linhas.length);
+      setLinhas([...linhas, ...(r.itens || [])]);
+      setTotal(r.total ?? null);
+    } catch (e) {
+      toast.error((e as Error)?.message || 'Não foi possível carregar mais.');
+    } finally {
+      setCarregandoMais(false);
+    }
+  }, [pesquisaId, linhas]);
   useEffect(() => { carregar(); }, [carregar]);
 
   useEffect(() => {
@@ -163,7 +186,8 @@ export default function AbaRespostas({ pesquisaId, podeApagar }: {
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground">
-          {linhas.length} resposta(s) concluída(s)
+          {total ?? linhas.length} resposta(s) concluída(s)
+          {total != null && total > linhas.length && ` · mostrando ${linhas.length}`}
           {filtradas.length !== linhas.length && ` · ${filtradas.length} no filtro`}
         </p>
         <div className="relative w-full sm:w-72">
@@ -241,6 +265,24 @@ export default function AbaRespostas({ pesquisaId, podeApagar }: {
           </table>
         </div>
       </Card>
+
+      {/* ⚠️ O botão só existe porque a lista é paginada em 500. Sem ele, o
+          número certo no topo ("812") ficaria contra uma tabela de 500 linhas
+          sem saída — pior que o bug antigo, porque agora a pessoa VÊ que falta. */}
+      {total != null && linhas.length < total && !normalizarBusca(busca) && (
+        <div className="flex justify-center pt-1">
+          <Button variant="outline" size="sm" onClick={carregarMais} disabled={carregandoMais}>
+            {carregandoMais ? 'Carregando…' : `Carregar mais ${Math.min(500, total - linhas.length)}`}
+          </Button>
+        </div>
+      )}
+      {/* A busca filtra só o que já foi carregado — dizer isso evita a conclusão
+          errada de que a pessoa procurada não respondeu. */}
+      {total != null && linhas.length < total && normalizarBusca(busca) && (
+        <p className="text-center text-xs text-muted-foreground pt-1">
+          A busca olha as {linhas.length} linhas já carregadas de {total}. Carregue o resto para procurar em todas.
+        </p>
+      )}
 
       {/* ── resposta individual ── */}
       <Dialog open={!!aberta} onOpenChange={(o) => !o && setAberta(null)}>
