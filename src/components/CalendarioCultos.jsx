@@ -820,6 +820,9 @@ function ModalCulto({ culto, onClose, onSaved }) {
   const presencialLabel = culto.service_type_presencial_label || 'Presencial';
   const hasKids   = culto.service_type_has_kids   ?? false;
   const hasOnline = culto.service_type_has_online ?? false;
+  // Decisões online: `decisoes_online` é o TOTAL (formulário + extra). A parte
+  // do formulário é o total menos o extra gravado; a parte manual vem do form.
+  const onlineForm  = Math.max(0, (Number(culto.decisoes_online) || 0) - (Number(culto.decisoes_online_extra) || 0));
 
   // Valores iniciais (preservados pra detectar dirty)
   // Marcos pediu pra deixar campos vazios em vez do 0 default · o 0 não
@@ -834,6 +837,10 @@ function ModalCulto({ culto, onClose, onSaved }) {
     presencial_kids:      exibir(culto.presencial_kids),
     decisoes_presenciais: exibir(culto.decisoes_presenciais),
     decisoes_online:      exibir(culto.decisoes_online),
+    // Parte MANUAL das decisões online (chat, WhatsApp, ligação) · 14/09/2026.
+    // É o único campo de online que a Integração edita; o total continua
+    // sendo recomposto no banco (trigger `fn_cultos_dec_online_extra_ajusta`).
+    decisoes_online_extra: exibir(culto.decisoes_online_extra),
     decisoes_kids:        exibir(culto.decisoes_kids),
     observacoes:          culto.observacoes ?? '',
   });
@@ -847,6 +854,8 @@ function ModalCulto({ culto, onClose, onSaved }) {
     youtube_video_id:     culto.youtube_video_id ?? '',
   });
   const [saving, setSaving] = useState(false);
+  // Total online que a tela mostra = formulário (gravado) + extra (digitado agora)
+  const onlineTotal = hasOnline ? onlineForm + (Number(form.decisoes_online_extra) || 0) : 0;
 
   const set = (k, v) => setForm(f => ({ ...f, [k]: v }));
 
@@ -928,6 +937,12 @@ function ModalCulto({ culto, onClose, onSaved }) {
         // ⚠️ Omitir é diferente de zerar: o UPDATE simplesmente não toca a
         // coluna (a mesma técnica que o campo do tipo que não usa Kids já
         // usava, por causa do totem).
+        //
+        // 14/09/2026 (Marcos): o que a Integração lança é a parte MANUAL —
+        // `decisoes_online_extra` (chat e outros). O trigger
+        // `fn_cultos_dec_online_extra_ajusta` recompõe o total por DELTA, então
+        // uma decisão que entrou pelo formulário com o modal aberto não se perde.
+        ...(hasOnline ? { decisoes_online_extra: Number(form.decisoes_online_extra) || 0 } : {}),
         observacoes:          (form.observacoes ?? '').trim() || null,
         frequencia_lancada:   freqLancada,
         decisoes_lancadas:    decisoesLancadas,
@@ -991,26 +1006,43 @@ function ModalCulto({ culto, onClose, onSaved }) {
             //   presencial + online:     2 colunas
             //   presencial + kids:       2 colunas (Presenciais + Kids)
             //   presencial + online+kids: 3 colunas
-            const cols = (hasOnline ? 1 : 0) + (hasKids ? 1 : 0) + 1;
-            const grid = ['1fr', '1fr 1fr', '1fr 1fr 1fr'][cols - 1];
+            // Online ocupa 2 colunas: formulário (automático, só leitura) e
+            // chat/outros (manual). O total online = soma das duas.
+            const cols = (hasOnline ? 2 : 0) + (hasKids ? 1 : 0) + 1;
+            const grid = ['1fr', '1fr 1fr', '1fr 1fr 1fr', '1fr 1fr 1fr 1fr'][cols - 1];
             return (
               <div style={{ display: 'grid', gridTemplateColumns: grid, gap: 10, marginBottom: 12 }}>
                 <Field label={(hasOnline || hasKids) ? 'Presenciais' : 'Decisões'}>
                   <input type="number" min="0" value={form.decisoes_presenciais} onChange={e => set('decisoes_presenciais', e.target.value)} style={inp} />
                 </Field>
                 {hasOnline && (
-                  /* ⚠️ SOMENTE LEITURA · o online passou a ser CONTADO, não
-                     lançado: cada pessoa que preenche cbrio.org/decisao (o QR
-                     do apelo) soma 1 aqui, por trigger. Campo editável aqui
-                     sobrescreveria a contagem com o valor que estava na tela
-                     quando o modal abriu. */
-                  <Field label="Online (do formulário)">
+                  /* ⚠️ SOMENTE LEITURA · a parte do FORMULÁRIO é CONTADA, não
+                     lançada: cada pessoa que preenche cbrio.org/decisao (o QR
+                     do apelo) soma 1, por trigger. Mostramos total − extra. */
+                  <Field label="Online · formulário">
                     <input
                       type="number"
-                      value={form.decisoes_online}
+                      value={onlineForm === 0 ? '' : String(onlineForm)}
                       readOnly
                       title="Contado automaticamente por quem preenche cbrio.org/decisao"
                       style={{ ...inp, opacity: 0.7, cursor: 'not-allowed' }}
+                    />
+                  </Field>
+                )}
+                {hasOnline && (
+                  /* MANUAL · decisões online fora do formulário (chat ao vivo,
+                     WhatsApp, ligação). Marcos, 14/09/2026: "desbloquear pra
+                     aumentar além dos que preencheram o formulário". Vai no
+                     payload como `decisoes_online_extra`; o banco recompõe o
+                     total (`decisoes_online`) por delta. */
+                  <Field label="Online · chat e outros">
+                    <input
+                      type="number"
+                      min="0"
+                      value={form.decisoes_online_extra}
+                      onChange={e => set('decisoes_online_extra', e.target.value)}
+                      title="Decisões online que não vieram pelo formulário do QR (chat ao vivo, WhatsApp, ligação)"
+                      style={inp}
                     />
                   </Field>
                 )}
@@ -1025,17 +1057,18 @@ function ModalCulto({ culto, onClose, onSaved }) {
           })()}
           {hasOnline && (
             <p style={{ fontSize: 11, color: C.t3, marginTop: -4, marginBottom: 12, lineHeight: 1.5 }}>
-              O número de <strong>decisões online</strong> é contado sozinho: soma 1 a cada
-              pessoa que preenche o formulário do QR do apelo (cbrio.org/decisao). Por isso
-              o campo não é editável — e por isso ele reflete pessoas com nome e contato,
-              não uma estimativa.
+              <strong>Online · formulário</strong> é contado sozinho: soma 1 a cada pessoa que
+              preenche o QR do apelo (cbrio.org/decisao), por isso não é editável.
+              <strong> Online · chat e outros</strong> é o que você lança à mão: quem decidiu pelo
+              chat ao vivo, WhatsApp ou ligação e não preencheu o formulário.
+              {' '}Total online deste culto: <strong>{onlineTotal}</strong>.
             </p>
           )}
 
           {/* Dados individuais das pessoas que decidiram */}
           <DecisoesPessoasSection
             cultoId={culto.id}
-            totalEsperado={(Number(form.decisoes_presenciais) || 0) + (hasOnline ? (Number(form.decisoes_online) || 0) : 0)}
+            totalEsperado={(Number(form.decisoes_presenciais) || 0) + onlineTotal}
             totalKidsEsperado={hasKids ? (Number(form.decisoes_kids) || 0) : 0}
             hasOnline={hasOnline}
             hasKids={hasKids}

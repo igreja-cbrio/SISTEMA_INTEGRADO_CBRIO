@@ -222,6 +222,10 @@ router.put('/cultos/:id', authorizeIntegracao, async (req, res) => {
   const allowed = [
     'presencial_adulto', 'presencial_kids',
     'decisoes_presenciais', 'decisoes_online', 'decisoes_kids',
+    // Decisões online FORA do formulário (chat e outros) · 14/09/2026. O
+    // trigger `fn_cultos_dec_online_extra_ajusta` recompõe `decisoes_online`
+    // (total) por delta — o modal manda SÓ este campo, nunca o total.
+    'decisoes_online_extra',
     'youtube_video_id', 'online_pico', 'nome',
     'online_ds', 'online_ddus',
     'voluntarios_escalados', 'voluntarios_checkin',
@@ -232,6 +236,7 @@ router.put('/cultos/:id', authorizeIntegracao, async (req, res) => {
   const camposNumericos = [
     'presencial_adulto', 'presencial_kids',
     'decisoes_presenciais', 'decisoes_online', 'decisoes_kids',
+    'decisoes_online_extra',
     'online_pico', 'online_ds', 'online_ddus',
     'voluntarios_escalados', 'voluntarios_checkin',
   ];
