@@ -74,7 +74,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **169** arquivos, **157** com teste.
+`backend/utils/` tem **170** arquivos, **158** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -120,6 +120,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/censoIaFiltro.js` | `src/test/censoIaSemPerguntaAberta.test.ts` `src/test/censoIaSemPii.test.ts` |
 | `backend/utils/censoPerguntas.js` | `src/test/censoConsentimento.test.ts` `src/test/censoFormEspelho.test.ts` `src/test/censoPerguntas.test.ts` `src/test/censoQuestionario2026.test.ts` |
 | `backend/utils/censoPrefill.js` | `src/test/censoPrefill.test.ts` `src/test/portasPublicasPii.test.ts` |
+| `backend/utils/censoRelatorioDados.js` | `src/test/censoRelatorioDados.test.ts` `src/test/censoRelatorioMaterial.test.ts` |
 | `backend/utils/censoRespostaToken.js` | `src/test/censoRespostaToken.test.ts` |
 | `backend/utils/censoToken.js` | `src/test/censoRespostaToken.test.ts` `src/test/censoToken.test.ts` `src/test/doacaoPrefill.test.ts` |
 | `backend/utils/censoVocabulario.js` | — |

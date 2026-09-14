@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-421 arquivos.
+422 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -183,6 +183,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/censoIaFiltro.js` | régua pura | — | `src/test/censoIaSemPerguntaAberta.test.ts` |
 | `backend/utils/censoPerguntas.js` | régua pura | — | `src/test/censoConsentimento.test.ts` |
 | `backend/utils/censoPrefill.js` | régua pura | — | `src/test/censoPrefill.test.ts` |
+| `backend/utils/censoRelatorioDados.js` | régua pura | — | `src/test/censoRelatorioDados.test.ts` |
 | `backend/utils/censoRespostaToken.js` | régua pura | — | `src/test/censoRespostaToken.test.ts` |
 | `backend/utils/censoToken.js` | régua pura | — | `src/test/censoRespostaToken.test.ts` |
 | `backend/utils/censoVocabulario.js` | régua pura | — | `SEM TESTE` |
