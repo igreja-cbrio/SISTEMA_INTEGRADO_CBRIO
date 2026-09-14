@@ -150,7 +150,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/doacaoToken.js` | `src/test/doacaoPrefill.test.ts` |
 | `backend/utils/documentoBr.js` | `src/test/documentoBr.test.ts` |
 | `backend/utils/dsOnline.js` | `src/test/dsOnline.test.ts` |
-| `backend/utils/eInscricao.js` | `src/test/eInscricao.test.ts` |
+| `backend/utils/eInscricao.js` | `src/test/eInscricao.test.ts` `src/test/importarEInscricao.test.ts` |
 | `backend/utils/elegibilidadeVol.js` | `src/test/elegibilidadeVol.test.ts` |
 | `backend/utils/entradaGrupoApp.js` | `src/test/entradaGrupoApp.test.ts` |
 | `backend/utils/equipeAtendimento.js` | `src/test/equipeAtendimento.test.ts` |
