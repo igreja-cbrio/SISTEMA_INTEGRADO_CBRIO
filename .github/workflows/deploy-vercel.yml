@@ -150,6 +150,9 @@ jobs:
       - name: Digito verificador de campanha (JS x espelho SQL)
         run: npm run test:campanha-digito
 
+      - name: Censo · pergunta vira gráfico (e identificação nunca vira)
+        run: npm run test:censo-grafico
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
