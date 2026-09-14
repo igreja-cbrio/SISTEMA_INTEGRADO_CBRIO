@@ -48,8 +48,17 @@ REGRAS DE HONESTIDADE (as mais importantes):
 
 TOM: direto, sem elogiar a igreja e sem suavizar o que está ruim. Quem lê precisa decidir, não ser consolado. Português do Brasil, frases curtas.
 
+QUANTIDADE: de 3 a 6 pontos no resumo; de 3 a 8 achados; de 2 a 8 recomendações; ao menos 1 limite do censo. Se não houver material para o mínimo, entregue menos e diga por quê — número de itens não é meta.
+
 SOBRE AS RECOMENDAÇÕES: cada uma precisa nascer de um número do material, e você tem de informar esse número em \`base_numerica\`. Recomendação sem âncora é descartada automaticamente antes de chegar em quem lê — então não gaste item com conselho genérico de igreja. Prefira poucas recomendações fortes a muitas plausíveis.`;
 
+// ⚠️⚠️ NADA de `minItems`/`maxItems` aqui. A API recusa o esquema INTEIRO com
+// 400 (`'minItems' values other than 0 or 1 are not supported` e depois
+// `property 'maxItems' is not supported`). Descoberto na PRIMEIRA geração real
+// (14/09/2026): o esquema passava no typecheck, no build e no gate, e só a
+// chamada de verdade reprova — os dois erros apareceram um de cada vez, então
+// tirar só o primeiro não bastou.
+// Quantidade de itens é pedida no PROMPT, que é onde ela sempre deveria estar.
 const ESQUEMA = {
   type: 'object',
   additionalProperties: false,
@@ -63,13 +72,13 @@ const ESQUEMA = {
       properties: {
         paragrafo: { type: 'string', description: 'Um parágrafo. O retrato da igreja segundo este censo.' },
         pontos: {
-          type: 'array', minItems: 3, maxItems: 6,
+          type: 'array',
           items: { type: 'string', description: 'Uma frase com número.' },
         },
       },
     },
     achados: {
-      type: 'array', minItems: 3, maxItems: 8,
+      type: 'array',
       items: {
         type: 'object',
         additionalProperties: false,
@@ -89,7 +98,7 @@ const ESQUEMA = {
       },
     },
     recomendacoes: {
-      type: 'array', minItems: 2, maxItems: 8,
+      type: 'array',
       items: {
         type: 'object',
         additionalProperties: false,
@@ -111,7 +120,7 @@ const ESQUEMA = {
       },
     },
     o_que_o_censo_nao_responde: {
-      type: 'array', minItems: 1, maxItems: 6,
+      type: 'array',
       items: { type: 'string' },
     },
   },

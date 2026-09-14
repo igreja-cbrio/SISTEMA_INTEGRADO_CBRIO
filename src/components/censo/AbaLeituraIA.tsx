@@ -21,11 +21,11 @@
 // pessoas na reunião veriam cinco conclusões diferentes.
 import { useCallback, useEffect, useState } from 'react';
 import { censo } from '../../api';
-import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
 import {
-  Loader2, Sparkles, AlertTriangle, ThumbsUp, Eye, HelpCircle, Quote, RefreshCw,
+  Loader2, Sparkles, AlertTriangle, ThumbsUp, Eye, HelpCircle, Quote, RefreshCw, FileText,
 } from 'lucide-react';
 import EmptyState from '@/components/EmptyState';
 
@@ -77,7 +77,12 @@ function Lista({ icone: Icone, titulo, itens, tom }: {
   );
 }
 
-export default function AbaLeituraIA({ pesquisaId }: { pesquisaId: string | null }) {
+export default function AbaLeituraIA(
+  { pesquisaId, aoIrParaRelatorio }: { pesquisaId: string | null; aoIrParaRelatorio?: () => void },
+) {
+  // O servidor distingue "a pergunta não existe" de "existe e ninguém escreveu"
+  // (PR #2916) — duas coisas com a mesma cara e conserto oposto.
+  const [semPerguntaAberta, setSemPerguntaAberta] = useState(false);
   const [e, setE] = useState<Estado | null>(null);
   const [erro, setErro] = useState<string | null>(null);
   const [gerando, setGerando] = useState(false);
@@ -97,6 +102,8 @@ export default function AbaLeituraIA({ pesquisaId }: { pesquisaId: string | null
       const r = await censo.ia.gerar(pesquisaId);
       setE((atual) => ({ ...(atual || {} as Estado), ...r }));
     } catch (er: unknown) {
+      const corpo = (er as { corpo?: { sem_pergunta_aberta?: boolean } })?.corpo;
+      setSemPerguntaAberta(corpo?.sem_pergunta_aberta === true);
       setErro(er instanceof Error ? er.message : 'A leitura falhou');
     } finally { setGerando(false); }
   }
@@ -141,7 +148,34 @@ export default function AbaLeituraIA({ pesquisaId }: { pesquisaId: string | null
         )}
       </div>
 
-      {erro && <p className="text-sm text-destructive">{erro}</p>}
+      {/* ⚠️ "Não há pergunta aberta" NÃO é erro — é o estado NORMAL deste censo
+          (0 das 33 perguntas são texto longo, medido em 14/09/2026). Em vermelho,
+          parecia defeito e deixava a pessoa num beco: ela quer analisar as
+          respostas e a tela só diz que não dá. A análise EXISTE e está na aba
+          Relatório, que lê as perguntas fechadas — então a tela leva até lá. */}
+      {erro && (
+        semPerguntaAberta ? (
+          <Card><CardContent className="p-4">
+            <p className="text-sm">
+              Esta pesquisa não tem pergunta aberta, então não há texto para esta leitura.
+            </p>
+            <p className="text-sm text-muted-foreground mt-2">
+              A análise das respostas está na aba <span className="font-medium text-foreground">Relatório</span>:
+              ela lê as perguntas fechadas — perfil e cruzamentos — e escreve achados, recomendações e limites.
+            </p>
+            {aoIrParaRelatorio && (
+              <Button variant="outline" size="sm" className="mt-3" onClick={aoIrParaRelatorio}>
+                <FileText className="size-4 mr-1.5" /> Ver o relatório
+              </Button>
+            )}
+            <p className="text-xs text-muted-foreground mt-3">
+              Para esta leitura funcionar, acrescente ao questionário ao menos uma pergunta de texto longo.
+            </p>
+          </CardContent></Card>
+        ) : (
+          <p className="text-sm text-destructive">{erro}</p>
+        )
+      )}
 
       {gerando && (
         <Card className="border-primary/30 bg-primary/5">
