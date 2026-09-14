@@ -136,7 +136,11 @@ export default function AbaPerfil({ pesquisaId }: { pesquisaId: string | null })
   }
 
   const demo: [string, string][] = [
-    ['faixa_etaria', 'Faixa etária'], ['genero', 'Gênero'],
+    // ⚠️ "Sexo", não "Gênero" (14/09/2026 · pedido do Marcos): é o nome que a
+    // igreja usa, era o nome da pergunta que saiu do questionário, e a
+    // Membresia já chamava assim. Duas telas com nomes diferentes para o mesmo
+    // campo fazem parecer que são dois dados.
+    ['faixa_etaria', 'Faixa etária'], ['genero', 'Sexo'],
     ['estado_civil', 'Estado civil'], ['bairro', 'Bairro'], ['status_membro', 'Vínculo'],
   ];
 
