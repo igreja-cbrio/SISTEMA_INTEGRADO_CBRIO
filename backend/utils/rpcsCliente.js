@@ -53,6 +53,21 @@ const RPCS_APP_MEMBROS = [
     alvo: 'auth.uid()',
   },
   {
+    // "Já me batizei aqui na CBRio" — batismo real anterior ao sistema, sem
+    // registro em `batismo_inscricoes` (27/08). NÃO tem parâmetro de pessoa:
+    // só a data, opcional.
+    nome: 'app_marcar_batizado_cbrio',
+    assinatura: 'public.app_marcar_batizado_cbrio(date)',
+    tela: 'app/(app)/batismo.tsx',
+    alvo: 'auth.uid()',
+  },
+  {
+    nome: 'app_desmarcar_batizado_cbrio',
+    assinatura: 'public.app_desmarcar_batizado_cbrio()',
+    tela: 'app/(app)/batismo.tsx',
+    alvo: 'auth.uid()',
+  },
+  {
     nome: 'app_desmarcar_batizado_outra',
     assinatura: 'public.app_desmarcar_batizado_outra()',
     tela: 'app/(app)/batismo.tsx',

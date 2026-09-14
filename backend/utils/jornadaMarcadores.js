@@ -109,7 +109,8 @@ const podeVerMarcadorSensivel = podeVerFinanceiroDePessoa;
  * Dobra os sinais crus de UMA pessoa nos marcadores exibidos.
  *
  * @param {object} sinais  booleans crus lidos do banco:
- *   { batismo_cbrio, batismo_outra, next, grupo, servir, devocional, generosidade }
+ *   { batismo_cbrio, batismo_outra, batismo_cbrio_declarado, next, grupo,
+ *     servir, devocional, generosidade }
  * @param {object} [opts]
  * @param {boolean} [opts.incluirSensiveis=false]
  * @returns {{ chaves: string[], detalhes: object, sensiveis_ocultos: boolean }}
@@ -124,8 +125,11 @@ function montarMarcadores(sinais, opts = {}) {
   const incluirSensiveis = opts.incluirSensiveis === true;
 
   const presente = {
-    // Batismo em outra igreja CONTA (ver a lei no topo).
-    batismo: !!(s.batismo_cbrio || s.batismo_outra),
+    // Batismo em outra igreja CONTA (ver a lei no topo) — e desde 27/08 a
+    // declaração de "me batizei AQUI, antes do sistema" também. As duas são
+    // AUTODECLARADAS e nenhuma delas vira batismo realizado em KPI nenhum;
+    // o que elas evitam é a tela cobrar batismo de quem já se batizou.
+    batismo: !!(s.batismo_cbrio || s.batismo_outra || s.batismo_cbrio_declarado),
     next: !!s.next,
     grupo: !!s.grupo,
     servir: !!s.servir,
@@ -143,8 +147,12 @@ function montarMarcadores(sinais, opts = {}) {
 
   // Detalhe só onde ele muda a leitura da flag. "Batizado" sem dizer onde faria
   // a equipe procurar um registro de batismo da CBRio que não existe.
-  if (presente.batismo && !s.batismo_cbrio && s.batismo_outra) {
-    detalhes.batismo = 'em outra igreja';
+  if (presente.batismo && !s.batismo_cbrio) {
+    // ⚠️ O detalhe diz de ONDE veio a informação, e a diferença importa pra
+    // quem opera: "registrado" é fato da igreja; "declarado" é a pessoa
+    // dizendo — a equipe pode querer conferir e criar o registro histórico.
+    if (s.batismo_outra) detalhes.batismo = 'em outra igreja';
+    else if (s.batismo_cbrio_declarado) detalhes.batismo = 'declarado pela pessoa (sem registro)';
   }
 
   return {
