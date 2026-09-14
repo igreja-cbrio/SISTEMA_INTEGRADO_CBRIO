@@ -199,6 +199,34 @@ não é 1 minuto).
    **LEI: numa página pública, um único `import` de `src/api.js` arrasta o ERP
    inteiro — conferir o BUNDLE depois do deploy, não só o build local.**
 
+### ⚠️ ABERTURA DO MÓDULO para o sistema inteiro (14/09 · pedido do Marcos)
+
+*"deixe a aba de /censo aberta para todas as pessoas aqui dentro do sistema
+verem"*. A matriz **já estava mais aberta do que parecia**: 27 cargos (incluindo
+**Membro** e **Voluntário**) tinham nível 2, que é ver a resposta NOMINAL — nome,
+CPF, telefone, endereço e o que a pessoa respondeu sobre fé. Faltavam 13 cargos:
+o **Pastor Pres estava em 0** (bloqueado por herança do seed, que veio do `nps`)
+e 12 não tinham linha nenhuma.
+
+⚠️ **Sem linha na matriz = nível 0**, não o `nivel_padrao_leitura` do cargo
+(`auth.js`: `nivelL = d?.nivel ?? 0`). Então acrescentar linha só SOMA acesso —
+foi o que permitiu fazer a mudança sem risco de rebaixar ninguém.
+
+Aplicado: Pastor Pres 0 → 2 · **nível 1 para 9 cargos** (Acesso admin/
+assistente/diretor/líder, Colaborador Grupos/Loja/Produção, Responsável de
+Batismo, Voluntário Kids). **Ficaram DE FORA de propósito: `Totem (quiosque)`,
+`Totem Kids (quiosque)` e `Acesso negado`** — quiosque é login compartilhado que
+passa o dia aberto num tablet do hall, e 339 fichas nominais não ficam lá.
+Resultado: **43 dos 46 cargos veem a aba**, 34 veem o nominal.
+
+⚠️⚠️ **E A ABA "RESPOSTAS" PRECISOU DE GATE NO CLIENTE.** O menu (`menuAccess.ts`)
+e a rota (`ModuleGuard nivelMinimo={1}`) abrem com nível 1, mas as rotas
+`/respostas` e `/cuidado` exigem **2** — quem entrasse com 1 veria a aba, clicaria
+e levaria 403. `TABS` em `Censo.tsx` ganhou `min` espelhando o servidor.
+**LEI: abrir módulo para um nível novo é conferir CADA aba contra o gate da
+rota — abrir a porta e deixar um cômodo trancado sem aviso é pior que não
+abrir.** Travado por `Censo.page.test.tsx` ("nível 1 vê só o agregado").
+
 ### Regra operacional do domingo (não é código)
 
 - **Não editar o questionário durante a coleta.** O cliente valida contra a
