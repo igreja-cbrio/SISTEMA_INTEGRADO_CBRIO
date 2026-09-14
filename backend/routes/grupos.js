@@ -4,6 +4,7 @@ const router = require('express').Router();
 // 'assistente' — o authorize() por role os bloqueava nas rotas de escrita).
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { verificarSobrasDaFusao } = require('../services/fusaoVerificacao');
 const { ehGrupoOnline } = require('../utils/grupoOnline');
 const { acharOuCriarGuardado, normalizarNome, normalizarCpf, normalizarTelefone, normalizarEmail } = require('../services/membroMatch');
 const { avaliarPossivelDuplicidade } = require('../services/duplicidadePolicy');
@@ -4075,7 +4076,18 @@ router.post('/duplicatas/fundir', authorizeModule('grupos', 5), async (req, res)
       }
     } catch (e) { console.error('[Grupos duplicatas fundir · nota]', e.message); }
 
-    res.json({ ...(data && typeof data === 'object' ? data : {}), ok: true, dados_somados: dadosSomados, campos_aplicados: camposAplicados });
+    // ⚠️ Conferência pós-fusão: ver `services/fusaoVerificacao.js`. A fusão já
+    // deu certo; isto só denuncia tabela que ficou para trás (e nunca derruba).
+    let conferencia = null;
+    try {
+      conferencia = await verificarSobrasDaFusao(supabase, merges);
+      if (!conferencia.ok) {
+        console.error('[Grupos duplicatas fundir] SOBRAS APÓS FUSÃO:', JSON.stringify(conferencia.sobras));
+      }
+    } catch (e) {
+      console.error('[Grupos duplicatas fundir] conferência falhou:', e.message);
+    }
+    res.json({ ...(data && typeof data === 'object' ? data : {}), ok: true, dados_somados: dadosSomados, campos_aplicados: camposAplicados, conferencia });
   } catch (e) { console.error('[Grupos duplicatas fundir]', e.message); res.status(500).json({ error: e.message || 'Erro ao fundir cadastros' }); }
 });
 

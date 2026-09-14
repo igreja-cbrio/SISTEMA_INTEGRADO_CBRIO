@@ -16,6 +16,7 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { verificarSobrasDaFusao } = require('../services/fusaoVerificacao');
 const { buscarCandidatos, acharOuCriar, acharOuCriarGuardado } = require('../services/membroMatch');
 const { avaliarPossivelDuplicidade, nomesPodemSerMesmaPessoa, tokensNome } = require('../services/duplicidadePolicy');
 const { similaridadeNome } = require('../services/identidadeProgressiva');
@@ -1578,6 +1579,17 @@ router.post('/fundir', authorizeModule('next-batismo', 3), async (req, res) => {
     invalidarTriagemPessoas();
     const resposta = (data && typeof data === 'object' && !Array.isArray(data)) ? { ...data } : { resultado: data };
     resposta.campos_aplicados = camposAplicados;
+    // ⚠️ Conferência pós-fusão: ver `services/fusaoVerificacao.js`. A fusão já
+    // deu certo; isto só denuncia tabela que ficou para trás (e nunca derruba).
+    try {
+      const conferencia = await verificarSobrasDaFusao(supabase, merge_ids);
+      resposta.conferencia = conferencia;
+      if (!conferencia.ok) {
+        console.error('[entradas/fundir] SOBRAS APÓS FUSÃO:', JSON.stringify(conferencia.sobras));
+      }
+    } catch (e) {
+      console.error('[entradas/fundir] conferência falhou:', e.message);
+    }
     res.json(resposta);
   } catch (e) {
     console.error('[entradas/fundir]', e.message);

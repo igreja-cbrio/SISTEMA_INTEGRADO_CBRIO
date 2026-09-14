@@ -10,6 +10,7 @@ const {
 } = require('../utils/membrosPagina');
 const { authenticate, authorize, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { verificarSobrasDaFusao } = require('../services/fusaoVerificacao');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
 const { notificar } = require('../services/notificar');
 const { enqueueSync } = require('../services/cerebroSync');
@@ -4886,6 +4887,24 @@ router.post('/membros/merge', authorizeModule('membresia', 3), async (req, res) 
     }
     const resposta = (data && typeof data === 'object' && !Array.isArray(data)) ? { ...data } : { resultado: data };
     resposta.campos_aplicados = camposAplicados;
+
+    // ⚠️⚠️ CONFERÊNCIA PÓS-FUSÃO (14/09/2026 · pedido do Marcos). A fusão
+    // devolve sucesso mesmo que alguma tabela tenha ficado para trás — e o
+    // sintoma não aparece no banco, aparece na FICHA DA PESSOA: contribuição
+    // órfã, batismo sumido. Varredura de 14/09 nas 1.037 fusões já feitas deu
+    // ZERO sobras; isto é o que garante que continue assim quando alguém criar
+    // tabela nova. Ver `services/fusaoVerificacao.js`.
+    // ⚠️ Nunca derruba a resposta: a fusão JÁ aconteceu e deu certo.
+    try {
+      const conferencia = await verificarSobrasDaFusao(supabase, merge_ids);
+      resposta.conferencia = conferencia;
+      if (!conferencia.ok) {
+        console.error('[membresia/membros/merge] SOBRAS APÓS FUSÃO:',
+          JSON.stringify({ keep_id, merge_ids, sobras: conferencia.sobras }));
+      }
+    } catch (e) {
+      console.error('[membresia/membros/merge] conferência falhou:', e.message);
+    }
     res.json(resposta);
   } catch (e) {
     console.error('[membresia/membros/merge]', e.message);
