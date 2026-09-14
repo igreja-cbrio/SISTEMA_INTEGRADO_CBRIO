@@ -22,6 +22,8 @@ const { fetchAllRows } = require('../utils/pagination');
 const { requireCron } = require('../utils/cronAuth');
 const { acharMembroGuardado } = require('../services/membroMatch');
 const { reconciliarCenso } = require('../services/censoReconciliar');
+const { montarPerfil, montarCruzamentos, CRUZAMENTOS } = require('../utils/censoRelatorioDados');
+const { gerarRelatorio } = require('../services/censoRelatorioIA');
 const {
   PORTA: PORTA_CONSENTIMENTO, gravarConsentimentosDoCenso, ligarOptinDoCenso,
 } = require('../services/censoConsentimentoGravar');
@@ -1366,6 +1368,143 @@ router.post('/ia', authorizeModule('censo', 4), async (req, res) => {
     if (e2) throw e2;
 
     res.json({ leitura: salva, respostas_na_base: naBase || 0, desatualizada: false, novas_desde: 0 });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  RELATÓRIO ANALÍTICO · o censo lido como uma pesquisa profissional
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Irmão da Leitura da IA e com a mesma régua de nível (LER 1 · GERAR 4), mas de
+// matéria-prima OPOSTA: aquela lê o que as pessoas escreveram; este lê as
+// perguntas FECHADAS agregadas — que é o que este censo tem (34 perguntas, zero
+// `texto_longo`, medido em 13/09/2026).
+//
+// ⚠️⚠️ QUEM CONTA É O CÓDIGO. `montarPerfil` e `montarCruzamentos` (puros, no
+// gate) produzem as tabelas; o modelo só interpreta. E o que ele escreve passa
+// por `filtrarRecomendacoes`: recomendação que não cita número real é
+// descartada antes de chegar na tela.
+
+/** Monta perfil + cruzamentos a partir do banco. Usado pelo POST e pela prévia. */
+async function materialDoRelatorio(pesquisaId) {
+  // Perfil: sai do agregado, filtrado por TIPO — a mesma whitelist que impede
+  // CPF/nome/telefone/nascimento de saírem do banco na aba Perfil.
+  const agregado = await fetchAllRows(
+    () => supabase.from('vw_cen_item_agregado')
+      .select('pergunta_texto, tipo, valor, total')
+      .eq('pesquisa_id', pesquisaId)
+      .in('tipo', TIPOS_PARA_BUSCAR)
+      .order('pergunta_id').order('valor'),
+    { max: TETO_AGREGADO },
+  );
+
+  // Cruzamentos: precisam da resposta POR PESSOA, senão não há como cruzar.
+  // ⚠️ Só as perguntas declaradas em CRUZAMENTOS são lidas, e o que sai daqui
+  // é `{ [pergunta_texto]: valor }` — sem id, sem nome, sem CPF. O que não é
+  // montado não pode vazar.
+  const perguntasUsadas = new Set();
+  for (const c of CRUZAMENTOS) {
+    perguntasUsadas.add(c.eixo);
+    if (c.controle) perguntasUsadas.add(c.controle);
+    for (const m of c.metricas) perguntasUsadas.add(m);
+  }
+  const itens = await fetchAllRows(
+    () => supabase.from('cen_resposta_item')
+      .select('resposta_id, pergunta_texto, valor_texto, cen_resposta!inner(pesquisa_id, concluida_em, deleted_at)')
+      .eq('cen_resposta.pesquisa_id', pesquisaId)
+      .not('cen_resposta.concluida_em', 'is', null)
+      .is('cen_resposta.deleted_at', null)
+      .in('pergunta_texto', [...perguntasUsadas])
+      .order('resposta_id'),
+    { max: 60000 },
+  );
+  const porPessoa = new Map();
+  for (const i of itens) {
+    if (!porPessoa.has(i.resposta_id)) porPessoa.set(i.resposta_id, {});
+    if (i.valor_texto != null) porPessoa.get(i.resposta_id)[i.pergunta_texto] = i.valor_texto;
+  }
+
+  return {
+    perfil: montarPerfil(agregado),
+    cruzamentos: montarCruzamentos([...porPessoa.values()]),
+  };
+}
+
+router.get('/relatorio', authorizeModule('censo', 1), async (req, res) => {
+  try {
+    const pesquisaId = req.query.pesquisa_id;
+    if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
+
+    const [ultimo, agora] = await Promise.all([
+      supabase.from('cen_relatorio_ia')
+        .select('id, respostas_na_base, respostas_lidas, modelo, conteudo, gerado_em')
+        .eq('pesquisa_id', pesquisaId).order('gerado_em', { ascending: false }).limit(1).maybeSingle(),
+      supabase.from('cen_resposta').select('id', { count: 'exact', head: true })
+        .eq('pesquisa_id', pesquisaId).not('concluida_em', 'is', null).is('deleted_at', null),
+    ]);
+    if (ultimo.error) throw ultimo.error;
+
+    const naBase = agora.count || 0;
+    const r = ultimo.data;
+    res.json({
+      relatorio: r || null,
+      respostas_na_base: naBase,
+      // Mesma régua da Leitura: envelhecer é sobre quanta resposta nova entrou,
+      // não sobre o calendário.
+      desatualizado: !!r && naBase > (r.respostas_na_base || 0) * 1.3,
+      novas_desde: r ? Math.max(0, naBase - (r.respostas_na_base || 0)) : naBase,
+      pode_gerar: getEffectiveLevel(req, 'censo') >= 4,
+      ia_configurada: !!process.env.ANTHROPIC_API_KEY,
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.post('/relatorio', authorizeModule('censo', 4), async (req, res) => {
+  try {
+    const pesquisaId = req.body?.pesquisa_id;
+    if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return res.status(503).json({ error: 'ANTHROPIC_API_KEY não configurada no servidor' });
+    }
+
+    const material = await materialDoRelatorio(pesquisaId);
+    // ⚠️ Sem perfil não é falha — é pesquisa sem resposta agregável. A mensagem
+    // diz qual dos dois, como no conserto de 13/09 da Leitura da IA.
+    if (!material.perfil.length) {
+      return res.status(422).json({
+        error: 'Esta pesquisa ainda não tem resposta suficiente para um relatório.',
+      });
+    }
+
+    const { count: naBase } = await supabase.from('cen_resposta')
+      .select('id', { count: 'exact', head: true })
+      .eq('pesquisa_id', pesquisaId).not('concluida_em', 'is', null).is('deleted_at', null);
+
+    const rel = await gerarRelatorio({ ...material, respostas: naBase || 0 });
+    if (!rel) return res.status(502).json({ error: 'A IA não devolveu um relatório utilizável' });
+
+    const { data: salvo, error: e2 } = await supabase.from('cen_relatorio_ia').insert({
+      pesquisa_id: pesquisaId,
+      respostas_na_base: naBase || 0,
+      respostas_lidas: rel.respostas_lidas,
+      modelo: rel.modelo,
+      conteudo: {
+        resumo_executivo: rel.resumo_executivo,
+        achados: rel.achados,
+        recomendacoes: rel.recomendacoes,
+        recomendacoes_descartadas: rel.recomendacoes_descartadas,
+        o_que_o_censo_nao_responde: rel.o_que_o_censo_nao_responde,
+        // Guardado junto para o PDF poder mostrar a tabela que sustenta o
+        // texto: relatório sem o número que o gerou não se confere.
+        perfil: material.perfil,
+        cruzamentos: material.cruzamentos,
+      },
+      uso: rel.uso,
+      gerado_por: req.user?.id || null,
+    }).select('id, respostas_na_base, respostas_lidas, modelo, conteudo, gerado_em').single();
+    if (e2) throw e2;
+
+    res.json({ relatorio: salvo, respostas_na_base: naBase || 0, desatualizado: false, novas_desde: 0 });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

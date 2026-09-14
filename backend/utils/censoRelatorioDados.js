@@ -208,8 +208,43 @@ function filtrarRecomendacoes(itens, perfil, cruzamentos) {
   return { mantidas, descartadas };
 }
 
+/**
+ * Tabela legível para o modelo — mais barata em token que JSON e mais fácil de
+ * ler. Mora aqui, e não no serviço, porque é PURA e precisa entrar no gate:
+ * `backend/` tem árvore de dependências própria (o SDK da Anthropic) e o CI só
+ * instala a da raiz. Régua no gate não pode arrastar `services/` atrás dela.
+ */
+function materialDoPerfil(perfil) {
+  return (perfil || []).map((p) => [
+    `### ${p.pergunta}  (base: ${p.base})`,
+    ...p.opcoes.map((o) => `- ${o.valor}: ${o.n} (${o.pct}%)`),
+  ].join('\n')).join('\n\n');
+}
+
+/**
+ * ⚠️ Leva o MOTIVO de cada cruzamento junto da tabela. Sem ele o modelo lê a
+ * tabela como curiosidade; com ele, sabe o que a igreja queria saber — que é o
+ * que separa achado de garimpo.
+ * ⚠️ E declara o CONTROLE: "quem fez o Next se conecta mais" sem controlar por
+ * tempo de casa é só antiguidade com outro nome.
+ */
+function materialDosCruzamentos(cruzamentos) {
+  return (cruzamentos || []).map((c) => {
+    const linhas = c.faixas.map((f) => {
+      const chave = [c.controle ? `${c.controle}=${f.controle}` : null, `${c.eixo}=${f.valor}`]
+        .filter(Boolean).join(' · ');
+      const ms = Object.entries(f.metricas)
+        .map(([m, v]) => `${m}: ${v.pct_sim}% sim (${v.sim}/${v.n})`).join(' · ');
+      return `- ${chave} [${f.pessoas} pessoas] → ${ms}`;
+    });
+    return [`### ${c.eixo}${c.controle ? ` (controlando por ${c.controle})` : ''}`,
+      `Por que a igreja quis saber: ${c.motivo}`, ...linhas].join('\n');
+  }).join('\n\n');
+}
+
 module.exports = {
   MINIMO_POR_CELULA, CRUZAMENTOS, ORDEM_TEMPO,
   montarPerfil, montarCruzamentos,
   numerosDisponiveis, citaNumeroReal, filtrarRecomendacoes,
+  materialDoPerfil, materialDosCruzamentos,
 };
