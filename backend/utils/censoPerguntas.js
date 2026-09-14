@@ -23,6 +23,10 @@
 // cadastro). Fica em arquivo próprio porque o tradutor rótulo→coluna é a mesma
 // régua usada pelo reconciliador.
 const { ehCampoDeCadastro } = require('./censoCampoCadastro');
+// Tipos de consentimento que o censo pode coletar (espelha o CHECK de
+// `inscricao_consentimentos.tipo`). A marca é DECLARATIVA na pergunta —
+// nunca o id dela, que o construtor pode renomear.
+const { TIPOS_CONSENTIMENTO } = require('./censoConsentimento');
 
 // ── Vocabulário ────────────────────────────────────────────────────────────
 
@@ -218,7 +222,21 @@ function validarPerguntas(entrada) {
     // ── gatilho de cuidado ──
     if (p?.acao !== undefined && p.acao !== null && String(p.acao).trim() !== '') {
       const acao = String(p.acao).trim();
-      if (acao !== 'cuidado') erros.push(`Pergunta ${pos}: acao "${acao}" não existe`);
+      if (acao === 'consentimento') {
+        // ⚠️ CONSENTIMENTO vira prova legal em `inscricao_consentimentos`, e por
+        // isso a pergunta precisa oferecer uma escolha EXPLÍCITA de sim/não. Uma
+        // escala ou texto livre não produz aceite auditável — e um "aceite" que
+        // ninguém consegue ler depois é pior que não ter coletado.
+        const ct = String(p?.consentimento_tipo || '').trim();
+        if (!TIPOS_CONSENTIMENTO.includes(ct)) {
+          erros.push(`Pergunta ${pos}: consentimento_tipo precisa ser um de ${TIPOS_CONSENTIMENTO.join('/')}`);
+        } else if (tipo !== 'sim_nao' && tipo !== 'opcao_unica') {
+          erros.push(`Pergunta ${pos}: consentimento precisa ser Sim/Não ou opção única`);
+        } else {
+          out.acao = 'consentimento';
+          out.consentimento_tipo = ct;
+        }
+      } else if (acao !== 'cuidado') erros.push(`Pergunta ${pos}: acao "${acao}" não existe`);
       else {
         const ct = String(p?.cuidado_tipo || '').trim();
         if (!CUIDADO_TIPOS.includes(ct)) {
@@ -454,6 +472,9 @@ module.exports = {
   FORMATOS,
   CATALOGOS,
   CUIDADO_TIPOS,
+  // Re-export: o catálogo do construtor (`GET /censo/aux`) serve os dois
+  // vocabulários pela mesma porta. Quem define é `censoConsentimento`.
+  TIPOS_CONSENTIMENTO,
   ESCALA_MIN,
   ESCALA_MAX,
   NAO_SE_APLICA,

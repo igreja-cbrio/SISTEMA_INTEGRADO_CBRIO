@@ -51,6 +51,30 @@ describe('censoConstrutor · trocar tipo não apaga configuração', () => {
     expect(r.preenche_de).toBe('bairro');
   });
 
+  // ⚠️⚠️ MESMA FAMÍLIA do preenche_de, e o preço já foi pago: o censo de
+  // 12-13/09/2026 ficou sem caixa de opt-in e 385 pessoas ficaram sem
+  // consentimento nenhum. Descartar a marca aqui repetiria a falha pelo outro
+  // lado — a caixa continuaria na tela, a pessoa continuaria marcando, e nada
+  // viraria prova.
+  it('preserva o consentimento entre tipos que produzem sim/não', () => {
+    const p = { id: 'q_wpp', tipo: 'sim_nao', texto: 'Podemos te mandar mensagens?',
+                acao: 'consentimento', consentimento_tipo: 'whatsapp' };
+    const r = trocarTipoPergunta(p, 'opcao_unica');
+    expect(r.acao).toBe('consentimento');
+    expect(r.consentimento_tipo).toBe('whatsapp');
+  });
+
+  // ⚠️ O servidor recusa consentimento fora de Sim/Não e opção única. Levar a
+  // marca para um tipo que não passa na validação trocaria o descarte mudo por
+  // um 400 na hora de salvar — pior para quem está montando o questionário.
+  it('NÃO leva consentimento para tipo que o servidor recusa', () => {
+    const p = { id: 'q', tipo: 'sim_nao', texto: 'Aceita?',
+                acao: 'consentimento', consentimento_tipo: 'whatsapp' };
+    const r = trocarTipoPergunta(p, 'texto_longo');
+    expect(r.acao).toBeUndefined();
+    expect(r.consentimento_tipo).toBeUndefined();
+  });
+
   it('seção continua limpando o que não faz sentido nela', () => {
     const p = { id: 's', tipo: 'texto_curto', texto: 'S', obrigatoria: true, sensivel: true,
                 mostrar_se: { pergunta: 'm', valores: ['Sim'] } };

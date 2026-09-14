@@ -32,6 +32,9 @@ export type Pergunta = {
   sensivel?: boolean;
   acao?: string;
   cuidado_tipo?: string;
+  /** Com `acao: 'consentimento'`: o que a resposta consente. O renderer não faz
+   *  nada de diferente — quem transforma em prova é o servidor no envio. */
+  consentimento_tipo?: string;
   permite_nao_se_aplica?: boolean;
   preenche_de?: string;
   /** Tipo `busca`: qual catálogo consultar ('igrejas_rj' | 'grupos_ativos').

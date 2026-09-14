@@ -74,7 +74,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **167** arquivos, **155** com teste.
+`backend/utils/` tem **169** arquivos, **157** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -114,9 +114,11 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/camposContato.js` | `src/test/paginacaoExtrato.test.ts` `src/test/saneamentoInscricaoApp.test.ts` `src/test/telefoneCodigoPais.test.ts` |
 | `backend/utils/capacidadeCulto.js` | `src/test/capacidadeCulto.test.ts` |
 | `backend/utils/censoCampoCadastro.js` | `src/test/censoCampoCadastro.test.ts` |
+| `backend/utils/censoConsentimento.js` | `src/test/censoConsentimento.test.ts` |
 | `backend/utils/censoConvite.js` | `src/test/censoConvite.test.ts` |
-| `backend/utils/censoIaFiltro.js` | `src/test/censoIaSemPii.test.ts` |
-| `backend/utils/censoPerguntas.js` | `src/test/censoFormEspelho.test.ts` `src/test/censoPerguntas.test.ts` `src/test/censoQuestionario2026.test.ts` |
+| `backend/utils/censoGrafico.js` | `src/test/censoGrafico.test.ts` |
+| `backend/utils/censoIaFiltro.js` | `src/test/censoIaSemPerguntaAberta.test.ts` `src/test/censoIaSemPii.test.ts` |
+| `backend/utils/censoPerguntas.js` | `src/test/censoConsentimento.test.ts` `src/test/censoFormEspelho.test.ts` `src/test/censoPerguntas.test.ts` `src/test/censoQuestionario2026.test.ts` |
 | `backend/utils/censoPrefill.js` | `src/test/censoPrefill.test.ts` `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/censoRespostaToken.js` | `src/test/censoRespostaToken.test.ts` |
 | `backend/utils/censoToken.js` | `src/test/censoRespostaToken.test.ts` `src/test/censoToken.test.ts` `src/test/doacaoPrefill.test.ts` |

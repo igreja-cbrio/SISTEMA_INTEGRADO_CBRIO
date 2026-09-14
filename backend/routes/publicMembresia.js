@@ -235,9 +235,23 @@ router.post('/upload-foto', cadastroLimiter, uploadMw.single('foto'), async (req
 let _bairrosCache = { em: 0, itens: null };
 const BAIRROS_CACHE_MS = 10 * 60 * 1000;
 
+// ⚠️ 5 min de cache NA BORDA além do cache em memória (11/09/2026). Medido: a
+// resposta saía com `max-age=0, must-revalidate` e `X-Vercel-Cache: MISS`, e a
+// pergunta de BAIRRO do censo chama este catálogo — ou seja, num culto de 500
+// pessoas são 500 invocações da função e 500 fichas no balde de 3.000/15min do
+// `lookupLimiter`, que é COMPARTILHADO com lookup de CPF, família e carteirinha.
+// O catálogo é agregado (bairro + contagem), igual para todo mundo e muda
+// devagar: é o caso exato de cache de borda. Mesmo truque do questionário do
+// censo e do NPS.
+// ⚠️ SÓ O SUCESSO é cacheado — a saída de erro devolve lista vazia, e guardar
+// isso por 5 minutos transformaria uma falha de 1 segundo em 5 minutos de campo
+// de bairro sem lista.
+const BAIRROS_CACHE_BORDA = 'public, s-maxage=300, stale-while-revalidate=600';
+
 router.get('/bairros', lookupLimiter, async (req, res) => {
   try {
     if (_bairrosCache.itens && Date.now() - _bairrosCache.em < BAIRROS_CACHE_MS) {
+      res.set('Cache-Control', BAIRROS_CACHE_BORDA);
       return res.json({ bairros: _bairrosCache.itens, cache: true });
     }
     const { data, error } = await supabase.rpc('fn_dem_bairros_catalogo');
@@ -249,6 +263,7 @@ router.get('/bairros', lookupLimiter, async (req, res) => {
       apelidos: b.apelidos || [],
     }));
     _bairrosCache = { em: Date.now(), itens };
+    res.set('Cache-Control', BAIRROS_CACHE_BORDA);
     res.json({ bairros: itens, cache: false });
   } catch (e) {
     // ⚠️ Catálogo indisponível NÃO pode travar cadastro: o seletor cai em campo

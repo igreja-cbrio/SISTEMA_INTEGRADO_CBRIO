@@ -199,6 +199,23 @@ não é 1 minuto).
    **LEI: numa página pública, um único `import` de `src/api.js` arrasta o ERP
    inteiro — conferir o BUNDLE depois do deploy, não só o build local.**
 
+### ⚠️⚠️ A regra do Firewall chamada "censo" NÃO é do censo de hoje (11/09)
+
+O Marcos achou uma rule existente apontando para `/api/public/membresia` e
+`/cadastro-membresia` e perguntou se ainda faziam falta — **fazem, e trocar as
+URLs quebraria o domingo.** `/api/public/membresia` não é legado do censo antigo
+(o `?censo=1` no formulário de membresia): serve `/bairros` (que **a pergunta de
+bairro do censo chama**, uma vez por pessoa), `/cadastro` (a porta de cadastro),
+`/wallet/*` (a carteirinha), os lookups e `/censo/meus-dados` (o link PESSOAL do
+convite). **A rule tem que GANHAR `/api/public/censo`, não trocar de dono.**
+
+De carona: `/bairros` saía com `max-age=0, must-revalidate` e
+`X-Vercel-Cache: MISS` — 500 pessoas = 500 invocações da função e 500 fichas no
+balde de **3.000/15min do `lookupLimiter`, compartilhado com lookup de CPF,
+família e carteirinha**. Ganhou `s-maxage=300` (só no sucesso).
+**LEI: endpoint de catálogo em porta pública é cache de BORDA, não só cache em
+memória — o cache em memória é por instância e a borda é por todo mundo.**
+
 ### ⚠️ ABERTURA DO MÓDULO para o sistema inteiro (14/09 · pedido do Marcos)
 
 *"deixe a aba de /censo aberta para todas as pessoas aqui dentro do sistema
@@ -236,6 +253,48 @@ abrir.** Travado por `Censo.page.test.tsx` ("nível 1 vê só o agregado").
   aplicada — `congregava_antes` volta consolidado).
 - Validar com **celulares reais**, nunca curl em rajada.
 - O preenchimento leva **2 a 3 minutos**, não 1.
+
+## ⚠️⚠️ CENSO 12–13/09 · o que a aplicação MEDIU e o opt-in da liderança (2026-09-13 · SEM migration)
+
+Marcos: *"Aplicamos o senso ontem e hoje. Quero saber como fomos"* + *"ligar o
+opt-in de todo mundo que preencheu"* + *"casar os sexos depois pelo nome"*.
+
+**Medido em 13/09 21:30 BRT** (`cen_resposta` vivas, fim de semana):
+**776 concluídas · 776 com pessoa (100% por CPF+nascimento) · 776
+pós-processadas · 0 erros · 0 pendências de identidade · 48 rascunhos
+abandonados** · mediana **3,3 min** (p90 5,7) · picos nos cultos: 249 às 9h,
+194 às 11h, 153 às 19h (sáb 20h: 38) · 69% iOS · 330 `membro_ativo` + 443
+`visitante`.
+
+### ⚠️⚠️ O opt-in de WhatsApp foi ligado por DECISÃO DA LIDERANÇA, não por aceite
+
+O questionário **não tinha a caixa de opt-in** até 16:36 de 13/09. Decisão do
+Marcos: ligar todo mundo que preencheu. Feito em **duas levas + um vão**:
+- **13:08** · 385 ligados · trilha em `mem_identidade_observacoes`
+  (`origem='whatsapp_optin_lideranca'`, `nao_e_aceite_do_titular: true`) — ⚠️
+  **NUNCA em `inscricao_consentimentos`**, que é ledger de aceite do titular.
+  **23 pessoas com recusa registrada noutra porta foram PRESERVADAS** (só liga,
+  nunca desliga — e recusa é da pessoa).
+- **16:36 em diante** · a caixa entrou no questionário (PR #2914): a resposta
+  vira prova no ledger (`porta='censo'`, tipo `whatsapp`, **inclusive o
+  "não"**) e o opt-in é ligado no pós-processamento com `whatsapp_optin_em` =
+  data da RESPOSTA. Conferido: 199 sim → 199 ligados; 11 não → 11 sem opt-in.
+- **21:30** · **6 pessoas** que responderam **entre o lote e a caixa**
+  (13:12–16:38) ficaram fora dos dois. Ligadas pela MESMA decisão, mesma trilha
+  (motivo cita o vão), backup em `_bk_20260913_optin_censo_vao`.
+Estado final: **742 com opt-in · 34 sem, TODAS com recusa registrada** (23 de
+outra porta + 11 da caixa). Zero "sem opt-in e sem recusa".
+
+⚠️ Régua de leitura: `whatsapp_optin_em` das levas da liderança é a hora da
+DECISÃO (13:08 / 21:30), não da resposta — a prova ali é a decisão, e ela mora
+na observação. Só o caminho da caixa carimba a data da resposta.
+
+### Sexo · 348 por sugestão de IA CONFIRMADA + 6 declarados nominalmente
+
+Lei de 10/08 respeitada: palpite por nome só grava com confirmação humana
+(`origem='sexo_inferido_ia'`, `confirmado_por`) e nome ambíguo/raro é declarado
+pela liderança (`sexo_declarado_lideranca`). **Sobram 7 sem sexo**, todos de
+nome ambíguo ou raro — ficam para identificação nominal, nunca palpite.
 
 ## ⚠️⚠️ VISITANTES · a porta pública `/visitante` (QR nos cartazes · voucher · pesquisa) (2026-09-09 · migration `20260909120000`)
 

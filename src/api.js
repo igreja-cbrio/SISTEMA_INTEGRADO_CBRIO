@@ -381,6 +381,7 @@ export const censo = {
   // Perfil: todo gráfico do censo, na ordem do questionário, com a base já sem
   // as opções neutras. Pergunta nova no construtor vira gráfico sozinha.
   perfil: (pesquisaId) => get(`/censo/perfil?pesquisa_id=${pesquisaId}`),
+  perfilMapa: (pesquisaId) => get(`/censo/perfil/mapa?pesquisa_id=${pesquisaId}`),
   ia: {
     obter: (pesquisaId) => get(`/censo/ia?pesquisa_id=${pesquisaId}`),
     // ⚠️ 600s (o padrão é 30s): a leitura roda Opus 5 sobre centenas de textos
