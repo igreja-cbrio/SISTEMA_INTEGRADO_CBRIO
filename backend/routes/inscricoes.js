@@ -23,7 +23,14 @@ const { contarInscritosVivos } = require('../services/inscricaoContagem');
 const { normalizarIds, separarExclusaoLote, resumoDoLote } = require('../utils/exclusaoInscricaoLote');
 const checkoutExterno = require('../utils/checkoutExterno');
 const { sanitizarLotes, anexarLoteNasInscricoes } = require('../utils/lotesEvento');
-const { resumoPorPlataforma } = require('../utils/eInscricao');
+const eInscricao = require('../utils/eInscricao');
+const { resumoPorPlataforma } = eInscricao;
+// Importação da planilha do E-Inscrição pela TELA (14/09) — a régua de conjunto
+// (o que entra, o que cancela, o que fica de fora) e a gravação.
+const importarEInscricao = require('../services/importarEInscricao');
+// Matcher oficial da membresia: a pessoa importada precisa virar (ou achar) o
+// cadastro, mesma política da porta pública.
+const { acharOuCriarGuardado } = require('../services/membroMatch');
 const {
   previewTemplate,
   esqueletoPadrao,
@@ -1932,6 +1939,110 @@ router.post('/eventos/:id/inscricoes/excluir-lote', authorizeModule('inscricoes'
     console.error('[inscricoes] excluir inscrições em lote:', e.message);
     // Motivo junto, pelo mesmo raciocínio do DELETE individual acima.
     res.status(500).json({ error: 'Erro ao excluir as inscrições', detalhe: e.message });
+  }
+});
+
+// ============================================================================
+// POST /eventos/:id/importar-einscricao — sobe a exportação do E-Inscrição
+//
+// Pedido do Marcos (14/09/2026): *"adicione dentro do painel do retiro a opção
+// de importar inscrições usando esse molde da planilha, para que posteriormente
+// ele possa alterar direto sem me mandar"*. Antes disso a importação era um
+// script de terminal e a equipe do retiro dependia de mim pra rodar.
+//
+// DOIS PASSOS pela MESMA rota, com o arquivo reenviado no segundo:
+//   `confirmar` ausente → só o PLANO (nada é gravado);
+//   `confirmar=1`       → replaneja com o banco de AGORA e grava.
+// Replanejar na confirmação é o que impede a corrida "duas pessoas subindo a
+// mesma planilha": quem chega depois relê as vivas e não acha mais nada a
+// inserir. Guardar o plano da prévia em sessão seria gravar um retrato velho.
+//
+// Nível 3 = a mesma régua de criar/editar/excluir inscrição em lote.
+// ============================================================================
+router.post('/eventos/:id/importar-einscricao', authorizeModule('inscricoes', 3), upload.single('arquivo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Arquivo não enviado' });
+    const confirmar = ['1', 'true', 'sim'].includes(String(req.body?.confirmar ?? '').toLowerCase());
+
+    const { data: ev, error: eEv } = await supabase.from('insc_eventos')
+      .select('id, nome, slug, vagas, lotes, campos, checkout_externo_url')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (eEv) throw eEv;
+    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+
+    // A exportação vem em windows-1252; salva de novo no Excel/Sheets vem UTF-8.
+    // `decodificarCsv` decide pelos BYTES, não pelo nome do arquivo.
+    const texto = eInscricao.decodificarCsv(req.file.buffer);
+    const registros = eInscricao.parseCsvEInscricao(texto);
+    // Arquivo errado não pode virar "0 novos" (que se lê como "ninguém comprou").
+    const faltam = eInscricao.faltamColunasEInscricao(registros);
+    if (faltam.length) {
+      return res.status(400).json({
+        error: `Este arquivo não parece a exportação de inscrições do E-Inscrição — faltam as colunas: ${faltam.join(', ')}.`,
+      });
+    }
+    if (!registros.length) return res.status(400).json({ error: 'A planilha não tem nenhuma linha de inscrição.' });
+
+    const agora = new Date().toISOString();
+    const linhas = registros.map((r) => eInscricao.mapearLinhaEInscricao(r, {
+      arquivo: String(req.file.originalname || 'planilha.csv').slice(0, 200),
+      importadoEm: agora,
+    }));
+
+    // Vivas do evento — inclusive as canceladas, que seguram o CPF no UNIQUE parcial.
+    // ⚠️ Paginação com erro FATAL de propósito (e por isso não é `fetchAllRows`,
+    // que degrada devolvendo o acumulado): lista de vivas incompleta faz quem já
+    // está parecer gente nova e a importação re-inserir o evento inteiro.
+    const vivas = [];
+    for (;;) {
+      const { data, error } = await supabase.from('inscricoes')
+        .select('id, codigo, nome_completo, cpf, status, origem, dados')
+        .eq('evento_id', ev.id).is('deleted_at', null)
+        .range(vivas.length, vivas.length + 999);
+      if (error) throw error;
+      vivas.push(...(data || []));
+      if ((data || []).length < 1000) break;
+    }
+    const plano = importarEInscricao.planejar(linhas, vivas, {
+      keysEvento: new Set((ev.campos || []).map((c) => c.key)),
+    });
+
+    // A tela não precisa (nem deve carregar) a linha inteira: só o cartãozinho.
+    const resumoLinha = (l) => ({
+      nome: l.nome_completo,
+      codigo_plataforma: l.dados?.e_inscricao?.codigo || null,
+      inscrito_em: l.created_at,
+      valor_centavos: l.valor_cobrado_centavos,
+      responsavel_nome: l.responsavel_nome || null,
+      idade: importarEInscricao.idadeEmAnos(l.data_nascimento),
+    });
+    const previa = {
+      arquivo: String(req.file.originalname || '').slice(0, 200),
+      total_linhas: plano.total_linhas,
+      dinheiro: plano.dinheiro,
+      keys_desconhecidas: plano.keys_desconhecidas,
+      inserir: plano.inserir.map((x) => ({ ...resumoLinha(x.linha), alertas: x.alertas })),
+      cancelar: plano.cancelar.map((x) => ({ ...resumoLinha(x.linha), codigo: x.existente.codigo })),
+      pular: plano.pular.map((x) => ({ nome: x.linha.nome_completo, motivo: x.motivo })),
+      invalidas: plano.invalidas.map((x) => ({ ...resumoLinha(x.linha), faltam: x.faltam })),
+    };
+
+    if (!confirmar) return res.json({ ok: true, confirmado: false, previa });
+
+    const r = await importarEInscricao.executar({
+      supabase, acharOuCriarGuardado, eventoId: ev.id, plano,
+    });
+    console.log(`[inscricoes] importar-einscricao · ${ev.slug} · ${req.user?.email || req.user?.id} · +${r.inseridas.length} ×${r.canceladas.length} !${r.erros.length}`);
+    res.json({
+      ok: true,
+      confirmado: true,
+      previa,
+      resultado: r,
+      contadores: await contadoresEvento(ev.id),
+    });
+  } catch (e) {
+    console.error('[inscricoes] importar-einscricao:', e.message);
+    res.status(500).json({ error: 'Erro ao importar a planilha', detalhe: e.message });
   }
 });
 

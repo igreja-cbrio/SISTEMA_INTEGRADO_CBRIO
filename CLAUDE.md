@@ -9767,6 +9767,69 @@ LÁ) é gerida LÁ — alinhar o lote 1 deles pra 16 é ação manual do Arthur 
 - A planilha é SNAPSHOT: quem comprar no cartão depois de 08/09 só entra rodando o
   script de novo com a exportação nova.
 
+### 4ª rodada (14/09) — IMPORTAR PELA TELA, e a régua saiu do script
+
+Pedido do Marcos: *"atualize as inscrições retiro de acordo com essa planilha csv,
+outra coisa, adicione dentro do painel do retiro a opção de importar inscrições
+usando esse molde da planilha, para que posteriormente ele possa alterar direto sem
+me mandar"*. Até aqui a importação só existia como script de terminal — quem
+coordena o retiro tinha que mandar a exportação pra mim.
+
+**Planilha de 14/09 aplicada**: 3 novas (`CBR-2026-000432…434` · Bruno Müller · Enzo
+Melchiades Palladino · Julia Abreu dos Santos Souza), as 3 ligadas a cadastro
+existente por CPF, 0 falhas, 24 puladas, 0 canceladas. Depois: **E-Inscrição 27 ·
+sistema 9 · 36 posições de 350 · Lote 1 restam 14** (R$ 21.687,75 líquidos + R$ 5.810
+no Pix). ⚠️ Diff conferido antes: nenhuma linha existente mudou de status/valor —
+a exportação só acrescentou.
+
+**A régua de CONJUNTO virou `backend/services/importarEInscricao.js`**
+(`planejar` PURO, no gate · `executar` é o único que toca o banco). A régua de LINHA
+segue em `utils/eInscricao.js`. **O script virou casca fina sobre o serviço** — duas
+cópias era o caminho garantido pra script e painel discordarem sobre quem já está.
+
+**Botão "Importar inscrições"** no cabeçalho do evento (`InscricaoEventoDetalhe.tsx`),
+só com `podeEditar` (nível 3) e só em evento com `checkout_externo_url`.
+`POST /inscricoes/eventos/:id/importar-einscricao` (nível 3 · multipart).
+
+⚠⚠ **DOIS PASSOS pela MESMA rota, com o arquivo reenviado no segundo**: sem
+`confirmar` devolve só o PLANO (nada gravado); com `confirmar=1` **replaneja contra
+o banco de AGORA** e grava. Guardar o plano em sessão seria gravar um retrato velho —
+duas pessoas subindo a mesma planilha, a segunda re-inseriria tudo.
+
+⚠⚠ **As leis do serviço (não regredir):**
+- **NUNCA sobrescreve inscrição existente** — nem valor, nem resposta, nem vínculo. A
+  planilha é SNAPSHOT de outra plataforma; deixá-la mandar por cima transformaria cada
+  re-importação num rollback silencioso das correções da equipe.
+- **Chave de identidade: código da plataforma → CPF**, nesta ordem. O código é o id de
+  lá; o CPF pega quem pagou Pix aqui E comprou no cartão (uma pessoa, uma posição).
+- **Linha repetida DENTRO da planilha entra uma vez só** (`noArquivo`): sem isso a 2ª
+  bateria no UNIQUE parcial e viraria "falha" no meio da gravação.
+- **Cancelada lá NÃO mexe em inscrição que entrou pelo nosso Pix** (`origem` conferida):
+  a plataforma não manda na porta que ela não vendeu.
+- ⚠️ **Alerta ≠ bloqueio**: menor sem responsável e idade absurda (o caso "Laura
+  nascida em 2025") entram na prévia em âmbar e a data fica **COMO VEIO** — corrigir
+  dado de gente é decisão humana, não do parser.
+- **Sem os 5 do contrato** (CPF/telefone/e-mail/nascimento/sexo) a linha não vai pro
+  INSERT e o que FALTA é declarado, campo a campo.
+
+⚠️ **`decodificarCsv` decide pelos BYTES, nunca pelo nome do arquivo**: a exportação
+crua vem **windows-1252**, mas quem abre no Excel/Sheets e salva de novo devolve
+UTF-8. Tenta UTF-8 estrito (`fatal`) e cai pra 1252 quando os bytes não formam UTF-8
+válido — o que acontece no primeiro acento de um arquivo 1252.
+
+⚠️ **`faltamColunasEInscricao` recusa arquivo que não é a exportação**: sem essa
+guarda, subir a planilha errada daria **"0 linhas reconhecidas"**, indistinguível de
+"ninguém novo comprou".
+
+⚠⚠ **A lista de vivas é paginada com erro FATAL, e por isso NÃO usa `fetchAllRows`**
+(que degrada devolvendo o acumulado em silêncio): lista incompleta faz quem já está
+parecer gente nova e a importação **re-inserir o evento inteiro**.
+
+Testes: `src/test/importarEInscricao.test.ts` (24 casos · no `npm test`). **4 mutantes
+RODADOS e mortos**: sem dedupe dentro do arquivo → 1 vermelho · cancelamento ignorando
+a origem → 1 · idade sem descontar aniversário futuro → 1 · reconhecer só pelo código,
+ignorando CPF → 1.
+
 ## ⚠️⚠️ EXCLUIR EVENTO travava no card espelho do Marketing (2026-08-14 · migration `20260814190000`)
 
 Marcos, ao tentar apagar o "Dia Reforma Protestante": *"quero apagar o da reforma
