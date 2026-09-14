@@ -341,7 +341,12 @@ export default function Censo() {
               )}
               {id === 'cobertura' && <AbaCobertura pesquisaId={pesquisaEscolhida} />}
               {id === 'perfil' && <AbaPerfil pesquisaId={pesquisaEscolhida} />}
-              {id === 'ia' && <AbaLeituraIA pesquisaId={pesquisaEscolhida} />}
+              {id === 'ia' && (
+                <AbaLeituraIA
+                  pesquisaId={pesquisaEscolhida}
+                  aoIrParaRelatorio={() => setTab('relatorio')}
+                />
+              )}
               {id === 'relatorio' && (
                 <AbaRelatorio
                   pesquisaId={pesquisaEscolhida}
