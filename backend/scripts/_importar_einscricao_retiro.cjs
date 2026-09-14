@@ -59,6 +59,10 @@ Module._initPaths();
 const { supabase } = require('../utils/supabase');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const ei = require('../utils/eInscricao');
+// Regua de CONJUNTO + gravacao — a MESMA que a tela usa
+// (POST /inscricoes/eventos/:id/importar-einscricao). Duas copias era o
+// caminho garantido pra script e painel discordarem sobre quem ja esta.
+const importar = require('../services/importarEInscricao');
 
 function acharCsv() {
   if (ARGS[0]) return path.resolve(ARGS[0]);
@@ -77,8 +81,8 @@ const fmt = (c) => (c == null ? '—' : `R$ ${(c / 100).toFixed(2).replace('.', 
   console.log(EXEC ? '=== EXECUTANDO ===' : '=== SIMULAÇÃO (use --exec para gravar) ===');
   const arquivo = acharCsv();
   console.log(`planilha: ${arquivo}`);
-  // A exportação vem em Windows-1252 (não UTF-8).
-  const texto = new TextDecoder('windows-1252').decode(fs.readFileSync(arquivo));
+  // windows-1252 na exportação crua; UTF-8 se alguém reabriu no Excel/Sheets.
+  const texto = ei.decodificarCsv(fs.readFileSync(arquivo));
   const recs = ei.parseCsvEInscricao(texto);
   const agora = new Date().toISOString();
   const linhas = recs.map((r) => ei.mapearLinhaEInscricao(r, { arquivo: path.basename(arquivo), importadoEm: agora }));
@@ -98,88 +102,49 @@ const fmt = (c) => (c == null ? '—' : `R$ ${(c / 100).toFixed(2).replace('.', 
   const porCpf = new Map(vivas.filter((v) => v.cpf).map((v) => [v.cpf, v]));
   const porCodigo = new Map(vivas.filter((v) => v.dados?.e_inscricao?.codigo).map((v) => [v.dados.e_inscricao.codigo, v]));
 
-  const inserir = []; const cancelar = []; const pular = []; const invalidas = [];
-  for (const l of linhas) {
-    const ja = (l.codigo_plataforma && porCodigo.get(l.codigo_plataforma)) || (l.cpf && porCpf.get(l.cpf));
-    if (l.status === 'cancelada') {
-      if (ja && ja.status !== 'cancelada' && ja.origem === ei.ORIGEM_E_INSCRICAO) cancelar.push({ l, ja });
-      else pular.push({ l, motivo: ja ? 'já cancelada aqui' : 'cancelada lá e nunca entrou aqui' });
-      continue;
-    }
-    if (ja) { pular.push({ l, motivo: `já existe (${ja.codigo} · ${ja.origem} · ${ja.status})` }); continue; }
-    // Contrato da espinha (CHECK chk_inscricoes_contrato): sem estes 5 o INSERT é recusado.
-    if (!l.cpf || !l.telefone || !l.email || !l.data_nascimento || !l.sexo) { invalidas.push(l); continue; }
-    for (const k of Object.keys(l.dados)) if (k !== 'e_inscricao' && !keysEvento.has(k)) console.warn(`  ⚠️ key ${k} não existe no evento (resposta fica gravada mesmo assim)`);
-    inserir.push(l);
-  }
+  const plano = importar.planejar(linhas, vivas, { keysEvento });
+  const { inserir, cancelar, pular, invalidas } = plano;
+  for (const k of plano.keys_desconhecidas) console.warn(`  ⚠️ key ${k} não existe no evento (resposta fica gravada mesmo assim)`);
 
   console.log(`\na inserir : ${inserir.length}`);
-  for (const l of inserir) {
-    const idade = Math.floor((Date.now() - Date.parse(l.data_nascimento)) / (365.25 * 864e5));
-    const flags = [];
-    if (idade < 18 && !l.responsavel_nome) flags.push('MENOR SEM RESPONSÁVEL');
-    if (idade < 5 || idade > 90) flags.push(`idade ${idade} suspeita — conferir nascimento`);
-    if (l.avisos.length) flags.push(...l.avisos);
-    console.log(`  + ${l.nome_completo.slice(0, 34).padEnd(36)} ${l.codigo_plataforma}  ${fmt(l.valor_cobrado_centavos)}  ${l.created_at}  ${idade}a${l.responsavel_nome ? ' · resp: ' + l.responsavel_nome.slice(0, 20) : ''}${flags.length ? '  ⚠️ ' + flags.join(' · ') : ''}`);
+  for (const { linha: l, alertas } of inserir) {
+    const idade = importar.idadeEmAnos(l.data_nascimento);
+    console.log(`  + ${l.nome_completo.slice(0, 34).padEnd(36)} ${l.codigo_plataforma}  ${fmt(l.valor_cobrado_centavos)}  ${l.created_at}  ${idade}a${l.responsavel_nome ? ' · resp: ' + l.responsavel_nome.slice(0, 20) : ''}${alertas.length ? '  ⚠️ ' + alertas.join(' · ') : ''}`);
   }
   console.log(`a cancelar: ${cancelar.length}`);
-  for (const { l, ja } of cancelar) console.log(`  × ${l.nome_completo} (${ja.codigo})`);
+  for (const { linha: l, existente } of cancelar) console.log(`  × ${l.nome_completo} (${existente.codigo})`);
   console.log(`puladas   : ${pular.length}`);
-  for (const { l, motivo } of pular) console.log(`  = ${l.nome_completo.slice(0, 34).padEnd(36)} ${motivo}`);
+  for (const { linha: l, motivo } of pular) console.log(`  = ${l.nome_completo.slice(0, 34).padEnd(36)} ${motivo}`);
   if (invalidas.length) {
     console.log(`inválidas (fora do contrato · NÃO entram): ${invalidas.length}`);
-    for (const l of invalidas) console.log(`  ! ${l.nome_completo.slice(0, 34).padEnd(36)} ${l.avisos.join(' · ')}`);
+    for (const { linha: l, faltam } of invalidas) console.log(`  ! ${l.nome_completo.slice(0, 34).padEnd(36)} falta ${faltam.join(', ')}`);
   }
 
-  const bruto = inserir.reduce((s, l) => s + (l.dados.e_inscricao.valor_bruto_centavos || 0), 0);
-  const liquido = inserir.reduce((s, l) => s + (l.valor_cobrado_centavos || 0), 0);
-  console.log(`\ndinheiro a entrar: bruto ${fmt(bruto)} · líquido ${fmt(liquido)} (taxa ${ei.TAXA_E_INSCRICAO_PCT}%)`);
+  console.log(`\ndinheiro a entrar: bruto ${fmt(plano.dinheiro.bruto_centavos)} · líquido ${fmt(plano.dinheiro.liquido_centavos)} (taxa ${plano.dinheiro.taxa_pct}%)`);
 
-  const backup = { gerado_em: agora, arquivo, evento: ev.id, inserir, cancelar: cancelar.map((c) => ({ id: c.ja.id, codigo: c.ja.codigo, nome: c.ja.nome_completo, status_antes: c.ja.status })) };
+  const backup = {
+    gerado_em: agora, arquivo, evento: ev.id,
+    inserir: inserir.map((x) => x.linha),
+    cancelar: cancelar.map((c) => ({ id: c.existente.id, codigo: c.existente.codigo, nome: c.existente.nome_completo, status_antes: c.existente.status })),
+  };
   const arqBackup = path.join(HOME, 'Downloads', `_bk_${agora.slice(0, 10).replace(/-/g, '')}_import_einscricao_retiro.json`);
   fs.writeFileSync(arqBackup, JSON.stringify(backup, null, 1));
   console.log(`backup do que vai ser gravado: ${arqBackup}`);
 
   if (!EXEC) { await placar(ev); return; }
 
-  let ok = 0; let ligados = 0; let criados = 0; let semVinculo = 0; let falhas = 0;
-  for (const l of inserir) {
-    const { avisos, codigo_plataforma, ...row } = l;
-    const { data: ins, error } = await supabase.from('inscricoes')
-      .insert({ ...row, evento_id: ev.id, whatsapp_optin: false })
-      .select('id, codigo').single();
-    if (error) { console.error(`  ERRO ${l.nome_completo}: ${error.message}`); falhas++; continue; }
-    ok++;
-    // Vínculo com a membresia — depois do INSERT pra o matcher registrar o id da inscrição como origem.
-    let r = null;
-    try {
-      r = await acharOuCriarGuardado({
-        cpf: l.cpf, email: l.email, telefone: l.telefone, nome: l.nome_completo,
-        dataNascimento: l.data_nascimento, genero: l.sexo, status: 'visitante',
-        extra: { data_nascimento: l.data_nascimento },
-        origem: 'inscricoes_e_inscricao', origemId: ins.id,
-      });
-    } catch (e) { console.error(`  [vínculo] ${l.nome_completo}: ${e.message}`); }
-    if (r?.membro_id) {
-      const { error: eM } = await supabase.from('inscricoes').update({ membro_id: r.membro_id }).eq('id', ins.id).is('membro_id', null);
-      if (eM) console.error(`  [vínculo] gravar ${l.nome_completo}: ${eM.message}`);
-      else if (r.created) criados++; else ligados++;
-    } else semVinculo++;
-    console.log(`  ✓ ${l.nome_completo.slice(0, 34).padEnd(36)} ${ins.codigo}  ${r?.membro_id ? (r.created ? 'CRIOU cadastro' : `ligou (${r.matched_by})`) : 'sem vínculo'}`);
-  }
-  for (const { l, ja } of cancelar) {
-    const { error } = await supabase.from('inscricoes').update({ status: 'cancelada' }).eq('id', ja.id).neq('status', 'cancelada');
-    if (error) { console.error(`  ERRO cancelar ${l.nome_completo}: ${error.message}`); falhas++; }
-    else console.log(`  × ${l.nome_completo} cancelada`);
-  }
+  const r = await importar.executar({ supabase, acharOuCriarGuardado, eventoId: ev.id, plano });
+  for (const i of r.inseridas) console.log(`  ✓ ${i.nome.slice(0, 34).padEnd(36)} ${i.codigo}  ${i.vinculo}`);
+  for (const c of r.canceladas) console.log(`  × ${c.nome} cancelada`);
+  for (const e of r.erros) console.error(`  ERRO ${e.nome}: ${e.erro}`);
 
   console.log('\n=== RESULTADO ===');
-  console.log(`inseridas          : ${ok}`);
-  console.log(`ligadas a cadastro : ${ligados}`);
-  console.log(`cadastros criados  : ${criados}`);
-  console.log(`sem vínculo        : ${semVinculo}${semVinculo ? '  → rodar backend/scripts/_reparo_inscricoes_valor_vinculo.cjs --exec' : ''}`);
-  console.log(`canceladas         : ${cancelar.length}`);
-  console.log(`falhas             : ${falhas}`);
+  console.log(`inseridas          : ${r.inseridas.length}`);
+  console.log(`ligadas a cadastro : ${r.ligados}`);
+  console.log(`cadastros criados  : ${r.criados}`);
+  console.log(`sem vínculo        : ${r.sem_vinculo}${r.sem_vinculo ? '  → rodar backend/scripts/_reparo_inscricoes_valor_vinculo.cjs --exec' : ''}`);
+  console.log(`canceladas         : ${r.canceladas.length}`);
+  console.log(`falhas             : ${r.erros.length}`);
   await placar(ev);
 })().catch((e) => { console.error(e); process.exit(1); });
 

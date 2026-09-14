@@ -2,7 +2,7 @@
 // da tela do Eventos Externos (inscritos, sorteio com roleta, edição de
 // inscrição) + o que a espinha tem a mais: status/Publicar, cancelar/reativar
 // inscrição e exportar CSV (gated por pode_exportar da matriz).
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import confetti from 'canvas-confetti';
 import { inscricoesApi as api } from '../api';
@@ -16,7 +16,7 @@ import {
   ArrowLeft, CalendarDays, Clock, MapPin, Users, Gift, Link2, MessageCircle,
   QrCode, Pencil, Trash2, Loader2, Search, ExternalLink, Ticket, Megaphone,
   ChevronDown, ChevronUp, ChevronsDownUp, ChevronsUpDown, Download, Repeat,
-  Printer, CreditCard, ScanLine, Paperclip, Lock, List, Table } from 'lucide-react';
+  Printer, CreditCard, ScanLine, Paperclip, Lock, List, Table, Upload } from 'lucide-react';
 import QrLinkDialog from '../components/QrLinkDialog';
 import { EventoModal } from './Inscricoes';
 import { idadeEmAnos, faixaLabel, sexoLabel } from '../lib/faixaEtaria';
@@ -290,6 +290,9 @@ export default function InscricaoEventoDetalhe() {
   const [anim, setAnim] = useState<{ fase: 'rolando' | 'fim'; premio: string; ganhador?: any } | null>(null);
   const [rolNum, setRolNum] = useState(0);
   const [imprimirOpen, setImprimirOpen] = useState(false);
+  // Importar a planilha do E-Inscrição direto pela tela (14/09) — antes
+  // disso a equipe do retiro dependia de alguém rodar o script no terminal.
+  const [importarOpen, setImportarOpen] = useState(false);
   // Placar do evento — vem de COUNTs no banco (não de contar a lista em JS), e
   // é ele que responde "quanto já entrou de dinheiro".
   const [resumo, setResumo] = useState<any>(null);
@@ -643,6 +646,15 @@ export default function InscricaoEventoDetalhe() {
         onClose={() => setQrOpen(false)}
       />
     )}
+    {importarOpen && (
+      <ImportarEInscricaoDialog
+        eventoId={ev.id}
+        evento={ev}
+        // Recarrega lista E placar: a importação mexe nos dois.
+        onImportado={() => carregar()}
+        onClose={() => setImportarOpen(false)}
+      />
+    )}
     {imprimirOpen && (
       <ImprimirListaDialog
         evento={ev}
@@ -734,6 +746,15 @@ export default function InscricaoEventoDetalhe() {
               <Button size="sm" variant="outline" onClick={() => navigate(`/inscricoes/evento/${id}/checkin`)}
                 title="Tela de check-in do dia: leitura do QR do comprovante + busca por nome/CPF">
                 <ScanLine className="h-3.5 w-3.5 mr-1" /> Check-in
+              </Button>
+            )}
+            {/* Importar planilha — só em evento que VENDE na plataforma externa
+                (é o `checkout_externo_url` que define isso). Nível 3, a mesma
+                régua de criar/excluir inscrição, porque é o que ela faz. */}
+            {podeEditar && !!ev.checkout_externo_url && (
+              <Button size="sm" variant="outline" onClick={() => setImportarOpen(true)}
+                title={`Sobe a exportação de inscrições do ${ev.checkout_externo_nome || 'E-Inscrição'} e traz quem pagou no cartão pra cá`}>
+                <Upload className="h-3.5 w-3.5 mr-1" /> Importar inscrições
               </Button>
             )}
             <a href={link} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><ExternalLink className="h-3.5 w-3.5 mr-1" /> Abrir formulário</Button></a>
@@ -1248,6 +1269,217 @@ const AGRUPAMENTOS: { key: Agrupamento; label: string; dica: string }[] = [
   { key: 'status', label: 'Status', dica: 'Confirmadas · Aguardando pagamento' },
   { key: 'pagamento', label: 'Pagamento', dica: 'Pago · Aguardando · Sem cobrança' },
 ];
+
+// ============================================================================
+// Importar a planilha do E-Inscrição (pedido do Marcos · 14/09/2026)
+//
+// Dois passos, SEMPRE nesta ordem: sobe o arquivo → a tela mostra o que vai
+// acontecer → só então grava. A prévia não é enfeite: é ela que mostra o menor
+// que veio sem responsável e a data de nascimento absurda ANTES de a linha
+// existir no sistema — foi assim que a "Laura nascida em 2025" apareceu na
+// importação de setembro.
+//
+// ⚠️ O arquivo sobe de novo na confirmação de propósito: o servidor replaneja
+// contra o banco daquele instante. Se alguém importou a mesma planilha no
+// intervalo, o segundo simplesmente não acha nada novo — em vez de gravar duas
+// vezes um plano montado minutos antes.
+// ============================================================================
+function ImportarEInscricaoDialog({ eventoId, evento, onClose, onImportado }: {
+  eventoId: string; evento: any; onClose: () => void; onImportado: () => void;
+}) {
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [previa, setPrevia] = useState<any>(null);
+  const [ocupado, setOcupado] = useState<'previa' | 'gravando' | null>(null);
+  const [resultado, setResultado] = useState<any>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  async function analisar(f: File) {
+    setArquivo(f); setPrevia(null); setResultado(null); setErro(null);
+    setOcupado('previa');
+    try {
+      const r: any = await api.importarEInscricao(eventoId, f, false);
+      setPrevia(r?.previa || null);
+    } catch (e: any) {
+      setErro(e?.message || 'Não consegui ler a planilha');
+    } finally { setOcupado(null); }
+  }
+
+  async function gravar() {
+    if (!arquivo) return;
+    setOcupado('gravando'); setErro(null);
+    try {
+      const r: any = await api.importarEInscricao(eventoId, arquivo, true);
+      setResultado(r?.resultado || null);
+      setPrevia(r?.previa || previa);
+      const n = r?.resultado?.inseridas?.length || 0;
+      const c = r?.resultado?.canceladas?.length || 0;
+      if (r?.resultado?.erros?.length) toast.warning(`${n} importada(s), mas ${r.resultado.erros.length} linha(s) falharam`);
+      else if (n || c) toast.success(`${n} inscrição(ões) importada(s)${c ? ` · ${c} cancelada(s)` : ''}`);
+      else toast.info('Nada novo na planilha — o sistema já estava em dia');
+      onImportado();
+    } catch (e: any) {
+      setErro(e?.message || 'Erro ao importar');
+    } finally { setOcupado(null); }
+  }
+
+  const nInserir = previa?.inserir?.length || 0;
+  const nCancelar = previa?.cancelar?.length || 0;
+  const nPular = previa?.pular?.length || 0;
+  const nInvalidas = previa?.invalidas?.length || 0;
+  const plataforma = evento?.checkout_externo_nome || 'E-Inscrição';
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o && !ocupado) onClose(); }}>
+      <DialogContent className="max-w-2xl flex flex-col max-h-[88vh]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Upload className="h-4 w-4 text-primary" /> Importar inscrições do {plataforma}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-3 text-sm">
+          {/* Molde: o arquivo é a exportação da própria plataforma, sem editar. */}
+          <div className="rounded-lg border border-border bg-foreground/[0.03] p-3 space-y-1.5">
+            <div className="font-medium">Como pegar o arquivo</div>
+            <ol className="list-decimal ml-4 space-y-0.5 text-muted-foreground text-[13px]">
+              <li>No painel do {plataforma}, abra as inscrições deste evento.</li>
+              <li>Clique em <strong>Exportar</strong> e escolha <strong>CSV</strong>.</li>
+              <li>Suba o arquivo aqui <strong>como veio</strong> — sem abrir, sem apagar coluna, sem renomear.</li>
+            </ol>
+            <div className="text-[12px] text-muted-foreground pt-0.5">
+              Pode subir a planilha inteira toda semana: quem já está no sistema é
+              <strong> reconhecido e pulado</strong>, e nada do que já existe aqui é sobrescrito.
+              O valor gravado é o <strong>líquido</strong> (o bruto menos a taxa da plataforma).
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <input
+              ref={inputRef} type="file" accept=".csv,text/csv" className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) analisar(f); }}
+            />
+            <Button size="sm" variant="outline" type="button"
+              onClick={() => inputRef.current?.click()} disabled={!!ocupado}>
+              {ocupado === 'previa' ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Paperclip className="h-3.5 w-3.5 mr-1" />}
+              {arquivo ? 'Trocar arquivo' : 'Escolher a planilha (.csv)'}
+            </Button>
+            {arquivo && <span className="text-xs text-muted-foreground break-all">{arquivo.name}</span>}
+          </div>
+
+          {erro && (
+            <div className="rounded-lg border border-red-500/40 bg-red-500/5 p-3 text-red-700 dark:text-red-300 text-[13px]">{erro}</div>
+          )}
+
+          {previa && (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <PlacarTile label={resultado ? 'Importadas' : 'Vão entrar'} valor={resultado ? (resultado.inseridas?.length || 0) : nInserir} cor="text-emerald-600" dica="Inscrições novas, com o valor líquido da plataforma" />
+                <PlacarTile label="Já no sistema" valor={nPular} dica="Reconhecidas pelo código da plataforma ou pelo CPF — ficam como estão" />
+                <PlacarTile label="Canceladas lá" valor={resultado ? (resultado.canceladas?.length || 0) : nCancelar} cor={nCancelar ? 'text-amber-600' : undefined} dica="Cancelamento feito na plataforma, refletido aqui" />
+                <PlacarTile label="Fora do contrato" valor={nInvalidas} cor={nInvalidas ? 'text-red-600' : undefined} dica="Faltam dados obrigatórios — não entram; precisa corrigir na plataforma" />
+              </div>
+
+              {nInserir > 0 && !resultado && (
+                <div className="text-[13px] text-muted-foreground">
+                  Entram <strong className="text-foreground">{brl(previa.dinheiro?.liquido_centavos)}</strong> líquidos
+                  <span className="tabular-nums"> ({brl(previa.dinheiro?.bruto_centavos)} bruto − {previa.dinheiro?.taxa_pct}% de taxa)</span>.
+                </div>
+              )}
+
+              {/* A lista de quem entra, com os alertas de cada linha. */}
+              {nInserir > 0 && (
+                <div className="rounded-lg border border-border overflow-hidden">
+                  <div className="px-3 py-1.5 text-[11px] uppercase tracking-wide text-muted-foreground bg-foreground/[0.03]">
+                    {resultado ? 'Importadas' : 'Vão entrar'}
+                  </div>
+                  <ul className="divide-y divide-border max-h-56 overflow-y-auto">
+                    {previa.inserir.map((p: any, i: number) => {
+                      const gravada = resultado?.inseridas?.find((x: any) => x.codigo_plataforma === p.codigo_plataforma);
+                      return (
+                        <li key={p.codigo_plataforma || i} className="px-3 py-1.5 text-[13px]">
+                          <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                            <span className="font-medium break-words">{p.nome}</span>
+                            <span className="text-xs text-muted-foreground tabular-nums">
+                              {p.idade != null ? `${p.idade} anos · ` : ''}{brl(p.valor_centavos)}
+                              {gravada ? <span className="text-emerald-600"> · {gravada.codigo} · {gravada.vinculo}</span> : null}
+                            </span>
+                          </div>
+                          {p.responsavel_nome && <div className="text-[11px] text-muted-foreground">responsável: {p.responsavel_nome}</div>}
+                          {p.alertas?.length > 0 && (
+                            <div className="text-[11px] text-amber-600 dark:text-amber-400">⚠️ {p.alertas.join(' · ')}</div>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {nCancelar > 0 && (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-2.5 text-[13px]">
+                  <div className="font-medium text-amber-700 dark:text-amber-300">Canceladas na plataforma — vão ser canceladas aqui</div>
+                  <ul className="ml-4 list-disc text-muted-foreground">
+                    {previa.cancelar.map((p: any, i: number) => <li key={i}>{p.nome} ({p.codigo})</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {nInvalidas > 0 && (
+                <div className="rounded-lg border border-red-500/40 bg-red-500/5 p-2.5 text-[13px]">
+                  <div className="font-medium text-red-700 dark:text-red-300">Não entram — falta dado obrigatório na planilha</div>
+                  <ul className="ml-4 list-disc text-muted-foreground">
+                    {previa.invalidas.map((p: any, i: number) => <li key={i}>{p.nome} — sem {p.faltam.join(', ')}</li>)}
+                  </ul>
+                  <div className="text-[11px] text-muted-foreground pt-1">
+                    Corrija na plataforma e exporte de novo, ou cadastre essas pessoas à mão aqui.
+                  </div>
+                </div>
+              )}
+
+              {previa.keys_desconhecidas?.length > 0 && (
+                <div className="text-[11px] text-muted-foreground">
+                  ⚠️ Respostas que este evento não pergunta ({previa.keys_desconhecidas.join(', ')}) ficam gravadas na
+                  inscrição, mas não aparecem na ficha.
+                </div>
+              )}
+
+              {resultado?.erros?.length > 0 && (
+                <div className="rounded-lg border border-red-500/40 bg-red-500/5 p-2.5 text-[13px]">
+                  <div className="font-medium text-red-700 dark:text-red-300">Linhas que falharam ao gravar</div>
+                  <ul className="ml-4 list-disc text-muted-foreground">
+                    {resultado.erros.map((e: any, i: number) => <li key={i}>{e.nome}: {e.erro}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {resultado && (resultado.sem_vinculo > 0) && (
+                <div className="text-[11px] text-muted-foreground">
+                  {resultado.sem_vinculo} inscrição(ões) entraram sem vínculo com a membresia — aparecem na lista, mas
+                  não estão ligadas a um cadastro de pessoa.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 pt-3 border-t border-border">
+          <Button size="sm" variant="ghost" onClick={onClose} disabled={ocupado === 'gravando'}>
+            {resultado ? 'Fechar' : 'Cancelar'}
+          </Button>
+          {previa && !resultado && (
+            <Button size="sm" onClick={gravar} disabled={!!ocupado || (nInserir === 0 && nCancelar === 0)}>
+              {ocupado === 'gravando' ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Upload className="h-3.5 w-3.5 mr-1" />}
+              {nInserir === 0 && nCancelar === 0
+                ? 'Nada novo pra importar'
+                : `Importar ${nInserir ? `${nInserir} inscrição(ões)` : ''}${nInserir && nCancelar ? ' e ' : ''}${nCancelar ? `cancelar ${nCancelar}` : ''}`}
+            </Button>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function ImprimirListaDialog({ evento, inscritos, recorte, totalEvento, onClose }: {
   evento: any; inscritos: any[]; recorte?: boolean; totalEvento?: number; onClose: () => void;

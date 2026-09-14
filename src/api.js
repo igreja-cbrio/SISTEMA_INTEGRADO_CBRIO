@@ -530,6 +530,16 @@ export const inscricoesApi = {
   // Documentos do evento (orientações gerais, autorização de menor) — bucket
   // público evento-arquivos. Devolve { url, nome }.
   uploadArquivoEvento: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/inscricoes/upload-arquivo', fd); },
+  // Importa a exportação de inscrições do E-Inscrição pro evento. Sem
+  // `confirmar` a rota só devolve a PRÉVIA (nada é gravado); com ele, replaneja
+  // contra o banco de agora e grava. O arquivo vai de novo na confirmação de
+  // propósito — plano guardado em sessão seria um retrato velho.
+  importarEInscricao: (eventoId, file, confirmar) => {
+    const fd = new FormData();
+    fd.append('arquivo', file);
+    if (confirmar) fd.append('confirmar', '1');
+    return requestFile(`/inscricoes/eventos/${eventoId}/importar-einscricao`, fd);
+  },
   // Check-in do evento (SPEC-06) — tela fullscreen: QR do comprovante + busca
   // Inventário das portas públicas do sistema (grupos/next/batismo/…) — read-only
   portas: () => get('/inscricoes/portas'),

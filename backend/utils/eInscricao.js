@@ -315,8 +315,49 @@ function resumoPorPlataforma(linhas, arrecadadoSistemaCentavos = null) {
   return { externo, sistema, total_inscritos: externo.inscritos + sistema.inscritos, total_centavos };
 }
 
+/**
+ * Bytes do arquivo → texto. A exportação do E-Inscrição vem em **windows-1252**,
+ * mas quem abre no Excel/Sheets e salva de novo devolve **UTF-8**. Decidir pelo
+ * nome do arquivo ou pela data seria chute; aqui o teste é o próprio conteúdo:
+ * tenta UTF-8 ESTRITO (`fatal`) e, se os bytes não formarem UTF-8 válido —
+ * o que acontece no primeiro acento de um arquivo 1252 —, cai pra 1252.
+ * ⚠️ Arquivo só-ASCII decodifica igual nos dois; não há ambiguidade a resolver.
+ */
+function decodificarCsv(bytes) {
+  const buf = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes || []);
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(buf);
+  } catch {
+    return new TextDecoder('windows-1252').decode(buf);
+  }
+}
+
+// Colunas SEM as quais o arquivo não é uma exportação do E-Inscrição. Sem esta
+// guarda, subir a planilha errada (a de outro evento, um export do Sheets) daria
+// "0 linhas reconhecidas" — indistinguível de "ninguém novo comprou".
+const COLUNAS_ESSENCIAIS = [
+  'Nome', 'Número do documento', 'Email', 'Código da inscrição',
+  'Cancelada', 'Data da inscrição', 'Valor',
+];
+
+/**
+ * Confere o cabeçalho do arquivo. Devolve os rótulos essenciais que FALTAM
+ * (array vazio = é uma exportação do E-Inscrição). Casamento por prefixo
+ * normalizado, a mesma régua de `coluna` — a plataforma muda pontuação entre
+ * exportações e isso não pode reprovar o arquivo.
+ */
+function faltamColunasEInscricao(registros) {
+  const chaves = Object.keys((registros || [])[0] || {});
+  if (!chaves.length) return [...COLUNAS_ESSENCIAIS];
+  return COLUNAS_ESSENCIAIS.filter((rotulo) => {
+    const alvo = norm(rotulo);
+    return !chaves.some((c) => norm(c).startsWith(alvo));
+  });
+}
+
 module.exports = {
   ORIGEM_E_INSCRICAO, PLATAFORMA_E_INSCRICAO, TAXA_E_INSCRICAO_PCT,
   reaisParaCentavos, liquidoCentavos, simNao, sexoCanonico, cpfDigits, telefoneDigits,
   parseDataBR, parseDataHoraBRT, parseCsvEInscricao, mapearLinhaEInscricao, resumoPorPlataforma,
+  decodificarCsv, faltamColunasEInscricao, COLUNAS_ESSENCIAIS,
 };
