@@ -15,6 +15,10 @@ const {
   TIPOS, FORMATOS, CUIDADO_TIPOS, TIPOS_CONSENTIMENTO, TIPOS_NUMERICOS, validarPerguntas, slugificar,
   ordenarPorOpcoes, baseSemNeutras, ehNeutra, montarItens,
 } = require('../utils/censoPerguntas');
+const {
+  TIPOS_PARA_BUSCAR, TIPOS_IDENTIFICACAO, classificar, aplicarTeto,
+} = require('../utils/censoGrafico');
+const { fetchAllRows } = require('../utils/pagination');
 const { requireCron } = require('../utils/cronAuth');
 const { acharMembroGuardado } = require('../services/membroMatch');
 const { reconciliarCenso } = require('../services/censoReconciliar');
@@ -931,29 +935,65 @@ router.get('/cobertura', authorizeModule('censo', 1), async (req, res) => {
 //  · BASE — "Prefiro não dizer" sai do denominador do percentual, senão dilui
 //    todo o bloco sensível e a leitura fica errada para baixo.
 
+// Tetos do cinto de segurança. Não são o mecanismo (quem resolve o cap é o
+// filtro por tipo) — existem para uma pesquisa futura com centenas de perguntas
+// não virar função de 300s, e para o buraco ser DECLARADO se forem atingidos.
+const TETO_AGREGADO = 20000;
+const TETO_DEMO = 20000;
+
 router.get('/perfil', authorizeModule('censo', 1), async (req, res) => {
   try {
     const pesquisaId = req.query.pesquisa_id;
     if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
 
+    // ⚠️⚠️ O FILTRO POR TIPO é o que resolve o cap de 1000 do PostgREST, e é
+    // também o que impede o vazamento: sem ele, `nascimento` (tipo `data`) vem
+    // com 774 valores distintos — a lista de datas de nascimento da igreja — e
+    // o handler antigo a desenharia como 774 barras para nível 1.
+    // Medido em 13/09: os tipos que viram gráfico somam ~282 linhas contra as
+    // 4.752 da view inteira, e esse número NÃO cresce com respondentes novos.
+    // O `fetchAllRows` fica por baixo como cinto de segurança (pesquisa com
+    // muitas perguntas de opção), com ORDEM ESTÁVEL — `range()` sem `order()`
+    // pula e duplica linha entre páginas.
     const [pesquisa, agregado, demo] = await Promise.all([
       supabase.from('cen_pesquisa').select('id, titulo, perguntas').eq('id', pesquisaId).maybeSingle(),
-      supabase.from('vw_cen_item_agregado').select('*').eq('pesquisa_id', pesquisaId).limit(5000),
+      fetchAllRows(
+        () => supabase.from('vw_cen_item_agregado').select('*')
+          .eq('pesquisa_id', pesquisaId)
+          .in('tipo', TIPOS_PARA_BUSCAR)
+          .order('pergunta_id').order('valor'),
+        { max: TETO_AGREGADO },
+      ),
       // Corte demográfico: vem da view NOMINAL, então é agregado aqui e o nome
       // nunca sai desta função. É o que permite nível 1 ver o perfil.
-      supabase.from('vw_cen_resposta_pessoa')
-        .select('faixa_etaria, genero, estado_civil, bairro, status_membro')
-        .eq('pesquisa_id', pesquisaId).limit(5000),
+      // ⚠️ A lista de colunas é EXPLÍCITA: `select('*')` traria nome, profissão
+      // e cidade para a memória do handler.
+      fetchAllRows(
+        () => supabase.from('vw_cen_resposta_pessoa')
+          .select('resposta_id, membro_id, faixa_etaria, genero, estado_civil, bairro, status_membro')
+          .eq('pesquisa_id', pesquisaId)
+          .order('resposta_id'),
+        { max: TETO_DEMO },
+      ),
     ]);
     if (pesquisa.error) throw pesquisa.error;
     if (!pesquisa.data) return res.status(404).json({ error: 'Pesquisa não encontrada' });
-    if (agregado.error) throw agregado.error;
+
+    // ⚠️ `fetchAllRows` DEGRADA EM ERRO devolvendo o que já leu — o que troca um
+    // truncamento silencioso por outro. A conferência contra o COUNT do banco é
+    // o que transforma isso em aviso na tela em vez de pergunta sumida.
+    const { count: totalAgregado } = await supabase
+      .from('vw_cen_item_agregado')
+      .select('pergunta_id', { count: 'exact', head: true })
+      .eq('pesquisa_id', pesquisaId)
+      .in('tipo', TIPOS_PARA_BUSCAR);
+    const leituraIncompleta = Number.isFinite(totalAgregado) && agregado.length < totalAgregado;
 
     const perguntas = validarPerguntas(pesquisa.data.perguntas || []).perguntas;
     const porId = new Map(perguntas.map((p) => [p.id, p]));
 
     const linhasPorPergunta = new Map();
-    for (const l of agregado.data || []) {
+    for (const l of agregado) {
       if (!linhasPorPergunta.has(l.pergunta_id)) linhasPorPergunta.set(l.pergunta_id, []);
       linhasPorPergunta.get(l.pergunta_id).push(l);
     }
@@ -961,8 +1001,26 @@ router.get('/perfil', authorizeModule('censo', 1), async (req, res) => {
     // Percorre na ORDEM DO QUESTIONÁRIO, não na ordem que o banco devolveu — a
     // tela tem que parecer o formulário que a pessoa respondeu.
     const graficos = [];
+    const identificacao = [];
     for (const p of perguntas) {
       if (p.tipo === 'secao') { graficos.push({ tipo: 'secao', id: p.id, texto: p.texto }); continue; }
+
+      const classe = classificar(p.tipo);
+      // ⚠️ Campo de identificação NUNCA vira barra, e o valor sequer foi lido do
+      // banco (o filtro por tipo o deixou de fora). A pergunta aparece DECLARADA
+      // na tela: quem olha vê que ela existe e por que não tem gráfico. Esconder
+      // seria o buraco silencioso de novo, agora do outro lado.
+      if (classe === 'identificacao') {
+        identificacao.push({ id: p.id, texto: p.texto, tipo: p.tipo });
+        continue;
+      }
+      // Tipo que o construtor conhece e esta régua ainda não classificou: também
+      // é declarado, nunca desenhado por engano.
+      if (classe === 'desconhecido') {
+        identificacao.push({ id: p.id, texto: p.texto, tipo: p.tipo, desconhecido: true });
+        continue;
+      }
+
       const linhas = linhasPorPergunta.get(p.id) || [];
       if (!linhas.length) continue;
 
@@ -991,18 +1049,29 @@ router.get('/perfil', authorizeModule('censo', 1), async (req, res) => {
         media = Math.round((soma / base) * 100) / 100;
       }
 
+      // ⚠️ `sensivel` é OU das linhas, nunca `linhas[0]` — ler de uma linha
+      // arbitrária faz uma pergunta sensível passar por comum quando a ordem
+      // do banco muda.
+      const sensivel = linhas.some((l) => l.sensivel === true);
+      // Lista longa (igreja anterior, grupo) tem cauda de valores digitados à
+      // mão: 177 numa pergunta só. O teto mantém a tela legível e o que ficou
+      // de fora vai DECLARADO, com quantas pessoas representa.
+      const corte = classe === 'lista_longa' ? aplicarTeto(ordenadas) : { valores: ordenadas, ocultos: 0, ocultosTotal: 0 };
+
       graficos.push({
-        tipo: p.tipo, id: p.id, texto: p.texto, sensivel: linhas[0]?.sensivel === true,
+        tipo: p.tipo, id: p.id, texto: p.texto, sensivel,
         base, neutras, total, media,
         // Texto livre não vira barra — vira Leitura da IA. Aqui só o volume.
-        aberta: ['texto_longo', 'texto_curto', 'busca'].includes(p.tipo),
-        valores: ['texto_longo', 'texto_curto'].includes(p.tipo) ? [] : ordenadas,
+        aberta: classe === 'texto' || classe === 'lista_longa',
+        valores: classe === 'texto' ? [] : corte.valores,
+        valores_ocultos: corte.ocultos || 0,
+        valores_ocultos_pessoas: corte.ocultosTotal || 0,
       });
     }
 
     // Cortes demográficos, contados aqui.
     const cortes = { faixa_etaria: {}, genero: {}, estado_civil: {}, bairro: {}, status_membro: {} };
-    for (const r of demo.data || []) {
+    for (const r of demo) {
       for (const k of Object.keys(cortes)) {
         const v = r[k] || '(não informado)';
         cortes[k][v] = (cortes[k][v] || 0) + 1;
@@ -1012,10 +1081,37 @@ router.get('/perfil', authorizeModule('censo', 1), async (req, res) => {
       .map(([valor, total]) => ({ valor, total }))
       .sort((a, b) => b.total - a.total).slice(0, teto || 100);
 
+    // ⚠️ ÓRFÃS: linha no agregado cujo `pergunta_id` não está mais no
+    // questionário (pergunta removida ou renomeada depois de já ter resposta).
+    // O laço acima percorre `perguntas`, então elas ficariam invisíveis mesmo
+    // depois do conserto — e o pedido foi ver CADA resposta. Entram declaradas,
+    // com o texto que a própria view guardou.
+    const idsVivos = new Set(perguntas.map((p) => p.id));
+    const orfas = [];
+    for (const [id, linhas] of linhasPorPergunta) {
+      if (idsVivos.has(id)) continue;
+      orfas.push({
+        id,
+        texto: linhas[0]?.pergunta_texto || id,
+        respostas: linhas.reduce((acc, l) => acc + (Number(l.total) || 0), 0),
+      });
+    }
+    orfas.sort((a, b) => b.respostas - a.respostas);
+
     res.json({
       titulo: pesquisa.data.titulo,
-      respondentes: (demo.data || []).length,
+      // ⚠️ São RESPOSTAS RECEBIDAS, não concluídas: nem esta view nem
+      // `vw_cen_item_agregado` filtram `concluida_em`, então o gráfico conta a
+      // resposta abandonada também. O rótulo da tela dizia "concluídas" e
+      // mentia. Unificar o denominador com a aba Cobertura (que conta só
+      // concluídas) exige mexer na view — follow-up, não este PR.
+      respondentes: demo.length,
       graficos,
+      identificacao,
+      orfas,
+      // Buraco declarado: `fetchAllRows` devolve o que já leu quando uma página
+      // falha, e sem isto a falha voltaria a aparecer como pergunta sumida.
+      leitura_incompleta: leituraIncompleta || undefined,
       demografia: {
         faixa_etaria: ordenarPorOpcoes({ opcoes: ['0-11', '12-17', '18-24', '25-34', '35-44', '45-59', '60+'] },
           emLista(cortes.faixa_etaria)),
@@ -1024,6 +1120,88 @@ router.get('/perfil', authorizeModule('censo', 1), async (req, res) => {
         bairro: emLista(cortes.bairro, 12),
         status_membro: emLista(cortes.status_membro),
       },
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+//  PERFIL · MAPA · de onde vem quem respondeu
+// ══════════════════════════════════════════════════════════════════════════
+//
+// Endpoint SEPARADO do /perfil de propósito: o mapa carrega o maplibre (~1MB)
+// e é lazy na tela; falha aqui não pode derrubar os gráficos, que são o
+// conteúdo principal da aba.
+//
+// ⚠️⚠️ A COORDENADA VEM DE `vw_dem_pessoa`, NUNCA de um join escrito aqui.
+// Medido em 13/09: juntar `dem_bairro_geo` direto pelo bairro cru posiciona 595
+// pessoas; pela view são 694. A diferença são as 99 pessoas de "Barra Olímpica",
+// que é `alias_de = 'barra da tijuca'` — bairro de alias NÃO TEM centróide
+// próprio, por definição (decisão de 23/08: agrupamento no mapa, sem reescrever
+// onde a pessoa mora). Reimplementar o join aqui perderia essas 99 pessoas em
+// silêncio, e o número menor pareceria certo.
+//
+// ⚠️ Nível 1, como o /perfil: o que sai daqui é contagem por bairro. Nenhum
+// `membro_id` e nenhum nome atravessam o `res.json`.
+router.get('/perfil/mapa', authorizeModule('censo', 1), async (req, res) => {
+  try {
+    const pesquisaId = req.query.pesquisa_id;
+    if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
+
+    const respostas = await fetchAllRows(
+      () => supabase.from('vw_cen_resposta_pessoa')
+        .select('resposta_id, membro_id')
+        .eq('pesquisa_id', pesquisaId)
+        .order('resposta_id'),
+      { max: TETO_DEMO },
+    );
+    const total = respostas.length;
+    const ids = [...new Set(respostas.map((r) => r.membro_id).filter(Boolean))];
+    // ⚠️ Resposta anônima ou sem cadastro nunca entra no mapa — mas CONTA no
+    // denominador. Sem isso "82% posicionados" viraria 87% por omissão.
+    const semCadastro = total - respostas.filter((r) => r.membro_id).length;
+
+    // `.in()` em lotes de 200: lista longa estoura a URL do PostgREST.
+    const pessoas = [];
+    for (let i = 0; i < ids.length; i += 200) {
+      const { data, error } = await supabase
+        .from('vw_dem_pessoa')
+        .select('id, bairro, bairro_norm, lat, lng')
+        .in('id', ids.slice(i, i + 200));
+      // ⚠️ Erro PROPAGA: mapa com menos gente é pior que mapa ausente, porque
+      // parece completo.
+      if (error) throw error;
+      pessoas.push(...(data || []));
+    }
+
+    const porNorm = new Map();
+    let semBairro = 0;
+    let semCoordenada = 0;
+    const achadas = new Set();
+    for (const p of pessoas) {
+      achadas.add(p.id);
+      if (!p.bairro_norm) { semBairro += 1; continue; }
+      if (p.lat == null || p.lng == null) { semCoordenada += 1; continue; }
+      const at = porNorm.get(p.bairro_norm)
+        || { bairro: p.bairro || p.bairro_norm, norm: p.bairro_norm, total: 0, lat: p.lat, lng: p.lng };
+      at.total += 1;
+      porNorm.set(p.bairro_norm, at);
+    }
+    // ⚠️ `vw_dem_pessoa` filtra cadastro ATIVO. Quem respondeu e foi desativado
+    // depois some do mapa sem sumir do gráfico — os dois números divergem
+    // sozinhos com o tempo, então o buraco é declarado em vez de arredondado.
+    const foraDaBase = ids.length - achadas.size;
+
+    const bairros = [...porNorm.values()].sort((a, b) => b.total - a.total);
+    const noMapa = bairros.reduce((acc, b) => acc + b.total, 0);
+
+    res.json({
+      bairros,
+      total,
+      pessoas_no_mapa: noMapa,
+      pessoas_sem_bairro: semBairro,
+      pessoas_sem_coordenada: semCoordenada,
+      pessoas_sem_cadastro: semCadastro,
+      pessoas_fora_da_base: foraDaBase,
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
