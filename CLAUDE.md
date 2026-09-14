@@ -300,6 +300,37 @@ para sempre.
 respondentes (808 de 818) — só 10 pessoas ficam sem gênero por via nenhuma. O
 gráfico de gênero do painel lê o CADASTRO, não a pergunta.
 
+### ⚠️⚠️ FUSÃO DE CADASTROS · a garantia de que nada fica pendurado (14/09)
+
+Pedido do Marcos depois de fundir o João Guilherme Coletto: *"garanta que não
+haja esse problema de linhas penduradas em cadastros juntados"*.
+
+**Medido primeiro:** varredura das **1.037 fusões já feitas** contra as **63
+tabelas que apontam para `mem_membros`** → **ZERO linhas órfãs**. O
+`merge_membros` repointa tudo hoje, inclusive `cen_resposta`, que nasceu em
+agosto DEPOIS da função. A fusão do Coletto, conferida linha a linha: 74 vínculos
+no removido → 74 no mantido, 14 de 14 tabelas, 0 campos perdidos.
+
+⇒ **Não havia defeito no passado. O risco é a tabela que alguém vai criar mês
+que vem** — se ela ficar fora do repointe, a fusão continua devolvendo sucesso e
+a linha fica apontando para um cadastro que não existe mais. O dado não some do
+banco: some da FICHA DA PESSOA (contribuição órfã, batismo desaparecido).
+
+Duas travas, que se completam:
+1. **`services/fusaoVerificacao.js`** — roda depois de TODA fusão (os 3 pontos
+   que chamam a RPC: Entradas, Membresia e Duplicatas de Grupos) e devolve
+   `conferencia: { ok, sobras[] }` na resposta. ⚠️ **Nunca lança**: a fusão já
+   aconteceu e deu certo; derrubar a resposta por causa da conferência faria a
+   pessoa repetir uma fusão bem-sucedida.
+2. **`src/test/fusaoTabelas.test.ts`** — lê as migrations e **quebra o gate**
+   quando aparece tabela com `membro_id` que ninguém declarou. Sem ela a lista
+   envelhece em silêncio, que é o defeito que ela existe para evitar. Mesma
+   ideia do `routeModuleMap.test.ts`. ⚠️ Mutante conferido: tirando
+   `cen_resposta` da lista, o teste fica vermelho com o nome da tabela.
+
+**LEI: fusão que devolve sucesso não prova que o vínculo foi junto — quem prova
+é a conferência independente da lista de tabelas.**
+
 ### Regra operacional do domingo (não é código)
 
 - **Não editar o questionário durante a coleta.** O cliente valida contra a
