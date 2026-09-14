@@ -543,7 +543,12 @@ export default function CensoPublica() {
     if (erro) return <Aviso texto={erro} tom="erro" />;
     if (!pesquisa) return <Aviso texto="Pesquisa indisponível" tom="erro" />;
     if (jaRespondeu) {
-      return <Aviso titulo="Você já respondeu" texto="Obrigado! Sua resposta está registrada." />;
+      return (
+        <Aviso
+          titulo="Você já respondeu"
+          texto="Sua resposta está registrada — não precisa responder de novo. Obrigado!"
+        />
+      );
     }
     // ⚠️⚠️ RECUSA VENCE O "OBRIGADO". Se a resposta que estava na fila voltou
     // recusada, a tela DESDIZ o agradecimento — é feio e é honesto: a
@@ -559,9 +564,15 @@ export default function CensoPublica() {
     }
     if (pronto) {
       return (
+        // ⚠️ SÓ O AGRADECIMENTO (decisão do Matheus, 14/09/2026). A frase
+        // antiga prometia "se você pediu contato, alguém vai falar com você" —
+        // e o questionário NÃO TEM pergunta de contato (medido: 0 das 33). Era
+        // promessa de algo que a tela não oferece, para quem acabou de confiar
+        // dados à igreja. Nada de promessa nem de discurso aqui: a pessoa
+        // terminou, agradeça e deixe ir.
         <Aviso
-          titulo="Obrigado!"
-          texto="Sua resposta foi registrada. Se você pediu contato, alguém da equipe vai falar com você."
+          titulo="Obrigado por responder!"
+          texto="Sua resposta foi registrada."
         />
       );
     }

@@ -153,6 +153,9 @@ jobs:
       - name: Censo · pergunta vira gráfico (e identificação nunca vira)
         run: npm run test:censo-grafico
 
+      - name: Censo · material do relatório (só agregado, com motivo e controle)
+        run: npm run test:censo-relatorio
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 
