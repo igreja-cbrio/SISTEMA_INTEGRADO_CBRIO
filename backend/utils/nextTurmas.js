@@ -134,8 +134,37 @@ function domingosInscritiveis(dias, agora = new Date()) {
     .sort();
 }
 
+/**
+ * A PRÓXIMA turma — a única que o formulário público oferece desde 15/09/2026.
+ *
+ * ⚠️⚠️ Pedido do Kevyn (via Marcos): "as pessoas não poderem se inscrever em
+ * turmas do Next muito futuras, pedir para apenas colocar a opção da próxima
+ * turma aberta". Medido em 15/09: **9 turmas abertas e 6 apareciam no
+ * formulário** (20/09 a 25/10) — a rotina automática garante o mês corrente E
+ * o seguinte (26/08), então a lista só cresce.
+ *
+ * ⚠️⚠️ ORDENA PELA DATA DO ENCONTRO, nunca por quando a turma foi criada. A
+ * rotina cria os domingos em ordem, então "a mais recentemente criada" é a MAIS
+ * DISTANTE — era esse o resolvedor do fallback e do QR de direcionamento, e ele
+ * mandava quem não escolheu para o domingo mais longe possível.
+ *
+ * ⚠️ Turma SEM data de encontro fica de fora: sem saber quando é, ela não pode
+ * ser "a próxima" (e a matrícula nasceria num domingo que ninguém sabe qual é).
+ *
+ * @param {{id: string, data: string|null}[]} turmas
+ * @param {string} hoje  dia BRT (YYYY-MM-DD)
+ * @returns {object|null}
+ */
+function proximaTurma(turmas, hoje) {
+  if (!Array.isArray(turmas) || !diaValido(hoje)) return null;
+  return turmas
+    .filter((t) => t && diaValido(t.data) && t.data >= hoje)
+    .sort((a, b) => String(a.data).localeCompare(String(b.data)))[0] || null;
+}
+
 module.exports = {
   HORARIO_NEXT, ENCONTROS_POR_TURMA,
   mesValido, diaValido, diaDaSemana, domingosDoMes, mesDe, proximoMes,
   hojeBRT, nomeTurma, turmasPlanejadas, mesesAGarantir, domingosInscritiveis,
+  proximaTurma,
 };

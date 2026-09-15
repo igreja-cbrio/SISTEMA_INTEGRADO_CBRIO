@@ -60,26 +60,67 @@ router.use(limiter);
  */
 async function turmaEscolhida(turmaId) {
   if (!turmaId || !/^[0-9a-f-]{36}$/i.test(String(turmaId))) return null;
-  const { data } = await supabase.from('next_turmas')
-    .select('id, nome, next_encontros(data)')
-    .eq('id', String(turmaId)).eq('status', 'aberta').is('deleted_at', null)
-    .maybeSingle();
-  if (!data) return null;
-  const datas = (data.next_encontros || []).map(e => e.data).filter(Boolean).sort();
-  const dia = datas[0] || null;
-  if (!dia || dia < hojeBRT()) return null; // domingo já passou
-  return { id: data.id, nome: data.nome, data: dia };
+  // ⚠️⚠️ 15/09/2026 · o id só vale se for A PRÓXIMA turma (pedido do Kevyn).
+  // Aceitar qualquer turma aberta matricularia gente em domingo de dois meses
+  // à frente — que é justamente o que ele pediu pra fechar. Turma vencida ou
+  // distante devolve null e o chamador cai na próxima, que é o único destino
+  // oferecido hoje.
+  const prox = await proximaTurmaAberta();
+  if (!prox || String(turmaId) !== prox.id) return null;
+  return prox;
 }
 
+/**
+ * A PRÓXIMA turma aberta — a única que o formulário oferece.
+ *
+ * ⚠️⚠️ 15/09/2026 (pedido do Kevyn, via Marcos): "as pessoas não poderem se
+ * inscrever em turmas do Next muito futuras, pedir para apenas colocar a opção
+ * da próxima turma aberta". Medido no dia: **9 turmas abertas e 6 apareciam no
+ * formulário** (20/09 a 25/10) — a rotina automática abre o mês corrente E o
+ * seguinte (26/08), então a lista só cresce.
+ *
+ * ⚠️⚠️ ORDENA PELA DATA DO ENCONTRO, nunca por `created_at`. O `turmaAbertaAtual`
+ * antigo pegava a turma criada MAIS RECENTEMENTE — e como a rotina cria os
+ * domingos em ordem, a mais nova é a MAIS DISTANTE. Ou seja: quem enviasse sem
+ * escolher (bundle antigo, ou falha de rede escondendo o campo) caía no domingo
+ * mais longe possível, exatamente o problema que o Kevyn relatou.
+ */
+async function proximaTurmaAberta() {
+  const { data, error } = await supabase.from('next_turmas')
+    .select('id, nome, next_encontros(data)')
+    .eq('status', 'aberta').is('deleted_at', null)
+    .limit(200);
+  if (error) throw error;
+  const lista = (data || []).map((t) => {
+    // A turma nova tem UM encontro; turma antiga (2 encontros) usa o primeiro.
+    const datas = (t.next_encontros || []).map(e => e.data).filter(Boolean).sort();
+    return { id: t.id, nome: t.nome, data: datas[0] || null };
+  });
+  // ⚠️ A escolha é régua PURA (utils/nextTurmas.proximaTurma · no gate).
+  return proximaTurma(lista, hojeBRT());
+}
+
+/**
+ * "A turma aberta do momento" — usada pelo QR de direcionamento do fim do Next,
+ * pelo check-in do totem e pelo walk-in. DELEGA pra `proximaTurmaAberta`.
+ *
+ * ⚠️⚠️ O corpo antigo era `order(created_at desc).limit(1)` — a turma criada
+ * MAIS RECENTEMENTE. Com a rotina automática abrindo um domingo por vez (26/08),
+ * a mais nova é a MAIS DISTANTE: medido em 15/09, com 9 turmas abertas, o QR do
+ * fim do encontro resolveria a de **25/10** e listaria as pessoas dela — ou seja,
+ * ninguém. É a mesma doença que o Kevyn relatou na inscrição, do outro lado da
+ * porta. No DIA do encontro `proximaTurmaAberta` devolve a turma de hoje
+ * (`data >= hoje`), que é a resposta certa pra essas telas.
+ *
+ * ⚠️ O nome fica por causa dos 5 chamadores; o comentário de "cai na MAIS
+ * RECENTE" acima deles deixou de valer.
+ */
 async function turmaAbertaAtual() {
-  const { data } = await supabase.from('next_turmas')
-    .select('id, nome').eq('status', 'aberta').is('deleted_at', null)
-    .order('created_at', { ascending: false }).limit(1).maybeSingle();
-  return data || null;
+  return proximaTurmaAberta();
 }
 
 // Régua das turmas do Next (1 turma por domingo · culto de 09:30 · 26/08/2026)
-const { HORARIO_NEXT, hojeBRT } = require('../utils/nextTurmas');
+const { HORARIO_NEXT, hojeBRT, proximaTurma } = require('../utils/nextTurmas');
 
 // Contrato de Inscrição (F3.1 · docs/modulo-inscricoes/) — utils da fonte única
 const {
@@ -139,24 +180,11 @@ router.get('/eventos', async (_req, res) => {
 // ----------------------------------------------------------------------------
 router.get('/turmas', async (_req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('next_turmas')
-      .select('id, nome, next_encontros(data)')
-      .eq('status', 'aberta').is('deleted_at', null)
-      .limit(200);
-    if (error) throw error;
-
-    const hoje = hojeBRT();
-    const lista = (data || [])
-      .map(t => {
-        // A turma nova tem UM encontro; turma antiga (2 encontros) usa o primeiro.
-        const datas = (t.next_encontros || []).map(e => e.data).filter(Boolean).sort();
-        return { id: t.id, nome: t.nome, data: datas[0] || null };
-      })
-      .filter(t => t.data && t.data >= hoje)
-      .sort((a, b) => a.data.localeCompare(b.data));
-
-    res.json({ horario: HORARIO_NEXT, turmas: lista });
+    // ⚠️⚠️ SÓ A PRÓXIMA (15/09/2026 · Kevyn). A resposta continua sendo uma
+    // LISTA de propósito: o bundle publicado lê `turmas[]`, e trocar a forma
+    // quebraria quem não recarregou a página. O que mudou é o TAMANHO.
+    const prox = await proximaTurmaAberta();
+    res.json({ horario: HORARIO_NEXT, turmas: prox ? [prox] : [] });
   } catch (e) {
     // ⚠️ Erro NÃO vira lista vazia: lista vazia se lê como "não há Next marcado"
     // e o formulário esconderia o campo, matriculando às cegas.
@@ -298,7 +326,7 @@ router.post('/inscrever', async (req, res) => {
     // A pessoa escolhe o domingo no formulário (26/08/2026). Sem escolha — bundle
     // antigo em cache, ou nenhum domingo disponível — cai no comportamento
     // anterior: turma aberta mais recente, ou lista de espera.
-    const turma = (await turmaEscolhida(req.body?.turma_id)) || await turmaAbertaAtual();
+    const turma = (await turmaEscolhida(req.body?.turma_id)) || await proximaTurmaAberta();
 
     // Dedup por membro_id (CPF é opcional no formulário): se a pessoa JÁ está na
     // lista de espera (sem turma) OU na turma aberta, não duplica (reenvio do form).
@@ -371,8 +399,10 @@ router.post('/inscrever', async (req, res) => {
 // UM QR pro Next inteiro (token fixo assinado): resolve a TURMA ABERTA do momento e lista
 // as pessoas dela. A pessoa acha o nome e escolhe pra onde vai (Grupos/Voluntários/Batismo ·
 // Devocional é Fase 2b). Escreve na matrícula (mesmo motor do líder). Quando há
-// mais de uma turma aberta (2 por mês), o público cai na MAIS RECENTE (ver
-// turmaAbertaAtual) · o operador reorganiza quem vai em cada uma na aba Turmas.
+// mais de uma turma aberta, o público cai na PRÓXIMA por data de encontro (ver
+// turmaAbertaAtual · 15/09/2026, era "a mais recentemente criada", que com a
+// rotina automática é a mais DISTANTE) · o operador reorganiza quem vai em cada
+// uma na aba Turmas.
 
 // GET /api/public/next/direcionar/:token — turma aberta + suas pessoas pra escolher o nome
 router.get('/direcionar/:token', async (req, res) => {
