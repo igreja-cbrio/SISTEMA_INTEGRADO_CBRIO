@@ -164,4 +164,49 @@ describe('cuidados.js · rotas que precisam de authorizeModule', () => {
     expect(corpo).not.toMatch(/\.update\(\s*req\.body\s*\)/);
     expect(corpo).toContain('CAMPOS_EDITAVEIS');
   });
+
+  /**
+   * ⚠️⚠️ A whitelist acima fechou a porta e levou junto um campo que a tela usa.
+   * Regressão de 09/09/2026 (PR #2875): `primeiro_contato_status` ficou de fora e
+   * a coluna "Status do 1º contato" dos Próximos passos parou de gravar — em
+   * silêncio quando o patch levava junto `primeiro_contato_em`, e com 400
+   * "Nenhum campo editavel" quando a pessoa JÁ tinha o carimbo e só o status
+   * mudava. Medido em 15/09: 13 de 13 marcações entre 09/09 e 14/09 gravaram a
+   * data e perderam o status.
+   *
+   * Whitelist é remoção silenciosa por natureza — campo que some daqui não
+   * quebra build, não loga, só para de salvar. Este teste é o alarme.
+   */
+  it('a whitelist do PATCH /convertidos/:id cobre todo campo que a tela edita', () => {
+    const trecho = limpo.slice(limpo.indexOf('const CAMPOS_EDITAVEIS'));
+    const lista = trecho.slice(0, trecho.indexOf('];'));
+    // Cada campo aqui é editável em src/pages/ministerial/Cuidados.tsx.
+    const EDITADOS_PELA_TELA = [
+      'primeiro_contato_status', // <select> da coluna "Status do 1º contato" (setPcStatus)
+      'primeiro_contato_em',     // carimbo que o mesmo <select> grava junto
+      'atendido_apos_culto',     // checkbox da lista + modal
+      'responsavel_atendimento', // <select> da coluna "Responsável"
+      'nome', 'telefone', 'observacoes', 'tags', // modal de edição
+      'data_culto',              // DatePicker "Data do culto" do modal
+      'cadastrado',              // checkbox "Cadastrado" do modal
+    ];
+    for (const campo of EDITADOS_PELA_TELA) {
+      expect(lista, `${campo} saiu da whitelist — a tela edita e o PATCH descarta`).toContain(`'${campo}'`);
+    }
+  });
+
+  /**
+   * A lista de 09/09 foi escrita de cabeça e citava seis colunas que não existem
+   * em `cui_convertidos` (`email`, `status`, `encontro_em`, `encontro_responsavel`,
+   * `desfecho`, `desfecho_observacao`). Nome inventado na whitelist não protege
+   * nada e ainda vira 500 do PostgREST se algum cliente mandar o campo.
+   */
+  it('a whitelist não ressuscita colunas que não existem em cui_convertidos', () => {
+    const trecho = limpo.slice(limpo.indexOf('const CAMPOS_EDITAVEIS'));
+    const lista = trecho.slice(0, trecho.indexOf('];'));
+    // Encontro e desfecho têm rota própria (agendar-encontro / desfecho).
+    for (const fantasma of ['email', 'status', 'encontro_em', 'encontro_responsavel', 'desfecho_observacao']) {
+      expect(lista, `'${fantasma}' não é coluna de cui_convertidos`).not.toContain(`'${fantasma}'`);
+    }
+  });
 });
