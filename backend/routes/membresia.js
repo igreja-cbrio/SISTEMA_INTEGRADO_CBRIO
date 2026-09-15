@@ -4187,6 +4187,15 @@ async function aprovarCadastroCore({
     const cadFields = [
       'nome', 'cpf', 'email', 'telefone', 'data_nascimento', 'genero', 'estado_civil',
       'endereco', 'bairro', 'cidade', 'cep', 'profissao',
+      // 20260915120000 · "Seja membro" (Pr. Nélio · 15/09). As colunas têm o
+      // MESMO nome nas duas tabelas de propósito — `pickNonNull` monta o patch
+      // com estas chaves e manda direto em `mem_membros`.
+      // ⚠️ Sem a migration aplicada, o laço de retentativa logo abaixo remove a
+      // coluna ausente do patch e segue: a aprovação não quebra.
+      // ⚠️ A porta pública só manda estes campos quando a pessoa RESPONDE, e
+      // `pickNonNull` descarta null/''/undefined — então um "não respondeu"
+      // nunca sobrescreve o que a equipe já tinha registrado no cadastro.
+      'carta_transferencia', 'igreja_anterior',
     ];
 
     // Auto-geocode da aprovação: o formulário público pede CEP e NÃO pede

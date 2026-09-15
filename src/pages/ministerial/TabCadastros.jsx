@@ -876,6 +876,35 @@ export default function TabCadastros({ onMembrosChange }) {
                 ]}
               />
 
+              {/* ⚠️ Carta de transferência (15/09/2026): é DECLARAÇÃO da pessoa,
+                  não prova — quem confere o documento e decide a membresia é a
+                  equipe. Por isso aparece aqui, na ficha que ela lê antes de
+                  aprovar: coletar a resposta e não mostrar seria guardar dado
+                  que ninguém vê.
+                  ⚠️ Só renderiza quando há resposta — bloco vazio em toda ficha
+                  antiga vira ruído que treina a equipe a pular a seção. */}
+              {(selecionado.carta_transferencia || selecionado.igreja_anterior) && (
+                <div style={{ marginTop: 18 }}>
+                  <div style={{ fontSize: 11, color: C.text3, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>
+                    Vem de outra igreja
+                  </div>
+                  <div style={{
+                    fontSize: 13, color: C.text2, lineHeight: 1.6,
+                    padding: 12, background: 'var(--cbrio-input-bg)',
+                    border: `1px solid ${C.border}`, borderRadius: 10,
+                  }}>
+                    {selecionado.igreja_anterior && (
+                      <div><strong style={{ color: C.text2 }}>Igreja:</strong> {selecionado.igreja_anterior}</div>
+                    )}
+                    <div style={{ marginTop: selecionado.igreja_anterior ? 4 : 0 }}>
+                      {selecionado.carta_transferencia
+                        ? 'Declarou que vem com carta de transferência — confira o documento antes de aprovar.'
+                        : 'Não declarou carta de transferência.'}
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {selecionado.como_conheceu && (
                 <div style={{ marginTop: 18 }}>
                   <div style={{ fontSize: 11, color: C.text3, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 6 }}>

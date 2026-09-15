@@ -157,15 +157,28 @@ const VINCULOS_DECLARADOS = ['membro', 'congregado', 'visitante'];
 // (20260803160000_censo_recadastramento.sql · mem_cadastros_pendentes).
 const COLUNAS_CENSO = ['censo', 'vinculo_declarado', 'censo_conflitos'];
 
+// ⚠️⚠️ TODA coluna que este INSERT só tem depois de uma migration entra AQUI.
+// O fallback abaixo era específico do censo, e com ele assim uma coluna nova
+// (as da carta de transferência, 20260915120000) faria o INSERT falhar e a
+// retentativa falhar de novo — pelo mesmo 42703 — perdendo a submissão da
+// pessoa, que é justamente o que o fallback existe pra impedir.
+// Lista em UM lugar: esquecer de acrescentar aqui é perder cadastro, não perder
+// um campo.
+const COLUNAS_OPCIONAIS = [
+  ...COLUNAS_CENSO,
+  // 20260915120000 · "Seja membro": carta de transferência + igreja de origem
+  'carta_transferencia', 'igreja_anterior',
+];
+
 // 42703 = undefined_column. O PostgREST recusa a query INTEIRA quando uma
 // coluna não existe, então pedir coluna nova antes da migration derrubaria o
 // formulário pra TODO MUNDO (lição do `parcelas_max`). Aqui a submissão é o que
 // não pode se perder: tenta com as colunas do censo e, se elas não existirem
 // ainda, repete SEM elas — a pessoa se cadastra, só a marcação do censo espera
 // a migration.
-function semColunasDoCenso(payload) {
+function semColunasOpcionais(payload) {
   const copia = { ...payload };
-  for (const c of COLUNAS_CENSO) delete copia[c];
+  for (const c of COLUNAS_OPCIONAIS) delete copia[c];
   return copia;
 }
 function ehColunaAusente(error) {
@@ -578,6 +591,15 @@ router.post('/cadastro', cadastroLimiter, contaPorEmailLimiter, async (req, res)
       whatsapp_optin, // consentimento p/ mensagens no WhatsApp (Marketing · LGPD)
       consentimento_texto,
       converteu_na_cbrio, // autodeclarado (checkbox) · NUNCA vira convertido/NSM
+      // "Seja membro" · carta de transferência (Pr. Nélio · 15/09/2026).
+      // ⚠️⚠️ AUTODECLARADO, como o `vinculo_declarado` do censo: marcar a caixa
+      // NÃO muda `mem_membros.status` nem aprova nada. Quem confere o documento
+      // e decide a membresia é a igreja.
+      // ⚠️ `igreja_anterior` é DE ONDE A PESSOA VEM — não é onde ela foi
+      // batizada (isso é `mem_membros.igreja_batismo_anterior`, outra coluna e
+      // outro fato · ver a migration 20260915120000).
+      carta_transferencia,
+      igreja_anterior,
       // Censo / recadastramento (2026-08-03). `vinculo_declarado` é
       // AUTODECLARADO (membro|congregado|visitante) e NUNCA vira
       // mem_membros.status — quem é membro é decisão da igreja.
@@ -778,6 +800,18 @@ router.post('/cadastro', cadastroLimiter, contaPorEmailLimiter, async (req, res)
       // Só inclui a coluna quando a pessoa marcou (tolera a migration ainda não
       // aplicada · flow antigo sem o checkbox não toca a coluna).
       ...(converteu_na_cbrio ? { converteu_na_cbrio: true } : {}),
+      // Mesma política do `converteu_na_cbrio`: a coluna só entra no INSERT
+      // quando a pessoa respondeu — com a migration `20260915120000` ainda não
+      // aplicada, quem não responde nem toca nela (e quem responde cai no
+      // fallback de coluna ausente logo abaixo, sem perder a submissão).
+      // ⚠️ `=== true`, nunca truthy: o corpo vem de JSON, e a string "false" é
+      // truthy — registraria carta de transferência que ninguém declarou.
+      ...(carta_transferencia === true ? { carta_transferencia: true } : {}),
+      // ⚠️ Teto de 160 e trim: é texto livre de porta pública. Sem limite, o
+      // campo aceita o que couber no corpo da requisição.
+      ...(typeof igreja_anterior === 'string' && igreja_anterior.trim()
+        ? { igreja_anterior: igreja_anterior.trim().slice(0, 160) }
+        : {}),
       familia_sugerida_id: familia_sugerida_id || null,
       foto_url: foto_url || null,
       status: duplicadoDeId ? 'duplicado' : 'pendente',
@@ -795,10 +829,10 @@ router.post('/cadastro', cadastroLimiter, contaPorEmailLimiter, async (req, res)
       .single();
 
     if (error && ehColunaAusente(error)) {
-      console.warn('[PUBLIC CADASTRO] colunas do censo ausentes (parte 1 da migration, 20260803160000, não aplicada) — gravando sem elas');
+      console.warn('[PUBLIC CADASTRO] coluna opcional ausente (migration do censo 20260803160000 ou da carta 20260915120000 não aplicada) — gravando sem elas');
       ({ data, error } = await supabase
         .from('mem_cadastros_pendentes')
-        .insert(semColunasDoCenso(payload))
+        .insert(semColunasOpcionais(payload))
         .select('id, status')
         .single());
     }

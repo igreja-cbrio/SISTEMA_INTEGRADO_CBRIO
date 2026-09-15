@@ -321,6 +321,11 @@ export default function CadastroMembresia() {
   const [aceitaTermos, setAceitaTermos] = useState(false);
   const [aceitaComunicacao, setAceitaComunicacao] = useState(false);
   const [converteuCbrio, setConverteuCbrio] = useState(false);
+  // "Seja membro" · carta de transferência (Pr. Nélio · 15/09/2026).
+  // ⚠️ Autodeclaração: marcar a caixa NÃO torna ninguém membro — quem confere o
+  // documento e decide é a igreja. Mesma régua do vínculo declarado do censo.
+  const [cartaTransferencia, setCartaTransferencia] = useState(false);
+  const [igrejaAnterior, setIgrejaAnterior] = useState('');
   // Vínculo AUTODECLARADO no censo. ⚠️ NÃO define membresia: responder o censo
   // não faz ninguém membro (isso é batismo/curso/carta, decisão da igreja). Só
   // separa quem já se considera membro de quem frequenta ou está chegando.
@@ -700,6 +705,14 @@ export default function CadastroMembresia() {
         aceita_contato: aceitaComunicacao,
         whatsapp_optin: aceitaComunicacao,
         converteu_na_cbrio: converteuCbrio || undefined,
+        // ⚠️ `|| undefined` no lugar de mandar `false`/'' é o mesmo padrão do
+        // `converteu_na_cbrio`: a chave só viaja quando a pessoa respondeu, e
+        // aí o servidor só toca a coluna nesse caso. É o que torna o deploy
+        // tolerante à migration ainda não aplicada — e o que impede um `false`
+        // de sobrescrever, na aprovação de atualização, um `true` que a equipe
+        // já tinha registrado no cadastro.
+        carta_transferencia: cartaTransferencia || undefined,
+        igreja_anterior: igrejaAnterior.trim() || undefined,
         censo: ehCenso || undefined,
         // Identifica a pessoa no servidor sem depender de CPF (chave FORTE no
         // censoReconciliar) — é o que faz a submissão ATUALIZAR o cadastro dela
@@ -1340,6 +1353,43 @@ export default function CadastroMembresia() {
                       onChange={setConverteuCbrio}
                       label="Eu me converti / aceitei Jesus aqui na CBRio."
                     />
+                  </div>
+
+                  {/* ⚠️ "De qual igreja você está vindo?" é pergunta SOLTA, não
+                      condicionada ao checkbox da carta: quem sai de outra
+                      igreja SEM carta (a maioria) também é gente que a equipe
+                      quer saber de onde veio. Esconder o campo atrás da carta
+                      perderia justamente o caso mais comum.
+
+                      ⚠️⚠️ E NENHUM DOS DOIS É OBRIGATÓRIO. Porta pública não
+                      recusa quem não responde — nem ninguém precisa "provar"
+                      procedência para se cadastrar. A carta é conferida pela
+                      equipe depois; aqui é declaração.
+
+                      ⚠️ NÃO confundir com "onde você foi batizado", que é outro
+                      fato e tem coluna própria (`igreja_batismo_anterior`) —
+                      ver o cabeçalho da migration 20260915120000. */}
+                  <div style={{ marginTop: 20 }}>
+                    <Field
+                      id="igreja_anterior"
+                      label="De qual igreja você está vindo? (opcional)"
+                      value={igrejaAnterior}
+                      onChange={(e) => setIgrejaAnterior(e.target.value)}
+                      maxLength={160}
+                      placeholder="Nome da igreja de onde você vem"
+                    />
+                    <div style={{ marginTop: -8 }}>
+                      <CheckboxField
+                        id="carta_transferencia"
+                        checked={cartaTransferencia}
+                        onChange={setCartaTransferencia}
+                        label="Estou vindo com carta de transferência."
+                      />
+                    </div>
+                    <p style={{ fontSize: 11, color: 'var(--cbrio-text3)', margin: '-4px 0 0', lineHeight: 1.5 }}>
+                      Se você tem a carta, traga no próximo culto ou fale com a
+                      secretaria — a equipe confere e cuida do resto.
+                    </p>
                   </div>
                 </div>
               )}
