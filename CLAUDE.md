@@ -10888,6 +10888,65 @@ Matheus**; nada foi convertido retroativamente. As 5 turmas do formato novo
 em produção. A rotina automática roda pela primeira vez em 27/08 e vai **pular**
 essas 5 pela UNIQUE.
 
+### ⚠️⚠️ 15/09/2026 · o formulário oferece SÓ A PRÓXIMA turma (pedido do Kevyn)
+
+*"as pessoas não poderem se inscrever em turmas do Next muito futuras, pedir
+para apenas colocar a opção da próxima turma aberta, não deixar todas só a
+próxima."*
+
+**Medido em 15/09: 9 turmas abertas e 6 apareciam no formulário** (20/09 · 27/09
+· 04/10 · 11/10 · 18/10 · 25/10) — a rotina automática garante o mês corrente
+**e o seguinte** (26/08), então a lista só cresce.
+
+⚠️⚠️ **E o achado de carona é pior que o pedido: o resolvedor de fallback
+escolhia a turma MAIS DISTANTE.** `turmaAbertaAtual` era
+`order('created_at', desc).limit(1)` — "a criada mais recentemente" —, e como a
+rotina cria os domingos **em ordem**, a mais nova é a mais longe. Ou seja: quem
+enviasse **sem escolher** (bundle antigo em cache, ou a falha de rede que esconde
+o campo) caía no domingo mais distante possível. E os **5 chamadores** dela — o
+QR de direcionamento do fim do encontro, o check-in do totem e o walk-in — liam
+a mesma resposta: no dia 20/09 o QR listaria as pessoas da turma de **25/10**,
+isto é, ninguém.
+
+⇒ **`proximaTurma(turmas, hoje)`** em `backend/utils/nextTurmas.js` (régua PURA,
+no gate) é agora a única resposta para "qual turma está valendo", e
+`turmaAbertaAtual` **delega** a ela (o nome fica por causa dos 5 chamadores).
+
+- ⚠️⚠️ **Ordena pela DATA DO ENCONTRO, nunca por `created_at`** — é a inversão
+  que produzia o bug. Mutante rodado: ordenar decrescente → 3 vermelhos.
+- ⚠️ **O domingo de HOJE ainda conta** (`data >= hoje`): o encontro é às 9h30 e
+  a tela segue aberta o dia todo. E no DIA do encontro é isso que faz o QR de
+  direcionamento resolver a turma certa.
+- ⚠️ **Turma sem data de encontro fica de fora**: sem saber quando é, ela não
+  pode ser "a próxima" — a matrícula nasceria num domingo que ninguém sabe qual é.
+- ⚠️⚠️ **String VAZIA no `hoje` é o caso que morde**: qualquer data é `>= ''`,
+  então sem a guarda `diaValido(hoje)` a função devolveria a turma mais ANTIGA
+  da lista — um domingo **que já passou** — como se fosse a próxima. O 1º mutante
+  dessa guarda (passar `'hoje'`) **sobreviveu por acidente** (`'2026-…' >= 'hoje'`
+  é false e o resultado coincide); o caso que a mata é a string vazia. **Mutante
+  que não distingue não testa guarda nenhuma** — a lição de 25/08, outra vez.
+- ⚠️ **`turmaEscolhida` passou a aceitar SÓ a próxima**: id de turma distante
+  devolve `null` e o POST cai na próxima. Aceitar qualquer turma aberta manteria
+  aberto exatamente o caminho que o pedido fecha.
+- ⚠️ **A resposta de `GET /turmas` continua sendo uma LISTA**, de propósito: o
+  bundle publicado lê `turmas[]` e trocar a forma quebraria quem não recarregou.
+  O que mudou é o TAMANHO (1 item).
+- ⚠️ **Com uma opção só o campo deixa de ser `<select>`**: vira linha de
+  informação ("Domingo, 20 de setembro · 9h30 — é o próximo NEXT") e o `turma_id`
+  é preenchido sozinho. Um seletor de um item pede um toque que não decide nada.
+  O ramo do `<select>` **fica** para o caso de a régua voltar a oferecer mais de
+  uma — apagá-lo agora deixaria a tela sem caminho.
+- ⚠️ A tela de sucesso passou a dizer **a data**, em vez de "no domingo que você
+  escolheu" — que deixou de ser verdade quando não há escolha.
+
+**4 mutantes RODADOS e mortos**: sem ordenar → 1 vermelho · aceitando domingo que
+já passou → 4 · ordenando decrescente → 3 · guarda de `hoje` inválido → 1.
+
+⏳ **Não mexido**: as 3 turmas de 30/08, 06/09 e 13/09 continuam com
+`status='aberta'` no banco. Não aparecem em lugar nenhum (o encontro passou), mas
+encerrá-las é faxina de dado, não de código.
+
+
 ## ⚠️⚠️ Next · "fez o Next" passou a ser UM encontro (2026-08-14 · migration `20260814200000`)
 
 Decisão do **Matheus**, olhando o funil da Integração: *"a pessoa é considerada
