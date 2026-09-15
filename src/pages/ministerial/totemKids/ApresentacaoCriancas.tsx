@@ -34,13 +34,19 @@ const fmtTel = (v?: string | null) => { const s = String(v || '').replace(/\D/g,
 // '09:30' → '9h30' (como a igreja fala) · usado quando o horário não está mais no catálogo
 const rotuloHora = (h?: string | null) => { const m = /^(\d{1,2}):(\d{2})/.exec(String(h ?? '')); if (!m) return null; return m[2] === '00' ? `${Number(m[1])}h` : `${Number(m[1])}h${m[2]}`; };
 
+// ⚠⚠ `contatado` (15/09/2026 · pedido do Marcos via Milena): "saber quem nós
+// já entramos em contato". É uma etapa do funil ENTRE pendente e confirmado —
+// a família foi chamada mas ainda não confirmou. O CHECK do banco precisa
+// aceitar o valor (migration 20260915180000), e `vw_inscricoes_unificadas`
+// mapeia contatado → 'recebida' (sem isso o ELSE dela diria 'confirmada').
 const STATUS_COR: Record<string, string> = {
   pendente: 'bg-amber-500/10 text-amber-600',
+  contatado: 'bg-sky-500/10 text-sky-600',
   confirmado: 'bg-emerald-500/10 text-emerald-600',
   realizado: 'bg-muted text-muted-foreground',
   cancelado: 'bg-red-500/10 text-red-600',
 };
-const STATUS_OPCOES = ['pendente', 'confirmado', 'realizado', 'cancelado'];
+const STATUS_OPCOES = ['pendente', 'contatado', 'confirmado', 'realizado', 'cancelado'];
 const SEM_HORARIO = '__sem__';
 const ORIGEM_ROTULO: Record<string, string> = { publico: 'Formulário público', app: 'App de membros', manual: 'Cadastro manual' };
 
@@ -386,6 +392,23 @@ export default function ApresentacaoCriancas() {
     try { await api.apresentacaoUpdate(id, { status }); patchLinha(id, { status }); toast.success('Status atualizado'); }
     catch { toast.error('Erro ao atualizar'); }
   };
+  // ⚠⚠ CHECK-IN DO DIA (15/09/2026) · "no dia a Milena poder marcar quem foi,
+  // para saber se já foi entregue o kit". NÃO é `status = realizado`: aquele é
+  // carimbado no LOTE pra turma inteira depois da cerimônia e diria que todo
+  // mundo veio, inclusive quem faltou.
+  const [checkinId, setCheckinId] = useState<string | null>(null);
+  const marcarPresenca = async (id: string, presente: boolean) => {
+    setCheckinId(id);
+    try {
+      const r: any = await api.apresentacaoCheckin(id, presente);
+      patchLinha(id, { presente_em: r?.presente_em ?? null });
+      toast.success(presente ? 'Check-in registrado' : 'Check-in desfeito');
+    } catch (e: any) {
+      // ⚠️ A mensagem do servidor DIZ quando falta a migration — genérico aqui
+      // faria a equipe achar que o botão está quebrado.
+      toast.error(e?.message || 'Erro ao registrar o check-in');
+    } finally { setCheckinId(null); }
+  };
   const mudarData = async (id: string, data_apresentacao: string) => {
     if (!data_apresentacao) return;
     try { await api.apresentacaoUpdate(id, { data_apresentacao }); patchLinha(id, { data_apresentacao }); toast.success('Turma (data) atualizada'); }
@@ -497,6 +520,14 @@ export default function ApresentacaoCriancas() {
                 </label>
                 <Badge variant="secondary" className="text-[10px]">{items.length}</Badge>
                 <span className="text-[11px] text-muted-foreground inline-flex items-center gap-1"><Clock className="h-3 w-3" /> {resumoHorarios(items) || '—'}</span>
+                {/* ⚠️ Só aparece quando ALGUÉM já fez check-in: "0 de 14 presentes"
+                    numa turma que ainda não aconteceu se lê como ausência, não como
+                    "ninguém foi marcado ainda". */}
+                {items.some((x: any) => x.presente_em) && (
+                  <span className="text-[11px] inline-flex items-center gap-1 text-emerald-600">
+                    <Check className="h-3 w-3" /> {items.filter((x: any) => x.presente_em).length} de {items.length} presente{items.filter((x: any) => x.presente_em).length === 1 ? '' : 's'}
+                  </span>
+                )}
               </div>
               {items.map((b) => {
                 const pais = nomesDosPaisUnicos(b.nome_pai, b.nome_mae);
@@ -543,8 +574,18 @@ export default function ApresentacaoCriancas() {
                       </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2 justify-end border-t border-border/50 pt-2">
-                      <button onClick={() => setFichaId(b.id)} className="inline-flex items-center gap-1.5 text-xs border border-border rounded-md px-2.5 py-1.5 hover:bg-muted transition-colors mr-auto" title="Ver tudo o que a pessoa preencheu no formulário">
+                      <button onClick={() => setFichaId(b.id)} className="inline-flex items-center gap-1.5 text-xs border border-border rounded-md px-2.5 py-1.5 hover:bg-muted transition-colors" title="Ver tudo o que a pessoa preencheu no formulário">
                         <FileText className="h-3.5 w-3.5" /> Ver ficha
+                      </button>
+                      {/* Check-in do dia · marcar = a família apareceu e levou o kit. */}
+                      <button
+                        onClick={() => marcarPresenca(b.id, !b.presente_em)}
+                        disabled={checkinId === b.id}
+                        title={b.presente_em ? `Presente desde ${fmtDataHora(b.presente_em)} · clique pra desfazer` : 'Marcar que a família chegou (e recebeu o kit)'}
+                        className={`inline-flex items-center gap-1.5 text-xs rounded-md px-2.5 py-1.5 border transition-colors mr-auto disabled:opacity-50 ${b.presente_em ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700' : 'border-border hover:bg-muted'}`}
+                      >
+                        {checkinId === b.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}
+                        {b.presente_em ? 'Presente' : 'Check-in'}
                       </button>
                       <select value={generoDe(b)} onChange={(e) => setGeneros(g => ({ ...g, [b.id]: e.target.value as 'menino' | 'menina' }))} title="Usado na concordância do certificado (filho/filha)" className="h-7 text-[11px] rounded-md border border-border bg-background px-1.5">
                         <option value="menino">Menino</option>

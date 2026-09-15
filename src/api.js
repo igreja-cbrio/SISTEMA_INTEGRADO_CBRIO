@@ -2208,6 +2208,8 @@ export const totemKids = {
   apresentacaoDetalhe: (id) => get(`/totem-kids/apresentacoes/${id}`),
   apresentacaoUpdate: (id, body) => patch(`/totem-kids/apresentacoes/${id}`, body),
   apresentacaoRemove: (id) => del(`/totem-kids/apresentacoes/${id}`),
+  // Check-in do dia (15/09/2026) · `presente: false` desfaz.
+  apresentacaoCheckin: (id, presente) => post(`/totem-kids/apresentacoes/${id}/checkin`, { presente }),
   // Catálogo dos cultos da apresentação (9h30 até o limite → 11h30) · editável pelo Kids
   apresentacaoHorarios: {
     list: (data) => get('/totem-kids/apresentacoes/horarios' + (data ? `?data=${encodeURIComponent(data)}` : '')),

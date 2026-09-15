@@ -915,6 +915,64 @@ CRLF e o `\n` do meu `replace` não casava. É a lição já registrada em 15/09
 25/08: **confirmar que o mutante entrou** (o script agora conta as ocorrências e
 aborta em zero) antes de concluir qualquer coisa sobre o teste.
 
+### ⚠️⚠️ 15/09/2026 · status `contatado` + CHECK-IN do dia (migration `20260915180000`)
+
+Dois pedidos do Marcos, via Milena: *"colocar uma opção ali na área do kids como
+contatado para saber quem nós já entramos em contato, pode ser no mesmo menu,
+apenas adicionar uma opção a mais"* e *"criar uma lógica de check-in ali, no dia
+a Milena poder marcar quem foi, para saber se já foi entregue o kit"*.
+
+⚠️⚠️ **SÃO DUAS PERGUNTAS DIFERENTES, e por isso são dois campos:**
+
+| | o que é | granularidade |
+|---|---|---|
+| `status` | ciclo de vida da inscrição (**pendente → contatado → confirmado → realizado/cancelado**) | a TURMA inteira |
+| `presente_em` | o FATO daquele domingo | por FAMÍLIA |
+
+**Usar `status='realizado'` como check-in diria que TODO mundo veio** — medido em
+15/09: as 14 linhas de 13/09 estão `realizado`, carimbadas no lote depois da
+cerimônia, inclusive quem faltou.
+
+- ⚠️⚠️ **A lista do CHECK é DERIVADA da definição VIVA** (`pg_get_constraintdef`),
+  nunca escrita à mão: `chk_apres_status` pode ter ganho valor fora do git, e
+  lista estática num `DROP + ADD` é **remoção silenciosa disfarçada de
+  acréscimo** (a lei do `app_soft_deletable_tables`). Segue `NOT VALID`, como em
+  28/07 — vale pra escrita nova e não valida as linhas antigas.
+- ⚠️⚠️ **`vw_inscricoes_unificadas` precisou saber o que é "contatado".** O CASE
+  dela termina em `ELSE 'confirmada'`, então sem o patch a família apenas
+  CONTATADA apareceria em `/inscricoes` como **confirmada** — número na tela
+  afirmando o que ninguém confirmou. Patch **DINÂMICO** sobre `pg_get_viewdef`
+  (a view foi recriada por 5 migrations depois da original; colar o corpo do
+  repo reverteria em silêncio o que só existe em prod), com regexp tolerando os
+  `::text` que o `pg_get_viewdef` acrescenta e **ABORT** se a âncora não casar.
+  ⚠️ `CREATE OR REPLACE VIEW` preserva GRANTS mas **não as `reloptions`** —
+  elas são lidas e reaplicadas.
+  ⚠️ O regexp casa os 4 ramos que mapeiam `pendente → recebida`; nos outros
+  (batismo, next…) o `WHEN` novo é **INERTE**, porque aquelas tabelas não têm o
+  valor.
+- ⚠️⚠️ **`ADD COLUMN IF NOT EXISTS ... REFERENCES` ENGOLE a FK** quando a coluna
+  já existe (lição de 30/07 · `vol_profiles.membresia_id`): o comando inteiro é
+  pulado, `REFERENCES` incluído. Por isso `presente_por` tem a FK conferida e
+  criada em bloco à parte.
+- ⚠️ **A lista do Kids tolera as colunas ausentes** — `OPCIONAIS = ['horario_culto',
+  'presente_em']`, derrubadas uma a uma no 42703. Pedir coluna que não existe faz
+  o PostgREST recusar a query INTEIRA e **a lista apareceria VAZIA, em silêncio**.
+  O fallback específico de `horario_culto` (08/09) virou laço genérico: coluna
+  nova que dependa de migration entra na lista, não solta no select.
+- ⚠️ **O check-in é rota PRÓPRIA** (`POST /apresentacoes/:id/checkin` · nível
+  **2**, não 3 do PATCH): marcar presença é trabalho de quem está no balcão no
+  domingo, é reversível e não edita cadastro de ninguém. A hora e o autor são
+  gravados **no servidor** — nunca vêm do cliente.
+- ⚠️ **UPDATE condicionado a `presente_em` vazio** no marcar: dois toques não
+  reescrevem a hora de quem já entrou nem trocam o autor. Zero linhas ⇒ relê e
+  devolve o estado atual (**idempotente**), nunca erro.
+- ⚠️ **Sem a migration o botão responde 409 DIZENDO o motivo**, nunca 500
+  genérico — quem clica precisa saber que falta migration, senão conclui que o
+  botão quebrou.
+- ⚠️ **O contador "N de M presentes" só aparece depois do primeiro check-in**:
+  "0 de 14" numa turma que ainda não aconteceu se lê como ausência, não como
+  "ninguém foi marcado ainda".
+
 ⚠️ **Não medido em produção**: a sonda ao banco foi bloqueada nesta máquina
 (classificador recusou a leitura do `.env`), então a linha da Isabella e quantas
 mais estão dobradas **não foram contadas**. A leitura deduplica todas; corrigir o
