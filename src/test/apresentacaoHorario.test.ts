@@ -6,6 +6,7 @@ import { describe, it, expect } from 'vitest';
 // @ts-ignore — util CommonJS do backend (padrão do cultoApresentacao.test.ts)
 import {
   escolherHorarioApresentacao, rotuloHorarioApresentacao, paisIguais, nomesDosPaisUnicos,
+  exigeConfirmacaoPaisIguais,
 } from '../../backend/utils/apresentacaoHorario';
 import * as front from '../lib/apresentacaoPais';
 
@@ -128,5 +129,46 @@ describe('espelho front × backend (apresentacaoPais)', () => {
   });
   it('nomesDosPaisUnicos concorda em todos os casos', () => {
     for (const [a, b] of casos) expect(front.nomesDosPaisUnicos(a, b)).toEqual(nomesDosPaisUnicos(a, b));
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// 15/09/2026 · o bloqueio virou CONFIRMAÇÃO (pedido do Marcos).
+//
+// ⚠⚠ A MEDIÇÃO QUE DECIDIU: das 22 inscrições vivas em 15/09, as 22 têm pai E
+// mãe preenchidos e 4 (18%) com o MESMO nome — a saída que o bloqueio oferecia
+// ("deixe um dos campos em branco") NUNCA foi usada por ninguém. E as 4 são
+// anteriores a 08/09, ou seja o bloqueio funcionou: o que ele produziu de lá
+// pra cá foi atrito, não conserto — o dado dobrado já sai deduplicado na
+// leitura desde aquele dia.
+describe('exigeConfirmacaoPaisIguais', () => {
+  it('nome dobrado SEM confirmação é recusado', () => {
+    expect(exigeConfirmacaoPaisIguais('Aline Lazaro', 'Aline Lazaro', undefined)).toBe(true);
+  });
+  it('nome dobrado COM confirmação passa', () => {
+    expect(exigeConfirmacaoPaisIguais('Aline Lazaro', 'Aline Lazaro', true)).toBe(false);
+  });
+  // ⚠⚠ O corpo vem de JSON: "false", 1 e {} são truthy e transformariam a
+  // confirmação em enfeite — qualquer cliente distraído passaria.
+  it('só o booleano true confirma — truthy não serve', () => {
+    for (const v of ['false', 'true', 1, {}, [], 'sim']) {
+      expect(exigeConfirmacaoPaisIguais('Aline Lazaro', 'Aline Lazaro', v)).toBe(true);
+    }
+  });
+  it('nomes diferentes nunca pedem confirmação', () => {
+    expect(exigeConfirmacaoPaisIguais('Carlos Pestana', 'Aline Lazaro', undefined)).toBe(false);
+  });
+  it('um campo só preenchido é o caso normal — passa direto', () => {
+    expect(exigeConfirmacaoPaisIguais(null, 'Aline Lazaro', undefined)).toBe(false);
+    expect(exigeConfirmacaoPaisIguais('', '', undefined)).toBe(false);
+  });
+  // ⚠⚠ Espelho: divergir faz a tela aceitar o que a porta recusa (formulário
+  // insubmissível) ou a tela pedir confirmação que a porta ignora.
+  it('front e backend decidem IGUAL', () => {
+    const nomes = ['Aline Lazaro', 'aline  lázaro', 'Carlos Pestana', '', null];
+    const flags = [true, false, undefined, 'true', 1];
+    for (const a of nomes) for (const b of nomes) for (const c of flags) {
+      expect(front.exigeConfirmacaoPaisIguais(a, b, c)).toBe(exigeConfirmacaoPaisIguais(a, b, c));
+    }
   });
 });

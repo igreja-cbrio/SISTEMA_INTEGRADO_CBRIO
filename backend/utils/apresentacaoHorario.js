@@ -122,10 +122,32 @@ function nomesDosPaisUnicos(nomePai, nomeMae) {
   return out;
 }
 
+/**
+ * A porta precisa de CONFIRMAÇÃO explícita pra aceitar o nome dobrado?
+ *
+ * ⚠⚠ 15/09/2026 · o BLOQUEIO de 08/09 virou confirmação (pedido do Marcos).
+ * Medido no dia: das 22 inscrições vivas, as 22 têm pai E mãe preenchidos e 4
+ * (18%) com o MESMO nome — ou seja a saída que o bloqueio oferecia ("deixe um
+ * dos campos em branco") nunca foi usada por ninguém. O dado dobrado já é
+ * tratado na LEITURA (nomesDosPaisUnicos), então o bloqueio era só atrito.
+ *
+ * ⚠⚠ A guarda NÃO sumiu: sem confirmado === true a porta segue recusando.
+ * O que ela impede é a duplicação ACIDENTAL, não a deliberada.
+ *
+ * ⚠⚠ === true, NUNCA truthy: o corpo vem de JSON e a string "false", o número
+ * 1 ou um objeto passariam — a confirmação deixaria de ser confirmação.
+ *
+ * @returns {boolean} true = recusar e pedir a confirmação
+ */
+function exigeConfirmacaoPaisIguais(nomePai, nomeMae, confirmado) {
+  return paisIguais(nomePai, nomeMae) && confirmado !== true;
+}
+
 module.exports = {
   escolherHorarioApresentacao,
   rotuloHorarioApresentacao,
   paisIguais,
+  exigeConfirmacaoPaisIguais,
   nomesDosPaisUnicos,
   nomeChave,
 };

@@ -21,6 +21,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import { mascaraCep, cepCompleto, buscarCep } from '../lib/cepAutopreenche';
 import SeletorBairro from '../components/ui/seletor-bairro';
 import { tirarCodigoPais } from '@/lib/inscricao';
+import { AVISO_PAIS_IGUAIS, exigeConfirmacaoPaisIguais } from '@/lib/apresentacaoPais';
 
 // ── Menu ──────────────────────────────────────────────────────────────────────
 
@@ -3378,6 +3379,11 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [aceitaTermosMenor, setAceitaTermosMenor] = useState(false);
+  // ⚠⚠ 15/09/2026 · mesmo nome em pai e mãe AVISA (esta porta nunca teve guarda).
+  // Ref, não estado: o botão de confirmar chama handleSubmit na sequência e o
+  // estado ainda não teria comitado — o painel reabriria em loop.
+  const [confirmarPais, setConfirmarPais] = useState(false);
+  const paisOkRef = useRef(false);
   // Texto canônico do consentimento de menor (art. 14 §1º) — o snapshot que o
   // backend grava é sempre o canônico, então a tela busca o MESMO texto (rota
   // pública de textos da apresentação) com fallback idêntico ao atual.
@@ -3405,6 +3411,7 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
     let v = e.target.value;
     if (k === 'responsavel_telefone') v = maskPhoneInput(v);
     if (k === 'responsavel_cpf') v = maskCpfInput(v);
+    if (k === 'nome_pai' || k === 'nome_mae') { paisOkRef.current = false; setConfirmarPais(false); }
     setForm(f => ({ ...f, [k]: v }));
     onActivity();
   };
@@ -3417,6 +3424,10 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
     if (!cpfDvOk(form.responsavel_cpf)) { setError('CPF do responsável é obrigatório e precisa ser válido'); return; }
     if (form.responsavel_telefone.replace(/\D/g, '').length < 10) { setError('Telefone inválido'); return; }
     if (!aceitaTermosMenor) { setError('É preciso aceitar a autorização de responsável para agendar a apresentação'); return; }
+    if (exigeConfirmacaoPaisIguais(form.nome_pai, form.nome_mae, paisOkRef.current)) {
+      setConfirmarPais(true);
+      return;
+    }
     setSaving(true); setError('');
     onActivity();
     try {
@@ -3634,6 +3645,29 @@ function ApresentacaoBebeFlow({ opt, member, onBack, onDone, onEndSession, onAct
               className="mt-1 h-5 w-5 accent-[#EC4899] shrink-0" />
             <span className="text-[12px] leading-relaxed text-white/70">{textoMenor} *</span>
           </label>
+
+          {/* ⚠⚠ Nome dobrado: avisa e deixa confirmar · NUNCA window.confirm. */}
+          {confirmarPais && (
+            <div className="rounded-2xl border border-amber-500/40 bg-amber-500/10 p-4 text-sm text-white/90">
+              <p className="font-semibold text-amber-300 mb-1">Confere o nome dos responsáveis</p>
+              <p className="text-white/70">{AVISO_PAIS_IGUAIS}</p>
+              <div className="flex flex-wrap gap-2 mt-3">
+                <Button
+                  onClick={() => { paisOkRef.current = true; setConfirmarPais(false); handleSubmit(); }}
+                  className="bg-[#EC4899] hover:bg-[#EC4899]/90 text-white rounded-xl"
+                >
+                  Sim, é a mesma pessoa
+                </Button>
+                <Button
+                  variant="ghost"
+                  onClick={() => setConfirmarPais(false)}
+                  className="text-white/70 rounded-xl"
+                >
+                  Corrigir os nomes
+                </Button>
+              </div>
+            </div>
+          )}
 
           {error && <p className="text-red-400 text-sm text-center">{error}</p>}
 
