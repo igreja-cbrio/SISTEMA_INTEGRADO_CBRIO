@@ -12,6 +12,7 @@ const cultosApi = kpisApi.cultos;
 import { Calendar, CalendarClock, ChevronLeft, ChevronRight, CheckCircle2, AlertCircle, AlertTriangle, X, Save, Tv, Users, Sparkles, UserPlus, Trash2, Pencil, Search as SearchIcon, Link as LinkIcon, FileText } from 'lucide-react';
 import { toast } from 'sonner';
 import { formatErro } from '../lib/formatErro';
+import { conferirCobertura, textoDivergencia } from '../lib/coberturaDecisoes';
 import { tirarCodigoPais } from '@/lib/inscricao';
 
 const C = {
@@ -1070,6 +1071,14 @@ function ModalCulto({ culto, onClose, onSaved }) {
             cultoId={culto.id}
             totalEsperado={(Number(form.decisoes_presenciais) || 0) + onlineTotal}
             totalKidsEsperado={hasKids ? (Number(form.decisoes_kids) || 0) : 0}
+            /* ⚠️⚠️ Os dois tipos vão SEPARADOS além do total (15/09/2026). O
+               `totalEsperado` soma presencial + online, e somar antes de
+               comparar faz a sobra de um CANCELAR a falta do outro: em 13/09
+               (Domingo 11:30) o gap somado dava 7 enquanto faltavam 8 nomes
+               presenciais. Cada tipo alimenta um indicador diferente, então a
+               conferência tem de ter a mesma granularidade do indicador. */
+            esperadoPresencial={Number(form.decisoes_presenciais) || 0}
+            esperadoOnline={onlineTotal}
             hasOnline={hasOnline}
             hasKids={hasKids}
           />
@@ -1186,7 +1195,10 @@ const btnGhost = {
 //   opcional · CPF tenta vincular a mem_membros existente no backend)
 // - Lista as pessoas já registradas · click pra editar/remover
 // ============================================================================
-function DecisoesPessoasSection({ cultoId, totalEsperado, totalKidsEsperado = 0, hasOnline, hasKids }) {
+function DecisoesPessoasSection({
+  cultoId, totalEsperado, totalKidsEsperado = 0, hasOnline, hasKids,
+  esperadoPresencial = 0, esperadoOnline = 0,
+}) {
   const [pessoas, setPessoas] = useState([]);
   const [loading, setLoading] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -1229,6 +1241,23 @@ function DecisoesPessoasSection({ cultoId, totalEsperado, totalKidsEsperado = 0,
   const registradasKids = pessoasKids.length;
   const faltando       = Math.max(0, totalEsperado - registradas);
   const faltandoKids   = Math.max(0, totalKidsEsperado - registradasKids);
+
+  // ⚠️⚠️ CONFERÊNCIA POR TIPO (15/09/2026 · pedido do Marcos depois de a Renata
+  // mostrar a tela). Cadastrar o NOME com tipo `online` não move número nenhum:
+  // `decisoes_online` só sobe pelo trigger do formulário público ou pelo campo
+  // "Online · chat e outros". Como todo KPI de conversão lê os AGREGADOS, a
+  // pessoa cadastrada aqui e não lançada lá fica invisível para o indicador —
+  // enquanto APARECE na jornada e na NSM (o trigger cria o convertido com área
+  // online). Medido: 9 pessoas nesse estado, em 5 cultos.
+  const avisoCobertura = useMemo(() => {
+    if (loading) return null; // sem a lista, "0 nomes" acusaria falta que não existe
+    return textoDivergencia(conferirCobertura({
+      declaradoPresencial: esperadoPresencial,
+      declaradoOnline: esperadoOnline,
+      nomesPresencial: pessoas.filter(p => p.tipo_decisao === 'presencial').length,
+      nomesOnline: pessoas.filter(p => p.tipo_decisao === 'online').length,
+    }));
+  }, [loading, pessoas, esperadoPresencial, esperadoOnline]);
   const completo       = totalEsperado > 0 && registradas >= totalEsperado;
 
   // Sempre mostra a secao (mesmo sem decisões preenchidas) pra ficar visível
@@ -1285,6 +1314,21 @@ function DecisoesPessoasSection({ cultoId, totalEsperado, totalKidsEsperado = 0,
         </div>
       )}
 
+      {/* ⚠️⚠️ Conferência POR TIPO · a soma dos tipos esconde falta: sobra de um
+          cancela falta do outro (caso real de 13/09 11:30 · gap total 7 contra gap
+          presencial 8). Nome online cadastrado NÃO soma no agregado que o KPI lê. */}
+      {avisoCobertura && (
+        <div style={{
+          background: '#F59E0B18', borderLeft: '3px solid #F59E0B',
+          padding: '8px 12px', borderRadius: 4, marginBottom: 10,
+          fontSize: 11, color: 'var(--cbrio-text)', display: 'flex', alignItems: 'flex-start', gap: 8,
+        }}>
+          <AlertTriangle size={14} style={{ color: '#F59E0B', flexShrink: 0, marginTop: 1 }} />
+          <div>
+            <strong>Conferindo nome × número:</strong> {avisoCobertura}
+          </div>
+        </div>
+      )}
       {/* Lista de pessoas já registradas */}
       {pessoas.length > 0 && (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4, marginBottom: 8 }}>
