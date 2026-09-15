@@ -7,9 +7,9 @@
 // é obrigatório + consentimento de imagem opcional + opt-in explícito (D4).
 // Validações de src/lib/inscricao (fonte única). Os textos exibidos vêm do
 // backend (GET /textos) — o snapshot gravado é sempre o canônico.
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { apresentacaoCriancasPublico } from '../../api';
-import { paisIguais } from '../../lib/apresentacaoPais';
+import { AVISO_PAIS_IGUAIS, exigeConfirmacaoPaisIguais } from '../../lib/apresentacaoPais';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
@@ -141,6 +141,13 @@ export default function ApresentacaoCriancas() {
   const [textos, setTextos] = useState<any>(TEXTOS_FALLBACK);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  // ⚠⚠ 15/09/2026 · mesmo nome em pai e mãe AVISA e deixa seguir (era bloqueio).
+  // O "já confirmei" vive num REF, não em estado: o botão de confirmar chama
+  // requestSubmit() na sequência, e o estado ainda não teria comitado — a
+  // validação leria o valor velho e o painel reabriria em loop.
+  const [confirmarPais, setConfirmarPais] = useState(false);
+  const paisOkRef = useRef(false);
+  const formRef = useRef<HTMLFormElement>(null);
   const [sent, setSent] = useState(false);
   const [avisoJaInscritas, setAvisoJaInscritas] = useState<string[]>([]);
 
@@ -166,6 +173,9 @@ export default function ApresentacaoCriancas() {
     let v = e.target.value;
     if (k === 'telefone') v = mascaraTelefone(v);
     if (k === 'cpf_responsavel') v = mascaraCpf(v);
+    // Mudou o nome de um dos dois? A confirmação anterior deixa de valer — senão
+    // trocar para OUTRO par igual passaria sem a pessoa ver o aviso de novo.
+    if (k === 'nome_pai' || k === 'nome_mae') { paisOkRef.current = false; setConfirmarPais(false); }
     setForm(f => ({ ...f, [k]: v }));
   };
 
@@ -178,9 +188,12 @@ export default function ApresentacaoCriancas() {
         return setError(temAbreviacaoNome(n) ? 'Escreva o nome do pai/mãe completo, sem abreviações.' : 'Escreva o nome do pai/mãe completo.');
       }
     }
-    // O mesmo nome nos dois campos dobra o nome no certificado (caso Isabella · 08/09).
-    if (paisIguais(form.nome_pai, form.nome_mae)) {
-      return setError('O nome do pai e o da mãe estão iguais. Se há só um responsável, preencha apenas o campo dele e deixe o outro em branco.');
+    // ⚠⚠ Mesmo nome nos dois campos: AVISA e deixa seguir (15/09/2026). Não é
+    // erro — mãe solo preenchendo os dois campos é 1 em cada 5 inscrições, e a
+    // saída antiga ("deixe um em branco") nunca foi usada por ninguém.
+    if (exigeConfirmacaoPaisIguais(form.nome_pai, form.nome_mae, paisOkRef.current)) {
+      setConfirmarPais(true);
+      return;
     }
     const criancasValidas = criancas
       .map(c => ({ nome: c.nome.trim().replace(/\s+/g, ' '), data_nascimento: c.nascimento, sexo: c.sexo }))
@@ -201,6 +214,8 @@ export default function ApresentacaoCriancas() {
       const r: any = await apresentacaoCriancasPublico.inscrever({
         nome_pai: form.nome_pai.trim() || null,
         nome_mae: form.nome_mae.trim() || null,
+        // A porta recusa o nome dobrado sem esta confirmação explícita.
+        pais_iguais_confirmado: paisOkRef.current === true,
         criancas: criancasValidas,
         telefone: form.telefone,
         cpf_responsavel: soDigitos(form.cpf_responsavel),
@@ -296,6 +311,40 @@ export default function ApresentacaoCriancas() {
           </div>
         ) : (
           <>
+            {/* ⚠⚠ Confirmação do nome dobrado · NUNCA window.confirm (padrão da
+                casa: diálogo nativo trava automação e não é o visual do sistema). */}
+            {confirmarPais && (
+              <div style={{
+                background: '#F59E0B18', border: '1px solid #F59E0B55', borderRadius: 10,
+                padding: '12px 14px', marginBottom: 20, fontSize: 13, color: 'var(--cbrio-text)',
+              }}>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>Confere o nome dos responsáveis</div>
+                <div style={{ opacity: 0.9 }}>{AVISO_PAIS_IGUAIS}</div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => { paisOkRef.current = true; setConfirmarPais(false); formRef.current?.requestSubmit(); }}
+                    style={{
+                      padding: '9px 14px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                      background: 'linear-gradient(90deg, #00B39D, #00d9bd)', color: '#fff', fontWeight: 700, fontSize: 13,
+                    }}
+                  >
+                    Sim, é a mesma pessoa — enviar
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmarPais(false)}
+                    style={{
+                      padding: '9px 14px', borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 600,
+                      background: 'transparent', color: 'var(--cbrio-text)', border: '1px solid var(--cbrio-border)',
+                    }}
+                  >
+                    Corrigir os nomes
+                  </button>
+                </div>
+              </div>
+            )}
+
             {error && (
               <div style={{
                 background: '#ef444418', border: '1px solid #ef444440', borderRadius: 10,
@@ -310,7 +359,7 @@ export default function ApresentacaoCriancas() {
                 value={form.website} onChange={set('website') as any} />
             </div>
 
-            <form onSubmit={handleSubmit}>
+            <form ref={formRef} onSubmit={handleSubmit}>
               <Row>
                 <Field id="nome_pai" label="Nome completo do pai" value={form.nome_pai} onChange={set('nome_pai')} autoComplete="name" />
                 <Field id="nome_mae" label="Nome completo da mãe" value={form.nome_mae} onChange={set('nome_mae')} autoComplete="name" />

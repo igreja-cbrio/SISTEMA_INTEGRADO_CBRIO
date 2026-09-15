@@ -31,7 +31,7 @@ const { normalizarSaude } = require('../utils/saudeCrianca');
 // `utils/apresentacaoHorario`; leitura em `services/apresentacaoHorarios` — as
 // MESMAS que o app usa. E a guarda do nome dobrado (pai = mãe).
 const { escolherHorarioPara } = require('../services/apresentacaoHorarios');
-const { paisIguais, rotuloHorarioApresentacao } = require('../utils/apresentacaoHorario');
+const { exigeConfirmacaoPaisIguais, rotuloHorarioApresentacao } = require('../utils/apresentacaoHorario');
 
 // Limiter GENEROSO do router (padrão grupos/NPS/eventos): Wi-Fi único da
 // igreja — 10/15min por IP dava 429 na 11ª família (sweep 28/07).
@@ -120,7 +120,7 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
     const {
       nome_pai, nome_mae, criancas, crianca_nome, crianca_idade, telefone,
       cpf_responsavel, email, endereco, observacoes,
-      aceita_termos_menor, consent_imagem, whatsapp_optin,
+      aceita_termos_menor, consent_imagem, whatsapp_optin, pais_iguais_confirmado,
     } = body;
 
     if (honeypotPreenchido(body)) return res.json({ ok: true }); // honeypot · ignora silenciosamente
@@ -158,11 +158,22 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
     for (const n of [nomePaiT, nomeMaeT]) {
       if (n && !nomeCompletoOk(n)) return res.status(400).json({ error: 'Escreva o nome completo do pai/mãe, sem abreviações.' });
     }
-    // ⚠️ O caso Isabella (08/09): a mãe escreveu o próprio nome nos DOIS campos e
-    // saiu "Aline Lazaro e Aline Lazaro" no certificado. Um responsável só?
-    // Preenche só o campo dele — o outro fica em branco.
-    if (paisIguais(nomePaiT, nomeMaeT)) {
-      return res.status(400).json({ error: 'O nome do pai e o da mãe estão iguais. Se há só um responsável, preencha apenas o campo dele e deixe o outro em branco.' });
+    // ⚠️⚠️ 15/09/2026 · o BLOQUEIO virou CONFIRMAÇÃO (pedido do Marcos). O caso
+    // Isabella (08/09) era real — a mãe escreveu o próprio nome nos DOIS campos —,
+    // mas a saída oferecida ("deixe um dos campos em branco") NUNCA foi usada:
+    // medido em 15/09, as 22 inscrições vivas têm os dois campos preenchidos e 4
+    // delas com o mesmo nome. O bloqueio era atrito; o dado dobrado já é tratado
+    // na LEITURA (nomesDosPaisUnicos · certificado e lista do Kids saem com o
+    // nome uma vez só desde 08/09).
+    //
+    // ⚠️ A guarda NÃO some: sem a confirmação explícita do cliente a porta segue
+    // recusando — o que ela impede é a duplicação ACIDENTAL, não a deliberada.
+    // === true, nunca truthy: o corpo vem de JSON e a string "false" é truthy.
+    if (exigeConfirmacaoPaisIguais(nomePaiT, nomeMaeT, pais_iguais_confirmado)) {
+      return res.status(400).json({
+        codigo: 'pais_iguais',
+        error: 'O nome do pai e o da mãe estão iguais. Confirme que é a mesma pessoa para seguir.',
+      });
     }
 
     const tel = String(telefone || '').replace(/\D+/g, '');

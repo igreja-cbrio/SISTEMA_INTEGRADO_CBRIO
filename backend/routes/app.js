@@ -6819,7 +6819,7 @@ const {
 // depois 11h30, catálogo `apresentacao_horarios` editável no Kids. Duas cópias
 // é como o app e o web passam a discordar do horário da família.
 const { escolherHorarioPara: _escolherHorarioApres } = require('../services/apresentacaoHorarios');
-const { paisIguais: _paisIguaisApres, rotuloHorarioApresentacao: _rotuloHorarioApres } = require('../utils/apresentacaoHorario');
+const { exigeConfirmacaoPaisIguais: _exigeConfPaisApres, rotuloHorarioApresentacao: _rotuloHorarioApres } = require('../utils/apresentacaoHorario');
 
 /**
  * Quem são os pais/mães de cada criança da lista (id → [ids dos responsáveis]).
@@ -6981,11 +6981,18 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
 
     const dataApres = _isoData(_proxSegDom());
 
-    // ⚠️ O caso Isabella (08/09): pai e mãe com o MESMO nome dobra o nome na
-    // lista do Kids e no certificado. Só no caminho de terceiro — no "é meu
-    // filho" os nomes são derivados do sexo e nunca colidem.
-    if (!p.propria && _paisIguaisApres(p.responsavel.nome_pai, p.responsavel.nome_mae)) {
-      return res.status(400).json({ error: 'O nome do pai e o da mãe estão iguais. Se há só um responsável, preencha apenas o campo dele.' });
+    // ⚠⚠ 15/09/2026 · o bloqueio virou CONFIRMAÇÃO, como na porta pública
+    // (publicApresentacao.js). O caso Isabella (08/09) é real, mas a saída
+    // "deixe um campo em branco" nunca foi usada — e a LEITURA já deduplica.
+    // Só no caminho de terceiro: no "é meu filho" os nomes vêm do sexo e nunca
+    // colidem.
+    //
+    // ⚠⚠ BUNDLE ANTIGO DO APP NÃO MANDA A FLAG e continua levando 400 — isso
+    // é o comportamento de hoje, não regressão. A tela do app precisa de OTA
+    // pra oferecer a confirmação (repo Aplicativo-CBRio).
+    if (!p.propria && _exigeConfPaisApres(p.responsavel.nome_pai, p.responsavel.nome_mae, p.pais_iguais_confirmado)
+       ) {
+      return res.status(400).json({ codigo: 'pais_iguais', error: 'O nome do pai e o da mãe estão iguais. Confirme que é a mesma pessoa para seguir.' });
     }
 
     // Horário do culto — atribuído pela régua (9h30 até o limite, depois 11h30).

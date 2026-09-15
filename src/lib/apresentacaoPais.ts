@@ -37,3 +37,29 @@ export function nomesDosPaisUnicos(nomePai: unknown, nomeMae: unknown): string[]
   }
   return out;
 }
+
+// ⚠️⚠️ 15/09/2026 · o bloqueio virou AVISO (pedido do Marcos). O caminho antigo
+// mandava "deixe um dos campos em branco" e PARAVA — medido em 15/09: das 22
+// inscrições vivas, **as 22 têm os dois campos preenchidos** e 4 (18%) com o
+// mesmo nome nos dois, ou seja ninguém deixa campo em branco: o bloqueio era
+// atrito, não conserto. Agora a pessoa confirma e a inscrição entra.
+//
+// ⚠️⚠️ O TEXTO DIZ A VERDADE: desde 08/09 o certificado (e a lista do Kids)
+// DEDUPLICAM via `nomesDosPaisUnicos`, então o nome sai UMA vez — não duas.
+// Prometer "vai aparecer duas vezes" seria avisar de um efeito que não existe
+// mais, e a pessoa corrigiria por um motivo falso.
+/**
+ * Precisa pedir a confirmação antes de enviar? Espelho de
+ * backend/utils/apresentacaoHorario.exigeConfirmacaoPaisIguais — divergir faz
+ * a tela aceitar o que a porta recusa (formulário insubmissível) ou o
+ * contrário. O teste roda a MESMA tabela de casos nos dois lados.
+ */
+export function exigeConfirmacaoPaisIguais(
+  nomePai: unknown, nomeMae: unknown, confirmado: unknown,
+): boolean {
+  return paisIguais(nomePai, nomeMae) && confirmado !== true;
+}
+
+export const AVISO_PAIS_IGUAIS =
+  'Você escreveu o mesmo nome no campo do pai e no da mãe. Se é a mesma pessoa, tudo bem — '
+  + 'mas o certificado vai sair com esse nome UMA vez só, e não com dois responsáveis. Confere?';

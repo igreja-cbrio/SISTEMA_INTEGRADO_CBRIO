@@ -11,7 +11,7 @@
 import { useState, useEffect, useMemo, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { hrefWhatsapp } from '@/lib/conversas';
-import { nomesDosPaisUnicos, paisIguais } from '@/lib/apresentacaoPais';
+import { AVISO_PAIS_IGUAIS, nomesDosPaisUnicos, paisIguais } from '@/lib/apresentacaoPais';
 import { totemKids as api } from '../../../api';
 import { Card } from '../../../components/ui/card';
 import { Input } from '../../../components/ui/input';
@@ -205,16 +205,21 @@ function FichaDialog({ id, horarios, onClose, onSaved }: { id: string | null; ho
 
   const paisMudaram = d && (pais.nome_pai !== (d.nome_pai || '') || pais.nome_mae !== (d.nome_mae || ''));
   const dobrado = paisIguais(d?.nome_pai, d?.nome_mae);
+  // ⚠⚠ 15/09/2026 · salvar pai == mãe deixou de ser BLOQUEIO e virou confirmação
+  // em dois cliques (a mesma decisão da porta pública): mãe solo preenchendo os
+  // dois campos é caso real, e a leitura já deduplica desde 08/09.
+  const [confirmarPais, setConfirmarPais] = useState(false);
   const salvarPais = async () => {
     if (!id) return;
-    if (paisIguais(pais.nome_pai, pais.nome_mae)) { toast.error('Pai e mãe estão com o mesmo nome. Deixe um dos campos em branco.'); return; }
     if (!pais.nome_pai.trim() && !pais.nome_mae.trim()) { toast.error('Informe ao menos um responsável.'); return; }
+    if (paisIguais(pais.nome_pai, pais.nome_mae) && !confirmarPais) { setConfirmarPais(true); return; }
     setSalvando(true);
     try {
       const r: any = await api.apresentacaoUpdate(id, { nome_pai: pais.nome_pai.trim() || null, nome_mae: pais.nome_mae.trim() || null });
       setD((x: any) => ({ ...x, nome_pai: r?.nome_pai ?? null, nome_mae: r?.nome_mae ?? null }));
       onSaved({ id, nome_pai: r?.nome_pai ?? null, nome_mae: r?.nome_mae ?? null });
       toast.success('Responsáveis atualizados');
+      setConfirmarPais(false);
     } catch (e: any) { toast.error(e?.message || 'Erro ao salvar'); }
     finally { setSalvando(false); }
   };
@@ -266,9 +271,14 @@ function FichaDialog({ id, horarios, onClose, onSaved }: { id: string | null; ho
                   <div><div className="text-[11px] text-muted-foreground mb-0.5">Nome do pai</div><Input value={pais.nome_pai} onChange={(e) => setPais(p => ({ ...p, nome_pai: e.target.value }))} className="h-8" placeholder="—" /></div>
                   <div><div className="text-[11px] text-muted-foreground mb-0.5">Nome da mãe</div><Input value={pais.nome_mae} onChange={(e) => setPais(p => ({ ...p, nome_mae: e.target.value }))} className="h-8" placeholder="—" /></div>
                 </div>
+                {confirmarPais && (
+                  <div className="mt-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-700">
+                    {AVISO_PAIS_IGUAIS} Clique de novo em <b>Salvar responsáveis</b> para confirmar.
+                  </div>
+                )}
                 {paisMudaram && (
                   <div className="flex justify-end mt-2">
-                    <Button size="sm" onClick={salvarPais} disabled={salvando}>{salvando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : 'Salvar responsáveis'}</Button>
+                    <Button size="sm" onClick={salvarPais} disabled={salvando}>{salvando ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : (confirmarPais ? 'Salvar mesmo assim' : 'Salvar responsáveis')}</Button>
                   </div>
                 )}
                 <div className="mt-2">

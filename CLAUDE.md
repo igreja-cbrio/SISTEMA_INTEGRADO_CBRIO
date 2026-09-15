@@ -861,6 +861,60 @@ necessárias:
   a MESMA tabela de casos nos dois — divergir faria a porta recusar o que a tela
   aceita.
 
+### ⚠️⚠️ 15/09/2026 · o BLOQUEIO do nome dobrado virou CONFIRMAÇÃO
+
+Pedido do Marcos: *"gostaria de colocar uma informação antes da pessoa enviar
+caso ela coloque o mesmo nome da mãe e do pai dizendo que isso vai afetar o
+certificado e deixa ela dar o ok."*
+
+⚠️⚠️ **A MEDIÇÃO QUE DECIDIU (15/09, base viva):** das **22 inscrições vivas**
+de `apresentacao_criancas` (100% origem `publico`), **as 22 têm pai E mãe
+preenchidos** e **4 (18%) com o MESMO nome**. Ou seja: a saída que o bloqueio de
+08/09 oferecia — *"deixe um dos campos em branco"* — **nunca foi usada por
+ninguém**. E as 4 dobradas são de 03/08, 10/08, 18/08 e 06/09, todas anteriores
+ao bloqueio: ele funcionou, e o que produziu daí pra frente foi **atrito**, não
+conserto — porque o dado dobrado **já sai deduplicado na leitura** desde 08/09.
+
+⇒ **`exigeConfirmacaoPaisIguais(pai, mae, confirmado)`** (régua PURA, espelhada
+em `utils/apresentacaoHorario.js` e `src/lib/apresentacaoPais.ts`), usada pelas
+**4** portas: formulário público, app (caminho de terceiro), totem
+("Apresentar bebê") e a ficha do Kids.
+
+⚠️⚠️ **O TEXTO DO AVISO DIZ A VERDADE, e ela é o contrário do que o pedido
+supunha.** O Marcos escreveu *"vai aparecer o nome dela duas vezes"* — **não
+vai**: `nomesDosPaisUnicos` deduplica no certificado E na lista do Kids desde
+08/09, então o nome sai **UMA vez**. Prometer a duplicação seria avisar de um
+efeito que não existe mais, e a pessoa corrigiria por um motivo falso. O texto
+canônico é `AVISO_PAIS_IGUAIS`, em UM lugar só.
+
+- ⚠️⚠️ **A guarda NÃO sumiu**: sem `confirmado === true` a porta segue recusando
+  (**400 `codigo: 'pais_iguais'`**). O que ela impede é a duplicação
+  **ACIDENTAL**, não a deliberada.
+- ⚠️⚠️ **`=== true`, nunca truthy**: o corpo vem de JSON, e `"false"`, `1` ou
+  `{}` transformariam a confirmação em enfeite. Mutante rodado.
+- ⚠️ **O "já confirmei" do front vive num REF, não em estado**: o botão de
+  confirmar chama `requestSubmit()`/`handleSubmit()` na sequência, e o estado
+  ainda não teria comitado — a validação leria o valor velho e **o painel
+  reabriria em loop**.
+- ⚠️ **Editar um dos nomes RESETA a confirmação**: sem isso, trocar para outro
+  par igual passaria sem a pessoa ver o aviso de novo.
+- ⚠️ **Nunca `window.confirm`** (padrão da casa): painel inline, com
+  "Sim, é a mesma pessoa" e "Corrigir os nomes". Na ficha do Kids, onde quem
+  edita é a equipe, é **confirmação em dois cliques** (o botão vira "Salvar
+  mesmo assim").
+- ⚠️⚠️ **O APP continua levando 400** — o bundle publicado não manda a flag, e
+  isso é o comportamento de hoje, **não regressão**. A tela dele precisa de OTA
+  (repo `Aplicativo-CBRio`).
+- ⚠️ **O totem nunca teve guarda nenhuma** (passava calado · `apresentacao_bebes`
+  tem **0 linhas**): o que entrou ali é o AVISO, não um bloqueio novo.
+
+**3 mutantes RODADOS e mortos**: backend aceitando truthy → 2 vermelhos · guarda
+removida → 3 · front divergindo do backend → 1.
+⚠️⚠️ **E o 3º "sobreviveu" na 1ª rodada porque NÃO FOI APLICADO** — o arquivo é
+CRLF e o `\n` do meu `replace` não casava. É a lição já registrada em 15/09 e em
+25/08: **confirmar que o mutante entrou** (o script agora conta as ocorrências e
+aborta em zero) antes de concluir qualquer coisa sobre o teste.
+
 ⚠️ **Não medido em produção**: a sonda ao banco foi bloqueada nesta máquina
 (classificador recusou a leitura do `.env`), então a linha da Isabella e quantas
 mais estão dobradas **não foram contadas**. A leitura deduplica todas; corrigir o
