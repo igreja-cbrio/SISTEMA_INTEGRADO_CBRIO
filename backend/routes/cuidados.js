@@ -1265,11 +1265,19 @@ router.patch('/convertidos/:id', authorizeModule('cuidados', 3), async (req, res
     // varredura 2026-09: A01 — `update(req.body)` cru aceitava QUALQUER coluna, inclusive
     // `deleted_at` (apagar por fora da RPC `app_soft_delete` e da whitelist dela) e `id`.
     // Whitelist explicita: so os campos que a tela de Cuidados edita de fato.
+    // 2026-09-15: a lista de 09/09 foi escrita de cabeça e deixou `primeiro_contato_status`
+    // de fora — justo o campo que a coluna "Status do 1º contato" dos Próximos passos grava.
+    // Efeito medido: as 13 marcações entre 09/09 e 14/09 carimbaram `primeiro_contato_em` e
+    // perderam o status; e quando a pessoa JÁ tinha carimbo o patch sobrava vazio e voltava
+    // 400 "Nenhum campo editavel" (o erro que o Marcelo viu). `data_culto` e `cadastrado`
+    // caíram no mesmo buraco — o modal de edição mostra os dois.
+    // Conferido contra o schema vivo de cui_convertidos: `email`, `status`, `encontro_em`,
+    // `encontro_responsavel`, `desfecho` e `desfecho_observacao` NÃO são colunas da tabela
+    // (encontro e desfecho têm rota própria) — saíram da lista pra ela não mentir.
     const CAMPOS_EDITAVEIS = [
-      'nome', 'telefone', 'email', 'observacoes', 'tags', 'area', 'status',
+      'nome', 'telefone', 'observacoes', 'tags', 'area', 'data_culto', 'cadastrado',
       'membro_id', 'responsavel_atendimento', 'atendido_apos_culto',
-      'encontro_em', 'encontro_responsavel', 'primeiro_contato_em',
-      'desfecho', 'desfecho_em', 'desfecho_observacao',
+      'primeiro_contato_em', 'primeiro_contato_status',
     ];
     const patch = {};
     for (const c of CAMPOS_EDITAVEIS) if (Object.prototype.hasOwnProperty.call(req.body || {}, c)) patch[c] = req.body[c];
