@@ -42,6 +42,28 @@ const DIA = 86400000;
 // Status que carimbam contato feito e cuja data segue a regra "dia seguinte".
 const STATUS_ALVO = new Set(['atendido_respondido', 'nao_respondeu', 'nao_atendido', 'respondeu', 'nao_compareceu']);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 2026-09-15 · a 4ª categoria: CARIMBO SEM STATUS (o rastro do bug do #2875)
+//
+// Entre 09/09 e 15/09 a whitelist do `PATCH /cuidados/convertidos/:id` estava
+// sem `primeiro_contato_status` (PR #2875): ao marcar a coluna, o servidor
+// gravava `primeiro_contato_em` e DESCARTAVA o status, em silêncio. Quem já
+// tinha o carimbo levava 400 e remarcava dias depois — e o carimbo ficou com a
+// data do CLIQUE que funcionou, não a do contato.
+//
+// ⚠️⚠️ "Carimbo preenchido com status NULO" é ASSINATURA DO BUG, não estado
+// normal: o único caminho que carimba a data é escolher um status de contato
+// feito, e LIMPAR o status manda `primeiro_contato_em: null` junto (a data iria
+// embora com ele). Fora desta janela, o par (data sim, status não) não nasce.
+//
+// A régua aplicada é a MESMA das outras três — a equipe manda a mensagem no dia
+// seguinte ao culto —, então o carimbo passa a dizer o fato em vez de dizer o
+// dia em que o clique finalmente funcionou.
+//
+// ⚠️ O STATUS NÃO É RESTAURADO, e não dá pra restaurar: não existe registro de
+// qual opção foi escolhida em cada linha. Quem remarca é o Marcelo, pela tela.
+const INICIO_DO_BUG = '2026-09-09T00:00:00Z';
+
 // data_culto (DATE) + 1 dia, ao meio-dia BRT — meia-noite UTC é 21h do dia
 // anterior no Rio, e meio-dia evita qualquer deslize de dia nos dois fusos.
 function diaSeguinteBRT(dataCulto) {
@@ -70,18 +92,37 @@ function fimDoDiaSeguinteBRT(dataCulto) {
 
   const corrigir = [];   // em > culto+1d
   const backfill = [];   // status feito · em nulo
+  const semStatus = [];  // 2026-09-15 · carimbo do bug do #2875 (data sim, status não)
   const anomalias = [];  // em antes do culto
   for (const c of linhas) {
-    if (!c.data_culto || !STATUS_ALVO.has(c.primeiro_contato_status)) continue;
+    if (!c.data_culto) continue;
     const novo = diaSeguinteBRT(c.data_culto);
+    const antesDoCulto = c.primeiro_contato_em
+      && new Date(c.primeiro_contato_em).getTime() < new Date(c.data_culto + 'T00:00:00-03:00').getTime();
+
+    // 4ª categoria: sem status, com carimbo dentro da janela do bug.
+    if (!c.primeiro_contato_status) {
+      if (!c.primeiro_contato_em) continue;               // nunca contatada — não é deste reparo
+      if (c.primeiro_contato_em < INICIO_DO_BUG) continue; // fora da janela: não é rastro do bug
+      if (antesDoCulto) { anomalias.push(c); continue; }
+      if (new Date(c.primeiro_contato_em).getTime() > fimDoDiaSeguinteBRT(c.data_culto)) {
+        semStatus.push({ ...c, novo });
+      }
+      continue;
+    }
+
+    if (!STATUS_ALVO.has(c.primeiro_contato_status)) continue;
     if (!c.primeiro_contato_em) { backfill.push({ ...c, novo }); continue; }
-    const em = new Date(c.primeiro_contato_em).getTime();
-    if (em < new Date(c.data_culto + 'T00:00:00-03:00').getTime()) { anomalias.push(c); continue; }
-    if (em > fimDoDiaSeguinteBRT(c.data_culto)) corrigir.push({ ...c, novo });
+    if (antesDoCulto) { anomalias.push(c); continue; }
+    if (new Date(c.primeiro_contato_em).getTime() > fimDoDiaSeguinteBRT(c.data_culto)) corrigir.push({ ...c, novo });
   }
 
-  console.log(`vivos: ${linhas.length} · corrigir (em > culto+1d): ${corrigir.length} · backfill (status sem data): ${backfill.length} · anomalias (em antes do culto · intocadas): ${anomalias.length}`);
-  const alvo = [...corrigir, ...backfill];
+  console.log(`vivos: ${linhas.length} · corrigir (em > culto+1d): ${corrigir.length} · backfill (status sem data): ${backfill.length} · sem status (rastro do #2875): ${semStatus.length} · anomalias (em antes do culto · intocadas): ${anomalias.length}`);
+  if (semStatus.length) {
+    console.log('\n⚠️ As linhas "sem status" ficam SEM status depois deste reparo — ele corrige a DATA.');
+    console.log('   Quem remarca a opção (Contactada / Atendida / …) é a equipe, pela tela.');
+  }
+  const alvo = [...corrigir, ...backfill, ...semStatus];
   if (!alvo.length) { console.log('Nada a fazer.'); return; }
 
   if (!EXEC) {
