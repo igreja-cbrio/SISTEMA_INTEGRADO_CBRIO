@@ -10,14 +10,14 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { supabase } = require('../utils/supabase');
 
-// Mesma régua do cuidados.js: contato feito = status real OU primeiro_contato_em.
-// ('numero_errado' conta como contato feito — a mensagem foi enviada, o número é
-// que estava errado · Marcos 2026-07-01.) O helper contatoFoiFeito FALTAVA —
-// o cron /cron/enfileirar quebrava com "contatoFoiFeito is not defined" todo
-// dia desde 04/07: o agente nunca enfileirou nada em produção.
-// ⚠️ Espelho da régua de routes/cuidados.js (com 'contactada' desde 2026-09-01).
-const CONTATO_FEITO_STATUS = new Set(['contactada', 'respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
-const contatoFoiFeito = (c) => !!c.primeiro_contato_em || CONTATO_FEITO_STATUS.has(c.primeiro_contato_status);
+// ⚠️⚠️ AQUI a pergunta é OUTRA: não é "a mensagem chegou?", é "esta pessoa
+// ainda precisa entrar na fila?". Para quem tem número errado as respostas são
+// opostas — a mensagem não chegou, e insistir não adianta. Era por isso que
+// esta cópia incluía `numero_errado` e a do front não. Régua única desde 16/09:
+// `precisaDeContato` responde a pergunta da FILA; `contatoFoiFeito`, a do
+// indicador. (O helper chegou a FALTAR aqui: o cron /cron/enfileirar quebrava
+// com "contatoFoiFeito is not defined" todo dia desde 04/07.)
+const { precisaDeContato } = require('../utils/primeiroContatoRegua');
 const AGENTE_VERSAO = 'primeiro-contato-v1';
 const DIA = 86400000;
 
@@ -86,7 +86,7 @@ async function enfileirarPrimeiroContato() {
     .gte('data_culto', desde);
 
   const candidatos = (convs || []).filter((c) => {
-    if (contatoFoiFeito(c)) return false;
+    if (!precisaDeContato(c)) return false;
     const dias = Math.floor((Date.now() - new Date(c.data_culto + 'T12:00:00').getTime()) / DIA);
     return dias >= 1; // dá 1 dia antes de cobrar
   });

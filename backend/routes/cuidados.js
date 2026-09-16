@@ -22,16 +22,12 @@ router.use(authenticate);
 // "contactada" (Marcelo · 2026-09-01) = mensagem enviada, aguardando resposta — é o
 // estado real do dia seguinte ao culto; conta como contato feito.
 // ⚠️ ESPELHOS: painel.js · nextConvite.js · agentePrimeiroContato.js · Cuidados.tsx.
-const CONTATO_FEITO_STATUS = new Set(['contactada', 'respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
-// ⚠️⚠️ `contato_impossivel` (16/09) NÃO entra no Set acima: nenhuma mensagem
-// saiu, porque não há para onde mandar — é converso do online de quem só
-// temos o id do YouTube. Marcar como feito inflaria o indicador de contato
-// com contato que não aconteceu (medido em 16/09: 6 linhas assim estavam em
-// `contactada`, que conta como feito).
-// Quem a equipe não tinha como alcançar, e por isso sai do DENOMINADOR do
-// percentual de atendimento:
-const INALCANCAVEL = new Set(['numero_errado', 'contato_impossivel']);
-const contatoFoiFeito = (c) => !!c.primeiro_contato_em || CONTATO_FEITO_STATUS.has(c.primeiro_contato_status);
+// ⚠️⚠️ A régua saiu daqui pra `utils/primeiroContatoRegua.js` em 16/09: as 4
+// cópias do backend DIVERGIAM sobre `numero_errado` (3 contavam como contato
+// feito, 1 não), porque um Set só respondia duas perguntas diferentes — ver o
+// cabeçalho de lá.
+const { contatoFoiFeito, ehInalcancavel, pctAlcancavel } = require('../utils/primeiroContatoRegua');
+
 
 // Mensagem automática de WhatsApp · pedido de aconselhamento pastoral
 // (config/edição em /whatsapp-auto/* · gerencia a chave 'cuidados_aconselhamento')
@@ -298,16 +294,17 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
       // já saía; `contato_impossivel` (16/09) entra na mesma família — nos dois
       // a equipe não tinha como alcançar a pessoa, e cobrar disso é cobrar o
       // que não está na mão dela.
-      if (INALCANCAVEL.has(c.primeiro_contato_status)) o.inalcancavel++;
+      if (ehInalcancavel(c)) o.inalcancavel++;
       respMap.set(r, o);
     }
     const statusDist = Object.keys(PP_STATUS_LABEL).map(k => ({ status: k, label: PP_STATUS_LABEL[k], n: ppCount[k] }));
-    // contato_pct = feitos ÷ todos; atendido_pct exclui do DENOMINADOR quem a
-    // equipe não tinha como alcançar (número errado · contato impossível).
+    // ⚠️⚠️ OS DOIS percentuais saem sobre o total ALCANÇÁVEL (decisão do Marcos,
+    // 16/09): quem não dava pra contatar sai do total, em vez de ser somado ao
+    // numerador como "resolvido". Somar E tirar do denominador daria acima de 100%.
     const porResponsavel = [...respMap.values()].map(o => ({
       ...o,
-      contato_pct: o.total ? Math.round(o.contato / o.total * 100) : 0,
-      atendido_pct: (o.total - o.inalcancavel) > 0 ? Math.round(o.atendido / (o.total - o.inalcancavel) * 100) : 0,
+      contato_pct: pctAlcancavel(o.contato, o.total, o.inalcancavel) ?? 0,
+      atendido_pct: pctAlcancavel(o.atendido, o.total, o.inalcancavel) ?? 0,
     })).sort((a, b) => b.total - a.total);
 
     // Cards de cobertura (toda a janela) · "com dados" = telefone preenchido (dá pra contatar)
@@ -2122,8 +2119,14 @@ router.get('/jornada-convertidos', authorizeModule('jornada-convertidos', 1), as
       if (c.primeiro_contato_em) {
         const d = Math.floor((new Date(c.primeiro_contato_em).getTime() - new Date(c.data_culto + 'T12:00:00').getTime()) / DIA);
         contato = { feito: true, status: d <= 3 ? 'feito_no_prazo' : 'feito_atrasado', dias: d };
-      } else if (CONTATO_FEITO_STATUS.has(c.primeiro_contato_status)) {
+      } else if (contatoFoiFeito(c)) {
         contato = { feito: true, status: 'feito', dias: ddesde };
+      } else if (ehInalcancavel(c)) {
+        // ⚠️⚠️ TERCEIRO estado, nem feito nem atrasado. Antes `numero_errado`
+        // entrava no ramo de cima e aparecia como FEITO; tirando-o de lá sem
+        // isto aqui, ele cairia no `else` e a jornada passaria a cobrar contato
+        // de quem não tem como ser contatado — trocar uma mentira por outra.
+        contato = { feito: false, status: 'inalcancavel', dias: ddesde };
       } else {
         contato = { feito: false, status: ddesde > 3 ? 'atrasado' : (ddesde >= 2 ? 'vencendo' : 'no_prazo'), dias: ddesde };
       }

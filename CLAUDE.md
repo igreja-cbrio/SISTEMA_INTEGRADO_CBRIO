@@ -17941,13 +17941,49 @@ Set de contato feito deixa o portão vermelho).
 `routes/painel.js`, `routes/nextConvite.js`, `services/agentePrimeiroContato.js`)
 — a lib unifica o que é do NAVEGADOR, não o sistema inteiro.
 
-### ⏳ ACHADO NÃO CONSERTADO · os espelhos discordam sobre `numero_errado`
+### ⚠️⚠️ A RÉGUA VIROU ÚNICA · e a divergência tinha uma CAUSA, não descuido
 
-⚠️⚠️ O front **não** conta `numero_errado` como contato feito; `routes/cuidados.js`
-e `routes/painel.js` **contam**. Medido em 16/09 sobre as 461 linhas vivas:
-**98% pela régua do front × 100% pela do backend**, por causa de 7 linhas.
-**Não mexi**: alinhar move um número que o Juninho acompanha, e isso é decisão
-dele, não efeito colateral de um PR de dropdown.
+Decisão do Marcos ao ler o achado: *"o contato impossível deve ser a mesma coisa
+de número errado, não altera o % de contato feito, pois essas pessoas não são
+possíveis de contatar, elas devem sair do número total, pois são pessoas que não
+erramos o processo, elas simplesmente não podem ser alcançadas."*
+
+Isso obrigou a alinhar os espelhos — e aí apareceu **por que** eles divergiam.
+`numero_errado` estava em 3 das 4 cópias do backend e fora da do front, e nenhum
+dos lados estava errado:
+
+| pergunta | quem usa | `numero_errado` |
+|---|---|---|
+| **A mensagem chegou na pessoa?** | indicador · jornada · percentual | **não** |
+| **Ainda preciso contatar essa pessoa?** | FILA do agente | **não** (não adianta insistir) |
+
+⚠️⚠️ **Um Set só não conseguia dizer as duas coisas.** Quem usava pra fila
+precisava de `numero_errado` DENTRO; quem usava pro indicador precisava dele
+FORA. Com um nome só, cada arquivo escolheu um lado — e o mesmo dado saía **98%
+no front e 100% no backend**.
+
+⇒ **`backend/utils/primeiroContatoRegua.js`** tem os dois conceitos com nomes que
+dizem qual pergunta respondem: `contatoFoiFeito` (indicador) e `precisaDeContato`
+(fila), mais `INALCANCAVEL` e `pctAlcancavel`. As 4 cópias
+(`routes/cuidados.js`, `routes/painel.js`, `routes/nextConvite.js`,
+`services/agentePrimeiroContato.js`) importam dela. O front espelha em
+`src/lib/primeiroContato.ts`.
+
+⚠️⚠️ **O percentual sai sobre o TOTAL ALCANÇÁVEL.** Antes o front somava
+`numero_errado` ao NUMERADOR e mantinha no denominador ("contato resolvido");
+agora sai dos dois. **Somar ao numerador E tirar do denominador daria acima de
+100%** — tem teste pra isso.
+
+⚠️⚠️ **TERCEIRO ESTADO no semáforo da jornada: `inalcancavel`.** Tirando
+`numero_errado` do ramo "feito" sem isto, ele cairia no `else` e a jornada
+passaria a cobrar contato de quem não tem como ser contatado — trocaria uma
+mentira por outra. Rótulo "Sem contato possível", cinza: não é conquista nem
+cobrança.
+
+⚠️ `next_pos_contato` (painel) é *"dos que RECEBERAM o 1º contato, quantos foram
+a um encontro"*: quem nunca foi alcançado sai do numerador **e** do denominador.
+O número muda — é correção, não efeito colateral.
+
 
 ## ⚠️ Próximos passos · status "Contactada" + coluna Culto (2026-09-01 · migration `20260901130000`)
 

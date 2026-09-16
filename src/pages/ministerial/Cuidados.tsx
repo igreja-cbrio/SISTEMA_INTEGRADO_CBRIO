@@ -38,7 +38,7 @@ import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
 import { opcoesAno, ehAno, anoDe } from '../../lib/janelaPeriodo';
 import {
-  PCONTATO_OPCOES, PCONTATO_LABEL, PCONTATO_COR, PCONTATO_FEITO,
+  PCONTATO_OPCOES, PCONTATO_LABEL, PCONTATO_COR, PCONTATO_FEITO, PCONTATO_INALCANCAVEL,
 } from '../../lib/primeiroContato';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ef476f' };
@@ -552,6 +552,9 @@ const JORNADA_ST: Record<string, { label: string; color: string }> = {
   no_prazo:       { label: 'No prazo',     color: '#94a3b8' },
   vencendo:       { label: 'Vencendo',     color: '#f59e0b' },
   atrasado:       { label: 'Atrasado',     color: '#ef4444' },
+  // ⚠️ Nem feito nem atrasado: a equipe não tinha como alcançar. Cinza de
+  // propósito — não é conquista nem cobrança.
+  inalcancavel:   { label: 'Sem contato possível', color: '#94a3b8' },
 };
 function JornadaPill({ label, m }: { label: string; m: any }) {
   const st = JORNADA_ST[m?.status] || JORNADA_ST.no_prazo;
@@ -2119,7 +2122,8 @@ export default function Cuidados() {
     const cur: any = convertidos.find((x: any) => x.id === id);
     const patch: any = { primeiro_contato_status: v };
     if (v === 'atendido_respondido') patch.atendido_apos_culto = true;
-    if (v === 'numero_errado') patch.atendido_apos_culto = false; // número errado nunca é "atendido"
+    // ⚠️ Inalcançável nunca é "atendido após o culto" — não houve atendimento.
+    if (v && PCONTATO_INALCANCAVEL.has(v)) patch.atendido_apos_culto = false;
     if (v && CONTATO_FEITO.has(v)) {
       if (!cur?.primeiro_contato_em) patch.primeiro_contato_em = new Date().toISOString();
     } else {
@@ -2248,12 +2252,17 @@ export default function Cuidados() {
     const corte = convertPeriodoCorte;
     const jById = new Map<string, any>((jornadaData?.itens || []).map((i: any) => [i.id, i]));
     const periodo = convertidos.filter((c: any) => !corte || (c.data_culto || '') >= corte);
-    const contataveis = periodo.filter((c: any) => c.primeiro_contato_status !== 'numero_errado');
-    const numErrado = periodo.length - contataveis.length;
-    const total = contataveis.length;        // denominador de atendido/batismo/next (exclui número errado)
-    const totalContato = periodo.length;      // denominador de "contato feito" (inclui número errado)
+    // ⚠️⚠️ DECISÃO DO MARCOS (16/09): quem não dava pra contatar SAI DO TOTAL, em
+    // vez de ser somado ao numerador como "resolvido". *"São pessoas que não
+    // erramos o processo, elas simplesmente não podem ser alcançadas."*
+    // Antes, `numero_errado` entrava nos dois lados da conta (numerador + total);
+    // agora sai dos dois, junto com `contato_impossivel`.
+    const contataveis = periodo.filter((c: any) => !PCONTATO_INALCANCAVEL.has(c.primeiro_contato_status));
+    const numErrado = periodo.length - contataveis.length;   // inalcançáveis (nº errado + contato impossível)
+    const total = contataveis.length;        // denominador de atendido/batismo/next
+    const totalContato = contataveis.length;  // denominador de "contato feito" — o MESMO
     const feitosOk = contataveis.filter((c: any) => CONTATO_FEITO.has(c.primeiro_contato_status) || c.primeiro_contato_em).length;
-    const feitos = feitosOk + numErrado;      // número errado conta como contato resolvido
+    const feitos = feitosOk;
     const pendentes = periodo.filter((c: any) => !c.primeiro_contato_status && !c.primeiro_contato_em).length; // só "—"
     const atendidos = periodo.filter((c: any) => c.primeiro_contato_status === 'atendido_respondido').length;
     const batismos = contataveis.filter((c: any) => jById.get(c.id)?.batismo?.feito).length;

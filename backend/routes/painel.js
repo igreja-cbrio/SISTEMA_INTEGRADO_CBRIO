@@ -46,6 +46,8 @@ async function fetchAllPaginado(table, buildQuery) {
 // ============================================================================
 // Cache compartilhado via service · permite outros routes invalidarem
 const painelCache = require('../services/painelCache');
+// Régua única do 1º contato (16/09) — ver utils/primeiroContatoRegua.
+const { contatoFoiFeito } = require('../utils/primeiroContatoRegua');
 const cacheGet = painelCache.get;
 const cacheSet = painelCache.set;
 const cacheBust = painelCache.bust;
@@ -2222,12 +2224,14 @@ router.get('/monitoramento-okr', async (req, res) => {
       const kNome = (v) => String(v || '').trim().toLowerCase() || null;
       const kTel = (v) => { const d = dig(v); return d.length >= 10 ? d.slice(-8) : null; };
       const kPri = (v) => kNome(v)?.split(' ')[0] || null;
-      // ⚠️ Espelho da régua de routes/cuidados.js (com 'contactada' desde 2026-09-01).
-      const CONTATO_FEITO = new Set(['contactada', 'respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
-
+      // ⚠️⚠️ Régua ÚNICA desde 16/09 (`utils/primeiroContatoRegua`). Esta cópia
+      // incluía `numero_errado` em "contato feito" e a do front não — 100% × 98%
+      // sobre o mesmo dado. `next_pos_contato` é "dos que RECEBERAM o 1º contato,
+      // quantos foram a um encontro": quem nunca foi alcançado não pertence a
+      // esse conjunto, nem no numerador nem no denominador.
       const convs = await fetchPaged('cui_convertidos', 'membro_id, cpf, nome, telefone, primeiro_contato_em, primeiro_contato_status',
         (q) => q.is('deleted_at', null));
-      const comContato = convs.filter((c) => !!c.primeiro_contato_em || CONTATO_FEITO.has(c.primeiro_contato_status));
+      const comContato = convs.filter(contatoFoiFeito);
 
       if (comContato.length) {
         const pM = new Set(), pC = new Set(), pN = new Set(), pT = new Set();
