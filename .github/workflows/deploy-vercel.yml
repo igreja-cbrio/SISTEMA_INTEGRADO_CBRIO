@@ -115,6 +115,14 @@ jobs:
       - name: Fluxo de porta (dever da igreja, prazo BRT, fechamento)
         run: npm run test:fluxo-porta
 
+      # ENDERECO DO GRUPO no formulario publico (16/09): rua e NUMERO aparecem,
+      # apartamento/bloco NUNCA. A lei 2 e de seguranca — o grupo e na casa de
+      # alguem, e a rua mais a altura da via bastam pra pessoa decidir. O teste
+      # tambem guarda que nenhuma rota publica devolve o grupo cru (o deep-link
+      # ?grupo=<id> mandava o `complemento` do cadastro junto).
+      - name: Endereco do grupo no formulario publico (sem complemento)
+        run: npm run test:endereco-grupo
+
       # Trava de 24/08: a politica 'ligar' do contrato de porta nao consolidava
       # CPF nem acumulava contato — 18 CPFs e 14 telefones presos na linha da
       # inscricao no Celebra 2026, com o cadastro ao lado sem CPF.

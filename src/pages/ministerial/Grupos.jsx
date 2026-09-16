@@ -2599,7 +2599,19 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
             </div>
             <div>
               <Label>Endereço</Label>
-              <Input value={form.endereco || ''} onChange={e => set('endereco', e.target.value)} placeholder="Rua, número" />
+              <Input value={form.endereco || ''} onChange={e => set('endereco', e.target.value)} placeholder="Rua e número" />
+              {/* Este campo APARECE no formulário público de inscrição (Natasha ·
+                  16/09). O número pode ser aproximado — o prédio ao lado serve;
+                  apartamento e bloco vão no Complemento e nunca são exibidos. */}
+              <p style={{ fontSize: 11, color: C.t3, marginTop: 4, lineHeight: 1.45 }}>
+                Aparece no formulário público. Ponha um número (pode ser bem próximo do real) —
+                é ele que diz em que altura da rua o grupo fica. Apartamento e bloco vão no Complemento.
+              </p>
+              {(form.endereco || '').trim() && !/\d/.test(form.endereco) && (
+                <p style={{ fontSize: 11, color: '#b45309', marginTop: 4, lineHeight: 1.45 }}>
+                  Sem número: quem procura o grupo vai ver só a rua inteira.
+                </p>
+              )}
             </div>
           </div>
 

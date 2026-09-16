@@ -64,6 +64,9 @@ export interface MapGroup {
   codigo?: string | null;
   temporada?: string | null;
   complemento?: string | null;
+  /** Rua + número já limpos pelo servidor (sem apartamento/bloco · Natasha
+   *  16/09). Só as leituras PÚBLICAS mandam; no admin costuma vir undefined. */
+  endereco_publico?: string | null;
   descricao?: string | null;
   /** Só EXIBIÇÃO: pino deslocado porque vários grupos compartilham a mesma
    *  coordenada (centróide de bairro). Ver espalharPinosSobrepostos. */
@@ -690,6 +693,9 @@ function GrupoInfo({
           </span>
         )}
       </div>
+      {g.endereco_publico && (
+        <p className="text-xs text-muted-foreground">{g.endereco_publico}</p>
+      )}
       {g.local && (
         <p className="text-xs text-muted-foreground">
           {g.local}{g.complemento ? ` — ${g.complemento}` : ''}
@@ -713,7 +719,7 @@ function GrupoInfo({
       {(g.lat != null && g.lng != null) && (
         <AbrirRotaMenu
           lat={g.lat} lng={g.lng}
-          endereco={[g.local, g.bairro, "Rio de Janeiro"].filter(Boolean).join(", ")}
+          endereco={[g.endereco_publico || g.local, g.bairro, "Rio de Janeiro"].filter(Boolean).join(", ")}
           className="inline-flex items-center gap-1 mt-1 text-xs font-medium text-[#00B39D] hover:underline"
         >
           <NavIcon className="h-3 w-3" /> Como chegar
