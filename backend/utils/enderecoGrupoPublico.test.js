@@ -4,7 +4,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const { enderecoPublicoGrupo, temNumeroDeRua } = require('./enderecoGrupoPublico');
+const { enderecoPublicoGrupo, temNumeroDeRua, ondePublicoGrupo } = require('./enderecoGrupoPublico');
 
 // ── O que a Natasha pediu: o NÚMERO chega na tela ───────────────────────────
 // Sem ele, "Barra da Tijuca" cobre 20 km de Av. das Américas.
@@ -75,5 +75,24 @@ assert.ok(/semDadosDePorta/.test(trechoPublico), 'as leituras públicas precisam
 for (const m of trechoPublico.matchAll(/res\.json\(\s*\{\s*\n\s*\.\.\.grupo\b/g)) {
   assert.fail('rota pública devolvendo o grupo cru (leva complemento/endereco exato)');
 }
+
+// ── ondePublicoGrupo · o "onde" de quem AINDA NÃO foi aceito (sugestão) ────
+// ⚠️ O risco guardado aqui: a página de sugestão usava o `formatarOnde` do
+// WhatsApp, que junta o `complemento` — e quem a lê é um candidato realocado,
+// que o líder ainda não aceitou.
+{
+  const g = { local: 'Condomínio Le Parc', endereco: 'Av. das Américas, 9707, bloco 2 apto 304', complemento: 'APT 304', bairro: 'Barra da Tijuca' };
+  const onde = ondePublicoGrupo(g);
+  assert(!/apto|apt|bloco|304/i.test(onde), 'onde público não pode levar apartamento/bloco: ' + onde);
+  assert(onde.includes('9707'), 'o número da rua tem que ficar: ' + onde);
+  assert(onde.includes('Condomínio Le Parc') && onde.includes('Barra da Tijuca'), 'local e bairro ficam: ' + onde);
+}
+// local == bairro não vira "Barra — Barra"
+assert.strictEqual(ondePublicoGrupo({ local: 'Barra da Tijuca', endereco: null, bairro: 'Barra da Tijuca' }), 'Barra da Tijuca');
+// grupo sem nada continua dizendo algo, nunca "null — null"
+assert.strictEqual(ondePublicoGrupo({}), 'a combinar');
+assert.strictEqual(ondePublicoGrupo(null), 'a combinar');
+// "(endereço não informado)" não vaza pro texto
+assert.strictEqual(ondePublicoGrupo({ endereco: '(endereço não informado)', bairro: 'Recreio' }), 'Recreio');
 
 console.log('enderecoGrupoPublico: OK');
