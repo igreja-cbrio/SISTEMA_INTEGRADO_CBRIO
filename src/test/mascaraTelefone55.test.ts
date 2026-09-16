@@ -62,7 +62,10 @@ describe('⚠️⚠️ guarda estática · NENHUMA máscara pode truncar antes',
     'src/pages/ministerial/Next.tsx',
     'src/pages/ministerial/VisualizacaoDecisoes.tsx',
     'src/pages/ministerial/voluntariado/VolProfileComplete.tsx',
-    'src/pages/ministerial/voluntariado/components/checkin/ContactCaptureDialog.tsx',
+    // Em 16/09/2026 virou CompletarCadastroDialog e passou a IMPORTAR a máscara
+    // de `@/lib/inscricao` em vez de ter cópia local — o arquivo segue na lista
+    // porque a guarda tem que pegar uma cópia local que volte a nascer aqui.
+    'src/pages/ministerial/voluntariado/components/checkin/CompletarCadastroDialog.tsx',
     'src/pages/public/CadastroMembresia.jsx',
     'src/pages/public/Doar.tsx',
     'src/pages/public/GrupoFrequenciaMes.jsx',

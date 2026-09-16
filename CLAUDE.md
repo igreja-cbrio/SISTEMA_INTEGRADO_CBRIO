@@ -19278,3 +19278,79 @@ opt-in → 1 · a régua voltando a importar de `services/` → 2.
    confirmei** — fica como suspeita medida por um conselheiro, não como fato.
 4. `fatiarPeriodo` continua fatiando por dia com o comentário corrigido; mudar o
    comportamento depende do item 1.
+
+
+## ⚠️⚠️ COMPLETAR CADASTRO NO CHECK-IN · o dado do voluntário não mora onde o modal escrevia (2026-09-16 · SEM migration)
+
+O pedido: *"muitos voluntários se inscreveram, fizeram check-in, entraram no
+sistema sem termos resolvido isso [o CPF e os dados de entrada base] ... criar um
+modal apenas com os campos que nao temos dele ... Deixe sempre a opção de nao
+preencher, caso a pessoa esteja com pressa, mas na proxima vez vai aparecer
+novamente."*
+
+### A medição (janela 16/03/2026–16/09/2026)
+
+516 voluntários distintos com check-in. **220 (42,6%) têm ao menos 1 dos 6
+campos do Contrato de Inscrição faltando.** Por campo: sexo 207 · nascimento 158
+· CPF 156 · telefone 137 · e-mail 22 · **nome 0**. Note o desenho da cauda: 296
+pessoas completas, 49 com 1 campo só, e **102 com exatamente 4** — a assinatura
+de quem entrou pela porta antiga, que só pedia nome.
+
+### ⚠️⚠️ A LEI: "falta" é a UNIÃO de `vol_profiles` + `mem_membros`
+
+`vol_profiles` é **casca**; `mem_membros` é a fonte. Medido no mesmo dia: dos 516
+voluntários, **4 tinham telefone no `vol_profiles`** e **379 tinham no membro
+vinculado**. O controle olhando só a tabela do voluntariado acusa **513
+incompletos** em vez de 220 — ou seja, olhar só ali faria o modal pedir de novo,
+a cada culto, o telefone que a igreja já tem. `data_nascimento` e `genero` nem
+existem no `vol_profiles`.
+
+Isso é o que o `ContactCaptureDialog` (removido aqui) fazia de errado: pedia
+sempre os mesmos 3 campos e **gravava só no `vol_profiles`**, de onde ninguém lê.
+
+A régua virou `backend/utils/volCadastroCheckin.js` — pura, sem import de
+supabase, portanto testável (`npm run test:vol-cadastro-checkin`, no gate de
+deploy). `faltandoNoCadastro(perfil, membro)` aplica a união; sem membresia,
+`data_nascimento` e `sexo` faltam sempre (não têm onde morar).
+
+### ⚠️ 99,9% dos check-ins são `method:'manual'`, feitos por 2 pessoas
+
+Ariel (2.396) e Jessica (285). **Não é o totem nem o self-service** que vê esse
+modal na prática — é a `VolCheckin.tsx` do operador. Por isso o caminho do
+domingo de manhã (`POST /check-ins/manha`) também devolve `missing_fields`: sem
+isso o modal ficaria mudo justamente no dia mais movimentado. As 3 superfícies
+foram ligadas (`VolCheckin`, `VolSelfCheckin`, `VolTotem`).
+
+### As 5 armadilhas que o endpoint evita
+
+`PUT /profiles/:id/contact` (que virou o completar-cadastro) escreve em ordem:
+
+1. **Não cria gente duplicada** — `acharOuCriarGuardado` só é chamado se houver
+   chave forte (CPF/e-mail/telefone). Quem responde só "sexo" não gera membro
+   novo só com nome.
+2. **CPF tardio antes do nascimento** — `reconciliarCpfTardio` roda ANTES de
+   gravar a data, senão a checagem cruzada de nascimento seria circular.
+   Conflito vira `identidade_pendencias`, nunca update cru.
+3. **Só-onde-vazio** no `mem_membros` — a porta preenche buraco, não sobrescreve
+   o que humano digitou.
+4. **Pular não grava nada** — payload vazio devolve `{success:true, pulou:true}`
+   com 200. Não existe dismissal persistido: é assim que o modal volta na
+   próxima vez, como o Marcos pediu.
+5. **Dono ou nível ≥1** — a rota era exceção self-service sem trava; ganhou
+   guarda de posse (`auth_user_id === req.user.userId`) OU
+   `getEffectiveLevel(req,'voluntariado') >= 1`, porque agora o operador também
+   preenche pelo outro.
+
+### ⚠️ Gotchas
+
+- **Totem**: o modal **segura** o auto-reset de 4s (`abrirCompletarCadastro`);
+  fechar agenda `resetAfter(1200)`. E só aparece depois que o diálogo dos cultos
+  da manhã fecha — dois modais empilhados escondem um ao outro.
+- **`needs_cpf` foi mantido** no lado de `missing_fields`: este repo já foi
+  mordido por bundle antigo em cache, e o campo velho é o que o JS congelado
+  ainda lê.
+- **Offline do totem não abre modal** — check-in enfileirado não tem resposta do
+  servidor pra saber o que falta.
+- A máscara de telefone do diálogo importa `tirarCodigoPais` de `@/lib/inscricao`
+  e normaliza **de novo** no envio: autofill pode escapar do `onChange`, e o que
+  o servidor recebe é o que persiste (lei de 31/07).

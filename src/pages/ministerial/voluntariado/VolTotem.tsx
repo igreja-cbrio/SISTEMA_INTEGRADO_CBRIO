@@ -18,6 +18,7 @@ import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
 import { useHomeScreenMeta } from '@/hooks/useHomeScreenMeta';
 import type { VolSchedule } from './types';
+import CompletarCadastroDialog, { CampoBase } from './components/checkin/CompletarCadastroDialog';
 import {
   saveTodayServices, getTodayServices, saveProfiles, getProfiles,
   saveServiceSchedules, getServiceSchedules,
@@ -103,6 +104,7 @@ export default function VolTotem() {
     staleTime: 60 * 60 * 1000,
   });
   const [manhaDialog, setManhaDialog] = useState<{ volunteerId?: string; name: string; method: string; afterReset: () => void } | null>(null);
+  const [completarCadastro, setCompletarCadastro] = useState<{ id: string; name: string; falta: CampoBase[]; afterReset: () => void } | null>(null);
   const [selCultos, setSelCultos] = useState<Set<string>>(new Set());
   const [salvandoManha, setSalvandoManha] = useState(false);
 
@@ -292,6 +294,30 @@ export default function VolTotem() {
     }, ms);
   };
 
+  // ── Completar cadastro · o modal dos campos que faltam ──
+  //
+  // ⚠️⚠️ ELE SEGURA O AUTO-RESET. O totem volta pro idle sozinho em 4s; abrir um
+  // formulário por cima disso faria a tela se apagar embaixo de quem está
+  // digitando. Por isso quem abre o modal NÃO chama `autoReset` — o reset só
+  // acontece quando o modal fecha (salvou ou "Agora não"), e `processingRef`
+  // fica travado até lá, o que também barra o próximo scan enquanto a pessoa
+  // ainda está no balcão.
+  //
+  // Retorna true se abriu (o chamador deve pular o autoReset dele).
+  const abrirCompletarCadastro = (resp: any, nome: string, afterReset: () => void) => {
+    const falta: CampoBase[] = resp?.missing_fields || [];
+    if (!falta.length || !resp?.volunteer_id) return false;
+    setCompletarCadastro({ id: resp.volunteer_id, name: resp.volunteer_name || nome, falta, afterReset });
+    return true;
+  };
+
+  const fecharCompletarCadastro = () => {
+    const after = completarCadastro?.afterReset;
+    setCompletarCadastro(null);
+    // Reset curto: tem fila no balcão, ninguém precisa reler a tela de sucesso.
+    resetAfter(1200, after || (() => {}));
+  };
+
   const handleCheckinError = (err: any, afterReset: () => void) => {
     const msg = err.message || 'Erro no check-in';
     const isDuplicate = err.alreadyCheckedIn || err.status === 409
@@ -332,11 +358,14 @@ export default function VolTotem() {
     if (!navigator.onLine) { queueIt(); return; }
 
     try {
-      await voluntariado.checkIns.create(payload as any);
+      const resp: any = await voluntariado.checkIns.create(payload as any);
       refreshLocalDone();
       setResult(display);
       setState('success');
-      autoReset(afterReset);
+      // Completar cadastro · só no caminho ONLINE: o check-in enfileirado
+      // offline não tem resposta do servidor, e é o servidor que sabe o que
+      // falta (`missing_fields` = vol_profiles + mem_membros).
+      if (!abrirCompletarCadastro(resp, display.name, afterReset)) autoReset(afterReset);
       runSync(); // aproveita pra esvaziar backlog de uma queda anterior
     } catch (err: any) {
       if (isDuplicateError(err)) {
@@ -651,12 +680,12 @@ export default function VolTotem() {
     const after = manhaDialog.afterReset;
     setSalvandoManha(true);
     try {
-      await voluntariado.checkIns.manha({ volunteer_id: manhaDialog.volunteerId, service_date: serviceDate, service_type_ids: ids, method: manhaDialog.method });
+      const r: any = await voluntariado.checkIns.manha({ volunteer_id: manhaDialog.volunteerId, service_date: serviceDate, service_type_ids: ids, method: manhaDialog.method });
       setResult({ name: manhaDialog.name });
       setState('success');
       setManhaDialog(null);
       refreshLocalDone();
-      autoReset(after);
+      if (!abrirCompletarCadastro(r, manhaDialog.name, after)) autoReset(after);
     } catch (err: any) {
       setErrorMsg(err?.message || 'Erro no check-in');
       setState('error');
@@ -1232,6 +1261,18 @@ export default function VolTotem() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Completar cadastro · segura o auto-reset enquanto estiver aberto
+          (ver abrirCompletarCadastro). Só aparece depois que o diálogo dos
+          cultos da manhã fecha — dois modais empilhados escondem um ao outro. */}
+      {completarCadastro && !manhaDialog && (
+        <CompletarCadastroDialog
+          volunteerId={completarCadastro.id}
+          volunteerName={completarCadastro.name}
+          missingFields={completarCadastro.falta}
+          onDone={fecharCompletarCadastro}
+        />
+      )}
     </div>
   );
 }

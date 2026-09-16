@@ -30,6 +30,10 @@ const { filtrarVigentes } = require('../utils/vigenciaTipoCulto');
 const { proximoCursor } = require('../utils/cursorLote');
 const { chavePco } = require('../utils/pcoChave');
 const { diaIntegracaoBRT } = require('../utils/volIntegradoEm');
+// Régua ÚNICA do "completar cadastro no check-in": o que falta é a UNIÃO de
+// vol_profiles + mem_membros (o dado mora no membro), e o que o modal manda é
+// sempre PARCIAL — pular é lei.
+const { faltandoNoCadastro, validarParcialCadastro } = require('../utils/volCadastroCheckin');
 const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
 const { responderEscala } = require('../services/escalaResposta');
 const antecedentes = require('../services/antecedentesCriminais');
@@ -2746,9 +2750,14 @@ router.post('/check-ins', async (req, res) => {
         .update({ confirmation_status: 'confirmed' }).eq('id', resolvedScheduleId).eq('confirmation_status', 'pending');
     }
 
-    // Sinaliza ao operador se o voluntário ainda não tem CPF cadastrado, pra
-    // oferecer a captura logo após o check-in (frente 2 da unificacao).
+    // Sinaliza ao operador QUAIS dados base ainda faltam desta pessoa, pra
+    // oferecer o "completar cadastro" logo após o check-in (16/09/2026 · a
+    // evolução da captura de CPF de antes: eram 220 dos 516 voluntários com
+    // check-in no semestre com pelo menos 1 campo faltando, e o buraco maior
+    // não era CPF (156) e sim SEXO (207) e NASCIMENTO (158), que nem existem
+    // no `vol_profiles`). Régua única em utils/volCadastroCheckin.
     let needsCpf = false;
+    let faltando = [];
     let volProfileName = null;
     // resolvedVolunteerId já resolvido acima (inclui o volunteer_id da escala
     // casada por dia/bloco). Fallback final pela escala explícita do cliente.
@@ -2758,10 +2767,14 @@ router.post('/check-ins', async (req, res) => {
       resolvedVolunteerId = sch?.volunteer_id || null;
     }
     if (resolvedVolunteerId) {
-      const { data: vp } = await supabase.from('vol_profiles')
-        .select('cpf, full_name').eq('id', resolvedVolunteerId).maybeSingle();
-      needsCpf = !!vp && !vp.cpf;
-      volProfileName = vp?.full_name || null;
+      const r = await faltaDoVoluntario(resolvedVolunteerId);
+      faltando = r.faltando;
+      // ⚠️ `needs_cpf` fica: o bundle ANTIGO em cache no tablet do check-in só
+      // conhece essa chave, e este repo já foi mordido por chunk velho em
+      // produção (o guard anti-cliente-desatualizado logo acima nasceu disso).
+      // Cliente velho segue pedindo o CPF; cliente novo lê `missing_fields`.
+      needsCpf = faltando.includes('cpf');
+      volProfileName = r.nome;
     }
 
     // Sinaliza pra coordenação quando o totem cadastra um voluntário NOVO na
@@ -2777,7 +2790,14 @@ router.post('/check-ins', async (req, res) => {
       }).catch((e) => console.warn('[checkin novo notify]', e.message));
     }
 
-    res.json({ ...data, isUnscheduled: !!resolvedUnscheduled, volunteer_id: resolvedVolunteerId, needs_cpf: needsCpf });
+    res.json({
+      ...data,
+      isUnscheduled: !!resolvedUnscheduled,
+      volunteer_id: resolvedVolunteerId,
+      volunteer_name: volProfileName || nomeDigitado || null,
+      needs_cpf: needsCpf,
+      missing_fields: faltando,
+    });
   } catch (e) { res.status(500).json({ error: 'Erro ao registrar check-in' }); }
 });
 
@@ -2912,6 +2932,30 @@ router.get('/cultos-manha', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar cultos da manhã' }); }
 });
 
+// Quais dados base ainda faltam desta pessoa — a leitura que alimenta o modal
+// "Completar cadastro" do check-in. Fica aqui (e não dentro de uma rota) porque
+// os DOIS caminhos de check-in precisam responder a mesma coisa: o normal e o
+// dos cultos da manhã. Domingo de manhã é justamente quando mais gente passa
+// pelo balcão — deixar o `/manha` de fora silenciaria o modal no dia de maior
+// movimento, que foi o que motivou o pedido.
+//
+// ⚠️ Lê as DUAS tabelas: `vol_profiles` é casca (16/09: 4 dos 516 voluntários
+// com telefone lá, contra 379 no membro vinculado). Ver utils/volCadastroCheckin.
+async function faltaDoVoluntario(volunteerId) {
+  if (!volunteerId) return { faltando: [], nome: null };
+  const { data: vp } = await supabase.from('vol_profiles')
+    .select('full_name, cpf, phone, email, membresia_id').eq('id', volunteerId).maybeSingle();
+  if (!vp) return { faltando: [], nome: null };
+  let membro = null;
+  if (vp.membresia_id) {
+    const { data: m } = await supabase.from('mem_membros')
+      .select('nome, cpf, telefone, email, data_nascimento, genero')
+      .eq('id', vp.membresia_id).maybeSingle();
+    membro = m || null;
+  }
+  return { faltando: faltandoNoCadastro(vp, membro), nome: vp.full_name || membro?.nome || null };
+}
+
 // POST /check-ins/manha — marca presença do voluntário em VÁRIOS cultos da manhã
 // de uma vez (o operador/voluntário escolhe os horários no checkbox). Cria o
 // vol_services sob demanda e 1 check-in por culto marcado, casando a escala do
@@ -2962,55 +3006,203 @@ router.post('/check-ins/manha', async (req, res) => {
       });
       if (!error) criados++;
     }
-    res.json({ ok: true, criados, ja_tinha: jaTinha, cultos: svcIds.length });
+    // Mesma sinalização do check-in normal: o modal de completar cadastro tem
+    // que aparecer também no domingo de manhã (ver faltaDoVoluntario acima).
+    const falta = await faltaDoVoluntario(resolvedVolunteerId);
+    res.json({
+      ok: true, criados, ja_tinha: jaTinha, cultos: svcIds.length,
+      volunteer_id: resolvedVolunteerId,
+      volunteer_name: falta.nome,
+      missing_fields: falta.faltando,
+    });
   } catch (e) {
     console.error('[vol checkin manha]', e.message);
     res.status(500).json({ error: e.message || 'Erro no check-in da manhã' });
   }
 });
 
-// Atualiza dados de contato de UM vol_profile (operador do check-in preenche
-// o CPF/telefone/email do voluntário que acabou de chegar). Update parcial:
-// so grava o que vier, nunca apaga valor existente. O trigger BEFORE UPDATE
-// OF cpf vincula ao mem_membros automaticamente.
+// ══════════════════════════════════════════════════════════════
+// COMPLETAR O CADASTRO NO CHECK-IN · os 6 campos base do Contrato
+// (nome · telefone · CPF · nascimento · e-mail · sexo)          16/09/2026
+//
+// Era "capturar contato" (só CPF/telefone/e-mail no `vol_profiles`) e virou o
+// completar-cadastro do modal do check-in. Duas coisas mudaram de fundo:
+//
+//  1. ESCREVE NA MEMBRESIA, não na casca. Medido em 16/09: dos 516 voluntários
+//     com check-in no semestre, o `vol_profiles` tinha telefone de 4 e CPF de
+//     16 — o `mem_membros` vinculado tinha 379 e 357. Gravar só no perfil é
+//     pedir o dado e jogá-lo onde o resto do sistema não lê. E nascimento/sexo
+//     (os 2 campos que MAIS faltam: 158 e 207) não têm nem coluna aqui.
+//  2. ENTRA PELA PORTA CANÔNICA. Perfil sem `membresia_id` (101 dos 516) passa
+//     por `acharOuCriarGuardado` — CPF → e-mail+nome → telefone+nome →
+//     nascimento+nome → cria. Nada de INSERT cru: é o mesmo funil das outras
+//     portas, com observação de identidade e fila de duplicidade.
+//
+// ⚠️ Update PARCIAL e NUNCA destrutivo: o modal só pergunta o que falta, "Agora
+// não" é lei (a pessoa está chegando pro culto) e corpo vazio devolve 200, não
+// 400 — pular não pode parecer erro. Em `mem_membros` vale só-onde-vazio, a
+// mesma política do censo e de utils/dadosDoCadastro: cadastro que já tem valor
+// não é sobrescrito por esta porta.
+//
+// ⚠️ Rota SEM o gate `voluntariado>=3` de propósito (é self-service · ver a LEI
+// no topo do arquivo), mas com guarda de POSSE: dono do perfil ou quem opera o
+// voluntariado. Antes, qualquer conta com `membresia>=1` podia reescrever o
+// contato de QUALQUER voluntário; agora que a rota também move nome, CPF e
+// nascimento no cadastro de membro, "qualquer um" deixou de ser aceitável.
+// ══════════════════════════════════════════════════════════════
 router.put('/profiles/:id/contact', async (req, res) => {
   try {
     const { id } = req.params;
-    const { cpf, phone, email } = req.body || {};
 
-    const { data: prof, error: fetchErr } = await supabase.from('vol_profiles')
-      .select('id, cpf, phone, email').eq('id', id).maybeSingle();
+    const { data: perfil, error: fetchErr } = await supabase.from('vol_profiles')
+      .select('id, auth_user_id, full_name, cpf, phone, email, membresia_id').eq('id', id).maybeSingle();
     if (fetchErr) return res.status(400).json({ error: fetchErr.message });
-    if (!prof) return res.status(404).json({ error: 'Voluntário não encontrado' });
+    if (!perfil) return res.status(404).json({ error: 'Voluntário não encontrado' });
 
-    const update = {};
-
-    if (cpf != null && String(cpf).trim() !== '') {
-      const cleanCpf = String(cpf).replace(/\D/g, '');
-      if (cleanCpf.length !== 11 || !cpfValido(cleanCpf)) return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
-      update.cpf = cleanCpf;
-    }
-    if (phone != null && String(phone).trim() !== '') {
-      update.phone = String(phone).replace(/\D/g, '');
-    }
-    if (email != null && String(email).trim() !== '') {
-      const e = String(email).toLowerCase().trim();
-      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) return res.status(400).json({ error: 'Email invalido' });
-      update.email = e;
+    const ehDono = !!perfil.auth_user_id && perfil.auth_user_id === req.user.userId;
+    const operaVoluntariado = (getEffectiveLevel(req, 'voluntariado') || 0) >= 1;
+    if (!ehDono && !operaVoluntariado) {
+      return res.status(403).json({ error: 'Sem permissão para completar o cadastro deste voluntário' });
     }
 
-    if (!Object.keys(update).length) {
-      return res.status(400).json({ error: 'Nada para atualizar' });
+    const { erros, valores } = validarParcialCadastro(req.body);
+    if (Object.keys(erros).length) {
+      return res.status(400).json({ error: Object.values(erros)[0], erros });
+    }
+    // "Agora não" / campos em branco: não é erro, é a saída prevista. O modal
+    // volta a aparecer no próximo check-in porque nada foi gravado.
+    if (!Object.keys(valores).length) {
+      return res.json({ success: true, pulou: true, gravou: [], profile: perfil });
     }
 
-    const { data: updated, error } = await supabase.from('vol_profiles')
-      .update(update).eq('id', id).select('id, full_name, cpf, phone, email, membresia_id').single();
-    if (error) return res.status(400).json({ error: error.message });
+    const semValor = (v) => v === null || v === undefined || String(v).trim() === '';
 
-    res.json({ success: true, profile: updated });
+    // ── 1) Vínculo com a membresia (fonte única) ──────────────────────────
+    // ⚠️ Só chama o matcher com CHAVE FORTE (CPF/e-mail/telefone, do que foi
+    // digitado agora ou do que o perfil já tinha). Quem só respondeu "sexo"
+    // não pode fazer nascer um cadastro de pessoa com nome e mais nada — isso
+    // é fábrica de duplicata, e o modal é justamente pra quem tem dado faltando.
+    let membresiaId = perfil.membresia_id || null;
+    if (!membresiaId) {
+      const cpfChave = valores.cpf || perfil.cpf || null;
+      const emailChave = valores.email || perfil.email || null;
+      const telChave = valores.telefone || perfil.phone || null;
+      if (cpfChave || emailChave || telChave) {
+        try {
+          const r = await acharOuCriarGuardado({
+            cpf: cpfChave, email: emailChave, telefone: telChave,
+            nome: valores.nome || perfil.full_name || null,
+            dataNascimento: valores.dataNascimento || null,
+            genero: valores.genero || null,
+            status: 'visitante', origem: 'voluntariado_checkin',
+          });
+          membresiaId = r?.membro_id || null;
+        } catch (e) {
+          // Vínculo é o ideal, não o mínimo: sem ele ainda dá pra guardar o que
+          // o `vol_profiles` comporta. Falhar aqui não pode perder o que a
+          // pessoa acabou de digitar na fila do culto.
+          console.error('[vol completar cadastro] matcher:', e.message);
+        }
+      }
+    }
+
+    // ── 2) CPF no membro: reconciliação tardia, NUNCA update cru ──────────
+    // ⚠️ Roda ANTES de gravar o nascimento, de propósito. É o nascimento que o
+    // membro JÁ tinha que serve de contraprova do vínculo; se a gente escrever
+    // primeiro o que a pessoa acabou de digitar, o gate passa a conferir o dado
+    // consigo mesmo e deixa de valer. Confiança 'fraca' = o mesmo que a ficha
+    // do voluntário usa: vínculo de voluntário pode ter nascido de sinal fraco,
+    // e carimbar CPF no membro errado cria identidade permanente na pessoa
+    // errada (conflito vira pendência humana, nunca auto-fusão).
+    let cpfNoMembro = null;
+    if (membresiaId && valores.cpf) {
+      try {
+        cpfNoMembro = await reconciliarCpfTardio({
+          membroId: membresiaId, cpf: valores.cpf,
+          origem: 'vol_checkin', origemId: perfil.id,
+          dataNascimento: valores.dataNascimento || null,
+          confianca: 'fraca',
+        });
+      } catch (e) {
+        console.error('[vol completar cadastro] cpf tardio:', e.message);
+      }
+    }
+
+    // ── 3) Demais campos no membro · SÓ ONDE VAZIO ────────────────────────
+    if (membresiaId) {
+      const { data: membro } = await supabase.from('mem_membros')
+        .select('id, nome, telefone, email, data_nascimento, genero').eq('id', membresiaId).maybeSingle();
+      if (membro) {
+        const candidatos = {
+          nome: valores.nome,
+          telefone: valores.telefone,
+          email: valores.email,
+          data_nascimento: valores.dataNascimento,
+          genero: valores.genero,
+        };
+        const patchMembro = {};
+        for (const [coluna, valor] of Object.entries(candidatos)) {
+          if (valor && semValor(membro[coluna])) patchMembro[coluna] = valor;
+        }
+        if (Object.keys(patchMembro).length) {
+          patchMembro.updated_at = new Date().toISOString();
+          const { error: mErr } = await supabase.from('mem_membros').update(patchMembro).eq('id', membresiaId);
+          if (mErr) {
+            const dup = /duplicate|unique|23505/i.test(mErr.message || '');
+            return res.status(dup ? 409 : 400).json({
+              error: dup ? 'Esse e-mail já pertence a outra pessoa na membresia.' : mErr.message,
+            });
+          }
+          enqueueSync('membro', membresiaId, 'upsert').catch(() => {});
+        }
+      }
+    }
+
+    // ── 4) O que o vol_profiles guarda ────────────────────────────────────
+    const patchPerfil = {};
+    if (valores.nome) patchPerfil.full_name = valores.nome;
+    if (valores.cpf) patchPerfil.cpf = valores.cpf;
+    if (valores.telefone) patchPerfil.phone = valores.telefone;
+    if (valores.email) patchPerfil.email = valores.email;
+    if (membresiaId && membresiaId !== perfil.membresia_id) patchPerfil.membresia_id = membresiaId;
+
+    let atualizado = perfil;
+    if (Object.keys(patchPerfil).length) {
+      const { data: upd, error } = await supabase.from('vol_profiles')
+        .update(patchPerfil).eq('id', id)
+        .select('id, full_name, cpf, phone, email, membresia_id').single();
+      if (error) {
+        const dup = /duplicate|unique|23505/i.test(error.message || '');
+        return res.status(dup ? 409 : 400).json({
+          error: dup ? 'Esse CPF ou e-mail já pertence a outro voluntário.' : error.message,
+        });
+      }
+      atualizado = upd;
+      enqueueSync('voluntario', id, 'upsert').catch(() => {});
+    }
+
+    // ── 5) Devolve o que AINDA falta ──────────────────────────────────────
+    // O cliente não recalcula: a régua é do servidor, e um campo pode ter sido
+    // recusado lá em cima (CPF em conflito vira pendência, não gravação).
+    let membroFinal = null;
+    if (atualizado.membresia_id) {
+      const { data: m } = await supabase.from('mem_membros')
+        .select('nome, cpf, telefone, email, data_nascimento, genero')
+        .eq('id', atualizado.membresia_id).maybeSingle();
+      membroFinal = m || null;
+    }
+
+    res.json({
+      success: true,
+      profile: atualizado,
+      gravou: Object.keys(valores),
+      membresia_vinculada: !!atualizado.membresia_id,
+      cpf_acao: cpfNoMembro?.acao || null,
+      missing_fields: faltandoNoCadastro(atualizado, membroFinal),
+    });
   } catch (e) {
-    console.error('[Vol] update contact error:', e.message);
-    res.status(500).json({ error: 'Erro ao atualizar contato' });
+    console.error('[Vol] completar cadastro no check-in:', e.message);
+    res.status(500).json({ error: 'Erro ao completar o cadastro' });
   }
 });
 
