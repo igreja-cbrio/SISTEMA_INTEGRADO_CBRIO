@@ -172,6 +172,14 @@ jobs:
       - name: Censo · material do relatório (só agregado, com motivo e controle)
         run: npm run test:censo-relatorio
 
+      # FILA DE TRABALHO do cadastro de grupos (16/09). O risco guardado aqui
+      # nao e deixar de acusar — e ACUSAR FALTA QUE NAO EXISTE: uma lista que
+      # manda abrir um grupo onde nao ha nada errado para de ser lida, e a
+      # falta real passa junto. Guarda tambem que o bundle novo contra backend
+      # antigo (derivados `undefined`) nunca inventa pendencia.
+      - name: Grupos · o que falta no cadastro (fila por campo)
+        run: npm run test:grupo-cadastro
+
       - name: Install Vercel CLI
         run: npm install -g vercel@latest
 

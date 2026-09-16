@@ -5250,6 +5250,66 @@ sem número** e mostram só a via — `RUA CRUZ DE MALTA`, `Rua Claudionor Jorda
 PENÍNSULA`, `Rua João Geraldo Kuhlman`, `Av. Jornalista Tim Lopes`. Os 33
 restantes sem endereço são online ou `(endereço não informado)`.
 
+## ⚠️ Grupos · a FILA do cadastro incompleto, por campo (2026-09-16 · SEM migration)
+
+Fecha a pendência de GENTE aberta pela seção acima. O chip **"Cadastro
+incompleto"** da aba Grupos existia desde julho, mas só dizia **quantos**
+(`78 incompletos`) e, na linha, **"faltam 2 dados"** — pra saber o quê era
+preciso abrir o grupo. Com 78 grupos na fila, fechar o cadastro custava 78
+aberturas, e ninguém fazia.
+
+Medido em 16/09 sobre os **110 grupos ativos**: **78 incompletos (70,9%)** —
+**74 sem Rede** · 14 sem Faixa etária · **13 sem Número no endereço** · 6 sem
+idades da faixa · 4 sem Endereço · **4 com o líder APAGADO** · 3 sem Categoria ·
+3 sem Bairro · 1 sem Líder · 1 sem Dia · 1 sem Horário.
+
+**O que mudou na tela** (`/grupos` → aba Grupos):
+- **Recorte por campo**: com o chip ligado, abre a régua `Falta: Rede (74) ·
+  Faixa etária (14) · Número no endereço (13) …`, do maior lote pro menor.
+  Clicar filtra a lista só naquele campo — a fila vira **tarefa**, não pilha.
+- **O selo da linha NOMEIA**: `Rede · Bairro` (até 2) ou `Rede · +3`, com a
+  lista inteira no `title`. Não é mais preciso abrir pra descobrir o quê.
+- O checklist da ficha do grupo é a **mesma função**, com os mesmos campos.
+
+⚠️⚠️ **Duas pendências que a régua antiga NÃO enxergava** (e por isso o número
+subiu): (1) **`endereco` preenchido com `(endereço não informado)`** passava
+como cadastro completo; (2) **líder APAGADO** (`mem_membros.deleted_at`) lia-se
+como *"falta o telefone do líder"* — e é a pendência **mais grave da lista**,
+porque o WhatsApp do grupo vai pro `lider_id` (lei de 31/07 · um destinatário
+só), ou seja, pra um cadastro morto. Agora o servidor manda `lider_apagado` e a
+falta se chama **"Líder (cadastro apagado)"**, que manda TROCAR o líder em vez
+de preencher um telefone.
+
+⚠️ **O endereço usa a régua ÚNICA do formulário público**
+(`backend/utils/enderecoGrupoPublico.js`): a rota interna manda o endereço CRU
+(a equipe precisa dele pra editar) **mais os derivados** `eh_online`,
+`endereco_publico` e `endereco_tem_numero` — o front não reimplementa a régua.
+Os derivados vão nas DUAS rotas (`GET /grupos` e `GET /grupos/:id`); se só a
+lista os tivesse, a lista cobraria o número e a ficha diria que está tudo certo.
+
+⚠️⚠️ **A lei desta tela**: o risco não é deixar de acusar, é **acusar falta que
+não existe**. Quem abre 5 grupos e não acha nada errado para de abrir o sexto, e
+a falta real passa junto. Por isso todo derivado novo é **fail-open**: derivado
+`undefined` (bundle novo contra backend antigo) cai no comportamento de sempre —
+só `=== null` / `=== false` explícito, que só o servidor novo produz, vira
+pendência. Grupo **online** não deve endereço nem número; grupo **diário** não
+deve dia da semana.
+
+Régua em `src/lib/grupoCadastro.js` (fora da tela porque é ela que monta a fila
+de trabalho da coordenação) · gate **`npm run test:grupo-cadastro`** (16 casos)
+no CI antes do deploy.
+
+⏳ **Pendente de GENTE**: os **13 sem número** (lista na seção acima + `CURSO
+CASAIS ALPHA`, `Espiritualidade Saudável`, `GRUPO - APRENDENDO COM A DOCE
+MARISA`, `Casais com filhos pequenos` (diz só "Barra"), `ROTEIRO DA MENSAGEM -
+QUINZENAL`) e os **4 com líder apagado**: `Jornada Bíblica 1` e `2` apontam pra
+**GELSON CAMPELO** (apagado em 12/08) e `JOVENS - ESTUDO DA MENSAGEM` +
+`JOVENS - GRUPO DE VÔLEI AMI` apontam pra **ELIEL FRANÇA PRAXEDES DE LUNA**
+(apagado no mesmo minuto). Os dois têm cadastro VIVO com o mesmo telefone
+(`Gelson Campelp` 25fcd61e · `Eliel França Praxedes de Luna` 507f2da9) — é
+**fusão que não repontou o `lider_id`** (a lição de que soft-delete não limpa
+ponteiro). Repontar é reparo de DADO: **só com o ok do Marcos**.
+
 ## Grupos · TODOS os líderes no cartão e no deep-link da inscrição pública (2026-08-20 · SEM migration)
 
 Pedido da Natasha (via Marcos), com o exemplo do grupo da Ana Paula Silva
