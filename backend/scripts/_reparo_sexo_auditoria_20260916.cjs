@@ -71,6 +71,16 @@ const RENOMEACOES = [
     evidencia: 'ela mesma respondeu o censo em 14/09 com este nome e o MESMO cpf' },
 ];
 
+// ── Cadastros de TESTE (decisão do Marcos · 16/09: "remova os dois testes") ──
+// ⚠️⚠️ Exclusão por nome exige DOIS SINAIS (lei de 17/08, quando "Teste" como
+// SOBRENOME quase levou gente real junto): aqui o nome é exatamente
+// "Teste da Silva" E o telefone é de teste E não há presença E não há login.
+// Qualquer um faltando, a linha não é tocada.
+const TESTES = [
+  { id: '49d5a864', nome: 'Teste da Silva', telefone: '21999999999' },
+  { id: 'a1894992', nome: 'Teste da Silva', telefone: '00000000000' },
+];
+
 async function todas(tabela, cols) {
   let out = [], off = 0;
   for (;;) {
@@ -84,7 +94,7 @@ async function todas(tabela, cols) {
 }
 
 async function main() {
-  const membros = (await todas('mem_membros', 'id, nome, genero, cpf, deleted_at'))
+  const membros = (await todas('mem_membros', 'id, nome, genero, cpf, telefone, deleted_at'))
     .filter((m) => !m.deleted_at);
 
   const plano = [];
@@ -136,14 +146,41 @@ async function main() {
     });
   }
 
+  // ── Cadastros de teste (bloco separado: é remoção, não correção) ──────────
+  const remover = [];
+  for (const t of TESTES) {
+    const achados = membros.filter((m) => m.id.startsWith(t.id));
+    if (achados.length !== 1) { problemas.push(`teste ${t.id}: esperava 1 cadastro vivo, achei ${achados.length}`); continue; }
+    const m = achados[0];
+    if (m.nome !== t.nome) { problemas.push(`teste ${t.id}: nome e "${m.nome}", esperava "${t.nome}" — NAO vou remover`); continue; }
+    if (String(m.telefone || '') !== t.telefone) { problemas.push(`teste ${t.id}: telefone nao bate — NAO vou remover`); continue; }
+
+    // 3o e 4o sinais, lidos AGORA: presenca e login. Cadastro de teste que
+    // ganhou presenca ou virou conta de alguem deixou de ser teste.
+    const { data: vinc, error: eV } = await supabase
+      .from('mem_grupo_membros').select('id, presencas, saiu_em').eq('membro_id', m.id).is('deleted_at', null);
+    if (eV) { problemas.push(`teste ${t.id}: nao consegui ler os vinculos (${eV.message}) — NAO vou remover`); continue; }
+    const comPresenca = (vinc || []).filter((v) => Number(v.presencas) > 0);
+    if (comPresenca.length) { problemas.push(`teste ${t.id}: tem presenca registrada — NAO vou remover`); continue; }
+    const { data: prof, error: eP } = await supabase.from('profiles').select('id').eq('membro_id', m.id);
+    if (eP) { problemas.push(`teste ${t.id}: nao consegui ler o login (${eP.message}) — NAO vou remover`); continue; }
+    if ((prof || []).length) { problemas.push(`teste ${t.id}: TEM login — NAO vou remover`); continue; }
+
+    remover.push({ ...t, uuid: m.id, nome: m.nome, vinculos: (vinc || []).filter((v) => !v.saiu_em).map((v) => v.id) });
+  }
+  if (remover.length) {
+    console.log('\n== REMOVER (cadastro de teste · soft-delete, reversivel) ==');
+    remover.forEach((r) => console.log(`  ${r.nome} [${r.uuid.slice(0, 8)}] · tel ${r.telefone} · ${r.vinculos.length} vinculo(s) de grupo a encerrar`));
+  }
+
   if (!exec) { console.log('\nDRY-RUN. Rode com --exec para aplicar.'); return; }
-  if (!plano.length && !renomear.length) { console.log('\nNada a aplicar.'); return; }
+  if (!plano.length && !renomear.length && !remover.length) { console.log('\nNada a aplicar.'); return; }
 
   // Backup ANTES de escrever — o estado anterior tem que existir em disco mesmo
   // que o processo morra no meio (lei de 04/08).
   const arquivo = path.join(os.homedir(), 'Downloads',
     `_bk_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}_sexo_auditoria.json`);
-  fs.writeFileSync(arquivo, JSON.stringify({ plano, renomear }, null, 1));
+  fs.writeFileSync(arquivo, JSON.stringify({ plano, renomear, remover }, null, 1));
   console.log(`\nBackup: ${arquivo}`);
 
   const aplicados = [];
@@ -204,7 +241,34 @@ async function main() {
     if (eObs) console.error('  (observacao do nome nao registrada:', eObs.message, ')');
   }
 
-  console.log(`\n✅ ${aplicados.length} de ${plano.length} sexos corrigidos · ${renomeados.length} de ${renomear.length} nomes.`);
+  // ── Remove os cadastros de teste ──────────────────────────────────────────
+  // ⚠️ ORDEM: encerra o vínculo ANTES de apagar a pessoa. Morrer no meio deixa
+  // vínculo encerrado + cadastro vivo (inofensivo e visível); o inverso deixaria
+  // o roster do grupo contando uma pessoa apagada.
+  const removidos = [];
+  for (const r of remover) {
+    let vinculoOk = true;
+    for (const vid of r.vinculos) {
+      const { error } = await supabase
+        .from('mem_grupo_membros')
+        .update({ saiu_em: new Date().toISOString().slice(0, 10), motivo_saida: 'cadastro de teste removido (auditoria 16/09)' })
+        .eq('id', vid)
+        .is('saiu_em', null);
+      if (error) { console.error(`  ✗ ${r.nome}: vinculo ${vid.slice(0, 8)}: ${error.message}`); vinculoOk = false; }
+    }
+    if (!vinculoOk) { console.error(`  ⚠ ${r.nome}: vinculo nao encerrado — NAO vou apagar o cadastro`); continue; }
+
+    // ⚠️ app_soft_delete, NUNCA delete direto (lei nº 2). Reversível com
+    // `select app_restore('mem_membros','<id>')`.
+    const { error } = await supabase.rpc('app_soft_delete', {
+      p_table_name: 'mem_membros', p_row_id: r.uuid, p_deleted_by: null,
+    });
+    if (error) { console.error(`  ✗ ${r.nome}: ${error.message}`); continue; }
+    removidos.push(r);
+    console.log(`  ✓ removido: ${r.nome} [${r.uuid.slice(0, 8)}]`);
+  }
+
+  console.log(`\n✅ ${aplicados.length}/${plano.length} sexos · ${renomeados.length}/${renomear.length} nomes · ${removidos.length}/${remover.length} testes removidos.`);
 }
 
 main().catch((e) => { console.error('ERRO:', e.message); process.exit(1); });

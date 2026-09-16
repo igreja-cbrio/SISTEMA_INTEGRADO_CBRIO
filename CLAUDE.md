@@ -202,9 +202,9 @@ afirmação minha de 16/09 de que a próxima inscrição reescreveria o valor.)
 Medido um a um: **3 são contas de revisão de loja COM LOGIN ATIVO**
 (`Apple Review (Demo)` · `Revisor App Store (Staff)` · `App Review CBRio`, esta
 última `origem='auth'`) — **não apagar**, quebra a revisão do app. **2 são
-`Teste da Silva`** (origem `grupos_aprovacao`, sem login, **1 vínculo de grupo
-cada**) — candidatos a soft-delete, mas some do roster de alguém. E **2 são
-PESSOAS REAIS com o nome sujo**:
+`Teste da Silva`** (origem `grupos_aprovacao`, sem login, 0 presenças, 1 vínculo
+de grupo cada) — **removidos por decisão do Marcos em 16/09**. E **2 são PESSOAS
+REAIS com o nome sujo**:
 
 - ⚠️⚠️ **`Juliafuncionalfight@gmail.com` RESOLVIDO** — é o follow-up que este
   arquivo registrava em aberto desde 05/08 (*"nome real da mãe do MURILO Mendes —
@@ -222,10 +222,20 @@ PESSOAS REAIS com o nome sujo**:
   seja **o sobrenome "Cruz" também é suspeito**. Renomear aqui é decisão humana.
 
 ⚠️ **8 nomes seguem sem evidência nenhuma** (Alex ×2, Ellis, Sued, Haryel, Ecimar,
-Jo, Lucimar, Vauclides) e **ficam como estão** — o valor atual é a leitura mais
-provável em pt-BR, e **apagar seria pior**: sexo nulo tira a pessoa de grupo
-Homens/Mulheres (a trava de `entradaGrupoApp` recusa quem não tem) e a joga na
-fila de "faltam dados". **Syogi Augusto** (masculino) foi confirmado pelo Marcos.
+Jo, Lucimar, Vauclides) e **ficam como estão por decisão do Marcos** (16/09) — o
+valor atual é a leitura mais provável em pt-BR, e **apagar seria pior**: sexo nulo
+tira a pessoa de grupo Homens/Mulheres (a trava de `entradaGrupoApp` recusa quem
+não tem) e a joga na fila de "faltam dados". **Syogi Augusto** (masculino) foi
+confirmado por ele.
+
+⚠️⚠️ **CUIDADO com "agora a pergunta resolve"**: ela resolve para quem tem o campo
+**VAZIO**. Para quem já tem valor ERRADO, `censoReconciliar` trata divergência de
+`genero` como **CONFLITO** (`genero` não está em `CAMPOS_ACUMULAVEIS`) — não
+sobrescreve, manda pra decisão humana. ⇒ a pergunta **impede erro novo, não
+conserta o velho**. Conferido em 16/09: das 299 declarações do censo, **ZERO
+divergem do cadastro** — ou seja o conjunto "declarou no censo diferente do
+cadastro" está **vazio** hoje, e a única divergência cadastro × declaração da base
+é o **Keith Matsumoto**, vinda do **formulário de membresia**, não do censo.
 
 ⚠️ **NÃO são duplicatas** (a régua da casa: CPF divergente EXCLUI o par): as duas
 `Cintia Kesseles Gonçalves` têm CPF e nascimento diferentes, e as duas
