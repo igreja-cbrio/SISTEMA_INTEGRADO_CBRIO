@@ -2,6 +2,10 @@
 // desativar, e ficha completa com aba de Atendimentos (histórico de contatos).
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { totemKids as api } from '../../../api';
+// ⚠️⚠️ Reduz a imagem ANTES de virar dataURL: estas rotas mandam base64 em
+// JSON e o express.json global é de 1mb — o teto real era ~750KB, não os 5MB
+// que a tela prometia. Ver src/lib/imagemParaEnvio.ts.
+import { arquivoParaDataUrl } from '@/lib/imagemParaEnvio';
 import { useNavigate, useSearchParams, Link } from 'react-router-dom';
 // hrefConversa (inbox interno) segue nos botões da FICHA da criança; hrefWhatsapp
 // (WhatsApp de quem clica) é só na lista de faltantes, que é trabalho de ligar
@@ -1119,10 +1123,12 @@ function FotoAvatar({ crianca, onChanged }: { crianca: any; onChanged: () => voi
   const [busy, setBusy] = useState(false);
   async function onFile(e: any) {
     const file = e.target.files?.[0]; if (!file || !crianca?.id) return;
-    if (file.size > 5 * 1024 * 1024) { toast.error('Imagem muito grande (máx 5MB)'); return; }
+    // ⚠️ O teto agora é do ARQUIVO que o navegador consegue decodificar, não do
+    // que a rota aguenta: a redução resolve o tamanho do envio.
+    if (file.size > 12 * 1024 * 1024) { toast.error('Imagem muito grande (máx 12MB)'); return; }
     setBusy(true);
     try {
-      const dataUrl: string = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result as string); r.onerror = rej; r.readAsDataURL(file); });
+      const dataUrl = await arquivoParaDataUrl(file);
       await api.criancas.uploadFoto(crianca.id, dataUrl);
       toast.success('Foto atualizada'); onChanged();
     } catch (err: any) { toast.error(err?.message || 'Erro ao enviar a foto'); }
@@ -1155,10 +1161,10 @@ function FotoMembroAvatar({ membro, onChanged }: { membro: any; onChanged: () =>
   const [busy, setBusy] = useState(false);
   async function onFile(e: any) {
     const file = e.target.files?.[0]; if (!file || !membro?.id) return;
-    if (file.size > 5 * 1024 * 1024) { toast.error('Imagem muito grande (máx 5MB)'); return; }
+    if (file.size > 12 * 1024 * 1024) { toast.error('Imagem muito grande (máx 12MB)'); return; }
     setBusy(true);
     try {
-      const dataUrl: string = await new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result as string); r.onerror = rej; r.readAsDataURL(file); });
+      const dataUrl = await arquivoParaDataUrl(file);
       await api.criancas.uploadFotoResponsavel(membro.id, dataUrl);
       toast.success('Foto do responsável atualizada'); onChanged();
     } catch (err: any) { toast.error(err?.message || 'Erro ao enviar a foto'); }
@@ -1395,10 +1401,13 @@ function NovaCrianca({ onClose, onCreated }: { onClose: () => void; onCreated: (
   const setResp = (i: number, patch: any) => setResps(rs => rs.map((r, idx) => idx === i ? { ...r, ...patch } : r));
   const addResp = () => setResps(rs => [...rs, { nome: '', telefone: '', cpf: '', parentesco: 'outro', autorizado_buscar: true, foto: null }]);
   const delResp = (i: number) => setResps(rs => rs.length > 1 ? rs.filter((_, idx) => idx !== i) : rs);
-  const lerFoto = (cb: (v: string) => void) => (e: any) => {
+  const lerFoto = (cb: (v: string) => void) => async (e: any) => {
     const f = e.target.files?.[0]; if (!f) return;
-    if (f.size > 5 * 1024 * 1024) { toast.error('Imagem muito grande (máx 5MB)'); return; }
-    const r = new FileReader(); r.onload = () => cb(r.result as string); r.readAsDataURL(f);
+    if (f.size > 12 * 1024 * 1024) { toast.error('Imagem muito grande (máx 12MB)'); return; }
+    // ⚠️ Aqui a foto fica guardada no estado e só sobe no `salvar`. Reduzir na
+    // ESCOLHA, e não no envio, evita segurar a pessoa no botão de salvar.
+    try { cb(await arquivoParaDataUrl(f)); }
+    catch (err: any) { toast.error(err?.message || 'Não consegui preparar esta imagem.'); }
   };
 
   async function salvar(permitirSemCpf?: unknown) {

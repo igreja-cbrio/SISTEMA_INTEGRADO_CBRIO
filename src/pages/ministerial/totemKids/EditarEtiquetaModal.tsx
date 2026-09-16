@@ -18,6 +18,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { toast } from 'sonner';
 import { totemKids } from '@/api';
 import { imprimirEtiquetas, gerarHtmlPreviewCrianca, gerarHtmlPreviewAniversario } from './lib/imprimir';
+import { arquivoParaDataUrl } from '@/lib/imagemParaEnvio';
 import type { DadosImpressao, EtiquetaLayout } from './lib/imprimir';
 
 type Cfg = { nome_tamanho: string; fonte: string; escala_fonte: string; logo_aniversario_url?: string | null };
@@ -26,13 +27,13 @@ const TAMANHOS: { v: string; label: string }[] = [
   { v: 'P', label: 'Pequeno' }, { v: 'M', label: 'Médio' }, { v: 'G', label: 'Grande' }, { v: 'GG', label: 'Extra' },
 ];
 
+// ⚠️⚠️ A logo vai como dataURL pra uma rota de `/api/totem-kids`, que cai no
+// `express.json` GLOBAL de 1mb (backend/server.js). Base64 engorda ~33%, então
+// o teto real é ~750KB de arquivo: acima disso o corpo morre NO PARSER, antes
+// da rota, e quem clicou lê um erro genérico. `arquivoParaDataUrl` reduz antes
+// de codificar — ver src/lib/imagemParaEnvio.ts.
 function lerArquivoComoDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const r = new FileReader();
-    r.onload = () => resolve(String(r.result));
-    r.onerror = () => reject(new Error('Falha ao ler o arquivo'));
-    r.readAsDataURL(file);
-  });
+  return arquivoParaDataUrl(file);
 }
 
 export default function EditarEtiquetaModal({ open, onClose }: { open: boolean; onClose: () => void }) {
