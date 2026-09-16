@@ -33,8 +33,9 @@
 ## Backend
 - `backend/routes/totemKids.js`
 Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
-<details><summary>Endpoints (126)</summary>
+<details><summary>Endpoints (128)</summary>
 - `DELETE /api/totem-kids/apresentacoes/:id`
+- `DELETE /api/totem-kids/apresentacoes/:id/foto`
 - `DELETE /api/totem-kids/apresentacoes/horarios/:id`
 - `DELETE /api/totem-kids/atendimentos/:id`
 - `DELETE /api/totem-kids/ausentes/:criancaId/contato`
@@ -118,6 +119,7 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `PATCH /api/totem-kids/salas/:id/localizacao`
 - `PATCH /api/totem-kids/voluntariado-inscricoes/:id`
 - `POST /api/totem-kids/apresentacoes/:id/checkin`
+- `POST /api/totem-kids/apresentacoes/:id/foto`
 - `POST /api/totem-kids/apresentacoes/horarios`
 - `POST /api/totem-kids/ausentes/:criancaId/contato`
 - `POST /api/totem-kids/checkin`
@@ -166,6 +168,7 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 
 - `backend/utils/cadastrosKids.js`
 - `backend/utils/cronAuth.js`
+- `backend/utils/fotoApresentacao.js`
 - `backend/utils/janelaPeriodo.js`
 - `backend/utils/kidsConversaoFila.js`
 - `backend/utils/kidsFrequencia.js`
