@@ -33,7 +33,7 @@
 ## Backend
 - `backend/routes/totemKids.js`
 Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
-<details><summary>Endpoints (125)</summary>
+<details><summary>Endpoints (126)</summary>
 - `DELETE /api/totem-kids/apresentacoes/:id`
 - `DELETE /api/totem-kids/apresentacoes/horarios/:id`
 - `DELETE /api/totem-kids/atendimentos/:id`
@@ -117,6 +117,7 @@ Guard: `authorizeModule('kids', 1 | 2 | 3 | 4 | 5)`
 - `PATCH /api/totem-kids/salas/:id`
 - `PATCH /api/totem-kids/salas/:id/localizacao`
 - `PATCH /api/totem-kids/voluntariado-inscricoes/:id`
+- `POST /api/totem-kids/apresentacoes/:id/checkin`
 - `POST /api/totem-kids/apresentacoes/horarios`
 - `POST /api/totem-kids/ausentes/:criancaId/contato`
 - `POST /api/totem-kids/checkin`
