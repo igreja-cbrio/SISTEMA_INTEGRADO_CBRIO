@@ -31,7 +31,14 @@ type Grafico = {
   aberta?: boolean; valores?: Valor[];
   valores_ocultos?: number; valores_ocultos_pessoas?: number;
 };
-type Identificacao = { id: string; texto: string; tipo: string; desconhecido?: boolean };
+type Identificacao = {
+  id: string; texto: string; tipo: string; desconhecido?: boolean;
+  // A pergunta de sexo: respondida, mas o resultado dela está no bloco "Quem
+  // respondeu" em vez de virar uma segunda barra. Ver censo.js /perfil.
+  no_bloco_demografico?: boolean;
+};
+/** De onde veio o sexo de cada respondente. Ver o comentário em censo.js. */
+type FonteSexo = { declarado: number; cadastro: number; sem: number };
 type Orfa = { id: string; texto: string; respostas: number };
 type Mapa = {
   bairros: { bairro: string; norm: string; total: number; lat: number; lng: number }[];
@@ -41,6 +48,7 @@ type Mapa = {
 type Perfil = {
   titulo: string; respondentes: number; graficos: Grafico[];
   demografia: Record<string, { valor: string; total: number }[]>;
+  sexo_fonte?: FonteSexo;
   // ⚠️ Opcionais: o mock do teste e um backend mais antigo não os mandam.
   identificacao?: Identificacao[]; orfas?: Orfa[]; leitura_incompleta?: boolean;
 };
@@ -228,6 +236,20 @@ export default function AbaPerfil({ pesquisaId }: { pesquisaId: string | null })
                         ...v, neutra: false,
                         pct: d.respondentes ? Math.round((v.total / d.respondentes) * 1000) / 10 : 0,
                       }))} />
+                    {/* ⚠️ A PROCEDÊNCIA fica colada na barra, não num rodapé.
+                        O sexo do cadastro é preenchido por várias portas e,
+                        para 38% dos respondentes de 2026, veio de palpite de
+                        IA pelo primeiro nome confirmado em lote. Quem cita o
+                        percentual precisa ver isso na mesma tela. */}
+                    {k === 'genero' && d.sexo_fonte && (
+                      <p className="text-[11px] text-muted-foreground mt-1.5 leading-relaxed">
+                        {d.sexo_fonte.declarado > 0
+                          ? <><strong>{d.sexo_fonte.declarado}</strong> declararam nesta pesquisa</>
+                          : <>Ninguém declarou nesta pesquisa</>}
+                        {d.sexo_fonte.cadastro > 0 && <> · <strong>{d.sexo_fonte.cadastro}</strong> vieram do cadastro</>}
+                        {d.sexo_fonte.sem > 0 && <> · {d.sexo_fonte.sem} sem informação</>}
+                      </p>
+                    )}
                   </div>
                 )
               ))}
@@ -307,6 +329,7 @@ export default function AbaPerfil({ pesquisaId }: { pesquisaId: string | null })
               {(d.identificacao || []).map((c) => (
                 <Badge key={c.id} variant="secondary" className="font-normal">
                   {c.texto}{c.desconhecido && ' · tipo novo'}
+                  {c.no_bloco_demografico && ' · está em "Quem respondeu"'}
                 </Badge>
               ))}
             </div>
