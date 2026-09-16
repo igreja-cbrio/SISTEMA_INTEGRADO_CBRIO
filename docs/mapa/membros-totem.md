@@ -124,6 +124,7 @@ Guard: `authorizeModule('membros-totem', 1)`
 - `backend/utils/dadosSensiveisPessoa.js`
 - `backend/utils/decisaoCampos.js`
 - `backend/utils/desativarMembro.js`
+- `backend/utils/escopoFicha.js`
 - `backend/utils/kidsVisitante.js`
 - `backend/utils/membrosPagina.js`
 - `backend/utils/prontidaoCadastro.js`

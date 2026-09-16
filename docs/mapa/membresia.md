@@ -261,6 +261,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `backend/utils/desativarMembro.js`
 - `backend/utils/elegibilidadeVol.js`
 - `backend/utils/escalaLinhaEquipe.js`
+- `backend/utils/escopoFicha.js`
 - `backend/utils/exclusaoInscricaoLote.js`
 - `backend/utils/fotoVoluntario.js`
 - `backend/utils/kidsVisitante.js`
