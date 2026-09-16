@@ -209,8 +209,21 @@ async function main() {
 
   // Backup ANTES de escrever — o estado anterior tem que existir em disco mesmo
   // que o processo morra no meio (lei de 04/08).
-  const arquivo = path.join(os.homedir(), 'Downloads',
-    `_bk_${new Date().toISOString().slice(0, 10).replace(/-/g, '')}_sexo_auditoria.json`);
+  //
+  // ⚠️⚠️ O NOME LEVA HORA E MINUTO, e isso é conserto de um defeito real: a 1a
+  // versão usava só a data, e a 2a execução do dia (o `--decisao-marcos`)
+  // SOBRESCREVEU o backup da 1a — em silêncio, sem erro nenhum. O estado
+  // anterior dos 7 sexos + 1 nome + 2 remoções sumiu do disco. Não se perdeu de
+  // verdade porque `mem_identidade_observacoes` guarda `genero_anterior` e o
+  // soft-delete é reversível, mas o arquivo que existe pra ser a rede de
+  // segurança comeu a si mesmo.
+  // ⇒ LEI: nome de arquivo de backup não pode colidir entre duas execuções.
+  const carimbo = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, '');
+  const arquivo = path.join(os.homedir(), 'Downloads', `_bk_${carimbo}_sexo_auditoria.json`);
+  if (fs.existsSync(arquivo)) {
+    console.error(`ERRO: ja existe ${arquivo} — nao vou sobrescrever backup.`);
+    process.exit(1);
+  }
   fs.writeFileSync(arquivo, JSON.stringify({ plano, renomear, remover }, null, 1));
   console.log(`\nBackup: ${arquivo}`);
 
