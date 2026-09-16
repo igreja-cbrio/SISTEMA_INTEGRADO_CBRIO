@@ -1055,6 +1055,56 @@ CRLF e o `\n` do meu `replace` não casava. É a lição já registrada em 15/09
 25/08: **confirmar que o mutante entrou** (o script agora conta as ocorrências e
 aborta em zero) antes de concluir qualquer coisa sobre o teste.
 
+### ⚠️⚠️ 16/09/2026 · foto de ARQUIVO no Kids morria no parser (sem migration)
+
+Ao fechar as pendências da foto do telão, medimos as duas portas de foto do Kids
+e elas **não são a mesma coisa**:
+
+- **totem (webcam)**: captura por canvas a **640×480, JPEG 0.85**. Nunca chega
+  perto de limite nenhum.
+- **`<input type="file">` (Gestão de Crianças + logos da etiqueta)**:
+  `readAsDataURL` **sem reduzir** → base64 em JSON → `/api/totem-kids` cai no
+  `express.json` **GLOBAL de 1mb** (`server.js`). Base64 engorda ~33%, então o
+  teto real era **~750KB de arquivo** — e a tela dizia **"máx 5MB"**.
+
+⚠️⚠️ **MEDIDO: das 98 fotos no bucket, a MAIOR tem 68KB** e a mediana 43KB — a
+assinatura exata da webcam. **O caminho do seletor de arquivo nunca produziu um
+sucesso sequer.** Não dá pra afirmar que alguém tentou e sofreu; dá pra afirmar
+que ninguém conseguiu.
+
+**Conserto: reduzir no navegador**, não aumentar o limite do servidor (mexeria
+em TODAS as rotas). `src/lib/imagemParaEnvio.ts` — 1024px, JPEG 0.85, com degraus
+de qualidade se ainda passar do teto.
+- ⚠️ `dimensoesReduzidas` **nunca aumenta** (foto pequena passa intacta) e
+  **nunca devolve 0**: canvas de lado 0 gera dataURL vazio e a foto some sem
+  erro. Dimensão inválida (imagem que não decodificou) volta como veio.
+- ⚠️ Se a redução falhar, cai no arquivo original **só quando ele cabe** — cair
+  no original grande reintroduziria a falha silenciosa.
+- ⚠️ O texto da tela mudou junto (12MB): número na tela que não corresponde ao
+  comportamento é pior que número nenhum.
+- ⚠️ A webcam **não** passa pela régua: 640×480 por canvas já nasce pequena.
+- Guarda em `src/test/fotosKidsSemBase64Cru.test.ts` — o defeito que importa é a
+  AUSÊNCIA da redução (voltar pro `readAsDataURL` cru não quebra build nem loga).
+
+### ⚠️ 16/09/2026 · faxina das fotos órfãs da apresentação
+
+`backend/scripts/_faxina_fotos_apresentacao_orfas.cjs` (dry-run por padrão,
+`--exec` apaga, `--dias=N` muda a carência). A família escolhe a foto ANTES de a
+inscrição existir; quem abandona o formulário deixa arquivo sem linha.
+
+⚠️⚠️ **Duas armadilhas, e as duas apagam foto de gente de verdade:**
+1. **Linha SOFT-DELETADA ainda aponta pro arquivo.** Varredura que olhe só as
+   linhas vivas acha órfã a foto de uma inscrição apagada — e o soft-delete é
+   reversível. Por isso o `select` **não** filtra `deleted_at`. (Medido em
+   16/09: a única linha com `foto_storage_path` era justamente uma apagada.)
+2. **Arquivo recém-subido ainda não tem linha.** Entre escolher e enviar passam
+   minutos. Daí a carência de 7 dias.
+
+⚠️ Remoção em lotes de 50: `remove` com centenas de caminhos estoura e falha o
+lote INTEIRO, inclusive o que daria certo.
+**Testado nos dois ramos** (arquivo órfão fabricado): dentro da carência fica
+intocado; forçando o corte, lista no dry-run e apaga no `--exec`.
+
 ### ⚠️⚠️ 16/09/2026 · de QUEM é o CPF + aviso de um responsável só (migration `20260916160000`)
 
 Achado do Marcos ao testar a foto: *"ele pede o nome dos dois responsáveis e

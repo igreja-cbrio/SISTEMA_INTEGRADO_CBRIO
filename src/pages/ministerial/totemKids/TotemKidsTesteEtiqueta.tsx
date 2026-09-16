@@ -24,15 +24,15 @@ import { imprimirEtiquetas, gerarHtmlPreviewCrianca, gerarHtmlPreviewAniversario
 import { formatIdadeShort } from './lib/idade';
 import { format } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
+import { arquivoParaDataUrl } from '@/lib/imagemParaEnvio';
 
-// Lê um arquivo de imagem como dataURL (base64) pra mandar pro backend
+// ⚠️⚠️ A logo vai como dataURL pra uma rota de `/api/totem-kids`, que cai no
+// `express.json` GLOBAL de 1mb (backend/server.js). Base64 engorda ~33%, então
+// o teto real é ~750KB de arquivo: acima disso o corpo morre NO PARSER, antes
+// da rota, e quem clicou lê um erro genérico. `arquivoParaDataUrl` reduz antes
+// de codificar — ver src/lib/imagemParaEnvio.ts.
 function lerArquivoComoDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('Falha ao ler o arquivo'));
-    reader.readAsDataURL(file);
-  });
+  return arquivoParaDataUrl(file);
 }
 
 // ============================================================================
