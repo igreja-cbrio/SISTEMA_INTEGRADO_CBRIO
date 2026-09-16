@@ -32,6 +32,10 @@ const { normalizarSaude } = require('../utils/saudeCrianca');
 // MESMAS que o app usa. E a guarda do nome dobrado (pai = mãe).
 const { escolherHorarioPara } = require('../services/apresentacaoHorarios');
 const { exigeConfirmacaoPaisIguais, rotuloHorarioApresentacao } = require('../utils/apresentacaoHorario');
+// FOTO pro telao do culto (16/09/2026) — regua do caminho em utils, testada.
+const multer = require('multer');
+const { caminhoFotoValido, extensaoDeMime, PREFIXO_FOTO } = require('../utils/fotoApresentacao');
+const { randomUUID } = require('crypto');
 
 // Limiter GENEROSO do router (padrão grupos/NPS/eventos): Wi-Fi único da
 // igreja — 10/15min por IP dava 429 na 11ª família (sweep 28/07).
@@ -113,6 +117,60 @@ router.get('/textos', (_req, res) => {
   });
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+//  POST /foto — a família manda a foto que vai no TELÃO do culto (16/09/2026)
+//
+//  Pedido do Marcos: "adicionar foto da criança nesse formulário (...) a ideia
+//  é passar a foto durante o culto".
+//
+//  ⚠️⚠️ MULTIPART, não dataURL. O `express.json` global é de **1mb**
+//  (server.js linha 129) e só `/api/staff` tem 10mb: foto de celular em base64
+//  (5MB de arquivo ≈ 6,7MB de JSON) seria recusada pelo PARSER antes de chegar
+//  na rota — 413 sem mensagem nossa, no meio do formulário. Multipart não passa
+//  pelo parser de JSON. (É por isso que o `/criancas/:id/foto` do totemKids, que
+//  usa dataURL e diz aceitar 5MB, na prática para por volta de 750KB.)
+//
+//  ⚠️ A foto sobe ANTES de a inscrição existir (a família escolhe enquanto
+//  preenche), então a rota devolve o CAMINHO e o envio manda esse caminho de
+//  volta. Por isso `caminhoFotoValido` guarda o INSERT: o caminho passa pela
+//  mão de quem preenche.
+//
+//  ⚠️ Bucket PRIVADO `kids-documentos`, em pasta própria. Foto de criança não
+//  vai pra bucket público — a foto some atrás de URL assinada de 30 min.
+// ════════════════════════════════════════════════════════════════════════════
+const uploadFoto = multer({
+  storage: multer.memoryStorage(),
+  // 8MB: foto de celular SEM reduzir. Encolher seria economizar no lugar errado
+  // — o destino dela é um telão, não um avatar de 40px.
+  limits: { fileSize: 8 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => cb(null, Boolean(extensaoDeMime(file.mimetype))),
+});
+
+router.post('/foto', uploadFoto.single('foto'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Envie uma imagem JPG, PNG ou WEBP de até 8MB.' });
+    const ext = extensaoDeMime(req.file.mimetype);
+    if (!ext) return res.status(400).json({ error: 'Formato não aceito. Use JPG, PNG ou WEBP.' });
+    const caminho = `${PREFIXO_FOTO}${randomUUID()}.${ext}`;
+    const { error } = await supabase.storage
+      .from('kids-documentos')
+      .upload(caminho, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
+    if (error) throw error;
+    res.json({ foto_path: caminho });
+  } catch (e) {
+    console.error('[publicApresentacao] upload de foto:', e.message);
+    res.status(500).json({ error: 'Não conseguimos guardar a foto. Você pode enviar a inscrição sem ela.' });
+  }
+});
+
+// ⚠️ Erro do multer vira mensagem NOSSA. O padrão dele é um 500 com stack, e
+// quem está no formulário precisa saber que o problema é o tamanho do arquivo.
+router.use('/foto', (err, _req, res, _next) => {
+  if (err && err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'A foto passa de 8MB. Envie uma versão menor.' });
+  console.error('[publicApresentacao] multer:', err && err.message);
+  res.status(400).json({ error: 'Não conseguimos ler esse arquivo. Use JPG, PNG ou WEBP.' });
+});
+
 // POST /api/public/apresentacao-criancas
 router.post('/', async (req, res) => { // limiter geral já está no router.use (contar 2x reduziria o teto pela metade)
   try {
@@ -139,6 +197,12 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
         // que MOVEM a operação de domingo. Não perguntada ⇒ chave ausente ⇒ o
         // campo fica NULO, que é diferente de "respondeu que não".
         saude: normalizarSaude(c),
+        // ⚠️⚠️ O caminho da foto vem do CLIENTE (a rota /foto devolveu). A guarda
+        // em `utils/fotoApresentacao` é o que impede mandar aqui o caminho da foto
+        // de identificação de OUTRA criança — mesmo bucket privado — e fazer a
+        // ficha servi-la assinada. Inválido ⇒ segue SEM foto: a inscrição nunca
+        // se perde por causa de uma imagem.
+        fotoPath: caminhoFotoValido(c && c.foto_path) ? c.foto_path : null,
       }))
       .filter(c => c.nome.length >= 2);
 
@@ -276,9 +340,7 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
         console.error('[publicApresentacao] cadastro kids_criancas falhou:', e.message);
       }
 
-      const { data, error } = await supabase
-        .from('apresentacao_criancas')
-        .insert({
+      const linhaInsc = {
           nome_pai: nomePaiT,
           nome_mae: nomeMaeT,
           crianca_nome: c.nome,
@@ -295,12 +357,29 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
           // INTEIRO (42703) e a família perderia a inscrição por um informativo.
           // Sem catálogo o serviço devolve null, então a chave fica de fora.
           ...(horarioFamilia ? { horario_culto: horarioFamilia } : {}),
+          // ⚠️ Mesma lei do `horario_culto` acima: coluna que depende de migration
+          // só é MENCIONADA quando tem valor. `foto_storage_path: null` sem a
+          // migration `20260916140000` faria o PostgREST recusar o INSERT INTEIRO
+          // (42703) — a família perderia a inscrição por causa de uma foto.
+          ...(c.fotoPath ? { foto_storage_path: c.fotoPath, foto_enviada_em: new Date().toISOString() } : {}),
           status: 'pendente',
           origem: 'publico',
           crianca_id: criancaId,
           observacoes: obsExtra,
-        })
-        .select('id').single();
+      };
+      const inserir = (linha) => supabase.from('apresentacao_criancas').insert(linha).select('id').single();
+      let { data, error } = await inserir(linhaInsc);
+      // ⚠️⚠️ COLUNA NOVA SEM MIGRATION APLICADA. Se o código subir antes do SQL,
+      // o INSERT COM FOTO morre em 42703 e o `continue` logo abaixo descarta a
+      // inscrição INTEIRA — a família perde a vaga por causa de uma imagem, em
+      // silêncio. A retentativa devolve a inscrição SEM a foto: some a foto,
+      // nunca a criança. Mesma lei que o cadastro público aprendeu em 15/09
+      // (`semColunasDoCenso` → `COLUNAS_OPCIONAIS`), aqui pro par foto_*.
+      if (error && error.code === '42703' && /foto_/.test(error.message || '')) {
+        console.warn('[publicApresentacao] colunas de foto ausentes (migration 20260916140000 não aplicada) — inscrevendo SEM a foto');
+        const { foto_storage_path, foto_enviada_em, ...semFoto } = linhaInsc;
+        ({ data, error } = await inserir(semFoto));
+      }
       if (error) {
         console.error('[publicApresentacao] insert error:', error.message);
         continue;

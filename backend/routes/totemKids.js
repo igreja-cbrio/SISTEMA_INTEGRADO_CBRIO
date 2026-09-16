@@ -27,6 +27,10 @@ const { safeEqual, isAuthorizedCron } = require('../utils/cronAuth');
 const { notificar } = require('../services/notificar');
 const wpp = require('../services/whatsappService');
 const { traduzErroUmPaiUmaMae } = require('../utils/kidsResponsavel');
+// FOTO da apresentação pro telão do culto (16/09/2026) — a MESMA régua da
+// porta pública, pra o caminho e o nome do download saírem iguais nas 2 pontas.
+const { extensaoDeMime, extensaoDoCaminho, nomeArquivoFoto, PREFIXO_FOTO } = require('../utils/fotoApresentacao');
+const { randomUUID: _uuidFoto } = require('crypto');
 // (templates deste arquivo migraram pra FILA no C2 · lote 5 — só o texto livre segue direto)
 const { enviarTexto: enviarTextoWpp } = require('../services/whatsappSend');
 const { acharOuCriarGuardado, ehNomePlaceholder } = require('../services/membroMatch');
@@ -2397,7 +2401,10 @@ router.get('/apresentacoes', authorizeModule('kids', 1), async (req, res) => {
     // `parcelas_max`). O laço abaixo derruba UMA por vez até a query passar —
     // generalizado em 15/09 quando `presente_em` (check-in) entrou ao lado do
     // `horario_culto` de 08/09.
-    const OPCIONAIS = ['horario_culto', 'presente_em'];
+    // ⚠️ `foto_storage_path` entra aqui, e não no BASE: a lista é onde a equipe
+    // vê QUEM AINDA NÃO MANDOU a foto, mas a coluna depende da migration
+    // `20260916140000` — solta no BASE, derrubaria a lista inteira (42703).
+    const OPCIONAIS = ['horario_culto', 'presente_em', 'foto_storage_path'];
     const listar = (cols) => {
       let q = supabase.from('apresentacao_criancas')
         .select(cols.length ? `${BASE}, ${cols.join(', ')}` : BASE)
@@ -2415,7 +2422,14 @@ router.get('/apresentacoes', authorizeModule('kids', 1), async (req, res) => {
       ({ data, error } = await listar(cols));
     }
     if (error) throw error;
-    res.json(data || []);
+    // ⚠️⚠️ O CAMINHO do arquivo não vai pra lista. A tela só precisa saber SE
+    // tem foto; caminho cru numa resposta de lista é matéria-prima pra montar
+    // URL na mão, e some o motivo de o bucket ser privado. Quem resolve em URL
+    // assinada é a FICHA, uma inscrição por vez, de propósito.
+    const linhas = (data || []).map(({ foto_storage_path, ...r }) => ({
+      ...r, tem_foto: Boolean(foto_storage_path),
+    }));
+    res.json(linhas);
   } catch (e) {
     console.error('[totemKids] apresentacoes:', e.message);
     res.status(500).json({ error: 'Erro ao carregar apresentações' });
@@ -2544,8 +2558,29 @@ router.get('/apresentacoes/:id', authorizeModule('kids', 1), async (req, res) =>
         ? supabase.from('mem_membros').select('id, nome, telefone, email, status').eq('id', insc.responsavel_membro_id).maybeSingle()
         : Promise.resolve({ data: null }),
     ]);
+    // ⚠️⚠️ O caminho NUNCA vai cru pro cliente: o bucket é privado e quem serve
+    // é uma URL ASSINADA de 30 min, gerada aqui, em rota autenticada.
+    // Duas URLs porque são dois atos diferentes: VER na ficha e BAIXAR o arquivo
+    // pra passar no culto — esta última carregando o nome da criança, senão 14
+    // arquivos `a3f9c1d2-...jpg` chegam juntos na pasta de quem monta o culto.
+    let fotoUrl = null;
+    let fotoDownloadUrl = null;
+    let fotoNome = null;
+    if (insc.foto_storage_path) {
+      fotoNome = nomeArquivoFoto(insc.crianca_nome, insc.data_apresentacao, extensaoDoCaminho(insc.foto_storage_path));
+      const [ver, baixar] = await Promise.all([
+        supabase.storage.from('kids-documentos').createSignedUrl(insc.foto_storage_path, 60 * 30),
+        supabase.storage.from('kids-documentos').createSignedUrl(insc.foto_storage_path, 60 * 30, { download: fotoNome }),
+      ]);
+      fotoUrl = (ver.data && ver.data.signedUrl) || null;
+      fotoDownloadUrl = (baixar.data && baixar.data.signedUrl) || null;
+    }
+
     res.json({
       ...insc,
+      foto_url: fotoUrl,
+      foto_download_url: fotoDownloadUrl,
+      foto_nome_arquivo: fotoNome,
       consentimentos: cons.data || [],
       crianca_kids: kid.data || null,
       responsavel_membro: resp.data || null,
@@ -2632,6 +2667,113 @@ router.post('/apresentacoes/:id/checkin', authorizeModule('kids', 2), async (req
     console.error('[totemKids] apresentacao checkin:', e.message);
     res.status(500).json({ error: 'Erro ao registrar o check-in' });
   }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  FOTO da apresentação (16/09/2026) · a que vai no TELÃO durante o culto
+//
+//  A família manda pelo formulário público. Estas rotas existem pro caso comum
+//  de sobra: a foto chegou pelo WhatsApp da Milena, ou veio tremida e a mãe
+//  mandou outra. Nível 2 — o mesmo do check-in: é trabalho de quem opera o
+//  domingo, é reversível e não edita o cadastro de ninguém.
+//
+//  ⚠️⚠️ MULTIPART aqui também. `/api/totem-kids` cai no `express.json` global de
+//  1mb (server.js) — dataURL de foto de celular não passa. É a armadilha em que
+//  o `/criancas/:id/foto` já está: ele confere 5MB no código, mas o parser
+//  recusa antes, por volta de 750KB de imagem.
+//
+//  ⚠️ Foto nova NÃO reaproveita o caminho da antiga (uuid novo + upsert:false):
+//  sobrescrever deixaria a URL assinada velha — válida por mais 30 min —
+//  apontando pra imagem NOVA. A antiga só é apagada DEPOIS que a linha já
+//  aponta pra nova: nessa ordem, falha no meio deixa arquivo órfão, nunca ficha
+//  cega.
+// ════════════════════════════════════════════════════════════════════════════
+const uploadFotoApres = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => cb(null, Boolean(extensaoDeMime(file.mimetype))),
+});
+
+router.post('/apresentacoes/:id/foto', authorizeModule('kids', 2), uploadFotoApres.single('foto'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Envie uma imagem JPG, PNG ou WEBP de até 8MB.' });
+    const ext = extensaoDeMime(req.file.mimetype);
+    if (!ext) return res.status(400).json({ error: 'Formato não aceito. Use JPG, PNG ou WEBP.' });
+
+    const { data: atual } = await supabase.from('apresentacao_criancas')
+      .select('id, crianca_nome, data_apresentacao, foto_storage_path')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada' });
+
+    const caminho = `${PREFIXO_FOTO}${_uuidFoto()}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('kids-documentos')
+      .upload(caminho, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
+    if (upErr) throw upErr;
+
+    const { error: eUp } = await supabase.from('apresentacao_criancas').update({
+      foto_storage_path: caminho,
+      foto_enviada_em: new Date().toISOString(),
+      foto_enviada_por: (req.user && (req.user.id || req.user.userId)) || null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id);
+    // ⚠️ Sem a migration `20260916140000` a coluna não existe: 409 DIZENDO o
+    // motivo, nunca 500 genérico (a lei do check-in, 15/09). E o arquivo que
+    // acabou de subir sai junto — senão vira lixo sem linha que o aponte.
+    if (eUp && eUp.code === '42703') {
+      await supabase.storage.from('kids-documentos').remove([caminho]).catch(() => {});
+      return res.status(409).json({ error: 'A foto ainda não está disponível — falta aplicar a migration 20260916140000.' });
+    }
+    if (eUp) throw eUp;
+
+    if (atual.foto_storage_path && atual.foto_storage_path !== caminho) {
+      await supabase.storage.from('kids-documentos').remove([atual.foto_storage_path]).catch(() => {});
+    }
+
+    const nome = nomeArquivoFoto(atual.crianca_nome, atual.data_apresentacao, ext);
+    const [ver, baixar] = await Promise.all([
+      supabase.storage.from('kids-documentos').createSignedUrl(caminho, 60 * 30),
+      supabase.storage.from('kids-documentos').createSignedUrl(caminho, 60 * 30, { download: nome }),
+    ]);
+    res.json({
+      foto_url: (ver.data && ver.data.signedUrl) || null,
+      foto_download_url: (baixar.data && baixar.data.signedUrl) || null,
+      foto_nome_arquivo: nome,
+    });
+  } catch (e) {
+    console.error('[totemKids] apresentacao foto:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a foto' });
+  }
+});
+
+// DELETE /apresentacoes/:id/foto — nível 3, como o PATCH: apagar a foto que a
+// família mandou não é operação de balcão.
+router.delete('/apresentacoes/:id/foto', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { data: atual } = await supabase.from('apresentacao_criancas')
+      .select('id, foto_storage_path').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada' });
+    const { error } = await supabase.from('apresentacao_criancas').update({
+      foto_storage_path: null, foto_enviada_em: null, foto_enviada_por: null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id);
+    if (error && error.code === '42703') return res.status(409).json({ error: 'A foto ainda não está disponível — falta aplicar a migration 20260916140000.' });
+    if (error) throw error;
+    if (atual.foto_storage_path) {
+      await supabase.storage.from('kids-documentos').remove([atual.foto_storage_path]).catch(() => {});
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[totemKids] apresentacao foto delete:', e.message);
+    res.status(500).json({ error: 'Erro ao remover a foto' });
+  }
+});
+
+// ⚠️ Erro do multer vira mensagem NOSSA (mesma razão da porta pública): o padrão
+// dele é 500 com stack, e quem clicou precisa saber que o problema é o arquivo.
+router.use('/apresentacoes/:id/foto', (err, _req, res, _next) => {
+  if (err && err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'A foto passa de 8MB. Envie uma versão menor.' });
+  console.error('[totemKids] multer foto:', err && err.message);
+  res.status(400).json({ error: 'Não conseguimos ler esse arquivo. Use JPG, PNG ou WEBP.' });
 });
 
 router.delete('/apresentacoes/:id', authorizeModule('kids', 4), async (req, res) => {
