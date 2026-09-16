@@ -83,11 +83,19 @@ BEGIN
     v_novo := regexp_replace(
       v_def,
       '(WHEN ''pendente''(::text)? THEN ''recebida''(::text)?)',
-      E'\1\n            WHEN ''contatado''::text THEN ''recebida''::text',
+      E'\\1\n            WHEN ''contatado''::text THEN ''recebida''::text',
       'g');
 
     IF v_novo = v_def THEN
       RAISE EXCEPTION 'âncora não encontrada na definição VIVA da view — conferir pg_get_viewdef antes de seguir';
+    END IF;
+
+    -- ⚠️⚠️ Mudou o texto, mas mudou CERTO? Numa string E'' a referencia ao
+    -- trecho casado seria lida como ESCAPE OCTAL (chr(1)) e nao como referencia:
+    -- o CASE perderia o ramo WHEN 'pendente' e a inscricao recem-chegada
+    -- apareceria como 'confirmada' em silencio. Dai a barra dobrada acima.
+    IF v_novo !~ 'WHEN ''pendente''' OR strpos(v_novo, chr(1)) > 0 THEN
+      RAISE EXCEPTION 'o patch corrompeu a definicao da view (ramo pendente perdido) - abortado';
     END IF;
 
     SELECT reloptions INTO v_opts
