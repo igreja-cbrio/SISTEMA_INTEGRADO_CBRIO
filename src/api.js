@@ -4350,10 +4350,10 @@ export const devocionalMembro = {
   historico: () => get('/devocional-membro/historico'),
 };
 
-// Devocional · público (envio do magic link)
-export const publicDevocional = {
-  login: (email) => post('/public/devocional/login', { email }),
-};
+// Devocional · público: o cliente do magic link saiu em 16/09/2026 (REM-02 da
+// auditoria). A rota `POST /public/devocional/login` foi removida do backend —
+// as telas web do devocional não existem mais (o devocional vive no app), e o
+// envio nunca funcionou: o backend gerava o link e descartava o valor.
 
 // Pessoas - lookup unificado (Membresia como fonte única)
 export const pessoas = {
