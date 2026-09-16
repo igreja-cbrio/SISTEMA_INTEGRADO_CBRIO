@@ -6375,7 +6375,7 @@ router.get('/voluntariado-inscricoes', authorizeModule('kids', 1), async (req, r
     const status = req.query.status ? String(req.query.status) : null;
     const search = req.query.search ? String(req.query.search).trim() : null;
     let q = supabase.from('vol_inscricoes')
-      .select('id, nome_completo, nome, sobrenome, telefone, email, status, ministerios_interesse, dom_predominante, data_inscricao, feedback, integrado_em')
+      .select('id, nome_completo, nome, sobrenome, telefone, email, status, ministerios_interesse, dom_predominante, data_inscricao, feedback, integrado_em, membro_id')
       .eq('area', 'kids')
       .is('deleted_at', null)
       .order('data_inscricao', { ascending: false, nullsFirst: false })
