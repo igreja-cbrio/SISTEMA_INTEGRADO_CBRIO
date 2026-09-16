@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-424 arquivos.
+426 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -195,6 +195,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/corsPolicy.js` | régua pura | — | `backend/middleware/errorHandler.test.js` |
 | `backend/utils/cotaMeta.js` | régua pura | — | `src/test/cotaMeta.test.ts` |
 | `backend/utils/cpf.js` | régua pura | — | `src/test/censoFormEspelho.test.ts` |
+| `backend/utils/cpfResponsavel.js` | régua pura | — | `src/test/cpfResponsavel.test.ts` |
 | `backend/utils/criancaApresentacao.js` | régua pura | — | `src/test/cultoApresentacao.test.ts` |
 | `backend/utils/cronAuth.js` | régua pura | — | `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/cultoJanela.js` | régua pura | — | `src/test/cultoJanela.test.ts` |
@@ -216,6 +217,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/dsOnline.js` | régua pura | — | `src/test/dsOnline.test.ts` |
 | `backend/utils/eInscricao.js` | régua pura | — | `src/test/eInscricao.test.ts` |
 | `backend/utils/elegibilidadeVol.js` | régua pura | — | `src/test/elegibilidadeVol.test.ts` |
+| `backend/utils/enderecoGrupoPublico.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/entradaGrupoApp.js` | régua pura | — | `src/test/entradaGrupoApp.test.ts` |
 | `backend/utils/equipeAtendimento.js` | régua pura | — | `src/test/equipeAtendimento.test.ts` |
 | `backend/utils/escalaLinhaEquipe.js` | régua pura | — | `src/test/escalaLinhaEquipe.test.ts` |

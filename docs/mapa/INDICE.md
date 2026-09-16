@@ -74,7 +74,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **172** arquivos, **159** com teste.
+`backend/utils/` tem **174** arquivos, **160** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -131,7 +131,8 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/contextoFalha.js` | `src/test/fetchFalhaDb.test.ts` `src/test/telemetria500.test.ts` |
 | `backend/utils/corsPolicy.js` | `backend/middleware/errorHandler.test.js` |
 | `backend/utils/cotaMeta.js` | `src/test/cotaMeta.test.ts` |
-| `backend/utils/cpf.js` | `src/test/censoFormEspelho.test.ts` |
+| `backend/utils/cpf.js` | `src/test/censoFormEspelho.test.ts` `src/test/cpfResponsavel.test.ts` |
+| `backend/utils/cpfResponsavel.js` | `src/test/cpfResponsavel.test.ts` |
 | `backend/utils/criancaApresentacao.js` | `src/test/cultoApresentacao.test.ts` |
 | `backend/utils/cronAuth.js` | `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/cultoJanela.js` | `src/test/cultoJanela.test.ts` |
@@ -153,6 +154,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/dsOnline.js` | `src/test/dsOnline.test.ts` |
 | `backend/utils/eInscricao.js` | `src/test/eInscricao.test.ts` `src/test/importarEInscricao.test.ts` |
 | `backend/utils/elegibilidadeVol.js` | `src/test/elegibilidadeVol.test.ts` |
+| `backend/utils/enderecoGrupoPublico.js` | — |
 | `backend/utils/entradaGrupoApp.js` | `src/test/entradaGrupoApp.test.ts` |
 | `backend/utils/equipeAtendimento.js` | `src/test/equipeAtendimento.test.ts` |
 | `backend/utils/escalaLinhaEquipe.js` | `src/test/escalaLinhaEquipe.test.ts` |
