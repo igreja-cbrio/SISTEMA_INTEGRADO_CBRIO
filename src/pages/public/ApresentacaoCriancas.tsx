@@ -137,7 +137,7 @@ export default function ApresentacaoCriancas() {
   const [horarioPrevisto, setHorarioPrevisto] = useState<string | null>(null);
   const [horarioFinal, setHorarioFinal] = useState<string | null>(null);
   const [form, setForm] = useState({
-    nome_pai: '', nome_mae: '', telefone: '', cpf_responsavel: '', email: '', endereco: '',
+    nome_pai: '', nome_mae: '', telefone: '', cpf_responsavel: '', cpf_outro: '', email: '', endereco: '',
     website: '', // honeypot
   });
   const [criancas, setCriancas] = useState<Crianca[]>([{ nome: '', nascimento: '', sexo: '' }]);
@@ -153,6 +153,18 @@ export default function ApresentacaoCriancas() {
   // validação leria o valor velho e o painel reabriria em loop.
   const [confirmarPais, setConfirmarPais] = useState(false);
   const paisOkRef = useRef(false);
+  // ⚠️ De quem é o CPF (16/09). 'mae' é o padrão porque é o que o sistema já
+  // assumia — quem tem o CPF do pai agora diz, em vez de o código adivinhar.
+  const [cpfDe, setCpfDe] = useState<'pai' | 'mae'>('mae');
+  const [mostrarCpf2, setMostrarCpf2] = useState(false);
+  // ⚠️⚠️ O 'já confirmei' vive num REF, não em estado: em estado o painel
+  // reabre em loop a cada render (a lição do aviso de pai==mãe, 15/09).
+  const [confirmarUmResp, setConfirmarUmResp] = useState(false);
+  const umRespOkRef = useRef(false);
+  // Quem foi informado. DERIVADO de `form` — estado paralelo aqui dessincroniza
+  // do campo e o aviso passaria a falar de um preenchimento que não é o atual.
+  const temPai = Boolean(form.nome_pai.trim());
+  const temMae = Boolean(form.nome_mae.trim());
   const formRef = useRef<HTMLFormElement>(null);
   const [sent, setSent] = useState(false);
   const [avisoJaInscritas, setAvisoJaInscritas] = useState<string[]>([]);
@@ -215,10 +227,13 @@ export default function ApresentacaoCriancas() {
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
     let v = e.target.value;
     if (k === 'telefone') v = mascaraTelefone(v);
-    if (k === 'cpf_responsavel') v = mascaraCpf(v);
+    if (k === 'cpf_responsavel' || k === 'cpf_outro') v = mascaraCpf(v);
     // Mudou o nome de um dos dois? A confirmação anterior deixa de valer — senão
     // trocar para OUTRO par igual passaria sem a pessoa ver o aviso de novo.
-    if (k === 'nome_pai' || k === 'nome_mae') { paisOkRef.current = false; setConfirmarPais(false); }
+    if (k === 'nome_pai' || k === 'nome_mae') {
+      paisOkRef.current = false; setConfirmarPais(false);
+      umRespOkRef.current = false; setConfirmarUmResp(false);
+    }
     setForm(f => ({ ...f, [k]: v }));
   };
 
@@ -252,6 +267,16 @@ export default function ApresentacaoCriancas() {
     if (criancas.some(c => c.fotoEnviando)) return setError('Aguarde a foto terminar de enviar.');
     if (!telefoneValido(form.telefone)) return setError('Informe um telefone válido com DDD.');
     if (!cpfValido(form.cpf_responsavel)) return setError('Informe um CPF válido do responsável.');
+    // ⚠️ O 2º CPF é opcional: só reclama se foi PREENCHIDO e está inválido.
+    if (form.cpf_outro.trim() && !cpfValido(form.cpf_outro)) return setError('O CPF do outro responsável não é válido. Corrija ou apague o campo.');
+    // ⚠️⚠️ AVISO, não bloqueio: um responsável só é caso real (mãe solo, pai
+    // solo) e a porta sempre aceitou. Só garantimos que ninguém deixe em branco
+    // por distração sem saber o que acontece com o certificado.
+    if (temPai !== temMae && !umRespOkRef.current) {
+      setError('');
+      setConfirmarUmResp(true);
+      return;
+    }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return setError('Informe um e-mail válido.');
     if (!aceitaTermos) return setError('É preciso aceitar a autorização de responsável para inscrever a criança.');
 
@@ -265,6 +290,10 @@ export default function ApresentacaoCriancas() {
         criancas: criancasValidas,
         telefone: form.telefone,
         cpf_responsavel: soDigitos(form.cpf_responsavel),
+        // ⚠️ Com um responsável só, o servidor INFERE o dono — mandar mesmo
+        // assim não atrapalha, a régua ignora o informado nesse caso.
+        cpf_de: cpfDe,
+        cpf_outro: form.cpf_outro.trim() ? soDigitos(form.cpf_outro) : null,
         email: form.email.trim(),
         endereco: form.endereco.trim() || null,
         aceita_termos_menor: aceitaTermos,
@@ -357,6 +386,49 @@ export default function ApresentacaoCriancas() {
           </div>
         ) : (
           <>
+            {/* ⚠️⚠️ UM RESPONSÁVEL SÓ (16/09/2026) · pedido do Marcos ao testar.
+                Não é bloqueio: mãe solo e pai solo são caso real, e a porta
+                sempre aceitou um nome só. É AVISO, porque o certificado sai com
+                o nome de quem foi informado — sozinho.
+                ⚠️ O texto diz o que o certificado FAZ de verdade
+                (`nomesDosPaisUnicos(...).join(' e ')` com um nome devolve aquele
+                nome, não uma lacuna). Prometer "vai sair incompleto" faria a
+                família corrigir por motivo falso — a lição do aviso de pai==mãe. */}
+            {confirmarUmResp && (
+              <div style={{
+                background: '#F59E0B18', border: '1px solid #F59E0B55', borderRadius: 10,
+                padding: '12px 14px', marginBottom: 20, fontSize: 13, color: 'var(--cbrio-text)',
+              }}>
+                <div style={{ fontWeight: 700, marginBottom: 6 }}>Só um responsável informado</div>
+                <div style={{ opacity: 0.9 }}>
+                  O certificado da apresentação sai com o nome de <strong>{(form.nome_pai || form.nome_mae).trim()}</strong> sozinho.
+                  Se quiser os dois nomes no certificado, volte e preencha {form.nome_mae ? 'o nome do pai' : 'o nome da mãe'}.
+                </div>
+                <div style={{ display: 'flex', gap: 8, marginTop: 12, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => { umRespOkRef.current = true; setConfirmarUmResp(false); formRef.current?.requestSubmit(); }}
+                    style={{
+                      padding: '9px 14px', borderRadius: 10, border: 'none', cursor: 'pointer',
+                      background: 'linear-gradient(90deg, #00B39D, #00d9bd)', color: '#fff', fontWeight: 700, fontSize: 13,
+                    }}
+                  >
+                    Continuar assim
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setConfirmarUmResp(false)}
+                    style={{
+                      padding: '9px 14px', borderRadius: 10, cursor: 'pointer', fontSize: 13,
+                      border: '1px solid var(--cbrio-border)', background: 'transparent', color: 'var(--cbrio-text)',
+                    }}
+                  >
+                    Voltar e preencher
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* ⚠⚠ Confirmação do nome dobrado · NUNCA window.confirm (padrão da
                 casa: diálogo nativo trava automação e não é o visual do sistema). */}
             {confirmarPais && (
@@ -480,7 +552,54 @@ export default function ApresentacaoCriancas() {
 
               <Field id="telefone" label="Telefone para contato" value={form.telefone} onChange={set('telefone')} required placeholder="(00) 00000-0000" inputMode="tel" autoComplete="tel" />
               <Row>
-                <Field id="cpf_responsavel" label="CPF do responsável" value={form.cpf_responsavel} onChange={set('cpf_responsavel')} required placeholder="000.000.000-00" inputMode="numeric" />
+                <div>
+                  <Field id="cpf_responsavel" label="CPF do responsável" value={form.cpf_responsavel} onChange={set('cpf_responsavel')} required placeholder="000.000.000-00" inputMode="numeric" />
+                  {/* ⚠️⚠️ DE QUEM É ESTE CPF (16/09/2026). Só aparece quando os DOIS
+                      nomes estão preenchidos — com um responsável só, a resposta já
+                      se sabe, e perguntar o óbvio é campo a mais no celular.
+                      Medido: das 9 inscrições em que dava pra saber o dono, 3 eram
+                      do PAI, e o sistema assumia mãe. */}
+                  {temPai && temMae && (
+                    <div style={{ marginTop: -10, marginBottom: 14 }}>
+                      <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>Este CPF é de quem?</div>
+                      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                        {(['mae', 'pai'] as const).map(d => (
+                          <button
+                            key={d}
+                            type="button"
+                            onClick={() => setCpfDe(d)}
+                            style={{
+                              padding: '7px 14px', borderRadius: 999, cursor: 'pointer', fontSize: 12,
+                              fontWeight: cpfDe === d ? 700 : 500,
+                              border: `1px solid ${cpfDe === d ? '#00B39D' : 'var(--cbrio-border)'}`,
+                              background: cpfDe === d ? '#00B39D18' : 'transparent',
+                              color: cpfDe === d ? '#00B39D' : 'var(--cbrio-text3)',
+                            }}
+                          >
+                            {d === 'mae' ? 'Da mãe' : 'Do pai'}
+                          </button>
+                        ))}
+                      </div>
+                      {!mostrarCpf2 ? (
+                        <button type="button" onClick={() => setMostrarCpf2(true)}
+                          style={{ marginTop: 10, background: 'transparent', border: 'none', color: '#00B39D', fontSize: 12, fontWeight: 600, cursor: 'pointer', padding: 0 }}>
+                          + Adicionar o CPF {cpfDe === 'mae' ? 'do pai' : 'da mãe'}
+                        </button>
+                      ) : (
+                        <div style={{ marginTop: 10 }}>
+                          <Field
+                            id="cpf_outro"
+                            label={`CPF ${cpfDe === 'mae' ? 'do pai' : 'da mãe'} (opcional)`}
+                            value={form.cpf_outro}
+                            onChange={set('cpf_outro')}
+                            placeholder="000.000.000-00"
+                            inputMode="numeric"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
                 <Field id="email" label="E-mail" value={form.email} onChange={set('email')} required inputMode="email" autoComplete="email" />
               </Row>
               <Field id="endereco" label="Endereço (opcional)" value={form.endereco} onChange={set('endereco')} autoComplete="street-address" />

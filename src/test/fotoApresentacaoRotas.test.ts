@@ -36,6 +36,62 @@ function semComentarios(js: string): string {
 const publica = semComentarios(readFileSync(PUBLICA, 'utf8'));
 const kids = semComentarios(readFileSync(KIDS, 'utf8'));
 
+const FORM = resolve(__dirname, '../../src/pages/public/ApresentacaoCriancas.tsx');
+const form = semComentarios(readFileSync(FORM, 'utf8'));
+
+describe('porta pública · o CPF vai com o nome do DONO dele', () => {
+  // ⚠️⚠️ O mutante: voltar pra `nomeMaeT || nomePaiT`. Medido em 16/09: 3 das 9
+  // inscrições com dono conhecido tinham CPF do PAI, e o código dizia mãe.
+  it('o funil de identidade recebe o nome do dono do CPF, não o da mãe por padrão', () => {
+    expect(publica).toContain('const nomeResp = nomeDoDonoDoCpf(donoCpf, nomePaiT, nomeMaeT);');
+    expect(publica).not.toContain('const nomeResp = nomeMaeT || nomePaiT;');
+  });
+
+  it('o dono é derivado pela régua, não escrito à mão na rota', () => {
+    expect(publica).toContain('const donoCpf = donoDoCpf({');
+    expect(publica).toContain('const cpfsDosPais = distribuirCpfs({ dono: donoCpf, cpf: cpfDig, cpfOutro: cpfOutroDig });');
+  });
+
+  it('as colunas novas só são mencionadas quando têm valor (lei do 42703)', () => {
+    expect(publica).toContain('...(cpfsDosPais.cpf_pai ? { cpf_pai: cpfsDosPais.cpf_pai } : {}),');
+    expect(publica).toContain('...(cpfsDosPais.cpf_mae ? { cpf_mae: cpfsDosPais.cpf_mae } : {}),');
+  });
+
+  // ⚠️ O laço substituiu a retentativa só-de-foto: agora derruba QUALQUER coluna
+  // opcional que o banco ainda não tenha, uma por vez.
+  it('sem migration, derruba a coluna e insere assim mesmo', () => {
+    expect(publica).toContain("const OPCIONAIS_INSC = ['foto_storage_path', 'foto_enviada_em', 'cpf_pai', 'cpf_mae'];");
+    expect(publica).toContain('if (!faltando || !(faltando in linhaAtual)) break;');
+  });
+
+  // ⚠️ 2º CPF é opcional: inválido NÃO pode derrubar a inscrição no servidor.
+  it('o CPF do outro responsável não é obrigatório no servidor', () => {
+    expect(publica).toContain('const cpfOutroDig = cpf_outro ? normalizarCpf(cpf_outro) : null;');
+    expect(publica).not.toContain("error: 'Informe um CPF válido do outro responsável.'");
+  });
+});
+
+describe('formulário público · um responsável só AVISA, não bloqueia', () => {
+  it('o aviso dispara quando só um dos dois foi preenchido', () => {
+    expect(form).toContain('if (temPai !== temMae && !umRespOkRef.current) {');
+    expect(form).toContain('setConfirmarUmResp(true);');
+  });
+
+  // ⚠️⚠️ O "já confirmei" em ESTADO reabriria o painel em loop a cada render —
+  // a lição do aviso de pai==mãe (15/09).
+  it('o "já confirmei" vive num ref, não em estado', () => {
+    expect(form).toContain('const umRespOkRef = useRef(false);');
+    expect(form).toContain('umRespOkRef.current = true;');
+  });
+
+  // ⚠️⚠️ Mãe solo e pai solo são caso real: a porta sempre aceitou um nome só, e
+  // o servidor continua aceitando. Aviso que vira bloqueio é atrito inventado.
+  it('o servidor continua aceitando um responsável só', () => {
+    expect(publica).toContain("if (!nomePaiT && !nomeMaeT) return res.status(400)");
+    expect(publica).not.toContain('um_responsavel_confirmado');
+  });
+});
+
 describe('porta pública · o caminho da foto é validado antes de virar coluna', () => {
   it('o normalizador da lista passa `foto_path` pela régua', () => {
     expect(publica).toContain('caminhoFotoValido(c && c.foto_path) ? c.foto_path : null');
@@ -57,10 +113,13 @@ describe('porta pública · o caminho da foto é validado antes de virar coluna'
   // ⚠️⚠️ Ordem de deploy: se o código subir antes do SQL, o INSERT COM FOTO
   // morre em 42703 e o `continue` descartaria a inscrição INTEIRA — a família
   // perderia a vaga por causa de uma imagem. Some a foto, nunca a criança.
-  it('sem a migration, retenta SEM a foto em vez de perder a inscrição', () => {
+  // ⚠️ Em 16/09 a retentativa só-de-foto virou LAÇO sobre `OPCIONAIS_INSC`,
+  // quando `cpf_pai`/`cpf_mae` entraram na mesma situação. A guarda mudou de
+  // forma; o que ela protege é o mesmo.
+  it('sem a migration, derruba a coluna e insere em vez de perder a inscrição', () => {
     expect(publica).toContain("error.code === '42703'");
-    expect(publica).toContain('const { foto_storage_path, foto_enviada_em, ...semFoto } = linhaInsc;');
-    expect(publica).toContain('await inserir(semFoto)');
+    expect(publica).toContain('delete linhaAtual[faltando];');
+    expect(publica).toContain('({ data, error } = await inserir(linhaAtual));');
   });
 
   it('sobe pro bucket PRIVADO, nunca pra um público', () => {

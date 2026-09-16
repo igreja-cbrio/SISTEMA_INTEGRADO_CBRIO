@@ -987,6 +987,50 @@ CRLF e o `\n` do meu `replace` não casava. É a lição já registrada em 15/09
 25/08: **confirmar que o mutante entrou** (o script agora conta as ocorrências e
 aborta em zero) antes de concluir qualquer coisa sobre o teste.
 
+### ⚠️⚠️ 16/09/2026 · de QUEM é o CPF + aviso de um responsável só (migration `20260916160000`)
+
+Achado do Marcos ao testar a foto: *"ele pede o nome dos dois responsáveis e
+apenas 1 cpf, ou seja algum responsável fica sem, ou pior ele vincula o cpf no
+responsável errado"*. E, depois: *"não coloquei o nome da mãe e não apareceu o
+modal dizendo que o certificado ficaria incompleto"*.
+
+**Medido ANTES de mexer (16/09):** das 9 inscrições em que dá pra saber o dono do
+CPF, **3 eram do PAI** (Robson Ribeiro com 2 filhos + 1 teste).
+⚠️ **O vínculo NÃO estava errado** — nas 9 ligadas, o CPF sempre bate com o
+membro ligado, porque o matcher prioriza CPF sobre nome. O defeito era o PAR que
+chegava no funil: `nomeCompleto: nomeMaeT || nomePaiT` com o CPF do pai. **É o
+nome que decide quando o CPF não está no cadastro** — aí ele decidiria errado.
+
+- ⚠️⚠️ **O nome que acompanha o CPF é o do DONO do CPF** (`nomeDoDonoDoCpf`).
+  Régua pura em `backend/utils/cpfResponsavel.js`, com teste e mutante
+  (revertendo pra `nomeMaeT || nomePaiT`, 1 teste fica vermelho).
+- ⚠️ **Com um responsável só, não se pergunta**: a régua infere. Perguntar o
+  óbvio é campo a mais numa porta que a família preenche no celular.
+- ⚠️ Sem `cpf_de` (porta do app, totem, linhas antigas) o dono cai em **`mae`** —
+  o comportamento histórico. Não inventar dono novo pra quem nunca declarou.
+- ⚠️⚠️ **CPF repetido nos dois campos descarta o segundo**: mesmo número como
+  sendo de duas pessoas cria identidade falsa.
+- ⚠️ O 2º CPF é **opcional e nunca derruba a inscrição**: inválido no servidor é
+  ignorado, não 400.
+- ⚠️⚠️ **A ficha não adivinha linha antiga**: sem `cpf_pai`/`cpf_mae`, o rótulo
+  volta a ser "CPF do responsável". Escrever "CPF da mãe" num registro que não
+  sabe disso seria inventar um fato.
+- ⚠️ A retentativa de 42703 do INSERT virou **LAÇO sobre `OPCIONAIS_INSC`**
+  (`foto_storage_path`, `foto_enviada_em`, `cpf_pai`, `cpf_mae`), derrubando uma
+  coluna por vez — com `break` quando não há o que derrubar, senão é laço
+  infinito batendo no banco a cada inscrição.
+
+**Um responsável só = AVISO, nunca bloqueio.** Mãe solo e pai solo são caso real
+e a porta sempre aceitou um nome só; o servidor **continua aceitando**. Pôr um
+400 aqui repetiria a armadilha do `pais_iguais` (o app leva 400 porque o bundle
+velho não manda a flag) sem nenhum ganho.
+- ⚠️⚠️ **O texto diz o que o certificado FAZ:** `nomesDosPaisUnicos(...).join(' e ')`
+  com um nome devolve **aquele nome sozinho**, não uma lacuna. Prometer
+  "sai incompleto" faria a família corrigir por motivo falso — a mesma lição do
+  aviso de pai==mãe (15/09).
+- ⚠️ O "já confirmei" vive num **REF**, não em estado: em estado o painel reabre
+  em loop a cada render.
+
 ### ⚠️⚠️ 16/09/2026 · FOTO da criança pro TELÃO do culto (migration `20260916140000`)
 
 Pedido do Marcos: *"adicionar foto da criança nesse formulário e que aparecesse
