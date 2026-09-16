@@ -16,7 +16,7 @@ const {
   ordenarPorOpcoes, baseSemNeutras, ehNeutra, montarItens,
 } = require('../utils/censoPerguntas');
 const {
-  TIPOS_PARA_BUSCAR, TIPOS_IDENTIFICACAO, classificar, aplicarTeto,
+  TIPOS_PARA_BUSCAR, TIPOS_IDENTIFICACAO, classificar, aplicarTeto, cortarDemografia,
 } = require('../utils/censoGrafico');
 const { fetchAllRows } = require('../utils/pagination');
 const { requireCron } = require('../utils/cronAuth');
@@ -1165,6 +1165,19 @@ router.get('/perfil', authorizeModule('censo', 1), async (req, res) => {
       .map(([valor, total]) => ({ valor, total }))
       .sort((a, b) => b.total - a.total).slice(0, teto || 100);
 
+    // ⚠️⚠️ TETO QUE CORTA TEM QUE DECLARAR O QUE ESCONDEU (achado do Marcos ·
+    // 16/09/2026): `bairro` corta em 12, e medido no mesmo dia isso escondia
+    // **205 pessoas em 108 bairros** de 973 respondentes — 21% — sem UMA
+    // palavra na tela. Quem somava as barras achava que faltava gente, e
+    // estava certo. É a lei "número na tela nunca pode ser efeito colateral de
+    // paginação", e o módulo JÁ tinha o padrão certo em `aplicarTeto`
+    // (`censoGrafico.js`), que devolve `ocultos`/`ocultosTotal` e a tela
+    // escreve "+ N outras respostas (M pessoas)". A demografia é que não usava.
+    //
+    // ⚠️ A régua é PURA e mora em `utils/censoGrafico.cortarDemografia` (no
+    // gate), ao lado do `aplicarTeto` que já fazia isso para os gráficos.
+    const bairroCorte = cortarDemografia(cortes.bairro, 12);
+
     // ⚠️ ÓRFÃS: linha no agregado cujo `pergunta_id` não está mais no
     // questionário (pergunta removida ou renomeada depois de já ter resposta).
     // O laço acima percorre `perguntas`, então elas ficariam invisíveis mesmo
@@ -1207,8 +1220,13 @@ router.get('/perfil', authorizeModule('censo', 1), async (req, res) => {
           emLista(cortes.faixa_etaria)),
         genero: emLista(cortes.genero),
         estado_civil: emLista(cortes.estado_civil),
-        bairro: emLista(cortes.bairro, 12),
+        bairro: bairroCorte.valores,
         status_membro: emLista(cortes.status_membro),
+      },
+      // ⚠️ O que o teto escondeu, por campo. Sem isto a soma das barras de
+      // bairro não fecha com `respondentes` e nada na tela explica.
+      demografia_ocultos: {
+        bairro: { valores: bairroCorte.ocultos, pessoas: bairroCorte.ocultos_pessoas },
       },
     });
   } catch (e) { res.status(500).json({ error: e.message }); }

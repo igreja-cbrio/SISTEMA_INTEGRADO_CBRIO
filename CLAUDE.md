@@ -145,6 +145,38 @@ pessoas têm palpite da IA *e* declaração no censo.
   Não foi tocado: o pedido era sobre sexo, e `bairro` tem tetos diferentes nos dois
   lugares.
 
+### ⚠️⚠️ O corte de BAIRRO escondia 21% das pessoas em silêncio (16/09 · SEM migration)
+
+Achado do Marcos: *"o campo de bairro somando todos os nomes dá bem menos que 960
+respostas"*. **Dava mesmo.** `bairro: emLista(cortes.bairro, 12)` fazia um
+`slice(0, 12)` cru, e medido no mesmo dia: **973 respondentes · 120 bairros
+distintos · as 12 barras somavam 768 · 205 pessoas em 108 bairros ficavam de
+fora, sem UMA palavra na tela.** Quem somasse as barras concluiria que faltava
+gente — e estaria certo.
+
+⚠️⚠️ **O módulo JÁ tinha o padrão certo e a demografia não o usava**:
+`aplicarTeto` (`censoGrafico.js`) devolve `ocultos`/`ocultosTotal` e a tela
+escreve *"+ N outras respostas (M pessoas)"* nos gráficos desde sempre. É a lei
+**"número na tela nunca pode ser efeito colateral de paginação"** (14/09, quando
+a aba Respostas anunciava 500 com 812 no banco) aparecendo pela terceira vez.
+
+⇒ **`cortarDemografia(contagem, teto)`** em `utils/censoGrafico.js` (régua PURA,
+no gate via `test:censo-grafico`), e o `/perfil` passou a devolver
+**`demografia_ocultos`** por campo. Depois: **775 + 198 = 973, fecha.**
+
+- ⚠️ **`(não informado)` NUNCA é cortado** — é o análogo da NEUTRA do
+  `aplicarTeto`: ele explica a base, e escondê-lo faz a tela **afirmar que todo
+  mundo respondeu**. Eram 7 pessoas caindo na cauda, ou seja **estava
+  desaparecendo**; agora aparece e **não consome uma das 12 vagas**.
+- ⚠️ Os outros 4 cortes (sexo, estado civil, faixa etária, vínculo) usam o teto
+  default de 100 e **sempre fecharam** — o defeito era só do bairro, que é o
+  único com teto apertado por ter cauda longa.
+- **3 mutantes RODADOS e mortos**: esconder sem declarar → 2 vermelhos · cortar o
+  "(não informado)" junto → 2 · voltar ao `slice` cru → 3.
+
+⚠️ **A régua vale para todo corte demográfico novo com teto** — e a pergunta a
+fazer é sempre a mesma: *a soma do que está na tela fecha com o total?*
+
 ### ⚠️⚠️ A auditoria nome a nome: o risco NÃO está na IA
 
 Varredura dos **931 pares nome→sexo** da base (1.856 pessoas com o campo), a pedido

@@ -76,7 +76,44 @@ function aplicarTeto(valores, teto) {
   return { valores: [...vis, ...neutras], ocultos: fora.length, ocultosTotal };
 }
 
+/**
+ * Corta um CORTE DEMOGRÁFICO no teto, DECLARANDO o que ficou de fora.
+ *
+ * ⚠️⚠️ Existe por um defeito medido em 16/09/2026 (achado pelo Marcos): o corte
+ * de `bairro` cortava em 12 com um `slice()` cru, e isso escondia **205 pessoas
+ * em 108 bairros** de 973 respondentes — 21% — sem uma palavra na tela. Quem
+ * somasse as barras concluiria que faltava gente, e estaria certo. É a lei
+ * "número na tela nunca pode ser efeito colateral de paginação".
+ *
+ * ⚠️ `(não informado)` NUNCA é cortado — é o análogo da NEUTRA do `aplicarTeto`:
+ * ele explica a base, e escondê-lo faz a tela afirmar que todo mundo respondeu.
+ * Hoje são 7 pessoas e ele cai na cauda; sem esta guarda, some.
+ *
+ * @param {Record<string, number>} contagem  valor -> total
+ * @param {number} teto  quantos valores desenhar (fora o "não informado")
+ * @returns {{valores: {valor: string, total: number}[], ocultos: number, ocultos_pessoas: number}}
+ */
+const SEM_DADO_DEMOGRAFIA = '(não informado)';
+function cortarDemografia(contagem, teto) {
+  const t = Number.isFinite(teto) && teto > 0 ? teto : TETO_VALORES;
+  const todos = Object.entries(contagem || {})
+    .map(([valor, total]) => ({ valor, total: Number(total) || 0 }))
+    .sort((a, b) => b.total - a.total);
+  if (todos.length <= t) return { valores: todos, ocultos: 0, ocultos_pessoas: 0 };
+  const semDado = todos.filter((v) => v.valor === SEM_DADO_DEMOGRAFIA);
+  const resto = todos.filter((v) => v.valor !== SEM_DADO_DEMOGRAFIA);
+  const vis = resto.slice(0, t);
+  const fora = resto.slice(t);
+  return {
+    valores: [...vis, ...semDado],
+    ocultos: fora.length,
+    ocultos_pessoas: fora.reduce((s, v) => s + v.total, 0),
+  };
+}
+
 module.exports = {
+  SEM_DADO_DEMOGRAFIA,
+  cortarDemografia,
   TIPOS_GRAFICO,
   TIPOS_LISTA_LONGA,
   TIPOS_TEXTO,
