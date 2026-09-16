@@ -74,6 +74,7 @@ Guard: `authorizeModule('cuidados', 1 | 2 | 3)`
 - `backend/utils/janelaPeriodo.js`
 - `backend/utils/jornadaTempo.js`
 - `backend/utils/origemRegistro.js`
+- `backend/utils/primeiroContatoRegua.js`
 - `backend/utils/supabase.js`
 
 **Serviços**
