@@ -135,8 +135,12 @@ pessoas têm palpite da IA *e* declaração no censo.
 - ⚠️ O rótulo é traduzido por `traduzirParaCadastro('genero', …)`: "Feminino" e
   'feminino' somados crus virariam DUAS barras.
 - **`sexo_fonte` (`declarado` · `cadastro` · `sem`) vai SEMPRE na resposta**, com
-  ou sem pergunta no questionário — sem pergunta, `declarado` é 0 e a tela diz que
-  o sexo inteiro veio do cadastro, que é exatamente o que ninguém sabia.
+  ou sem pergunta no questionário. ⚠️ **A TELA deixou de MOSTRÁ-LO em 16/09**
+  (pedido do Marcos, depois que a auditoria fechou os 28 cadastros errados e ele
+  passou a conhecer a origem do número) — **o campo continua saindo do servidor**,
+  porque o cálculo já acontece para fundir a barra e é a única coisa que
+  distingue "declarado na pesquisa" de "veio do cadastro". **Não recolocar a
+  linha achando que sumiu por engano**; voltar a exibir é uma linha de JSX.
 - ⚠️ `estado_civil` e `bairro` **seguem duplicados** (gráfico + bloco demográfico).
   Não foi tocado: o pedido era sobre sexo, e `bairro` tem tetos diferentes nos dois
   lugares.
@@ -257,12 +261,38 @@ REAIS com o nome sujo**:
   seria renomear pessoa a partir de um texto que pode ser de outra.
   ⚠️ `nomeMaisCompleto` não promove isso sozinho de propósito: ele exige que o
   nome atual seja **subsequência** do novo, e um e-mail nunca é.
-- ⏳ **`Mergulho inesquecível Cristiane Cruz` NÃO resolvido, e não deve ser
-  chutado**: o prefixo veio do batismo de 13/05, cujo campo `nome` é literalmente
-  **"Mergulho inesquecível"** (alguém digitou o TEMA do evento). Mas as 2 portas
-  que ELA preencheu depois (formulário de grupos 02/08 · inscrição 04/08) dizem
-  **"Cristiane Firula"**, e o e-mail do cadastro é `mariafirulaa@gmail.com` — ou
-  seja **o sobrenome "Cruz" também é suspeito**. Renomear aqui é decisão humana.
+- **`Mergulho inesquecível Cristiane Cruz` → `Cristiane Cruz`** (decisão do
+  Marcos, 16/09: *"tirando o prefixo"*). O prefixo veio do batismo de 13/05, cujo
+  campo `nome` é literalmente **"Mergulho inesquecível"** — alguém digitou ali o
+  TEMA do evento. ⚠️ Isto **ENCURTA** um nome, que `nomeMaisCompleto` recusa de
+  propósito (só promove quando o atual é subsequência do novo) — por isso é
+  script com guarda de corrida + CPF, nunca automação.
+  ⏳ **O SOBRENOME segue em aberto**: as 2 portas que ELA preencheu (grupos 02/08
+  · inscrição 04/08) dizem **"Cristiane Firula"** e o e-mail é
+  `mariafirulaa@gmail.com` — **"Cruz" também é suspeito**. Tirar o prefixo é
+  ganho certo; trocar o sobrenome exige falar com ela.
+
+### ⚠️⚠️ As contas de revisão de loja NÃO tocaram o censo — mas sujaram a fila pastoral
+
+Pergunta do Marcos (16/09): *"não entendi como essa conta pode ter preenchido o
+censo, ninguém usa isso"*. **Ela não preencheu.** Medido: as 3 contas
+(`Apple Review (Demo)` · `Revisor App Store (Staff)` · `App Review CBRio`) têm
+**ZERO `cen_resposta`**, e nenhum payload do censo cita o nome ou o telefone
+delas. Elas entraram na auditoria porque a varredura foi da **BASE inteira**
+(1.856 com `genero`), não dos respondentes do censo — confusão de redação minha.
+
+⚠️⚠️ **Mas a verificação achou coisa pior, e é real**: elas deixaram **4 pedidos
+na fila pastoral** (`app_inscricoes` tipo `sos`/`aconselhamento`/`oracao`) e
+**o ÚNICO pendente da Caixa de entrada do Cuidados hoje era um "SOS urgente"
+falso**, aberto pela conta da Apple em **29/08**. Fila pastoral com 20 itens, 1
+pendente, e ele fabricado — é assim que a equipe aprende a não olhar a fila.
+⇒ Marcado `tratamento_status='concluido'` (o que a equipe faria na tela, e
+reversível por lá), **nunca apagando a linha**.
+⚠️ A `vol_inscricoes` de teste da mesma conta **já estava soft-deletada** —
+alguém limpou antes; das 833 vivas, **0** são das contas de loja.
+⚠️ **Não apagar as 3 contas**: têm login ativo e servem a revisão nas lojas. O
+que se limpa é o RASTRO operacional que elas deixam, e vale conferir isso depois
+de cada ciclo de revisão de app.
 
 ⚠️ **8 nomes seguem sem evidência nenhuma** (Alex ×2, Ellis, Sued, Haryel, Ecimar,
 Jo, Lucimar, Vauclides) e **ficam como estão por decisão do Marcos** (16/09) — o
