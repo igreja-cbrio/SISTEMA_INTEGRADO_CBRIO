@@ -679,25 +679,7 @@ router.post('/cadastro', cadastroLimiter, contaPorEmailLimiter, async (req, res)
     const generoNorm = String(genero || '').trim().toLowerCase();
     if (!['masculino', 'feminino'].includes(generoNorm)) {
       return res.status(400).json({ error: 'Selecione o sexo (masculino ou feminino).', campo: 'genero' });
-
-
-    // CEP OBRIGATÓRIO nesta porta (pedido do Matheus · 25/08/2026, antes do
-    // censo presencial). ⚠️ É decisão DESTA porta, não do Contrato de
-    // Inscrição — endereço segue fixo-opcional nas outras 6.
-    //
-    // ⚠️ Exige COMPLETO (8 dígitos), não "preenchido": CEP pela metade entra
-    // no cadastro parecendo endereço e o mapa da aba Perfil não consegue
-    // posicionar a pessoa — `regiaoDeCep` recusa qualquer coisa que não tenha
-    // 8. O censo já coletou CEP de 7 dígitos por engano justamente porque o
-    // formulário não avisava.
-    if (!cepCompleto(cep)) {
-      return res.status(400).json({
-        error: String(cep || '').trim()
-          ? 'CEP incompleto — informe os 8 dígitos.'
-          : 'CEP é obrigatório.',
-        campo: 'cep',
-      });
-    }    }
+    }
 
     // ⚠️ Espelho do CHECK `mem_cadastros_pendentes_origem_check` (o banco é a
     // régua; aqui é só a porta recusando cedo). `online` entrou em 27/08/2026 e
@@ -707,6 +689,34 @@ router.post('/cadastro', cadastroLimiter, contaPorEmailLimiter, async (req, res)
     // recusar o cadastro por causa de um parâmetro de URL seria perder a pessoa.
     const origemValida = ['site', 'qr_code', 'evento', 'importacao', 'online'];
     const origemFinal = origemValida.includes(origem) ? origem : 'site';
+
+    // CEP OBRIGATÓRIO — SÓ NA PORTA DO SITE (pedido do Matheus · 25/08/2026,
+    // antes do censo presencial). É decisão DESTA porta, não do Contrato de
+    // Inscrição — endereço segue fixo-opcional nas outras 6.
+    //
+    // ⚠⚠ POR QUE SÓ `site` (auditoria REM-01 · medido em 16/09/2026): esta
+    // guarda nasceu ANINHADA dentro do `if` do sexo, depois do `return` dele —
+    // sintaticamente válida, semanticamente inalcançável, nunca cobrou nada. Ao
+    // desaninhar, ela passa a valer de verdade, e aí a medição manda: dos 166
+    // cadastros criados desde 25/08, **141 vieram por `qr_code` e NENHUM tem
+    // CEP** (o formulário do QR não pergunta), contra **24 de 25 COM CEP na
+    // porta do site** (o front já exige, `CadastroMembresia.jsx`). Ligar para
+    // todas as origens fecharia a porta do censo em 85% das submissões reais.
+    // Quando o formulário do QR passar a coletar CEP, basta tirar a condição.
+    //
+    // ⚠️ Exige COMPLETO (8 dígitos), não "preenchido": CEP pela metade entra
+    // no cadastro parecendo endereço e o mapa da aba Perfil não consegue
+    // posicionar a pessoa — `regiaoDeCep` recusa qualquer coisa que não tenha
+    // 8. O censo já coletou CEP de 7 dígitos por engano justamente porque o
+    // formulário não avisava.
+    if (origemFinal === 'site' && !cepCompleto(cep)) {
+      return res.status(400).json({
+        error: String(cep || '').trim()
+          ? 'CEP incompleto — informe os 8 dígitos.'
+          : 'CEP é obrigatório.',
+        campo: 'cep',
+      });
+    }
 
     // Uma grafia só para o bairro, antes de qualquer gravação.
     // ⚠️ Best-effort por dentro: catálogo fora do ar devolve o texto trimado —

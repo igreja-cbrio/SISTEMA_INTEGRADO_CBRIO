@@ -91,6 +91,52 @@ Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
 leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
 membro via `membro_id`.
 
+## ⚠⚠ MEMBRESIA PÚBLICA · o CEP era código morto, e só vale na porta do SITE (2026-09-16 · SEM migration)
+
+`backend/routes/publicMembresia.js` — a cobrança de CEP pedida pelo Matheus em
+25/08 existia no arquivo e **nunca cobrou nada**: nasceu aninhada dentro do `if`
+do sexo, DEPOIS do `return` dele (a chave do gênero foi parar no fim da linha do
+CEP, `}    }`). Sintaticamente válida, semanticamente inalcançável — `node
+--check` passa, lint passa, ninguém procura de novo. É o REM-01 da auditoria do
+banco.
+
+**Ao desaninhar, a medição mandou onde ela vale** (16/09/2026): dos 166
+cadastros criados desde 25/08, **141 vieram por `qr_code` e nenhum tem CEP** (o
+formulário do QR não pergunta), contra **24 de 25 COM CEP na porta do site** (o
+front já exige). Ligar para todas as origens recusaria 85% das submissões reais
+— fecharia a porta do censo. Por isso a guarda é
+`if (origemFinal === 'site' && !cepCompleto(cep))`, e ela fica **depois** da
+normalização de `origemFinal`. Quando o formulário do QR passar a coletar CEP,
+tira-se a condição.
+
+⚠️ **A guarda do teste é de ALCANCE, não de presença** (`src/test/cepPortaSite.test.ts`):
+casar o texto `if (!cepCompleto(cep))` passava verde com o código quebrado —
+era exatamente a forma que estava em produção. O teste conta chaves, acha onde o
+bloco do sexo fecha e exige que o CEP venha depois. Mutante fiel = re-aninhar.
+
+## ⚠⚠ LEI · backup de reparo NASCE no schema `backups` (2026-09-16 · migration `20260916190000`)
+
+Reparo de dado tira foto do estado anterior numa tabela `_bk_<data>_<assunto>` —
+isso continua certo. **O que muda é o endereço**: a foto vai para o schema
+`backups`, nunca para o `public`.
+
+```sql
+CREATE TABLE backups._bk_20260916_assunto AS SELECT ... ;   -- assim
+CREATE TABLE _bk_20260916_assunto AS SELECT ... ;           -- NUNCA
+```
+
+**Por quê (E05 da auditoria do banco):** o PostgREST publica o schema `public` e
+só ele. A foto herdava a superfície de API da tabela viva **sem herdar nenhuma
+política dela** — 45 tabelas, 20.152 linhas, 13 com dado sensível (3.946 CPFs em
+`_bk_20260824_cpf_backfill`, o hash bcrypt em `_bk_20260810_senha_reset`, 53
+linhas com `online_chat_page_token`). A migration moveu as 45 e criou o schema;
+a lei existe para a torneira não reabrir — três das 45 nasceram DEPOIS da
+varredura que as apontou.
+
+⚠️ Backup em **JSON no `~/Downloads`** (o que os scripts `_reparo_*.cjs` fazem)
+segue valendo e é o caminho preferido: não toca no banco. A lei acima é para
+quando a foto precisa mesmo ficar em tabela.
+
 ## ⚠️⚠️ CENSO · o bloco "Sexo" NUNCA veio da pesquisa (2026-09-16 · SEM migration)
 
 Dúvida do Marcos: *"no censo não existe pergunta de sexo… porém todas as respostas
