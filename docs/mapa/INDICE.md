@@ -74,7 +74,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **174** arquivos, **160** com teste.
+`backend/utils/` tem **175** arquivos, **160** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -231,6 +231,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/semFalhar.js` | `src/test/postgrestCatch.test.ts` |
 | `backend/utils/sentry.js` | `backend/middleware/errorHandler.test.js` `backend/services/systemWebOps.test.js` |
 | `backend/utils/sexoDeclarado.js` | `src/test/sexoDeclarado.test.ts` |
+| `backend/utils/sexoPeloNome.js` | — |
 | `backend/utils/solicitacaoStatusLabel.js` | — |
 | `backend/utils/storagePath.js` | `src/test/storagePath.test.ts` |
 | `backend/utils/supabase.js` | `src/test/anexosLogArquivos.test.ts` `src/test/appIdentidadePreencher.test.ts` `src/test/censoJaRespondeu.test.ts` `src/test/fetchFalhaDb.test.ts` `src/test/importSupabase.test.ts` `src/test/jornadaPiiGuard.test.ts` `src/test/lote2RotasComGate.test.ts` `src/test/lote3RotasComGate.test.ts` `src/test/lote6RotasComGate.test.ts` `src/test/nextGuardNivel.test.ts` `src/test/notificarRegraPorTipo.test.ts` `src/test/npsNomeTurma.test.ts` `src/test/pagamentosReemissao.test.ts` `src/test/portasPublicasPii.test.ts` `src/test/routeModuleMap.test.ts` |
