@@ -163,6 +163,74 @@ distintos que ela palpitou são todos inequívocos em pt-BR. **Alex, Ariel, Jean
 Yuri estão na base — e NENHUM veio da IA.** O mecanismo que o Marcos temia é o que
 menos errou; quem errou foram as portas e o import.
 
+### ⚠️⚠️ LEI · a DECLARAÇÃO da pessoa vence o palpite pelo nome
+
+Ao resolver os 28 (`backend/scripts/_reparo_sexo_auditoria_20260916.cjs`), cruzar
+com o que cada um DECLAROU mudou o resultado — e é a régra que fica:
+
+| pessoa | cadastro | o que ela declarou | decisão |
+|---|---|---|---|
+| Keith Matsumoto | feminino | **masculino** (cadastro pendente) | corrigir p/ masculino |
+| CAIO CESAR COSTA DOS SANTOS | feminino | **feminino** (censo, ela mesma) | **NÃO tocar** |
+| Isabella Amaral | masculino | **masculino** (cadastro pendente) | **NÃO tocar** |
+| Isabela Macedo dos santos | masculino | **M** (batismo · menor, nasc/2012) | **NÃO tocar** |
+
+Sobrescrever o que alguém declarou de si porque o nome "parece" de outro sexo é
+**a lei de 10/08 ao contrário** — e é exatamente o constrangimento que a auditoria
+existe pra evitar, na direção oposta. ⇒ dos 9 "erros prováveis" do relatório,
+**3 saíram** e entraram 2 achados novos por evidência (abaixo). Ficam **7**.
+
+⚠️⚠️ **E o sinal mais forte não é o nome — é o PAPEL no Kids.**
+`kids_responsaveis.parentesco` (`pai`/`mae`) é declaração operacional de terceiro
+sobre um fato verificável, e resolveu 2 casos que o nome não resolvia:
+**Juliana Farias** (mãe · estava masculino) e **Ariel Jardim de Medeiros** (mãe de
+2 · estava masculino) — esta última estava no grupo "o nome não decide" e teria
+ficado sem resposta. **Grupo com `categoria` Homens/Mulheres** confirmou
+**Chrystian Kelly** como feminino (nenhuma troca). Sinais que não serviram:
+nenhum alvo aparece como pai/mãe na apresentação de crianças.
+
+⚠️ **DURABILIDADE conferida antes de escrever**: os **12** caminhos automáticos
+que gravam `mem_membros.genero` são TODOS só-onde-vazio (`.is('genero', null)` ou
+`if (!mem.genero)`). ⚠️⚠️ A ÚNICA exceção é **`aprovarCadastroCore` no ramo de
+ATUALIZAÇÃO** (`membresia.js` ~4220), que reaplica o formulário inteiro e
+**sobrescreve** — os 2 pendentes que apontam para alvos estão `aplicado`, status
+que a própria rota recusa com 400. ⇒ **a correção é durável.** (Isto corrige uma
+afirmação minha de 16/09 de que a próxima inscrição reescreveria o valor.)
+
+### ⚠️ Os 7 que "não são pessoa" · o sexo NÃO era o problema deles
+
+Medido um a um: **3 são contas de revisão de loja COM LOGIN ATIVO**
+(`Apple Review (Demo)` · `Revisor App Store (Staff)` · `App Review CBRio`, esta
+última `origem='auth'`) — **não apagar**, quebra a revisão do app. **2 são
+`Teste da Silva`** (origem `grupos_aprovacao`, sem login, **1 vínculo de grupo
+cada**) — candidatos a soft-delete, mas some do roster de alguém. E **2 são
+PESSOAS REAIS com o nome sujo**:
+
+- ⚠️⚠️ **`Juliafuncionalfight@gmail.com` RESOLVIDO** — é o follow-up que este
+  arquivo registrava em aberto desde 05/08 (*"nome real da mãe do MURILO Mendes —
+  não vou adivinhar"*). **Ela respondeu o censo em 14/09** e escreveu
+  **"Julia Carolina mendes alvarez"** com o **mesmo CPF**. Renomeação entrou no
+  script, guardada por `.eq('nome', anterior)` **e `.eq('cpf', …)`** — sem o CPF
+  seria renomear pessoa a partir de um texto que pode ser de outra.
+  ⚠️ `nomeMaisCompleto` não promove isso sozinho de propósito: ele exige que o
+  nome atual seja **subsequência** do novo, e um e-mail nunca é.
+- ⏳ **`Mergulho inesquecível Cristiane Cruz` NÃO resolvido, e não deve ser
+  chutado**: o prefixo veio do batismo de 13/05, cujo campo `nome` é literalmente
+  **"Mergulho inesquecível"** (alguém digitou o TEMA do evento). Mas as 2 portas
+  que ELA preencheu depois (formulário de grupos 02/08 · inscrição 04/08) dizem
+  **"Cristiane Firula"**, e o e-mail do cadastro é `mariafirulaa@gmail.com` — ou
+  seja **o sobrenome "Cruz" também é suspeito**. Renomear aqui é decisão humana.
+
+⚠️ **8 nomes seguem sem evidência nenhuma** (Alex ×2, Ellis, Sued, Haryel, Ecimar,
+Jo, Lucimar, Vauclides) e **ficam como estão** — o valor atual é a leitura mais
+provável em pt-BR, e **apagar seria pior**: sexo nulo tira a pessoa de grupo
+Homens/Mulheres (a trava de `entradaGrupoApp` recusa quem não tem) e a joga na
+fila de "faltam dados". **Syogi Augusto** (masculino) foi confirmado pelo Marcos.
+
+⚠️ **NÃO são duplicatas** (a régua da casa: CPF divergente EXCLUI o par): as duas
+`Cintia Kesseles Gonçalves` têm CPF e nascimento diferentes, e as duas
+`Isabela Macedo dos santos` idem (uma nasceu em 2012, outra em 1982).
+
 ## ⚠️⚠️ CENSO · o domingo de 500 respostas simultâneas (2026-09-11 · SEM migration)
 
 Pergunta do Marcos: *"o censo tem os mesmos quesitos de validação que o NPS, que
