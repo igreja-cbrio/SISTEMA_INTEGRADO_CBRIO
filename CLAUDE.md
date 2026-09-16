@@ -5303,6 +5303,57 @@ sem número** e mostram só a via — `RUA CRUZ DE MALTA`, `Rua Claudionor Jorda
 PENÍNSULA`, `Rua João Geraldo Kuhlman`, `Av. Jornalista Tim Lopes`. Os 33
 restantes sem endereço são online ou `(endereço não informado)`.
 
+## ⚠️⚠️ Grupos · CAMPO VAZIO NÃO APAGA A REDE (2026-09-16 · SEM migration)
+
+Descoberto ao investigar o "74 grupos sem rede" da seção abaixo. A hipótese era
+que o **import de 2026 não tinha trazido a rede**. Errado — e o contrário:
+
+**A rede foi preenchida em lote em 29/07 e ESVAZIOU sozinha.** No
+`app_audit_log`: **80 salvamentos apagaram `rede_id`** entre 21/07 e 01/09,
+**um grupo por vez**, sempre como efeito colateral de um save que mexia em
+OUTRA coisa — **79 dos 80 tinham `modo_inscricao` no mesmo evento**, e em
+nenhum deles a rede era o único campo alterado. Dá pra ver a coordenação
+repondo a rede de um grupo às 15:23 e ela sumindo de novo no mesmo dia.
+
+⚠️⚠️ **A causa**: `PUT /api/grupos/:id` é **update de OBJETO INTEIRO**, e
+escrevia `rede_id: d.rede_id || null`. Qualquer corpo que chegasse sem a rede
+— chunk antigo em cache, payload parcial, tela que não carregou a lista de
+redes — **apagava o vínculo em silêncio**. `modo_inscricao` já tinha ganhado a
+guarda ("um form com chunk antigo não pode resetar o modo"); `rede_id` não.
+
+**A LEI agora**: `backend/utils/redePatchGrupo.js` é a régua ÚNICA do que o PUT
+escreve na rede — **campo vazio não apaga**. A rede só muda quando o corpo traz
+um **UUID de verdade**, ou quando alguém **PEDE** pra desvincular com
+`rede_limpar: true` (o seletor "Sem rede" da tela manda esse pedido, então tirar
+o grupo de uma rede continua funcionando normalmente). Escolher uma rede **ganha**
+do pedido de limpar, se os dois vierem. Gate: **`npm run test:grupo-rede`**
+(mutante do comportamento antigo rodado e morto).
+
+⚠️ O custo de errar é **assimétrico**, e é isso que decide a régua: deixar de
+gravar uma rede que a pessoa acabou de escolher, ela percebe na hora e refaz;
+**apagar a rede de 41 grupos ninguém percebe** — vira "o import veio
+incompleto" dois meses depois. Na dúvida, o servidor preserva.
+
+⚠️ O `POST` (criar grupo) segue com `d.rede_id || null`: grupo novo não tem
+vínculo a perder.
+
+**Reparo de dado já aplicado** (16/09, autorizado pelo Marcos ·
+`backend/_reparo_grupos_lider_rede.cjs`, dry-run por padrão): **41 grupos**
+tiveram a rede reposta a partir do `Rede: X` que o import deixou gravado na
+observação. Controle antes de escrever: dos 27 grupos que **tinham** rede E a
+observação, **25 concordavam (92,6%)**, e as 2 divergências foram editadas
+DEPOIS do import — decisão humana, não tocada (o script só escreve onde
+`rede_id` é NULO). No mesmo reparo, **4 grupos apontavam pro líder APAGADO** e
+foram repontados pro cadastro vivo da mesma pessoa (telefone idêntico, alvo
+ÚNICO): `Jornada Bíblica 1`/`2` → **Gelson Campelp** · `JOVENS - Estudo da
+Mensagem` e `JOVENS - Vôlei AMI` → **Eliel França Praxedes de Luna**.
+⚠️ Pegadinha do reparo: a busca do sobrevivente **tem que paginar** — o
+PostgREST corta em 1000 linhas e `mem_membros` passa disso; sem paginar, o
+script conclui "não achei" sobre um cadastro que existe.
+
+**Efeito medido na fila**: incompletos **78 → 44** (70,9% → 40,0%) · sem rede
+**74 → 33** · líder apagado **4 → 0**.
+
 ## ⚠️ Grupos · a FILA do cadastro incompleto, por campo (2026-09-16 · SEM migration)
 
 Fecha a pendência de GENTE aberta pela seção acima. O chip **"Cadastro

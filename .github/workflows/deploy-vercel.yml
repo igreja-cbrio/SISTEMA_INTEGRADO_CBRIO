@@ -177,6 +177,12 @@ jobs:
       # manda abrir um grupo onde nao ha nada errado para de ser lida, e a
       # falta real passa junto. Guarda tambem que o bundle novo contra backend
       # antigo (derivados `undefined`) nunca inventa pendencia.
+      # A rede dos grupos ESVAZIOU sozinha: 80 salvamentos apagaram `rede_id`
+      # de carona em outra edicao (16/09). Campo vazio nao apaga mais nada —
+      # so apaga quem PEDE (`rede_limpar`). Este gate guarda as duas pontas.
+      - name: Grupos · campo vazio nao apaga a rede
+        run: npm run test:grupo-rede
+
       - name: Grupos · o que falta no cadastro (fila por campo)
         run: npm run test:grupo-cadastro
 

@@ -11,6 +11,9 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { verificarSobrasDaFusao } = require('../services/fusaoVerificacao');
 const { ehGrupoOnline } = require('../utils/grupoOnline');
+// Campo vazio NAO apaga a rede do grupo (medido: 80 salvamentos apagaram
+// `rede_id` de carona em outra edicao). Regua pura, com gate proprio.
+const { patchRedeGrupo } = require('../utils/redePatchGrupo');
 const { acharOuCriarGuardado, normalizarNome, normalizarCpf, normalizarTelefone, normalizarEmail } = require('../services/membroMatch');
 const { avaliarPossivelDuplicidade } = require('../services/duplicidadePolicy');
 const { montarPatchFusao } = require('../services/fusaoCampos');
@@ -4328,7 +4331,11 @@ router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
       // Só atualiza se veio no body — um form com chunk antigo (sem o campo)
       // não pode resetar o modo do grupo ao salvar.
       ...('modo_inscricao' in d ? { modo_inscricao: ['fechado', 'temporada', 'sempre_aberto'].includes(d.modo_inscricao) ? d.modo_inscricao : 'temporada' } : {}),
-      rede_id: d.rede_id || null,
+      // ⚠️⚠️ A rede só é escrita quando o corpo traz uma rede DE VERDADE, ou
+      // quando alguém PEDE pra desvincular (`rede_limpar: true`). Era
+      // `d.rede_id || null`, e foi assim que 41 grupos perderam a rede sem que
+      // ninguém mexesse nela — qualquer save que chegasse sem o campo apagava.
+      ...patchRedeGrupo(d),
       status_temporada: d.status_temporada || null,
       temporada: d.temporada || null,
       descricao: d.descricao || '', ativo: d.ativo ?? true,
