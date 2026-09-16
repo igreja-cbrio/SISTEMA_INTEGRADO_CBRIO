@@ -37,7 +37,16 @@ const STATUS_LABEL = {
  *                  e busca /financeiro-v2/doador/transacoes pra exibir histórico de doação
  * - ano · int · ano de referência pra histórico financeiro do doador não-vinculado (default: ano corrente)
  */
-export default function MembroFichaDialog({ open, onClose, membroId, nomeFallback, ano }) {
+/**
+ * `semFinanceiro`: abre a ficha SEM o bloco de generosidade. Usado onde a pessoa
+ * é aberta a trabalho e o extrato de contribuição não tem por que aparecer
+ * (triagem de voluntário do Kids, por exemplo).
+ *
+ * ⚠️ O corte de verdade é no servidor (`?escopo=basico`): esconder só a aba
+ * deixaria as contribuições no payload, visíveis no devtools. A aba some porque
+ * o dado não vem — não o contrário.
+ */
+export default function MembroFichaDialog({ open, onClose, membroId, nomeFallback, ano, semFinanceiro = false }) {
   const [data, setData] = useState(null);
   const [transacoesDoador, setTransacoesDoador] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -51,13 +60,15 @@ export default function MembroFichaDialog({ open, onClose, membroId, nomeFallbac
       setLoading(true);
       setErro(null);
       setTab('info');
-      membresia.membros.get(membroId)
+      membresia.membros.get(membroId, semFinanceiro ? { escopo: 'basico' } : undefined)
         .then(r => { if (!cancelled) setData(r); })
         .catch(e => { if (!cancelled) setErro(e?.message || 'Erro ao carregar ficha'); })
         .finally(() => { if (!cancelled) setLoading(false); });
       return () => { cancelled = true; };
     }
-    if (nomeFallback) {
+    // ⚠️ O modo "doador não vinculado" é inteiramente financeiro. Com
+    // `semFinanceiro` ele não roda: seria a aba cortada entrando pela janela.
+    if (nomeFallback && !semFinanceiro) {
       let cancelled = false;
       setLoading(true);
       setErro(null);
@@ -68,7 +79,7 @@ export default function MembroFichaDialog({ open, onClose, membroId, nomeFallbac
         .finally(() => { if (!cancelled) setLoading(false); });
       return () => { cancelled = true; };
     }
-  }, [open, membroId, nomeFallback, ano]);
+  }, [open, membroId, nomeFallback, ano, semFinanceiro]);
 
   return (
     <Sheet open={open} onOpenChange={(v) => !v && onClose?.()}>
@@ -104,7 +115,7 @@ export default function MembroFichaDialog({ open, onClose, membroId, nomeFallbac
 
         {/* Modo: membro completo */}
         {!loading && !erro && data && (
-          <FichaCompleta data={data} tab={tab} setTab={setTab} onClose={onClose} />
+          <FichaCompleta data={data} tab={tab} setTab={setTab} onClose={onClose} semFinanceiro={semFinanceiro} />
         )}
       </SheetContent>
     </Sheet>
@@ -142,7 +153,7 @@ function HeaderMembro({ membro }) {
   );
 }
 
-function FichaCompleta({ data, tab, setTab, onClose }) {
+function FichaCompleta({ data, tab, setTab, onClose, semFinanceiro = false }) {
   const TABS = [
     { key: 'info', label: 'Info', icon: Users },
     { key: 'generosidade', label: 'Generosidade', icon: HandCoins },
@@ -150,7 +161,7 @@ function FichaCompleta({ data, tab, setTab, onClose }) {
     { key: 'servico', label: 'Serviço', icon: Sparkles },
     { key: 'next', label: 'NEXT', icon: ArrowRightLeft },
     { key: 'trilha', label: 'Trilha', icon: Award },
-  ];
+  ].filter(t => !(semFinanceiro && t.key === 'generosidade'));
 
   return (
     <>

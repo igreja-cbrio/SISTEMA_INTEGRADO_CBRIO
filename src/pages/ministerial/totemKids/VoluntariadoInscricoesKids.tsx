@@ -243,10 +243,13 @@ export default function VoluntariadoInscricoesKids() {
         Para <span className="font-medium">integrar</span> um voluntário (exige verificação de antecedentes), use o módulo Voluntariado.
       </p>
 
+      {/* ⚠️ Ficha REDUZIDA: triagem de voluntário não precisa do extrato de
+          contribuição da pessoa. O corte é no servidor — o dado não vem. */}
       <MembroFichaDialog
         open={!!ficha}
         membroId={ficha?.id}
         nomeFallback={ficha?.nome}
+        semFinanceiro
         onClose={() => setFicha(null)}
       />
     </div>

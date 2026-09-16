@@ -2781,7 +2781,7 @@ export const membresia = {
   },
   membros: {
     list: (params) => get('/membresia/membros' + (params ? '?' + new URLSearchParams(params) : '')),
-    get: (id) => get(`/membresia/membros/${id}`),
+    get: (id, opts) => get(`/membresia/membros/${id}` + (opts?.escopo ? `?escopo=${encodeURIComponent(opts.escopo)}` : '')),
     timeline: (id) => get(`/membresia/membros/${id}/timeline`),
     // Respostas do censo desta pessoa. O bloco sensível vem filtrado pelo
     // servidor conforme cen_acesso_sensivel — ter membresia não é autorização
