@@ -28,6 +28,8 @@ const { contatoParaLider } = require('../services/contatoPessoa');
 const { requireCron } = require('../utils/cronAuth');
 // Régua ÚNICA de busca (acento/caixa/espaço) · espelho de src/lib/busca.js.
 const { normalizarBusca, contemNormalizado, algumContemNormalizado } = require('../services/busca');
+// Rua e número pro cartão público — sem apartamento/bloco (Natasha · 16/09).
+const { enderecoPublicoGrupo } = require('../utils/enderecoGrupoPublico');
 // Guarda de UUID no GET /:id (deep-link ?grupo=<id> do QR/mapa/bookmark antigo):
 // sem ela, um id malformado (bot, link velho, "undefined") faz o Postgres recusar
 // `.eq('id', ...)` com 22P02 e a rota devolvia 500 — mesma lição já registrada
@@ -188,9 +190,20 @@ router.get('/temporadas', async (req, res) => {
 // Muda AQUI, nunca numa cópia: era uma régua duplicada (o app lia mem_grupos
 // cru + a tabela paralela app_grupos_temporada) que fazia o app listar grupo
 // fechado e dizer "temporada fechada" com a temporada aberta.
+// O grupo como o PÚBLICO pode vê-lo. Troca o endereço cru por `endereco_publico`
+// (rua + número, sem apartamento/bloco) e apaga `complemento` — que é o dado de
+// PORTA da casa de alguém e nunca teve motivo pra sair daqui (o deep-link
+// ?grupo=<id> devolvia `...grupo` inteiro e mandava o "apto 302" junto).
+// Régua ÚNICA das leituras públicas: passe TODA linha de mem_grupos por aqui.
+function semDadosDePorta(g) {
+  if (!g) return g;
+  const { endereco, complemento, ...publico } = g;
+  return { ...publico, endereco_publico: enderecoPublicoGrupo(g) };
+}
+
 async function buscarGruposInscriveis({ categoria, bairro, temporada } = {}) {
   let query = supabase.from('mem_grupos')
-    .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, modo_inscricao')
+    .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, endereco, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, modo_inscricao')
     .eq('ativo', true)
     .is('deleted_at', null) // soft-deletado some do form (a temporada aberta não o esconde)
     .eq('aceitando_inscricoes', true) // líder pode ter parado de receber pedidos
@@ -294,7 +307,7 @@ router.get('/buscar', async (req, res) => {
     let resultado = (grupos || []).map(g => {
       const principal = lideresMap[g.lider_id]?.nome || null;
       return {
-        ...g,
+        ...semDadosDePorta(g),
         lider_nome: principal,
         lider_apelido: g.lider_id ? (apelidos[g.lider_id] || null) : null,
         lider_foto: lideresMap[g.lider_id]?.foto_url || null,
@@ -319,6 +332,7 @@ router.get('/buscar', async (req, res) => {
         || algumContemNormalizado(alvosLider(g), q)
         || contemNormalizado(g.bairro, q)
         || contemNormalizado(g.local, q)
+        || contemNormalizado(g.endereco_publico, q)
         || contemNormalizado(g.codigo, q)
       );
     }
@@ -398,7 +412,7 @@ router.get('/:id', async (req, res) => {
   try {
     const { data: grupo, error } = await supabase
       .from('mem_grupos')
-      .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, complemento, ativo, aceitando_inscricoes, modo_inscricao')
+      .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, endereco, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, foto_url, complemento, ativo, aceitando_inscricoes, modo_inscricao')
       .eq('id', req.params.id)
       .is('deleted_at', null)
       .maybeSingle();
@@ -421,7 +435,7 @@ router.get('/:id', async (req, res) => {
     const apelidos = await buscarApelidos([grupo.lider_id, ...roster.map(r => r.membro_id)]);
     const lider_apelido = grupo.lider_id ? (apelidos[grupo.lider_id] || null) : null;
     res.json({
-      ...grupo,
+      ...semDadosDePorta(grupo),
       lider_nome,
       lider_apelido,
       lider_foto,
@@ -444,7 +458,7 @@ router.get('/lideres/:liderId/grupos', async (req, res) => {
   try {
     const { temporada } = req.query;
     let query = supabase.from('mem_grupos')
-      .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, modo_inscricao')
+      .select('id, codigo, nome, categoria, faixa_etaria, idade_min, idade_max, dia_semana, horario, recorrencia, local, endereco, descricao, bairro, lat, lng, lider_id, status_temporada, temporada, modo_inscricao')
       .eq('lider_id', req.params.liderId).eq('ativo', true)
       .is('deleted_at', null)
       .eq('aceitando_inscricoes', true)
@@ -456,7 +470,8 @@ router.get('/lideres/:liderId/grupos', async (req, res) => {
     const { data: temporadasAll } = await supabase.from('mem_temporadas').select('id, inscricoes_abertas');
     const abertas = new Set((temporadasAll || []).filter(t => t.inscricoes_abertas).map(t => t.id));
     res.json((data || []).filter(g =>
-      g.modo_inscricao === 'sempre_aberto' || !g.temporada || abertas.has(g.temporada)));
+      g.modo_inscricao === 'sempre_aberto' || !g.temporada || abertas.has(g.temporada))
+      .map(semDadosDePorta));
   } catch { res.status(500).json({ error: 'Erro' }); }
 });
 

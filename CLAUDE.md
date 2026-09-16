@@ -5064,6 +5064,74 @@ e 6 são tela — o item 2 vale sem OTA porque é servidor) · a Naná decidir o
 destinos das primeiras transferências · e o follow-up antigo de 20/08 segue aberto
 (`grupos.tsx` do app exibe só `lider_nome`, ignorando `lideres_exibicao`).
 
+## ⚠️⚠️ Grupos · a RUA E O NÚMERO no formulário público (2026-09-16 · SEM migration)
+
+Pedido da Natasha: *"no formulário de inscrição de grupos público, colocar o
+número na rua — tem muitos grupos que faz bastante diferença, porque existem
+avenidas muito longas como Av. das Américas e Lúcio Costa. Nunca coloque
+apartamento, bloco... mas adicione um número muito próximo ao real, para que as
+pessoas possam se inscrever com mais noção de onde é o grupo."*
+
+O formulário mostrava **só o BAIRRO**. Medido em 16/09 nos 88 grupos
+inscritíveis: **16 estão na Av. das Américas** (de 2300 a 9707 — ~7 km entre as
+pontas) e 2 na Lúcio Costa. Dois grupos "Barra da Tijuca" podem estar a meia
+hora de carro um do outro, e a pessoa se inscrevia no escuro.
+
+⚠️ **O dado já existia**: `mem_grupos.endereco` ("Rua, número") está preenchido
+em 87 dos 88, e **45 já têm número**. O que faltava era ele SAIR — o
+`/buscar` e o `GET /:id` nem o selecionavam.
+
+### ⚠️⚠️ AS DUAS LEIS (a segunda é de SEGURANÇA)
+
+1. **Rua + número aparecem.** É o que dá noção de ONDE é o grupo.
+2. **Apartamento, bloco, casa, torre NUNCA aparecem.** O grupo é na casa de
+   alguém: a rua e a altura da via bastam pra decidir; o resto é da porta pra
+   dentro e só o líder entrega, depois de aprovar. O campo `complemento` do
+   cadastro não sai, **e se alguém digitou "apto 302" dentro do campo Endereço,
+   a régua TIRA**.
+
+**`backend/utils/enderecoGrupoPublico.js`** é a régua PURA (gate
+`npm run test:endereco-grupo`). **`semDadosDePorta(g)` em `publicGrupos.js` é a
+régua ÚNICA das leituras públicas**: troca `endereco` por `endereco_publico` e
+**apaga `complemento`** — passe TODA linha de `mem_grupos` por ela.
+
+- ⚠️⚠️ **O deep-link `?grupo=<id>` (GET /:id) devolvia `...grupo` INTEIRO** —
+  ou seja, mandava o `complemento` do cadastro (hoje preenchido em 10 grupos,
+  com `CASA 9`, `APT 304`, `BL O1` e `Condomínio Mirante do Sol`) pra qualquer um
+  com o link. Era vazamento ATIVO, não hipotético. O teste tem guarda estática contra
+  a volta do `res.json({ ...grupo`.
+- ⚠️ **O corte de complemento COLADO só vale depois de um NÚMERO**
+  (`Rua X 427 apto 302` → `Rua X 427`): sem essa condição, "Rua **Casa** Forte
+  100" viraria "Rua". A **primeira** parte antes da vírgula é a VIA e nunca é
+  descartada — rua pode se chamar "Condomínio Vila Verde".
+- ⚠️ **Endereço que não é endereço some** (`(endereço não informado)` em 13
+  grupos · `Online` em 20): vira `null`, e a linha simplesmente não aparece. Pôr
+  "(endereço não informado)" no cartão assusta mais do que a ausência.
+- ⚠️ **Caixa alta da importação é destacaixada** na EXIBIÇÃO (o dado no banco
+  não é tocado): `AVENIDA EVANDO LINS E SILVA, 440` → `Avenida Evando Lins e
+  Silva, 440`. Letra sozinha DEPOIS de número é sufixo e sobe inteira
+  (`2300 A`); o "e" de "Lins e Silva" continua conector.
+- **O número aproximado é INSTRUÇÃO DE PREENCHIMENTO, não checagem**: está no
+  rótulo do campo Endereço em `/grupos` ("pode ser bem próximo do real"), com
+  aviso âmbar quando o endereço fica sem nenhum dígito. A régua garante a lei 2;
+  a 1 depende de gente.
+
+**Onde aparece**: cartão da lista (`GrupoSelector`, junto do bairro) · bloco de
+confirmação do grupo escolhido (`InscricaoGrupos`, passo 2) · balão do pino e
+o "Como chegar" do mapa (`GruposMapView` — a rota passa a apontar pra rua, não
+pro centro do bairro). A busca livre do `/buscar` também casa o endereço, então
+"Américas 9707" encontra o grupo.
+
+⚠️ **O APP ficou de fora**: `GET /public/grupos/app-inscricao` devolve campos
+explícitos e a tela dele não mostra endereço — exibir lá exige OTA (catraca).
+
+⏳ **Pendente de GENTE (é cadastro, não código)**: **10 grupos presenciais estão
+sem número** e mostram só a via — `RUA CRUZ DE MALTA`, `Rua Claudionor Jordan`,
+`RUA DINA SFAT`, `RUA ROCHA MIRANDA`, `AVENIDA AFONSO DELAMBERT NETO`,
+`Rua Buza Ferraz`, `Avenida das Américas` (!), `AVENIDA FLAMBOYANTS DA
+PENÍNSULA`, `Rua João Geraldo Kuhlman`, `Av. Jornalista Tim Lopes`. Os 33
+restantes sem endereço são online ou `(endereço não informado)`.
+
 ## Grupos · TODOS os líderes no cartão e no deep-link da inscrição pública (2026-08-20 · SEM migration)
 
 Pedido da Natasha (via Marcos), com o exemplo do grupo da Ana Paula Silva

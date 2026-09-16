@@ -31,7 +31,7 @@ import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette }
 import GrupoSelector from '../../components/grupos/GrupoSelector';
 import DescricaoGrupo from '../../components/grupos/DescricaoGrupo';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
-import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle, User, CalendarClock, Heart, Info } from 'lucide-react';
+import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle, User, CalendarClock, Heart, Info, MapPin } from 'lucide-react';
 // Contrato de Inscrição (F3.1 · porta 7 · docs/modulo-inscricoes/): validadores
 // da fonte única — só os que não colidem com os helpers locais deste form.
 import { nomeCompletoValido, temAbreviacaoNome, validarNascimento, tirarCodigoPais } from '../../lib/inscricao';
@@ -731,6 +731,18 @@ export default function InscricaoGrupos() {
                     <span style={{ display: 'flex', alignItems: 'center', gap: 7, fontSize: 12.5, color: C.text3 }}>
                       <CalendarClock size={14} style={{ color: '#00B39D', flexShrink: 0 }} />
                       <strong style={{ color: C.text, fontWeight: 600 }}>{formatarQuando(grupoEscolhido)}</strong>
+                    </span>
+                  )}
+                  {/* ONDE é o grupo — rua e número, nunca apartamento/bloco
+                      (Natasha · 16/09). Confere ANTES de preencher os dados:
+                      dois grupos "Barra da Tijuca" podem estar a meia hora um
+                      do outro. O servidor manda `endereco_publico` já limpo. */}
+                  {(grupoEscolhido.endereco_publico || grupoEscolhido.bairro) && (
+                    <span style={{ display: 'flex', alignItems: 'flex-start', gap: 7, fontSize: 12.5, color: C.text3 }}>
+                      <MapPin size={14} style={{ color: '#00B39D', flexShrink: 0, marginTop: 2 }} />
+                      <strong style={{ color: C.text, fontWeight: 600 }}>
+                        {[grupoEscolhido.endereco_publico, grupoEscolhido.bairro].filter(Boolean).join(' · ')}
+                      </strong>
                     </span>
                   )}
                   {/* Do que o grupo trata — pedido do Marcos (31/07). Vem depois
