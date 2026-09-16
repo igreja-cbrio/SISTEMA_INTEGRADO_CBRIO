@@ -23,7 +23,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { toast } from 'sonner';
 import {
   ArrowLeft, Baby, Loader2, Phone, Search, Copy, Share2, Check, Award, Download,
-  Clock, ChevronDown, FileText, Plus, Trash2, AlertTriangle,
+  Clock, ChevronDown, FileText, Plus, Trash2, AlertTriangle, Image as ImageIcon,
 } from 'lucide-react';
 import { gerarCertificadoApresentacao, gerarCertificadosApresentacaoLote } from '../../../lib/gerarCertificadoApresentacao';
 
@@ -48,6 +48,10 @@ const STATUS_COR: Record<string, string> = {
 };
 const STATUS_OPCOES = ['pendente', 'contatado', 'confirmado', 'realizado', 'cancelado'];
 const SEM_HORARIO = '__sem__';
+// ⚠️ Dia de OPERAÇÃO da igreja é BRT, nunca UTC: das 21h em diante o UTC já
+// virou o dia seguinte, e a turma de domingo sumiria do contador no sábado à
+// noite — justamente quando alguém confere se falta foto de alguém.
+const hojeISO = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
 const ORIGEM_ROTULO: Record<string, string> = { publico: 'Formulário público', app: 'App de membros', manual: 'Cadastro manual' };
 
 type Horario = { id: string; horario: string; label: string; aberto: boolean; limite: number | null; ordem: number; inscritos?: number };
@@ -230,6 +234,33 @@ function FichaDialog({ id, horarios, onClose, onSaved }: { id: string | null; ho
     finally { setSalvando(false); }
   };
 
+  // ── FOTO pro telão (16/09/2026) ───────────────────────────────────────────
+  // A porta normal é a família mandar no formulário. Isto aqui é pro caso de
+  // sobra: chegou pelo WhatsApp, ou veio tremida e a mãe mandou outra.
+  const [enviandoFoto, setEnviandoFoto] = useState(false);
+  const mandarFoto = async (file: File | null | undefined) => {
+    if (!id || !file) return;
+    setEnviandoFoto(true);
+    try {
+      const r: any = await api.apresentacaoFoto(id, file);
+      setD((x: any) => ({ ...x, ...r, foto_enviada_em: new Date().toISOString() }));
+      onSaved({ id, tem_foto: true });
+      toast.success('Foto salva');
+    } catch (e: any) { toast.error(e?.message || 'Erro ao salvar a foto'); }
+    finally { setEnviandoFoto(false); }
+  };
+  const tirarFoto = async () => {
+    if (!id) return;
+    setEnviandoFoto(true);
+    try {
+      await api.apresentacaoFotoRemover(id);
+      setD((x: any) => ({ ...x, foto_url: null, foto_download_url: null, foto_nome_arquivo: null, foto_enviada_em: null, foto_enviada_por: null }));
+      onSaved({ id, tem_foto: false });
+      toast.success('Foto removida');
+    } catch (e: any) { toast.error(e?.message || 'Erro ao remover a foto'); }
+    finally { setEnviandoFoto(false); }
+  };
+
   const hLabel = (h?: string | null) => h ? (horarios.find(x => x.horario === h)?.label || rotuloHora(h) || h) : 'sem culto definido';
   const kid = d?.crianca_kids;
 
@@ -255,6 +286,56 @@ function FichaDialog({ id, horarios, onClose, onSaved }: { id: string | null; ho
                 <Linha k="Culto" v={hLabel(d.horario_culto)} alerta={!d.horario_culto} />
                 <Linha k="Status" v={<span className={`inline-block rounded px-1.5 py-0.5 text-xs capitalize ${STATUS_COR[d.status] || ''}`}>{d.status}</span>} />
                 {d.observacoes && <Linha k="Observações" v={d.observacoes} />}
+              </section>
+
+              {/* ⚠️⚠️ FOTO PRO TELÃO (16/09/2026) · o arquivo que vai ser passado
+                  durante o culto. Vive em bucket PRIVADO: o que chega aqui é uma
+                  URL assinada de 30 min gerada pelo servidor — recarregar a ficha
+                  gera outra. Por isso o botão baixa DIRETO, sem copiar link: link
+                  copiado morre em meia hora e ninguém entende por quê. */}
+              <section>
+                <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground mb-1">Foto para o culto</h3>
+                {d.foto_url ? (
+                  <div className="flex items-start gap-3 py-2">
+                    <img src={d.foto_url} alt={`Foto de ${d.crianca_nome}`}
+                      className="h-28 w-28 rounded-lg object-cover border border-border shrink-0" />
+                    <div className="flex-1 min-w-0 space-y-2">
+                      <div className="text-xs text-muted-foreground">
+                        Enviada em {fmtDataHora(d.foto_enviada_em)}
+                        {d.foto_enviada_por ? ' pela equipe' : ' pela família, no formulário'}
+                      </div>
+                      <div className="flex flex-wrap items-center gap-2">
+                        <a href={d.foto_download_url || d.foto_url} download={d.foto_nome_arquivo || true}
+                          className="inline-flex items-center gap-1.5 text-xs rounded-md px-2.5 py-1.5 text-white transition-opacity hover:opacity-90"
+                          style={{ background: '#407F96' }}>
+                          <Download className="h-3.5 w-3.5" /> Baixar foto
+                        </a>
+                        <label className="inline-flex items-center gap-1.5 text-xs rounded-md px-2.5 py-1.5 border border-border hover:bg-muted cursor-pointer transition-colors">
+                          {enviandoFoto ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageIcon className="h-3.5 w-3.5" />}
+                          Trocar
+                          <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
+                            disabled={enviandoFoto} onChange={(e) => mandarFoto(e.target.files && e.target.files[0])} />
+                        </label>
+                        <button type="button" onClick={tirarFoto} disabled={enviandoFoto}
+                          className="text-xs text-red-500 hover:underline disabled:opacity-50">remover</button>
+                      </div>
+                      <div className="text-[11px] text-muted-foreground">
+                        Chega como <span className="font-mono">{d.foto_nome_arquivo}</span>
+                      </div>
+                    </div>
+                  </div>
+                ) : (
+                  <div className="flex flex-wrap items-center gap-2 py-2">
+                    <span className="text-sm text-muted-foreground">A família não mandou foto.</span>
+                    <label className="inline-flex items-center gap-1.5 text-xs rounded-md px-2.5 py-1.5 border border-border hover:bg-muted cursor-pointer transition-colors">
+                      {enviandoFoto ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <ImageIcon className="h-3.5 w-3.5" />}
+                      Enviar foto
+                      <input type="file" accept="image/jpeg,image/png,image/webp" className="hidden"
+                        disabled={enviandoFoto} onChange={(e) => mandarFoto(e.target.files && e.target.files[0])} />
+                    </label>
+                    <span className="text-[11px] text-muted-foreground">se ela mandou pelo WhatsApp, suba aqui</span>
+                  </div>
+                )}
               </section>
 
               <section>
@@ -528,6 +609,17 @@ export default function ApresentacaoCriancas() {
                     <Check className="h-3 w-3" /> {items.filter((x: any) => x.presente_em).length} de {items.length} presente{items.filter((x: any) => x.presente_em).length === 1 ? '' : 's'}
                   </span>
                 )}
+                {/* ⚠️⚠️ Só em turma que AINDA VAI ACONTECER. Numa turma de junho
+                    com zero fotos, "0 de 14 com foto" seria um alarme eterno
+                    sobre algo que não tem mais conserto — e aviso que aparece
+                    sempre deixa de ser lido (a mesma lei do contador de
+                    presentes ao lado). Aqui o número serve pra COBRAR: quem
+                    ainda falta mandar antes do domingo.  */}
+                {data !== 'sem-data' && data >= hojeISO && (
+                  <span className={`text-[11px] inline-flex items-center gap-1 ${items.every((x: any) => x.tem_foto) ? 'text-sky-600' : 'text-muted-foreground'}`}>
+                    <ImageIcon className="h-3 w-3" /> {items.filter((x: any) => x.tem_foto).length} de {items.length} com foto
+                  </span>
+                )}
               </div>
               {items.map((b) => {
                 const pais = nomesDosPaisUnicos(b.nome_pai, b.nome_mae);
@@ -548,6 +640,11 @@ export default function ApresentacaoCriancas() {
                             <span className="inline-flex items-center gap-1 rounded-full bg-fuchsia-500/10 text-fuchsia-700 px-2 py-0.5 text-[11px]"><Clock className="h-3 w-3" /> {hLabel(b.horario_culto)}</span>
                           ) : (
                             <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/10 text-amber-700 px-2 py-0.5 text-[11px]"><AlertTriangle className="h-3 w-3" /> sem culto definido</span>
+                          )}
+                          {/* ⚠️ Marca só a PRESENÇA da foto. O contador da turma
+                              ("N de M com foto") é que serve pra cobrar quem falta. */}
+                          {b.tem_foto && (
+                            <span className="inline-flex items-center gap-1 rounded-full bg-sky-500/10 text-sky-700 px-2 py-0.5 text-[11px]" title="Foto para o telão já enviada"><ImageIcon className="h-3 w-3" /> foto</span>
                           )}
                           {b.origem && b.origem !== 'publico' && <span className="text-[10px] text-muted-foreground">{ORIGEM_ROTULO[b.origem] || b.origem}</span>}
                           {b.observacoes && <span className="text-[11px] text-muted-foreground truncate max-w-[220px]">{b.observacoes}</span>}

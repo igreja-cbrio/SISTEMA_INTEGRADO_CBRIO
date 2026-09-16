@@ -2210,6 +2210,10 @@ export const totemKids = {
   apresentacaoRemove: (id) => del(`/totem-kids/apresentacoes/${id}`),
   // Check-in do dia (15/09/2026) · `presente: false` desfaz.
   apresentacaoCheckin: (id, presente) => post(`/totem-kids/apresentacoes/${id}/checkin`, { presente }),
+  // Foto do telão (16/09/2026). MULTIPART — o `express.json` do servidor é de
+  // 1mb e uma foto de celular em base64 não passaria por ele.
+  apresentacaoFoto: (id, file) => { const fd = new FormData(); fd.append('foto', file); return requestFile(`/totem-kids/apresentacoes/${id}/foto`, fd, { timeoutMs: 120_000 }); },
+  apresentacaoFotoRemover: (id) => del(`/totem-kids/apresentacoes/${id}/foto`),
   // Catálogo dos cultos da apresentação (9h30 até o limite → 11h30) · editável pelo Kids
   apresentacaoHorarios: {
     list: (data) => get('/totem-kids/apresentacoes/horarios' + (data ? `?data=${encodeURIComponent(data)}` : '')),
@@ -3112,6 +3116,16 @@ export const apresentacaoCriancasPublico = {
     const res = await fetch(`${API}/public/apresentacao-criancas/textos`);
     if (!res.ok) throw new Error('Erro ao buscar textos');
     return res.json();
+  },
+  // Foto que vai no TELÃO do culto (16/09/2026). Sobe ANTES do envio e devolve
+  // o CAMINHO, que a inscrição carrega junto. Sem token: é porta pública.
+  enviarFoto: async (file) => {
+    const fd = new FormData();
+    fd.append('foto', file);
+    const res = await fetch(`${API}/public/apresentacao-criancas/foto`, { method: 'POST', body: fd });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || 'Não conseguimos enviar a foto.');
+    return j;
   },
   inscrever: async (data) => {
     const res = await fetch(`${API}/public/apresentacao-criancas`, {

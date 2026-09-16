@@ -915,6 +915,68 @@ CRLF e o `\n` do meu `replace` não casava. É a lição já registrada em 15/09
 25/08: **confirmar que o mutante entrou** (o script agora conta as ocorrências e
 aborta em zero) antes de concluir qualquer coisa sobre o teste.
 
+### ⚠️⚠️ 16/09/2026 · FOTO da criança pro TELÃO do culto (migration `20260916140000`)
+
+Pedido do Marcos: *"adicionar foto da criança nesse formulário e que aparecesse
+o arquivo para download na ficha, a ideia é passar a foto durante o culto"*.
+
+A família anexa no formulário público (um campo por criança); a equipe baixa na
+ficha do Kids. Colunas novas em `apresentacao_criancas`: `foto_storage_path`,
+`foto_enviada_em`, `foto_enviada_por`.
+
+- ⚠️⚠️ **Coluna PRÓPRIA da inscrição, e não `kids_criancas.foto_storage_path`.**
+  Aquela é a foto de IDENTIFICAÇÃO do check-in do Kids (103 das 4.550 crianças
+  têm, com `foto_consentimento_*` próprio). Quem manda uma foto pro telão não
+  foi avisada de que ela passaria a identificar a criança na entrega do Kids —
+  escrever lá dentro **alargaria em silêncio o uso que ela autorizou**.
+  Finalidades diferentes, colunas diferentes.
+- ⚠️⚠️ **Sem caixa de aceite pra esta foto** (decisão do Marcos, 16/09): o ATO de
+  anexar, com o texto do campo dizendo pra que serve, É a autorização. Por isso
+  a frase *"será exibida no telão durante o culto"* fica **ACIMA** do botão — ela
+  não é enfeite, é a única coisa que torna o envio um consentimento informado.
+  `foto_enviada_em` é o carimbo desse ato, não um consentimento à parte.
+- ⚠️ A caixa `imagem` que já existia **CONTINUA**: cobre outro uso (fotos que a
+  IGREJA tira e publica nas mídias) e **1 das 16 famílias usou pra recusar** —
+  não é carimbo.
+- ⚠️⚠️ **MULTIPART, nunca dataURL.** O `express.json` global é de **1mb**
+  (`server.js`) e só `/api/staff` tem 10mb. Foto de celular em base64 (5MB ≈
+  6,7MB de JSON) morre **no parser**, antes da rota: 413 sem mensagem nossa.
+  É a armadilha em que o `/criancas/:id/foto` já está — confere 5MB no código,
+  mas para por volta de **750KB** de imagem. Não copiar aquele padrão.
+- ⚠️⚠️ **O caminho do arquivo chega pela mão de quem preenche.** A porta pública
+  sobe a foto ANTES de a inscrição existir e devolve o caminho, que volta no
+  envio. Sem a guarda `caminhoFotoValido` (`backend/utils/fotoApresentacao.js`,
+  com teste e mutante) dava pra mandar no formulário o caminho da foto de
+  identificação de OUTRA criança — mesmo bucket privado — e a ficha passaria a
+  servi-la assinada. O formato é fechado: `apresentacao-foto/<uuid v4>.<ext>`.
+- ⚠️ Bucket **privado** `kids-documentos`, pasta própria. O cliente nunca vê o
+  caminho: recebe **URL assinada de 30 min** gerada na ficha. Por isso o botão
+  **baixa direto** em vez de copiar link — link copiado morre em meia hora.
+- ⚠️ Troca de foto usa **uuid novo + `upsert: false`**: sobrescrever deixaria a
+  URL assinada velha, válida por mais 30 min, apontando pra imagem NOVA. A
+  antiga só é apagada DEPOIS que a linha aponta pra nova — nessa ordem, falha no
+  meio deixa arquivo órfão, nunca ficha cega.
+- ⚠️ O nome do download carrega criança + data (`Maria-Silva_2026-10-11.jpg`):
+  14 arquivos `a3f9c1d2-...jpg` na pasta de quem monta o culto não dizem de quem
+  é nenhum.
+- ⚠️ `foto_storage_path` entra nas `OPCIONAIS` da lista (lei do 42703), e o
+  INSERT público só MENCIONA a coluna quando há foto — senão a família perderia
+  a inscrição inteira por causa de uma imagem.
+- ⚠️⚠️ **Ordem de deploy é indiferente.** Se o código subir antes do SQL, o
+  INSERT COM foto morreria em 42703 e o `continue` do laço descartaria a
+  inscrição INTEIRA: a família perderia a vaga por causa de uma imagem, em
+  silêncio. A retentativa tira `foto_storage_path`/`foto_enviada_em` e
+  insere de novo — **some a foto, nunca a criança**.
+- ⚠️⚠️ **A lista devolve `tem_foto` (booleano), nunca o caminho.** Caminho cru
+  numa resposta de lista é matéria-prima pra montar URL na mão e some com o
+  motivo de o bucket ser privado. Quem resolve em URL assinada é a FICHA, uma
+  inscrição por vez.
+- ⚠️ Contador **"N de M com foto"** só em turma que ainda vai acontecer: numa
+  turma de junho com zero fotos seria alarme eterno sobre algo sem conserto.
+- ⏳ **A porta do APP não recebeu o campo**: ela grava `origem: 'app'` e, medido
+  em 16/09, **nunca produziu nenhuma inscrição** (as 22 vivas são todas
+  `publico`). Quando entrar, depende de OTA.
+
 ### ⚠️⚠️ 15/09/2026 · status `contatado` + CHECK-IN do dia (migration `20260915180000`)
 
 Dois pedidos do Marcos, via Milena: *"colocar uma opção ali na área do kids como

@@ -121,7 +121,13 @@ const TEXTOS_FALLBACK = {
   aviso_optin: AVISO_OPTIN,
 };
 
-type Crianca = { nome: string; nascimento: string; sexo: string };
+type Crianca = {
+  nome: string; nascimento: string; sexo: string;
+  // FOTO pro telão (16/09/2026): `fotoPath` é o que viaja no envio; o resto
+  // só existe na tela. `fotoPreview` é objectURL — revogado ao trocar/remover.
+  fotoPath?: string | null; fotoPreview?: string | null;
+  fotoEnviando?: boolean; fotoErro?: string | null;
+};
 
 export default function ApresentacaoCriancas() {
   const { C } = usePublicTheme();
@@ -154,8 +160,45 @@ export default function ApresentacaoCriancas() {
   const setCriancaCampo = (i: number, k: keyof Crianca, v: string) => {
     setCriancas(cs => cs.map((c, idx) => (idx === i ? { ...c, [k]: v } : c)));
   };
+  // ── FOTO pro telão do culto (16/09/2026) ──────────────────────────────────
+  // ⚠️ Sobe NA HORA da escolha, não no envio: a inscrição ainda não existe, e
+  // fazer a mãe esperar o upload de 8MB depois de apertar "Enviar" é onde as
+  // pessoas desistem. O que viaja no envio é só o CAMINHO devolvido aqui.
+  // ⚠️ Falha de foto NUNCA derruba a inscrição — vira recado no campo e a
+  // família segue sem foto.
+  const escolherFoto = async (i: number, file: File | null | undefined) => {
+    if (!file) return;
+    const preview = URL.createObjectURL(file);
+    setCriancas(cs => cs.map((c, idx) => (idx === i
+      ? { ...c, fotoPreview: preview, fotoPath: null, fotoErro: null, fotoEnviando: true }
+      : c)));
+    try {
+      const r: any = await apresentacaoCriancasPublico.enviarFoto(file);
+      setCriancas(cs => cs.map((c, idx) => (idx === i
+        ? { ...c, fotoPath: r?.foto_path || null, fotoEnviando: false }
+        : c)));
+    } catch (e: any) {
+      URL.revokeObjectURL(preview);
+      setCriancas(cs => cs.map((c, idx) => (idx === i
+        ? { ...c, fotoPreview: null, fotoPath: null, fotoEnviando: false, fotoErro: e?.message || 'Não conseguimos enviar a foto.' }
+        : c)));
+    }
+  };
+  const removerFoto = (i: number) => setCriancas(cs => cs.map((c, idx) => {
+    if (idx !== i) return c;
+    if (c.fotoPreview) URL.revokeObjectURL(c.fotoPreview);
+    return { ...c, fotoPreview: null, fotoPath: null, fotoEnviando: false, fotoErro: null };
+  }));
+
   const addCrianca = () => setCriancas(cs => [...cs, { nome: '', nascimento: '', sexo: '' }]);
-  const removeCrianca = (i: number) => setCriancas(cs => (cs.length > 1 ? cs.filter((_, idx) => idx !== i) : cs));
+  const removeCrianca = (i: number) => setCriancas(cs => {
+    if (cs.length <= 1) return cs;
+    // ⚠️ Tirar a criança da lista também solta o objectURL do preview dela —
+    // senão o blob fica preso na aba até a pessoa sair da página.
+    const alvo = cs[i];
+    if (alvo && alvo.fotoPreview) URL.revokeObjectURL(alvo.fotoPreview);
+    return cs.filter((_, idx) => idx !== i);
+  });
 
   useEffect(() => {
     apresentacaoCriancasPublico.proximaData()
@@ -196,7 +239,7 @@ export default function ApresentacaoCriancas() {
       return;
     }
     const criancasValidas = criancas
-      .map(c => ({ nome: c.nome.trim().replace(/\s+/g, ' '), data_nascimento: c.nascimento, sexo: c.sexo }))
+      .map(c => ({ nome: c.nome.trim().replace(/\s+/g, ' '), data_nascimento: c.nascimento, sexo: c.sexo, foto_path: c.fotoPath || null }))
       .filter(c => c.nome.length >= 2);
     if (!criancasValidas.length) return setError('Informe o nome completo de ao menos uma criança.');
     for (const c of criancasValidas) {
@@ -204,6 +247,9 @@ export default function ApresentacaoCriancas() {
       if (!validarNascimento(c.data_nascimento)) return setError(`Informe a data de nascimento de ${c.nome}.`);
       if (!SEXOS.includes(c.sexo)) return setError(`Selecione o sexo de ${c.nome}.`);
     }
+    // ⚠️ Enviar com upload em curso perderia a foto em silêncio: o caminho
+    // ainda não voltou, e a inscrição entraria sem ela sem ninguém perceber.
+    if (criancas.some(c => c.fotoEnviando)) return setError('Aguarde a foto terminar de enviar.');
     if (!telefoneValido(form.telefone)) return setError('Informe um telefone válido com DDD.');
     if (!cpfValido(form.cpf_responsavel)) return setError('Informe um CPF válido do responsável.');
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.email.trim())) return setError('Informe um e-mail válido.');
@@ -386,6 +432,44 @@ export default function ApresentacaoCriancas() {
                       <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 6 }}>Sexo *</div>
                       <SexoMini value={c.sexo} onPick={(v) => setCriancaCampo(i, 'sexo', v)} />
                     </div>
+                  </div>
+                  {/* ⚠️⚠️ FOTO PRO TELÃO (16/09/2026) · NÃO tem caixa de aceite.
+                      Decisão do Marcos: o ato de escolher o arquivo, com o texto
+                      dizendo pra que serve, É a autorização. Por isso a frase
+                      abaixo não é decoração — ela é a única coisa que torna o
+                      envio um consentimento informado, e fica ACIMA do botão,
+                      onde é lida ANTES de escolher, não depois.
+                      A caixa `imagem` lá embaixo continua: aquela é sobre as
+                      fotos que a IGREJA tira e publica nas mídias — outro uso. */}
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 4 }}>
+                      Foto da criança (opcional)
+                    </div>
+                    <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 8, lineHeight: 1.45 }}>
+                      Se você enviar uma foto, ela será <strong>exibida no telão durante o culto</strong> da apresentação. JPG, PNG ou WEBP, até 8MB.
+                    </div>
+                    {c.fotoPreview ? (
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <img src={c.fotoPreview} alt="" style={{ width: 52, height: 52, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--cbrio-border)' }} />
+                        <span style={{ fontSize: 12, color: c.fotoPath ? '#00B39D' : 'var(--cbrio-text3)' }}>
+                          {c.fotoEnviando ? 'Enviando…' : 'Foto anexada'}
+                        </span>
+                        <button type="button" onClick={() => removerFoto(i)}
+                          style={{ background: 'transparent', border: 'none', color: '#ef4444', fontSize: 12, cursor: 'pointer', padding: 0 }}>
+                          remover
+                        </button>
+                      </div>
+                    ) : (
+                      <input
+                        type="file"
+                        accept="image/jpeg,image/png,image/webp"
+                        onChange={(e) => escolherFoto(i, e.target.files && e.target.files[0])}
+                        style={{ fontSize: 12, color: 'var(--cbrio-text3)' }}
+                      />
+                    )}
+                    {c.fotoErro && (
+                      <div style={{ fontSize: 11, color: '#ef4444', marginTop: 6 }}>{c.fotoErro}</div>
+                    )}
                   </div>
                 </div>
               ))}
