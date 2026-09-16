@@ -130,6 +130,7 @@ Guard: `authorizeModule('grupos', 1 | 2 | 3 | 4 | 5)`
 - `backend/utils/enderecoGrupoPublico.js`
 - `backend/utils/grupoOnline.js`
 - `backend/utils/prontidaoCadastro.js`
+- `backend/utils/redePatchGrupo.js`
 - `backend/utils/supabase.js`
 - `backend/utils/vinculosDuplicados.js`
 
