@@ -19925,3 +19925,133 @@ a um ano precisa distinguir palpite confirmado de declaração da pessoa.
   em Downloads). SÓ-ONDE-VAZIO com `.is('genero', null)` como guarda de corrida:
   0 linhas = a pessoa respondeu no meio do caminho, e **a declaração dela vence o
   nosso palpite**.
+
+## ⚠️⚠️ FUSÃO de perfis de voluntário duplicados + a varredura dos 101 (2026-09-16 · SEM migration)
+
+Pedido do Marcos depois da migration `20260916180000`: *"pode resolver o caso do
+thiago, meu e dos demais, depois faça uma varredura entenda esses 101 perfis"*.
+
+### ⚠️⚠️ LEI · fusão de `vol_profiles` é MOVER OS FILHOS + APOSENTAR, nunca DELETE
+
+`vol_profiles` tem **15 FKs** apontando pra ela e **5 são `ON DELETE CASCADE`**:
+`vol_user_roles` (papel de permissão) · `vol_team_members` (vínculo de equipe) ·
+`vol_availability` · `vol_1x1_meetings` · `vol_escala_template_item_pessoas`.
+Deletar o perfil apagaria tudo isso **em cascata**. É a mesma lei já registrada
+pra `vol_teams`.
+
+⚠️⚠️ **QUEM SOBREVIVE é o perfil no ROSTER ATIVO do PCO** (`arquivado = false`
+com `planning_center_id`). Arquivar o que está no roster seria **DESFEITO pelo
+próximo sync** — `reconciliarComRosterPCO` "desarquiva os que reapareceram".
+
+⚠️ **Mover `volunteer_id` é DURÁVEL**, conferido antes de escrever: o payload de
+`upsertScheduleResilient` tem só `planning_center_person_id`, `volunteer_name`,
+`team_name`, `position_name`, `confirmation_status` — **`volunteer_id` NÃO é
+escrito pelo sync**, e não existe passo que o re-ligue a partir do pc_id.
+
+### ⚠️⚠️ O ACHADO QUE NÃO ERA O PEDIDO: o login apontava pro perfil VAZIO
+
+Padrão sistemático em 3 dos 7 casos — a conta de login estava no perfil **sem
+histórico**, e o perfil com tudo **não tinha login**:
+
+| pessoa | login apontava pra | agora aponta pra |
+|---|---|---|
+| **Ariel** (coordenadora do voluntariado) | perfil arquivado · 0 escalas | **76 escalas** |
+| **Mariane** | perfil sem histórico · 0 escalas | **58 escalas** |
+| **Marcos Paulo** | perfil arquivado · 0 escalas | **1 escala** |
+
+Efeito prático: elas abriam a área de voluntário e **não viam escala nenhuma**,
+porque `auth_user_id` resolve o perfil.
+
+⚠️ **Antes de mover, conferir que `profiles.membro_id` do login BATE com
+`vol_profiles.membresia_id` do perfil de destino** — senão liga o login de uma
+pessoa ao perfil de outra. Os 3 bateram.
+⚠️ **ORDEM OBRIGATÓRIA**: `vol_profiles_auth_user_idx` é UNIQUE ⇒ **limpa o
+perdedor ANTES** de gravar no sobrevivente; o inverso estoura 23505.
+
+### O que foi movido (16/09 · backup `~/Downloads/_bk_20260916_fusao_perfis_vol.json`)
+
+**THIAGO MARINHO DA SILVA** era o único com dado se perdendo — **2 pc_ids no
+PCO** (189959642 e 190435530), ou seja cadastrado duas vezes lá:
+
+| | antes | depois |
+|---|---|---|
+| perfil ativo | 7 check-ins · 8 escalas · 8 histórico | **10 · 13 · 20** |
+| perfil aposentado | 3 · 5 · 12 | **0 · 0 · 0** |
+
+⚠️ **2 `vol_team_members` ficaram no aposentado**: o sobrevivente já tinha o
+mesmo (team_id + position_id) e mover estouraria o único. Ficam inertes.
+
+Estado final: **0 membros com 2 perfis ATIVOS** · 954 perfis (nada criado nem
+apagado).
+
+⚠️ **NÃO tocado, é decisão de gente**: a **Jessica Salviano tem DUAS contas de
+login** (`jessica.salviano@cbrio.org` e `jessicasilva0307@gmail.com`) para o
+mesmo membro. O script detecta e se recusa a escolher.
+
+⚠️ **`vol_1x1_meetings` está declarada em migration e NÃO EXISTE em produção.**
+O script PULA e **DECLARA** (`PGRST205`); qualquer outro erro LANÇA — contagem
+truncada faria a fusão "mover 0 filhos" e reportar sucesso, deixando histórico
+pra trás sem ninguém saber.
+
+### A varredura dos 101 perfis sem vínculo que fizeram check-in
+
+**Nenhum é voluntário de todo domingo**: 37 com 1 check-in · 49 com 2–4 · 15 com
+5–9 · **0 com 10+**. 87 têm e-mail, **só 1 tem CPF**, **nenhum tem telefone**.
+
+⚠️⚠️ **Testado com a régua REAL (`nomesPodemSerMesmaPessoa`), não estimado:**
+
+| | quantos |
+|---|---|
+| o matcher canônico ligaria SOZINHO | **12** (11 por e-mail+nome · 1 por CPF) |
+| recusado — **apelido × nome legal** | 15 |
+| candidato só por nome exato (nome sozinho não é chave) | 10 |
+| ambíguo | 1 (**Enzo Palladino**, de novo) |
+| **sem cadastro nenhum** | **63** |
+
+⚠️⚠️ **A recusa dos 15 está CERTA, e um caso prova**: "Helena dos Santos
+Tupinamba" e "PAULA DOS SANTOS GUILHERME TUPINAMBÁ" **compartilham o e-mail** —
+pessoas diferentes da mesma família. Ligar por e-mail daria acesso ao cadastro
+errado. É o caso Palladino outra vez.
+
+**Os 63 sem cadastro servem de verdade e são invisíveis pra membresia** — Rosana
+Vasquez (9 check-ins), Mateus Romano (8), José Júnior (8), vários com o último
+check-in em **13/09**.
+
+⚠️ **Decisão do Marcos: NÃO rodar batch nenhum.** O modal resolve organicamente
+— perfil sem vínculo sempre cai nele (nascimento e sexo não têm onde morar), e
+quando a pessoa preenche CPF/telefone o `acharOuCriarGuardado` **acha** quem já
+existe ou **cria** quem é novo, com a confirmação da própria pessoa. Os 12
+automáticos são pouco ganho para o risco de mexer em identidade em lote.
+
+⚠️ Achado de carona: um dos candidatos é **"Mergulho inesquecível Cristiane
+Cruz"** — cadastro-lixo (descrição de evento que virou pessoa).
+
+### ⚠️ VERIFICAÇÃO do modal · "só pede o que falta" (pedido do Marcos)
+
+*"garanta que o modal funciona e que só pedirá os campos que estão faltando, não
+pedir novamente data de nascimento para quem já temos, isso para evitar ao máximo
+que pessoas possam digitar errado"*. Conferido nas 4 camadas:
+
+1. **Régua** — `faltandoNoCadastro` só acusa `data_nascimento` quando
+   `vazio(m.data_nascimento)`.
+2. **Endpoint** — `faltaDoVoluntario` seleciona as **6** colunas
+   (`nome, cpf, telefone, email, data_nascimento, genero`). ⚠️ Esquecer uma
+   coluna no SELECT faria o valor vir `undefined` ⇒ `vazio` ⇒ **o modal pediria
+   de novo**. Os 3 pontos que devolvem `missing_fields` usam essa função ÚNICA.
+3. **Tela** — `campos = ORDEM.filter(c => missingFields.includes(c))`,
+   `if (!campos.length) return null`, e **12 guardas `campos.includes(...)**
+   (6 no JSX + 6 no payload).
+4. ⚠️⚠️ **INVARIANTE PROVADA CONTRA PRODUÇÃO** (leitura, 16/09): dos 515
+   voluntários com check-in, o modal abre em 182 e **NÃO abre em 333** — e
+   **ZERO violações** (nenhum campo que já temos é pedido). **Já temos o
+   nascimento de 359 pessoas e o modal pede a NENHUMA delas.**
+
+**Rede de segurança contra erro de digitação**: o formulário valida
+(`validarNascimento`) antes de enviar, e o servidor grava **SÓ-ONDE-VAZIO**
+(`if (valor && semValor(membro[coluna]))`) — se o matcher ligar num cadastro que
+já tem nascimento, **o valor digitado é descartado**. O dado existente vence.
+
+⚠️ **PONTO CEGO declarado**: dos 101 sem vínculo, **35 têm cadastro provável COM
+nascimento** — e o modal vai pedir de novo, porque o perfil não está ligado. É
+honesto (não dá pra afirmar que é a mesma pessoa), e o só-onde-vazio protege o
+valor bom no momento em que o vínculo acontecer.
