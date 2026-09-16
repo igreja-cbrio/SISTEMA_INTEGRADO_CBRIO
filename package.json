@@ -33,6 +33,7 @@
     "test:porta-ligar": "node backend/services/portaLigarEscreve.test.js",
     "test:supervisor-subarea": "node backend/services/supervisorSubarea.test.js",
     "test:checkin-janela": "node backend/services/checkinJanela.test.js",
+    "test:vol-cadastro-checkin": "node backend/utils/volCadastroCheckin.test.js",
     "test:rodizio-culto": "node backend/services/rodizioCulto.test.js",
     "test:campanha-digito": "node backend/services/campanhaDigito.test.js",
     "test:watch": "vitest",

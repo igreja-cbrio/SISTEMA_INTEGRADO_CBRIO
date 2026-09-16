@@ -133,6 +133,14 @@ jobs:
       - name: Janela do check-in do supervisor (dia do culto em BRT)
         run: npm run test:checkin-janela
 
+      # DADO DA PESSOA. "Falta" no completar-cadastro do check-in e a UNIAO de
+      # vol_profiles + mem_membros: medido em 16/09, dos 516 voluntarios com
+      # check-in no semestre so 4 tinham telefone no vol_profiles e 379 tinham
+      # no membro vinculado. Olhar so a tabela do voluntariado faria o modal
+      # pedir de novo, a cada culto, o telefone que a igreja ja tem.
+      - name: Completar cadastro no check-in (falta = uniao das 2 tabelas)
+        run: npm run test:vol-cadastro-checkin
+
       # PERMISSAO. O rodizio da casa e semana do mes x dia x periodo (lista da
       # Ariel), NAO horario de culto — medido no PCO: 102 dos 110 escalados tem so
       # horario de ensaio e os 8 restantes tem as QUATRO horas.

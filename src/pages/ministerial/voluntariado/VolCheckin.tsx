@@ -14,7 +14,7 @@ import QrScanner from './components/checkin/QrScanner';
 import ManualCheckin from './components/checkin/ManualCheckin';
 import FaceScanner from './components/checkin/FaceScanner';
 import SuccessOverlay from './components/checkin/SuccessOverlay';
-import ContactCaptureDialog from './components/checkin/ContactCaptureDialog';
+import CompletarCadastroDialog, { CampoBase } from './components/checkin/CompletarCadastroDialog';
 import { toast } from 'sonner';
 
 export default function VolCheckin() {
@@ -25,10 +25,15 @@ export default function VolCheckin() {
   const checkIn = useCheckIn();
   const qrLookup = useScheduleByQrCode();
   const [success, setSuccess] = useState<{ name: string; team?: string | null; position?: string | null; unscheduled?: boolean } | null>(null);
-  const [contactCapture, setContactCapture] = useState<{ id: string; name: string } | null>(null);
+  const [completarCadastro, setCompletarCadastro] = useState<{ id: string; name: string; falta: CampoBase[] } | null>(null);
 
+  // Quem decide o que falta é o SERVIDOR (`missing_fields` = união de
+  // vol_profiles + mem_membros). A tela só abre o modal com a lista que veio.
   const maybeCapture = (resp: any, name: string) => {
-    if (resp?.needs_cpf && resp?.volunteer_id) setContactCapture({ id: resp.volunteer_id, name });
+    const falta: CampoBase[] = resp?.missing_fields || [];
+    if (falta.length && resp?.volunteer_id) {
+      setCompletarCadastro({ id: resp.volunteer_id, name: resp.volunteer_name || name, falta });
+    }
   };
 
   // Cultos da manhã (08:30/10:00/11:30) · pro check-in perguntar em quais a
@@ -72,6 +77,7 @@ export default function VolCheckin() {
       const r = await voluntariado.checkIns.manha({ volunteer_id: manhaDialog.volunteerId, service_date: serviceDate, service_type_ids: ids, method: manhaDialog.method });
       setSuccess({ name: manhaDialog.name });
       toast.success(`Check-in em ${r?.criados ?? ids.length} culto(s) da manhã!`);
+      maybeCapture(r, manhaDialog.name);
       setManhaDialog(null);
     } catch (e: any) { toast.error(e?.message || 'Erro no check-in'); }
     setSalvandoManha(false);
@@ -96,8 +102,11 @@ export default function VolCheckin() {
 
   const handleUnscheduledCheckIn = useCallback(async (name: string) => {
     try {
-      await checkIn.mutateAsync({ service_id: selectedServiceId, method: 'manual', is_unscheduled: true, volunteer_name: name });
+      // O servidor resolve o perfil pelo NOME digitado quando ele é único, então
+      // o check-in sem escala também sabe dizer o que falta do cadastro.
+      const resp = await checkIn.mutateAsync({ service_id: selectedServiceId, method: 'manual', is_unscheduled: true, volunteer_name: name });
       setSuccess({ name, unscheduled: true });
+      maybeCapture(resp, name);
       toast.success('Check-in sem escala realizado!');
     } catch (err: any) {
       toast.error(err.message || 'Erro no check-in');
@@ -210,11 +219,12 @@ export default function VolCheckin() {
 
       {success && <SuccessOverlay volunteerName={success.name} teamName={success.team} positionName={success.position} isUnscheduled={success.unscheduled} onClose={() => setSuccess(null)} />}
 
-      {contactCapture && (
-        <ContactCaptureDialog
-          volunteerId={contactCapture.id}
-          volunteerName={contactCapture.name}
-          onDone={() => setContactCapture(null)}
+      {completarCadastro && (
+        <CompletarCadastroDialog
+          volunteerId={completarCadastro.id}
+          volunteerName={completarCadastro.name}
+          missingFields={completarCadastro.falta}
+          onDone={() => setCompletarCadastro(null)}
         />
       )}
 
