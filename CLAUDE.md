@@ -200,6 +200,29 @@ novo não a reabre por acidente) e grava procedência com origem
 distinção que permite rever a decisão daqui a um ano sabendo que **não foi o
 sistema que concluiu**.
 
+### Estado final (aplicado e conferido no banco em 16/09)
+
+**10 sexos corrigidos** (7 por evidência + 3 por decisão) · **1 nome** · **2
+cadastros de teste removidos** · **0 casos de nome inequívoco × sexo trocado
+restando** · procedência: 7 `sexo_correcao_auditoria` + 3 `sexo_decisao_gestao` +
+1 `nome_correcao_auditoria`. Painel do censo: **545 F · 381 M · 32 sem** —
+*314 declararam · 612 do cadastro* (**58,9% feminino sobre 926**).
+
+⚠️⚠️ **LEI · nome de arquivo de backup não pode colidir entre duas execuções.**
+A 1ª versão do script nomeava o backup só com a DATA, e a 2ª execução do dia
+(`--decisao-marcos`) **sobrescreveu o backup da 1ª — em silêncio, sem erro**. O
+estado anterior dos 7 sexos + 1 nome + 2 remoções sumiu do disco. Não se perdeu
+de verdade (`mem_identidade_observacoes` guarda `genero_anterior` e o
+soft-delete é reversível), mas o arquivo que existe pra ser a rede de segurança
+comeu a si mesmo. Agora o carimbo leva **hora e minuto** e o script **ABORTA** se
+o arquivo já existir. ⇒ Script de reparo que roda mais de uma vez no mesmo dia —
+que é o caso normal quando há gate opcional — precisa disso.
+
+⚠️ **E conferência que usa `.like()` em coluna `uuid` dá FALSO NEGATIVO**
+(`like` sem cast não casa): a 1ª verificação da remoção dos testes acusou falha
+num trabalho que tinha dado certo. Filtrar em JS sobre a lista paginada, ou
+comparar o uuid inteiro.
+
 ⚠️⚠️ **E o sinal mais forte não é o nome — é o PAPEL no Kids.**
 `kids_responsaveis.parentesco` (`pai`/`mae`) é declaração operacional de terceiro
 sobre um fato verificável, e resolveu 2 casos que o nome não resolvia:
