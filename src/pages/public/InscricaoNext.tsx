@@ -374,10 +374,12 @@ export default function InscricaoNext() {
               </Row>
               <Field id="endereco" label="Endereço (opcional)" value={form.endereco} onChange={set('endereco')} autoComplete="street-address" />
 
-              {/* ⚠️⚠️ 15/09/2026 · o servidor devolve SÓ a próxima turma (Kevyn:
-                  "não deixar todas, só a próxima"). O ramo do <select> fica pra
-                  o caso de o servidor voltar a oferecer mais de uma — some-lo
-                  agora deixaria a tela sem caminho se a régua mudar. */}
+              {/* ⚠️⚠️ 16/09/2026 · o servidor devolve AS 3 PRÓXIMAS (Kevyn mudou
+                  de ideia — em 15/09 era só a próxima). Os DOIS ramos seguem:
+                  com uma turma o campo é informação, com mais de uma é seletor
+                  obrigatório. Guardar o ramo do <select> em 15/09 foi o que
+                  fez esta mudança não custar tela nenhuma — e o de uma turma
+                  volta a valer sozinho quando só sobrar um domingo aberto. */}
               {(turmas && turmas.length === 1) && (
                 <>
                   <SectionTitle>Quando</SectionTitle>
@@ -387,7 +389,7 @@ export default function InscricaoNext() {
                   }}>
                     <div style={{ fontWeight: 700 }}>{rotuloDomingo(turmas[0].data)}</div>
                     <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>
-                      É o próximo NEXT. Sua inscrição é para este domingo.
+                      É o único domingo aberto. Sua inscrição é para esta data.
                     </div>
                   </div>
                 </>
