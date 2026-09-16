@@ -370,7 +370,21 @@ function FichaDialog({ id, horarios, onClose, onSaved }: { id: string | null; ho
                 )}
                 <div className="mt-2">
                   <Linha k="Telefone" v={fmtTel(d.telefone)} />
-                  <Linha k="CPF do responsável" v={fmtCpf(d.cpf_responsavel)} />
+                  {/* ⚠️⚠️ De QUEM é o CPF (16/09/2026). A inscrição traz os nomes
+                      dos DOIS responsáveis e um CPF; até 16/09 ninguém dizia de
+                      qual deles era, e medimos 3 de 9 pertencendo ao PAI enquanto
+                      o sistema assumia a mãe.
+                      ⚠️ Linha ANTIGA não é adivinhada: sem cpf_pai/cpf_mae, o
+                      rótulo volta a ser o genérico. Escrever "CPF da mãe" num
+                      registro que não sabe disso seria inventar um fato. */}
+                  {(d.cpf_pai || d.cpf_mae) ? (
+                    <>
+                      {d.cpf_pai && <Linha k="CPF do pai" v={fmtCpf(d.cpf_pai)} />}
+                      {d.cpf_mae && <Linha k="CPF da mãe" v={fmtCpf(d.cpf_mae)} />}
+                    </>
+                  ) : (
+                    <Linha k="CPF do responsável" v={fmtCpf(d.cpf_responsavel)} />
+                  )}
                   <Linha k="E-mail" v={d.email || '—'} />
                   <Linha k="Endereço" v={d.endereco || '—'} />
                   <Linha k="No cadastro da igreja" v={d.responsavel_membro ? `${d.responsavel_membro.nome}${d.responsavel_membro.status ? ` · ${d.responsavel_membro.status}` : ''}` : 'não ligado a nenhum cadastro'} alerta={!d.responsavel_membro} />

@@ -36,6 +36,8 @@ const { exigeConfirmacaoPaisIguais, rotuloHorarioApresentacao } = require('../ut
 const multer = require('multer');
 const { caminhoFotoValido, extensaoDeMime, PREFIXO_FOTO } = require('../utils/fotoApresentacao');
 const { randomUUID } = require('crypto');
+// De QUEM é o CPF (16/09/2026) — régua pura, com teste e mutante.
+const { donoDoCpf, nomeDoDonoDoCpf, distribuirCpfs } = require('../utils/cpfResponsavel');
 
 // Limiter GENEROSO do router (padrão grupos/NPS/eventos): Wi-Fi único da
 // igreja — 10/15min por IP dava 429 na 11ª família (sweep 28/07).
@@ -177,7 +179,7 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
     const body = req.body || {};
     const {
       nome_pai, nome_mae, criancas, crianca_nome, crianca_idade, telefone,
-      cpf_responsavel, email, endereco, observacoes,
+      cpf_responsavel, cpf_de, cpf_outro, email, endereco, observacoes,
       aceita_termos_menor, consent_imagem, whatsapp_optin, pais_iguais_confirmado,
     } = body;
 
@@ -245,6 +247,24 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
 
     const cpfDig = normalizarCpf(cpf_responsavel);
     if (!cpfDig) return res.status(400).json({ error: 'Informe um CPF válido do responsável.' });
+
+    // ── De QUEM é este CPF (16/09/2026) ──────────────────────────────────────
+    // ⚠️⚠️ Achado do Marcos ao testar: o formulário pede os nomes dos DOIS
+    // responsáveis e um CPF só, e ninguém dizia de qual deles era. O código
+    // assumia a mãe. Medido: das 9 inscrições em que dá pra saber o dono, 3
+    // eram do PAI. O vínculo não saiu errado (o matcher prioriza CPF sobre
+    // nome), mas o par que chegava nele era falso — CPF de um, nome do outro —
+    // e é o nome que decide quando o CPF não está no cadastro.
+    // ⚠️ Com um responsável só, não se pergunta: a régua infere.
+    const donoCpf = donoDoCpf({
+      informado: cpf_de,
+      temPai: Boolean(nomePaiT),
+      temMae: Boolean(nomeMaeT),
+    });
+    // ⚠️ CPF do outro responsável é OPCIONAL: inválido é ignorado, nunca 400 —
+    // a inscrição não se perde por um campo que a família nem precisava pôr.
+    const cpfOutroDig = cpf_outro ? normalizarCpf(cpf_outro) : null;
+    const cpfsDosPais = distribuirCpfs({ dono: donoCpf, cpf: cpfDig, cpfOutro: cpfOutroDig });
 
     const emailNorm = normalizarEmail(email);
     if (!emailNorm || !emailValido(emailNorm)) {
@@ -349,6 +369,10 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
           crianca_sexo: c.sexo,
           telefone: tel,
           cpf_responsavel: cpfDig,
+          // ⚠️ Mesma lei do horario_culto/foto: coluna que depende de migration
+          // só é MENCIONADA quando tem valor.
+          ...(cpfsDosPais.cpf_pai ? { cpf_pai: cpfsDosPais.cpf_pai } : {}),
+          ...(cpfsDosPais.cpf_mae ? { cpf_mae: cpfsDosPais.cpf_mae } : {}),
           email: emailNorm,
           endereco: enderecoT,
           data_apresentacao: dataApresentacao,
@@ -367,18 +391,24 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
           crianca_id: criancaId,
           observacoes: obsExtra,
       };
+      // ⚠️⚠️ COLUNAS QUE DEPENDEM DE MIGRATION. Se o código subir antes do SQL,
+      // o INSERT morre em 42703 e o `continue` logo abaixo descarta a inscrição
+      // INTEIRA — a família perde a vaga por causa de um campo novo, em
+      // silêncio. O laço derruba UMA coluna por vez até passar: some o campo
+      // novo, nunca a criança. (Mesma lei que o cadastro público aprendeu em
+      // 15/09 com o `semColunasDoCenso` → `COLUNAS_OPCIONAIS`.)
+      const OPCIONAIS_INSC = ['foto_storage_path', 'foto_enviada_em', 'cpf_pai', 'cpf_mae'];
       const inserir = (linha) => supabase.from('apresentacao_criancas').insert(linha).select('id').single();
-      let { data, error } = await inserir(linhaInsc);
-      // ⚠️⚠️ COLUNA NOVA SEM MIGRATION APLICADA. Se o código subir antes do SQL,
-      // o INSERT COM FOTO morre em 42703 e o `continue` logo abaixo descarta a
-      // inscrição INTEIRA — a família perde a vaga por causa de uma imagem, em
-      // silêncio. A retentativa devolve a inscrição SEM a foto: some a foto,
-      // nunca a criança. Mesma lei que o cadastro público aprendeu em 15/09
-      // (`semColunasDoCenso` → `COLUNAS_OPCIONAIS`), aqui pro par foto_*.
-      if (error && error.code === '42703' && /foto_/.test(error.message || '')) {
-        console.warn('[publicApresentacao] colunas de foto ausentes (migration 20260916140000 não aplicada) — inscrevendo SEM a foto');
-        const { foto_storage_path, foto_enviada_em, ...semFoto } = linhaInsc;
-        ({ data, error } = await inserir(semFoto));
+      const linhaAtual = { ...linhaInsc };
+      let { data, error } = await inserir(linhaAtual);
+      while (error && error.code === '42703') {
+        const faltando = OPCIONAIS_INSC.find((c) => (error.message || '').includes(c));
+        // ⚠️ Sem nada que possamos derrubar, PARAR: insistir aqui seria laço
+        // infinito batendo no banco a cada inscrição.
+        if (!faltando || !(faltando in linhaAtual)) break;
+        console.warn(`[publicApresentacao] coluna ${faltando} ausente (migration não aplicada) — inscrevendo sem ela`);
+        delete linhaAtual[faltando];
+        ({ data, error } = await inserir(linhaAtual));
       }
       if (error) {
         console.error('[publicApresentacao] insert error:', error.message);
@@ -411,7 +441,12 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
       // Funil de identidade do RESPONSÁVEL (matcher read-only + observação) +
       // vínculo criança↔responsável no Kids. Best-effort: a inscrição nunca é
       // perdida por falha aqui.
-      const nomeResp = nomeMaeT || nomePaiT;
+      // ⚠️⚠️ O nome que vai junto do CPF é o do DONO do CPF. Antes era sempre
+      // `nomeMaeT || nomePaiT`: com o CPF do pai, o funil de identidade recebia
+      // o CPF de um com o nome do outro. Não estragou vínculo até hoje porque o
+      // matcher prioriza CPF — mas é o NOME que decide quando o CPF não está no
+      // cadastro, e aí ele decidiria pela pessoa errada.
+      const nomeResp = nomeDoDonoDoCpf(donoCpf, nomePaiT, nomeMaeT);
       processarIdentidade({
         nomeCompleto: nomeResp, cpf: cpfDig, email: emailNorm, telefone: tel,
         politica: 'ligar', origem: 'apresentacao_formulario', origemId: criados[0],
