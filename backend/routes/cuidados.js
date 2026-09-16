@@ -23,6 +23,14 @@ router.use(authenticate);
 // estado real do dia seguinte ao culto; conta como contato feito.
 // ⚠️ ESPELHOS: painel.js · nextConvite.js · agentePrimeiroContato.js · Cuidados.tsx.
 const CONTATO_FEITO_STATUS = new Set(['contactada', 'respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
+// ⚠️⚠️ `contato_impossivel` (16/09) NÃO entra no Set acima: nenhuma mensagem
+// saiu, porque não há para onde mandar — é converso do online de quem só
+// temos o id do YouTube. Marcar como feito inflaria o indicador de contato
+// com contato que não aconteceu (medido em 16/09: 6 linhas assim estavam em
+// `contactada`, que conta como feito).
+// Quem a equipe não tinha como alcançar, e por isso sai do DENOMINADOR do
+// percentual de atendimento:
+const INALCANCAVEL = new Set(['numero_errado', 'contato_impossivel']);
 const contatoFoiFeito = (c) => !!c.primeiro_contato_em || CONTATO_FEITO_STATUS.has(c.primeiro_contato_status);
 
 // Mensagem automática de WhatsApp · pedido de aconselhamento pastoral
@@ -273,26 +281,33 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
     }));
 
     // ── Próximos passos · distribuição por status do 1º contato + relatório por responsável (janela toda) ──
-    const PP_STATUS_LABEL = { atendido_respondido: 'Atendido e respondido', contactada: 'Contactada (aguardando resposta)', nao_respondeu: 'Não respondeu', nao_atendido: 'Não atendido', numero_errado: 'Número errado', pendente: 'Pendente' };
-    const ppCount = { atendido_respondido: 0, contactada: 0, nao_respondeu: 0, nao_atendido: 0, numero_errado: 0, pendente: 0 };
+    // ⚠️ Espelho de `src/lib/primeiroContato.ts` — mudou lá, muda aqui.
+    const PP_STATUS_LABEL = { atendido_respondido: 'Atendido e respondido', contactada: 'Contactada (aguardando resposta)', nao_respondeu: 'Não respondeu', nao_atendido: 'Não atendido', numero_errado: 'Número errado', contato_impossivel: 'Contato impossível', pendente: 'Pendente' };
+    const ppCount = { atendido_respondido: 0, contactada: 0, nao_respondeu: 0, nao_atendido: 0, numero_errado: 0, contato_impossivel: 0, pendente: 0 };
     const respMap = new Map();
     for (const c of convertidos) {
       const k = (c.primeiro_contato_status && ppCount[c.primeiro_contato_status] !== undefined) ? c.primeiro_contato_status : 'pendente';
       ppCount[k]++;
       const r = (c.responsavel_atendimento || '').trim() || '— sem responsável';
-      const o = respMap.get(r) || { responsavel: r, total: 0, contato: 0, atendido: 0, numero_errado: 0 };
+      const o = respMap.get(r) || { responsavel: r, total: 0, contato: 0, atendido: 0, numero_errado: 0, inalcancavel: 0 };
       o.total++;
       if (contatoFoiFeito(c)) o.contato++;
       if (c.primeiro_contato_status === 'atendido_respondido') o.atendido++;
       if (c.primeiro_contato_status === 'numero_errado') o.numero_errado++;
+      // ⚠️⚠️ INALCANÇÁVEL sai do denominador do atendimento. `numero_errado`
+      // já saía; `contato_impossivel` (16/09) entra na mesma família — nos dois
+      // a equipe não tinha como alcançar a pessoa, e cobrar disso é cobrar o
+      // que não está na mão dela.
+      if (INALCANCAVEL.has(c.primeiro_contato_status)) o.inalcancavel++;
       respMap.set(r, o);
     }
     const statusDist = Object.keys(PP_STATUS_LABEL).map(k => ({ status: k, label: PP_STATUS_LABEL[k], n: ppCount[k] }));
-    // contato_pct = feitos ÷ todos (número errado conta como feito); atendido_pct exclui número errado do denominador
+    // contato_pct = feitos ÷ todos; atendido_pct exclui do DENOMINADOR quem a
+    // equipe não tinha como alcançar (número errado · contato impossível).
     const porResponsavel = [...respMap.values()].map(o => ({
       ...o,
       contato_pct: o.total ? Math.round(o.contato / o.total * 100) : 0,
-      atendido_pct: (o.total - o.numero_errado) > 0 ? Math.round(o.atendido / (o.total - o.numero_errado) * 100) : 0,
+      atendido_pct: (o.total - o.inalcancavel) > 0 ? Math.round(o.atendido / (o.total - o.inalcancavel) * 100) : 0,
     })).sort((a, b) => b.total - a.total);
 
     // Cards de cobertura (toda a janela) · "com dados" = telefone preenchido (dá pra contatar)
@@ -1289,6 +1304,15 @@ router.patch('/convertidos/:id', authorizeModule('cuidados', 3), async (req, res
       .is('deleted_at', null)
       .select()
       .single();
+    // ⚠️⚠️ 23514 é o CHECK do banco recusando um status que ele ainda não
+    // conhece — acontece quando a tela já oferece a opção e a migration não
+    // subiu. 409 DIZENDO o motivo, nunca 500 genérico: quem clicou precisa
+    // saber que o problema não é o dado dele. (A lei do check-in, 15/09.)
+    if (error && error.code === '23514' && 'primeiro_contato_status' in patch) {
+      return res.status(409).json({
+        error: `O status "${patch.primeiro_contato_status}" ainda não está disponível — falta aplicar a migration do Próximos passos.`,
+      });
+    }
     if (error) throw error;
     res.json(data);
   } catch (e) {

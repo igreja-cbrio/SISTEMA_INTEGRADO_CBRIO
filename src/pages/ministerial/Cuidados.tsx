@@ -37,13 +37,13 @@ import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Cart
 import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
 import { opcoesAno, ehAno, anoDe } from '../../lib/janelaPeriodo';
+import {
+  PCONTATO_OPCOES, PCONTATO_LABEL, PCONTATO_COR, PCONTATO_FEITO,
+} from '../../lib/primeiroContato';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ef476f' };
-// Cor por status do 1º contato (dashboard · Próximos passos)
-const PP_COR: Record<string, string> = {
-  atendido_respondido: '#10b981', contactada: '#3b82f6', nao_respondeu: '#f59e0b', nao_atendido: '#64748b',
-  numero_errado: '#94a3b8', pendente: '#ef476f',
-};
+// Cor por status do 1º contato (dashboard · Próximos passos) · régua em lib.
+const PP_COR = PCONTATO_COR;
 
 // Filtro de período do dashboard (bate com DASH_DIAS_VALIDOS no backend)
 const DASH_PERIODOS = [
@@ -530,31 +530,18 @@ const DIRECIONAMENTO_LABEL: Record<string, string> = {
 // respondido". A meta é 100% contatado → o que falta pra 100% é quem está SEM marcação
 // ("—"). Ordem: do estado inicial ao melhor desfecho.
 // ⚠️ 'contactada' exige a migration 20260901130000 (CHECK vivo recusa valor novo).
-const PCONTATO_OPCOES: { v: string; label: string; positivo?: boolean }[] = [
-  { v: 'contactada',          label: 'Contactada (aguardando resposta)' },
-  { v: 'nao_respondeu',       label: 'Não respondeu' },
-  { v: 'nao_atendido',        label: 'Não atendido' },
-  { v: 'numero_errado',       label: 'Número errado' },
-  { v: 'atendido_respondido', label: 'Atendido e respondido', positivo: true },
-];
+// ⚠️ A lista saiu daqui pra `src/lib/primeiroContato.ts` em 16/09: o
+// PainelVisitantes mostra o MESMO campo e não alcançava esta constante,
+// então imprimia o valor cru.
 // Labels de TODOS os status (inclui os legados da planilha antiga já importada) ·
 // usado só pra EXIBIR registros que vieram com esses valores (não são mais oferecidos).
-const PCONTATO_LABEL: Record<string, string> = {
-  contactada: 'Contactada (aguardando resposta)',
-  nao_respondeu: 'Não respondeu',
-  nao_atendido: 'Não atendido',
-  atendido_respondido: 'Atendido e respondido',
-  respondeu: 'Respondeu',
-  nao_compareceu: 'Não compareceu',
-  sem_retorno: 'Sem retorno do responsável',
-  numero_errado: 'Número errado',
-};
+
 // Status que indicam que o PRIMEIRO CONTATO foi feito (a pessoa recebeu a mensagem,
 // independente da resposta) → balão "Contato" verde. "sem_retorno" e "numero_errado"
 // (e vazio) NÃO contam como contato feito.
 // ⚠️ ESPELHOS deste Set no backend: routes/cuidados.js · routes/painel.js ·
 // routes/nextConvite.js · services/agentePrimeiroContato.js — mudou aqui, muda lá.
-const CONTATO_FEITO = new Set(['contactada', 'respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido']);
+const CONTATO_FEITO = PCONTATO_FEITO;
 
 // Semáforo da jornada (contato/batismo/Next) · espelha o JornadaConvertidos
 const JORNADA_ST: Record<string, { label: string; color: string }> = {

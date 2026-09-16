@@ -35,6 +35,8 @@ import { useAuth } from '../../contexts/AuthContext';
 import { visitantes as api } from '../../api';
 import { hrefConversa } from '@/lib/conversas';
 import { opcoesAno, ehAno, anoDe } from '../../lib/janelaPeriodo';
+// ⚠️ Mostrava o valor CRU (`nao_atendido`) — o vocabulário vive em lib desde 16/09.
+import { rotuloPrimeiroContato } from '../../lib/primeiroContato';
 
 const ACENTO = '#a855f7';
 
@@ -318,7 +320,7 @@ function Visitas() {
                   )}
                 </TableCell>
                 <TableCell className="text-xs text-muted-foreground">
-                  {v.primeiro_contato_status ? `${v.primeiro_contato_status}${v.responsavel_atendimento ? ` · ${v.responsavel_atendimento}` : ''}` : '—'}
+                  {v.primeiro_contato_status ? `${rotuloPrimeiroContato(v.primeiro_contato_status)}${v.responsavel_atendimento ? ` · ${v.responsavel_atendimento}` : ''}` : '—'}
                 </TableCell>
                 <TableCell className="text-right whitespace-nowrap">
                   {v.telefone && (
