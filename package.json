@@ -43,7 +43,8 @@
     "test:e2e:report": "playwright show-report e2e/.report",
     "lint:hooks": "eslint --config eslint.hooks.config.js --quiet src",
     "test:censo-grafico": "vitest run src/test/censoGrafico.test.ts",
-    "test:censo-relatorio": "vitest run src/test/censoRelatorioDados.test.ts src/test/censoRelatorioMaterial.test.ts"
+    "test:censo-relatorio": "vitest run src/test/censoRelatorioDados.test.ts src/test/censoRelatorioMaterial.test.ts",
+    "test:grupo-cadastro": "vitest run src/test/grupoCadastro.test.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.10.0",

@@ -1,4 +1,9 @@
 const router = require('express').Router();
+// Rua/número como o PÚBLICO vê (régua única · 16/09). Aqui NÃO se esconde nada:
+// esta rota é interna (grupos >= 1) e a equipe precisa do endereço cru pra
+// editar — o que vai junto são os DERIVADOS, pra a aba marcar "falta o número"
+// sem reimplementar a régua no front.
+const { enderecoPublicoGrupo, temNumeroDeRua } = require('../utils/enderecoGrupoPublico');
 // authorizeModule('grupos', N) respeita a matriz cargo×módulo + boost de área
 // (Nélio/Natasha, donos do módulo, têm nível 5 via área Grupos mas role
 // 'assistente' — o authorize() por role os bloqueava nas rotas de escrita).
@@ -177,6 +182,14 @@ router.get('/', authorizeModule('grupos', 1), async (req, res) => {
       lider_telefone: lideresMap[g.lider_id]?.telefone || null,
       lider_foto: lideresMap[g.lider_id]?.foto_url || null,
       grupo_origem_nome: origensMap[g.grupo_origem_id] || null,
+      // ⚠️ O select dos líderes filtra `deleted_at` — grupo cujo líder foi
+      // apagado volta sem nome e sem telefone, e a tela lia isso como "falta o
+      // telefone". É fato que só o servidor sabe, então ele DIZ (e é grave: o
+      // WhatsApp do grupo vai pro `lider_id`, ou seja, pra um cadastro morto).
+      lider_apagado: !!g.lider_id && !lideresMap[g.lider_id],
+      eh_online: ehGrupoOnline(g),
+      endereco_publico: enderecoPublicoGrupo(g),
+      endereco_tem_numero: temNumeroDeRua(g),
     }));
 
     res.json(result);
@@ -4184,7 +4197,7 @@ router.get('/:id', authorizeModule('grupos', 1), async (req, res) => {
     // Round 2: líder e grupo de origem (so se houver — em paralelo)
     const [liderRes, origemRes, supRes] = await Promise.all([
       grupo.lider_id
-        ? supabase.from('mem_membros').select('id, nome, telefone, email, foto_url').eq('id', grupo.lider_id).single()
+        ? supabase.from('mem_membros').select('id, nome, telefone, email, foto_url, deleted_at').eq('id', grupo.lider_id).single()
         : Promise.resolve({ data: null }),
       grupo.grupo_origem_id
         ? supabase.from('mem_grupos').select('id, nome').eq('id', grupo.grupo_origem_id).single()
@@ -4206,6 +4219,17 @@ router.get('/:id', authorizeModule('grupos', 1), async (req, res) => {
     res.json({
       ...grupo,
       lider: liderRes.data,
+      // A ficha mostra o líder mesmo apagado (é o que explica o grupo), mas
+      // DIZ que ele foi apagado — senão a lista acusa pendência e a ficha
+      // parece normal, e ninguém entende qual das duas está certa.
+      lider_apagado: !!grupo.lider_id && !!liderRes.data?.deleted_at,
+      // Os MESMOS derivados de endereço que a lista recebe. Sem eles o
+      // checklist da ficha (mesma função `camposFaltantes`) não cobraria o
+      // número e a lista cobraria — duas telas dizendo coisas diferentes sobre
+      // o mesmo grupo, que é o jeito mais rápido de a fila perder a confiança.
+      eh_online: ehGrupoOnline(grupo),
+      endereco_publico: enderecoPublicoGrupo(grupo),
+      endereco_tem_numero: temNumeroDeRua(grupo),
       supervisor: supRes.data,
       grupo_origem: origemRes.data,
       multiplicacoes: multRes.data || [],

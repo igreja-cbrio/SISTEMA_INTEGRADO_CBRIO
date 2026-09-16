@@ -38,6 +38,9 @@ import { GruposMapView } from '@/components/grupos/GruposMapView';
 import { Card, CardContent, CardHeader, CardTitle } from '../../components/ui/card';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, LabelList, PieChart, Pie, Cell, LineChart, Line } from 'recharts';
 import { useTheme } from '../../contexts/ThemeContext';
+// Régua do cadastro do grupo (o que falta · a fila por campo) — fora da tela
+// porque é ela que decide a fila de trabalho da coordenação. Tem teste próprio.
+import { ehDiario, camposFaltantes, faltasPorCampo as calcularFaltasPorCampo } from '@/lib/grupoCadastro';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -58,10 +61,6 @@ const chartCores = (isDark) => ({
 });
 
 const DIAS = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-// Grupo diário acontece TODOS os dias (Marcos · 17/07): sem dia da semana fixo,
-// aparece em qualquer filtro de dia e mostra "Diário" no lugar do dia.
-const ehDiario = (g) => (g?.recorrencia || '').toLowerCase().trim() === 'diario';
-
 const STATUS_TEMPORADA = {
   ativo: { label: 'Ativo', cor: '#10b981', bg: '#10b98120' },
   novo: { label: 'Novo', cor: '#3b82f6', bg: '#3b82f620' },
@@ -115,30 +114,6 @@ function viewDaUrl() {
 }
 
 function fmtDate(d) { if (!d) return ''; try { return new Date(d + 'T12:00:00').toLocaleDateString('pt-BR'); } catch { return d; } }
-
-// Campos exigidos pro cadastro do grupo estar completo (capacidade e foto são
-// opcionais). Devolve os rótulos do que falta — lista vazia = cadastro completo.
-// Telefone do líder: na lista vem em lider_telefone; no detalhe, em lider.telefone.
-function camposFaltantes(g) {
-  const faltas = [];
-  if (!g.lider_id) faltas.push('Líder');
-  else if (!(g.lider?.telefone ?? g.lider_telefone)) faltas.push('Telefone do líder');
-  // Grupo diário não tem dia da semana de propósito — não é campo faltante.
-  if (g.dia_semana == null && !ehDiario(g)) faltas.push('Dia da semana');
-  if (!g.horario) faltas.push('Horário');
-  if (!g.endereco) faltas.push('Endereço');
-  if (!g.bairro) faltas.push('Bairro');
-  if (!g.faixa_etaria) faltas.push('Faixa etária');
-  // Grupo com cara de faixa etária (rótulo ou nome) sem limites numéricos vira
-  // pendência pra liderança resolver (Marcos · 2026-07-13) — é o limite que arma
-  // a trava de idade do form público. Grupos gerais não precisam.
-  const rotuloEtario = ['adolescentes', 'jovens', 'jovens adultos'].includes(String(g.faixa_etaria || '').toLowerCase());
-  const nomeEtario = /jovens|jovem|adolescente|teen/i.test(g.nome || '');
-  if ((rotuloEtario || nomeEtario) && g.idade_min == null && g.idade_max == null) faltas.push('Idades da faixa (mín/máx)');
-  if (!g.categoria) faltas.push('Categoria');
-  if (!g.rede_id) faltas.push('Rede');
-  return faltas;
-}
 
 // Seletor de visualização dentro da aba (Lista|Mapa · Pessoas|Organograma):
 // mesma informação, projeções diferentes — uma ativa por vez (Marcos · 13/07).
@@ -229,6 +204,10 @@ export default function Grupos() {
     return m;
   }, [redesAll]);
   const [filterIncompleto, setFilterIncompleto] = useState(false);
+  // Recorte POR CAMPO dentro do "cadastro incompleto" (Marcos · 16/09, pra a
+  // Natasha fechar o cadastro antes da próxima temporada): sem ele a fila tem
+  // 78 grupos dominados por UM campo, e fechar tudo exigiria abrir um a um.
+  const [filterFalta, setFilterFalta] = useState(null);
   const [filterTemporada, setFilterTemporada] = useState('');
   const [temporadas, setTemporadas] = useState([]);
   // Aba inicial pode vir da URL (/grupos?tab=visitas · usado por notificações).
@@ -808,6 +787,7 @@ export default function Grupos() {
       if (filterRede !== 'sem' && g.rede_id !== filterRede) return false;
     }
     if (filterIncompleto && camposFaltantes(g).length === 0) return false;
+    if (filterFalta && !camposFaltantes(g).includes(filterFalta)) return false;
     return true;
   });
 
@@ -823,7 +803,13 @@ export default function Grupos() {
 
   const incompletosCount = gruposList.filter(g => camposFaltantes(g).length > 0).length;
 
-  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterBairro !== 'all' || filterStatusTemp !== 'all' || filterRede !== 'all' || filterIncompleto;
+  // Quantos grupos faltam CADA campo — a fila de trabalho. Ordenado pelo maior
+  // lote: é assim que se fecha o cadastro sem abrir grupo por grupo. Conta
+  // sobre a lista CARREGADA (a mesma base do contador acima), não sobre o
+  // recorte já filtrado — senão o número mudaria conforme o próprio filtro.
+  const faltasPorCampo = calcularFaltasPorCampo(gruposList);
+
+  const hasActiveFilters = filterTipo !== 'all' || filterDia !== 'all' || filterBairro !== 'all' || filterStatusTemp !== 'all' || filterRede !== 'all' || filterIncompleto || !!filterFalta;
 
   // ── DETALHE DO GRUPO ──
   if (selectedGrupo && detailData) {
@@ -1978,7 +1964,7 @@ export default function Grupos() {
           </SelectContent>
         </ShadSelect>
 
-        <button onClick={() => setFilterIncompleto(v => !v)} title="Grupos com dados de cadastro faltando" style={{
+        <button onClick={() => setFilterIncompleto(v => { if (v) setFilterFalta(null); return !v; })} title="Grupos com dados de cadastro faltando" style={{
           fontSize: 11, padding: '4px 10px', borderRadius: 99, cursor: 'pointer', fontWeight: 600,
           border: filterIncompleto ? `1px solid ${C.amber}` : `1px solid ${C.amber}40`,
           background: filterIncompleto ? `${C.amber}28` : `${C.amber}12`, color: C.amber,
@@ -1988,7 +1974,7 @@ export default function Grupos() {
         </button>
 
         {hasActiveFilters && (
-          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterBairro('all'); setFilterStatusTemp('all'); setFilterRede('all'); setFilterIncompleto(false); }}
+          <button onClick={() => { setFilterTipo('all'); setFilterDia('all'); setFilterBairro('all'); setFilterStatusTemp('all'); setFilterRede('all'); setFilterIncompleto(false); setFilterFalta(null); }}
             style={{ fontSize: 11, color: C.red, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
             <X size={12} /> Limpar filtros
           </button>
@@ -2007,6 +1993,37 @@ export default function Grupos() {
         <span style={{ fontSize: 11, color: C.t3, marginLeft: hasActiveFilters || mostrarArquivados ? 'auto' : 0 }}>{filtered.length} de {gruposList.length} grupos</span>
       </div>
 
+      {/* O QUE falta, por campo — só abre com o filtro de incompleto ligado.
+          Um chip "78 incompletos" não diz o que fazer: o trabalho é por CAMPO
+          (fechar os 74 sem rede é uma tarefa; os 13 sem número é outra). */}
+      {filterIncompleto && faltasPorCampo.length > 0 && (
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center', margin: '-4px 0 14px' }}>
+          <span style={{ fontSize: 11, color: C.t3 }}>Falta:</span>
+          {faltasPorCampo.map(([campo, qtd]) => (
+            <button
+              key={campo}
+              onClick={() => setFilterFalta(f => (f === campo ? null : campo))}
+              title={`Ver só os grupos em que falta: ${campo}`}
+              style={{
+                fontSize: 11, padding: '3px 9px', borderRadius: 99, cursor: 'pointer',
+                fontWeight: filterFalta === campo ? 700 : 500,
+                border: `1px solid ${filterFalta === campo ? C.amber : C.border}`,
+                background: filterFalta === campo ? `${C.amber}20` : 'transparent',
+                color: filterFalta === campo ? C.amber : C.t2,
+              }}
+            >
+              {campo} ({qtd})
+            </button>
+          ))}
+          {filterFalta && (
+            <button onClick={() => setFilterFalta(null)}
+              style={{ fontSize: 11, color: C.red, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}>
+              ver todos os incompletos
+            </button>
+          )}
+        </div>
+      )}
+
       {loading ? (
         <div style={{ padding: 40, textAlign: 'center', color: C.t3 }}>Carregando...</div>
       ) : filtered.length === 0 ? (
@@ -2021,7 +2038,7 @@ export default function Grupos() {
                   setFilterTipo('all'); setFilterDia('all');
                   setFilterBairro('all'); setFilterStatusTemp('all');
                   setFilterRede('all');
-                  setFilterIncompleto(false); setFilterTemporada('');
+                  setFilterIncompleto(false); setFilterFalta(null); setFilterTemporada('');
                 }}
                 style={{ marginTop: 8, fontSize: 12, color: C.primary, background: 'none', border: 'none', cursor: 'pointer', fontWeight: 600 }}
               >
@@ -2074,11 +2091,15 @@ export default function Grupos() {
                       );
                     })()}
                     {(() => {
-                      const n = camposFaltantes(g).length;
-                      if (!n) return null;
+                      // NOMEIA o que falta na própria linha: "faltam 2 dados"
+                      // obrigava a abrir o grupo pra descobrir o quê, e com 78
+                      // grupos na fila isso é 78 aberturas. Nome completo no title.
+                      const f = camposFaltantes(g);
+                      if (!f.length) return null;
+                      const rotulo = f.length <= 2 ? f.join(' · ') : `${f[0]} · +${f.length - 1}`;
                       return (
-                        <span title="Cadastro incompleto — abra o grupo para ver o que falta" style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: `${C.amber}20`, color: C.amber, fontWeight: 600 }}>
-                          {n === 1 ? 'falta 1 dado' : `faltam ${n} dados`}
+                        <span title={`Cadastro incompleto — falta: ${f.join(' · ')}`} style={{ fontSize: 9, padding: '1px 6px', borderRadius: 99, background: `${C.amber}20`, color: C.amber, fontWeight: 600 }}>
+                          {rotulo}
                         </span>
                       );
                     })()}
