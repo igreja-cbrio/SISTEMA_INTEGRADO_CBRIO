@@ -188,6 +188,7 @@ Guard: `authorizeModule('voluntariado', 1 | 2 | 3 | 5)`
 - `backend/utils/pcoChave.js`
 - `backend/utils/supabase.js`
 - `backend/utils/vigenciaTipoCulto.js`
+- `backend/utils/volCadastroCheckin.js`
 - `backend/utils/volCobertura.js`
 - `backend/utils/volDisponibilidade.js`
 - `backend/utils/volIntegradoEm.js`

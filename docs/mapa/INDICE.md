@@ -74,7 +74,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **171** arquivos, **159** com teste.
+`backend/utils/` tem **172** arquivos, **159** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -243,6 +243,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/vinculosDuplicados.js` | `src/test/vinculosDuplicados.test.ts` |
 | `backend/utils/visitanteRegras.js` | — |
 | `backend/utils/visitanteToken.js` | — |
+| `backend/utils/volCadastroCheckin.js` | — |
 | `backend/utils/volCobertura.js` | `src/test/volCobertura.test.ts` |
 | `backend/utils/volDisponibilidade.js` | `src/test/volDisponibilidade.test.ts` |
 | `backend/utils/volIntegradoEm.js` | `src/test/volIntegradoEm.test.ts` |

@@ -271,6 +271,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `backend/utils/supabase.js`
 - `backend/utils/trechoCep.js`
 - `backend/utils/vigenciaTipoCulto.js`
+- `backend/utils/volCadastroCheckin.js`
 - `backend/utils/volCobertura.js`
 - `backend/utils/volDisponibilidade.js`
 - `backend/utils/volIntegradoEm.js`
