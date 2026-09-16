@@ -29,7 +29,7 @@ const { requireCron } = require('../utils/cronAuth');
 // Régua ÚNICA de busca (acento/caixa/espaço) · espelho de src/lib/busca.js.
 const { normalizarBusca, contemNormalizado, algumContemNormalizado } = require('../services/busca');
 // Rua e número pro cartão público — sem apartamento/bloco (Natasha · 16/09).
-const { enderecoPublicoGrupo } = require('../utils/enderecoGrupoPublico');
+const { enderecoPublicoGrupo, ondePublicoGrupo } = require('../utils/enderecoGrupoPublico');
 // Guarda de UUID no GET /:id (deep-link ?grupo=<id> do QR/mapa/bookmark antigo):
 // sem ela, um id malformado (bot, link velho, "undefined") faz o Postgres recusar
 // `.eq('id', ...)` com 22P02 e a rota devolvia 500 — mesma lição já registrada
@@ -2007,7 +2007,11 @@ router.get('/pedido/sugestao', async (req, res) => {
       pessoa,
       grupo: {
         nome: sugerido.nome, codigo: sugerido.codigo, bairro: sugerido.bairro,
-        quando: formatarQuando(sugerido), onde: formatarOnde(sugerido),
+        // ⚠️⚠️ NÃO é o `formatarOnde` do WhatsApp aqui: ele leva o
+        // `complemento` junto, e quem lê esta página é um candidato que a
+        // triagem realocou — o líder ainda NÃO aceitou. Rua e número bastam
+        // pra ele decidir se dá pra ir; o apartamento é da porta de alguém.
+        quando: formatarQuando(sugerido), onde: ondePublicoGrupo(sugerido),
       },
     });
   } catch (e) {

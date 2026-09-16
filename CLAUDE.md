@@ -5365,6 +5365,34 @@ sem número** e mostram só a via — `RUA CRUZ DE MALTA`, `Rua Claudionor Jorda
 PENÍNSULA`, `Rua João Geraldo Kuhlman`, `Av. Jornalista Tim Lopes`. Os 33
 restantes sem endereço são online ou `(endereço não informado)`.
 
+## ⚠️⚠️ Grupos · o "onde" de quem AINDA NÃO foi aceito (2026-09-16 · SEM migration)
+
+Fecha o último vão da régua de 16/09. Havia **duas páginas de token** montando
+o endereço com o mesmo `formatarOnde` do WhatsApp — que junta
+`local · endereco · COMPLEMENTO · bairro`:
+
+- **`/pedido/por-token`** — é a página do **LÍDER** aprovando. O token é a
+  credencial dele e a casa é a dele. **Continua com o complemento**, de propósito.
+- **`/pedido/sugestao`** — é a página de **REALOCAÇÃO**, lida por um candidato
+  que a triagem mandou pra outro grupo e que **o líder ainda não aceitou**. Aí o
+  apartamento não pode ir. Agora usa `ondePublicoGrupo()`.
+
+⚠️⚠️ **A régua de quem vê a porta**: complemento (apto/bloco) só depois do
+ACEITE. Quem já é membro vê pelos dois caminhos que já existiam e não mudaram —
+`GET /api/app/meu-grupo` (só responde pra quem tem vínculo ativo) e o WhatsApp
+`grupos_pedido_aprovado_v2`, que é disparado **na aprovação** e passa pelo gate
+de opt-in. Quem ainda é candidato vê rua + número, que é o que basta pra decidir
+se dá pra ir (lei da Natasha).
+
+`ondePublicoGrupo()` vive junto da régua única (`backend/utils/
+enderecoGrupoPublico.js`), não repete `local` igual a `bairro`, e devolve
+"a combinar" em vez de texto vazio. Gate: `npm run test:endereco-grupo`.
+
+**Reparo de dado junto** (autorizado): `complemento = "260"` reposto **só** no
+`ESTUDO BÍBLICO . 30+` (00000061), que é presencial. Os outros dois que o
+vazamento da rede tinha apagado (`APTO 204` · `304`) ficaram como estão: são
+**grupos ONLINE**, onde o complemento é a casa do líder e não o lugar do grupo.
+
 ## ⚠️⚠️ Grupos · CAMPO VAZIO NÃO APAGA A REDE (2026-09-16 · SEM migration)
 
 Descoberto ao investigar o "74 grupos sem rede" da seção abaixo. A hipótese era

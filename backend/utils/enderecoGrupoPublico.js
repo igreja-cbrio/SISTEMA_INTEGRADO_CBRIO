@@ -86,4 +86,27 @@ function temNumeroDeRua(grupo) {
   return publico != null && /\d/.test(publico);
 }
 
-module.exports = { enderecoPublicoGrupo, temNumeroDeRua };
+// O "onde" de UMA LINHA pra quem ainda NÃO foi aceito no grupo (página de
+// sugestão de realocação). Mesma régua do formulário: rua + número, nunca
+// apartamento/bloco.
+// ⚠️⚠️ Existe porque o `formatarOnde` do WhatsApp — que junta
+// `local · endereco · COMPLEMENTO · bairro` — estava sendo usado nas DUAS
+// páginas de token. Na do LÍDER isso é certo (o token é a credencial dele e a
+// casa é a dele). Na de SUGESTÃO, quem lê é um candidato que a triagem
+// realocou e que o líder ainda não aceitou — ali o apartamento não pode ir.
+// A régra é a de 16/09: rua e altura bastam pra pessoa decidir se dá pra ir.
+function ondePublicoGrupo(grupo) {
+  const partes = [grupo?.local, enderecoPublicoGrupo(grupo), grupo?.bairro]
+    .map(p => (p == null ? '' : String(p).trim()))
+    .filter(Boolean);
+  // Sem repetir "Barra da Tijuca — Barra da Tijuca" quando local == bairro.
+  const vistos = new Set();
+  const unicas = partes.filter(p => {
+    const k = p.toLowerCase();
+    if (vistos.has(k)) return false;
+    vistos.add(k); return true;
+  });
+  return unicas.length ? unicas.join(' — ') : 'a combinar';
+}
+
+module.exports = { enderecoPublicoGrupo, temNumeroDeRua, ondePublicoGrupo };
