@@ -12,13 +12,15 @@ import { Input } from '../../../components/ui/input';
 import { Badge } from '../../../components/ui/badge';
 import { Textarea } from '../../../components/ui/textarea';
 import { toast } from 'sonner';
-import { ArrowLeft, Search, Loader2, Send, Undo2, MessageSquare, Phone, Users } from 'lucide-react';
+import { ArrowLeft, Search, Loader2, Send, Undo2, MessageSquare, Phone, Users, Mail, Copy, Check } from 'lucide-react';
+import MembroFichaDialog from '@/components/membresia/MembroFichaDialog';
 
 type Insc = {
   id: string; nome_completo: string | null; nome: string | null; sobrenome: string | null;
   telefone: string | null; email: string | null; status: string;
   ministerios_interesse: string | null; dom_predominante: string | null;
   data_inscricao: string | null; feedback: string | null; integrado_em: string | null;
+  membro_id: string | null;
 };
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
@@ -47,6 +49,11 @@ export default function VoluntariadoInscricoesKids() {
   const [salvandoId, setSalvandoId] = useState<string | null>(null);
   const [notaId, setNotaId] = useState<string | null>(null);
   const [nota, setNota] = useState('');
+  // ⚠️ E-mail é PII: fica atrás de um interruptor, não sai impresso na tela por padrão.
+  const [mostrarEmail, setMostrarEmail] = useState(false);
+  const [copiado, setCopiado] = useState<string | null>(null);
+  // Ficha da pessoa. Só abre quando a inscrição está vinculada a um cadastro (membro_id).
+  const [ficha, setFicha] = useState<{ id: string; nome: string } | null>(null);
 
   const carregar = useCallback(() => {
     setLoading(true);
@@ -120,6 +127,12 @@ export default function VoluntariadoInscricoesKids() {
             {label}
           </button>
         ))}
+        <button type="button" onClick={() => setMostrarEmail(v => !v)}
+          aria-pressed={mostrarEmail}
+          title={mostrarEmail ? 'Ocultar os e-mails' : 'Mostrar o e-mail de cada inscrito'}
+          className={`px-2.5 py-1.5 rounded-md border text-xs transition inline-flex items-center gap-1.5 ${mostrarEmail ? 'bg-primary text-primary-foreground border-primary' : 'bg-background border-border hover:border-primary'}`}>
+          <Mail className="h-3.5 w-3.5" /> {mostrarEmail ? 'Ocultar e-mail' : 'Mostrar e-mail'}
+        </button>
       </div>
 
       {loading ? (
@@ -130,6 +143,7 @@ export default function VoluntariadoInscricoesKids() {
         <div className="space-y-2">
           {filtradas.map(i => {
             const wa = waHref(i.telefone);
+            const nome = (i.nome_completo || `${i.nome || ''} ${i.sobrenome || ''}`.trim());
             const meta = STATUS_META[i.status] || { label: i.status, cls: 'border-border text-muted-foreground' };
             const saving = salvandoId === i.id;
             const integrado = i.status === 'integrado';
@@ -137,12 +151,44 @@ export default function VoluntariadoInscricoesKids() {
               <Card key={i.id} className="p-3.5 space-y-2.5">
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
-                    <p className="font-semibold truncate">{i.nome_completo || `${i.nome || ''} ${i.sobrenome || ''}`.trim() || '—'}</p>
+                    {nome ? (
+                      i.membro_id ? (
+                        <button type="button" onClick={() => setFicha({ id: i.membro_id as string, nome })}
+                          title="Abrir a ficha desta pessoa"
+                          className="font-semibold truncate text-left hover:text-primary hover:underline underline-offset-2 transition max-w-full">
+                          {nome}
+                        </button>
+                      ) : (
+                        <p className="font-semibold truncate" title="Inscrição ainda não vinculada a um cadastro — não há ficha para abrir">
+                          {nome}
+                        </p>
+                      )
+                    ) : <p className="font-semibold text-muted-foreground">—</p>}
                     <p className="text-xs text-muted-foreground mt-0.5">
                       {i.ministerios_interesse ? `Interesse: ${i.ministerios_interesse}` : 'Kids'}
                       {i.dom_predominante ? ` · Dom: ${i.dom_predominante}` : ''}
                       {i.data_inscricao ? ` · ${new Date(i.data_inscricao).toLocaleDateString('pt-BR')}` : ''}
                     </p>
+                    {/* ⚠️ Ausência declarada: sem vínculo não há ficha, e a tela diz isso em vez de
+                        oferecer um clique que não leva a lugar nenhum. */}
+                    {!i.membro_id && (
+                      <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-0.5">sem cadastro vinculado · ficha indisponível</p>
+                    )}
+                    {mostrarEmail && (
+                      i.email ? (
+                        <div className="flex items-center gap-1.5 mt-1 min-w-0">
+                          <Mail className="h-3 w-3 text-muted-foreground shrink-0" />
+                          <a href={`mailto:${i.email}`} className="text-xs text-muted-foreground hover:text-primary truncate">{i.email}</a>
+                          <button type="button" title="Copiar e-mail"
+                            onClick={() => { navigator.clipboard?.writeText(i.email as string); setCopiado(i.id); setTimeout(() => setCopiado(c => c === i.id ? null : c), 1600); }}
+                            className="shrink-0 text-muted-foreground hover:text-primary transition">
+                            {copiado === i.id ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
+                          </button>
+                        </div>
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground/70 mt-1">sem e-mail cadastrado</p>
+                      )
+                    )}
                   </div>
                   <Badge variant="outline" className={`${meta.cls} shrink-0`}>{meta.label}</Badge>
                 </div>
@@ -196,6 +242,16 @@ export default function VoluntariadoInscricoesKids() {
       <p className="text-[11px] text-muted-foreground/70 pt-1">
         Para <span className="font-medium">integrar</span> um voluntário (exige verificação de antecedentes), use o módulo Voluntariado.
       </p>
+
+      {/* ⚠️ Ficha REDUZIDA: triagem de voluntário não precisa do extrato de
+          contribuição da pessoa. O corte é no servidor — o dado não vem. */}
+      <MembroFichaDialog
+        open={!!ficha}
+        membroId={ficha?.id}
+        nomeFallback={ficha?.nome}
+        semFinanceiro
+        onClose={() => setFicha(null)}
+      />
     </div>
   );
 }

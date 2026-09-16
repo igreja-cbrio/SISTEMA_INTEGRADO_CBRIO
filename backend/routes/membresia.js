@@ -1,4 +1,6 @@
 const router = require('express').Router();
+// Régua do escopo da ficha — módulo PURO, para o gate alcançar (ver escopoFicha.js).
+const { resolverEscopoFicha } = require('../utils/escopoFicha');
 const kidsVisitante = require('../utils/kidsVisitante');
 // Dia BRT — dia de operação da igreja nunca é UTC (das 21h o dia já virou).
 function hojeBRTKids() {
@@ -46,6 +48,7 @@ const {
 // filtrados no payload. Ver o cabeçalho de `utils/dadosSensiveisPessoa.js`.
 const {
   podeVerFinanceiroDePessoa, podeVerPastoralDePessoa, filtrarTimeline,
+
 } = require('../utils/dadosSensiveisPessoa');
 
 const uploadMw = multer({
@@ -688,6 +691,21 @@ router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
     const id = req.params.id;
     const anoAtual = new Date().getFullYear();
 
+    // ⚠️⚠️ ESCOPO BÁSICO (`?escopo=basico`): ficha sem o bloco financeiro, para
+    // telas onde a pessoa é aberta a trabalho (triagem de voluntário do Kids) e
+    // não há motivo para o extrato de contribuição trafegar junto.
+    // NÃO é só esconder a aba no front: se o payload sair com as contribuições,
+    // elas aparecem no devtools e a privacidade vira decoração. Aqui a consulta
+    // nem chega a rodar.
+    // ⚠️ É ESTREITAMENTO, nunca alargamento: quem não passa em
+    // `podeVerFinanceiroDePessoa` continua sem ver, peça o escopo que pedir.
+    const escopoFicha = resolverEscopoFicha({
+      escopo: req.query.escopo,
+      podeFinanceiro: podeVerFinanceiroDePessoa(req.user),
+      podeMarcadorSensivel: podeVerMarcadorSensivel(req.user),
+    });
+    const escopoBasico = escopoFicha.basico;
+
     // Round 1: tudo que so depende do id (em paralelo)
     const [
       membroRes,
@@ -708,9 +726,11 @@ router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
       supabase.from('mem_grupo_membros')
         .select('*, grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario, lider:mem_membros!lider_id(id, nome))')
         .eq('membro_id', id).order('entrou_em', { ascending: false }),
-      supabase.from('mem_contribuicoes').select('*').eq('membro_id', id).is('deleted_at', null).order('data', { ascending: false }).limit(30),
-      supabase.from('mem_contribuicoes').select('tipo, valor')
-        .eq('membro_id', id).is('deleted_at', null).gte('data', `${anoAtual}-01-01`).lte('data', `${anoAtual}-12-31`),
+      escopoBasico ? Promise.resolve({ data: [] })
+        : supabase.from('mem_contribuicoes').select('*').eq('membro_id', id).is('deleted_at', null).order('data', { ascending: false }).limit(30),
+      escopoBasico ? Promise.resolve({ data: [] })
+        : supabase.from('mem_contribuicoes').select('tipo, valor')
+          .eq('membro_id', id).is('deleted_at', null).gte('data', `${anoAtual}-01-01`).lte('data', `${anoAtual}-12-31`),
       supabase.from('vol_profiles')
         .select('id, full_name, planning_center_id, allocation_status, profile_complete')
         .eq('membresia_id', id).maybeSingle(),
@@ -854,7 +874,9 @@ router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
     let marcadores = null;
     try {
       const { porMembro } = await marcadoresDeMembros([id], {
-        incluirSensiveis: podeVerMarcadorSensivel(req.user),
+        // ⚠️ Mesma régua do bloco financeiro: sem isto o cabeçalho mostraria o
+        // marcador de generosidade e entregaria justamente o que a aba escondeu.
+        incluirSensiveis: escopoFicha.mostrarMarcadorSensivel,
       });
       marcadores = porMembro.get(id) || null;
     } catch (eMarc) {
@@ -867,7 +889,7 @@ router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
     // que `grupos` nível 1 lia o extrato de qualquer pessoa.
     // ⚠️ Omissão DECLARADA (`financeiro_oculto`): campo que some sem aviso é
     // lido como "esta pessoa nunca contribuiu".
-    const podeFinanceiro = podeVerFinanceiroDePessoa(req.user);
+    const podeFinanceiro = escopoFicha.mostrarFinanceiro;
 
     res.json({
       ...membro,
