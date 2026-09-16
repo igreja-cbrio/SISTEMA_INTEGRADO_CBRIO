@@ -2391,21 +2391,28 @@ router.get('/apresentacoes', authorizeModule('kids', 1), async (req, res) => {
     // (o que a pessoa preencheu) é `GET /apresentacoes/:id`, aberta de propósito.
     // `horario_culto` (08/09): o culto da família — 9h30/11h30 pela régua.
     const BASE = 'id, nome_pai, nome_mae, crianca_nome, crianca_idade, crianca_data_nascimento, crianca_sexo, telefone, data_apresentacao, status, observacoes, origem, crianca_id, created_at';
-    const listar = (comHorario) => {
+    // ⚠️⚠️ COLUNAS QUE DEPENDEM DE MIGRATION ficam nesta lista, nunca soltas no
+    // select: pedir uma que não existe faz o PostgREST recusar a query INTEIRA
+    // (42703) e a lista do Kids apareceria VAZIA, em silêncio (lição do
+    // `parcelas_max`). O laço abaixo derruba UMA por vez até a query passar —
+    // generalizado em 15/09 quando `presente_em` (check-in) entrou ao lado do
+    // `horario_culto` de 08/09.
+    const OPCIONAIS = ['horario_culto', 'presente_em'];
+    const listar = (cols) => {
       let q = supabase.from('apresentacao_criancas')
-        .select(comHorario ? `${BASE}, horario_culto` : BASE)
+        .select(cols.length ? `${BASE}, ${cols.join(', ')}` : BASE)
         .is('deleted_at', null)
         .order('data_apresentacao', { ascending: false, nullsFirst: false });
-      if (comHorario) q = q.order('horario_culto', { ascending: true, nullsFirst: false });
+      if (cols.includes('horario_culto')) q = q.order('horario_culto', { ascending: true, nullsFirst: false });
       return q.order('created_at', { ascending: false }).limit(1000);
     };
-    let { data, error } = await listar(true);
-    // ⚠️ Sem a migration `20260908150000`, pedir `horario_culto` faz o PostgREST
-    // recusar a query INTEIRA (42703) — e a lista do Kids apareceria VAZIA em
-    // silêncio. Recai no select antigo em vez de esconder as inscrições.
-    if (error && (error.code === '42703' || /horario_culto/.test(error.message || ''))) {
-      console.warn('[totemKids] apresentacoes: coluna horario_culto ausente (migration 20260908150000 não aplicada) — listando sem horário');
-      ({ data, error } = await listar(false));
+    let cols = [...OPCIONAIS];
+    let { data, error } = await listar(cols);
+    while (error && error.code === '42703' && cols.length) {
+      const faltando = cols.find((c) => (error.message || "").includes(c)) || cols[cols.length - 1];
+      console.warn(`[totemKids] apresentacoes: coluna ${faltando} ausente (migration não aplicada) — listando sem ela`);
+      cols = cols.filter((c) => c !== faltando);
+      ({ data, error } = await listar(cols));
     }
     if (error) throw error;
     res.json(data || []);
@@ -2572,6 +2579,58 @@ router.patch('/apresentacoes/:id', authorizeModule('kids', 3), async (req, res) 
   } catch (e) {
     console.error('[totemKids] apresentacao update:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar apresentação' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  POST /apresentacoes/:id/checkin — "quem foi" no dia (Kids · 15/09/2026)
+//
+//  Pedido do Marcos (via Milena): "no dia a Milena poder marcar quem foi, para
+//  saber se já foi entregue o kit".
+//
+//  ⚠️⚠️ NÃO é `status = realizado`. Aquele é carimbado no LOTE pra turma
+//  inteira depois da cerimônia (medido em 15/09: as 14 linhas de 13/09 estão
+//  realizado), então usá-lo como presença diria que TODO mundo veio, inclusive
+//  quem faltou. Granularidades diferentes: status é o ciclo da inscrição,
+//  `presente_em` é o fato daquele domingo, por família.
+//
+//  ⚠️ Nível 2 (e não 3, do PATCH): marcar presença é trabalho de quem está no
+//  balcão no domingo, é reversível e não edita o cadastro de ninguém.
+// ════════════════════════════════════════════════════════════════════════════
+router.post('/apresentacoes/:id/checkin', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const marcar = req.body?.presente !== false;
+    const patch = marcar
+      ? { presente_em: new Date().toISOString(), presente_por: req.user?.id ?? null }
+      : { presente_em: null, presente_por: null };
+
+    // ⚠️ No MARCAR o UPDATE é condicionado a `presente_em` vazio: dois toques
+    // não reescrevem a hora de quem já entrou nem trocam o autor do check-in.
+    let q = supabase.from('apresentacao_criancas')
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id).is('deleted_at', null);
+    if (marcar) q = q.is('presente_em', null);
+    const { data, error } = await q.select('id, presente_em').maybeSingle();
+
+    // ⚠️ Sem a migration `20260915180000` a coluna não existe: 409 DIZENDO o
+    // motivo, nunca 500 genérico — quem clica precisa saber que falta migration.
+    if (error && error.code === '42703') {
+      return res.status(409).json({ error: 'O check-in ainda não está disponível — falta aplicar a migration 20260915180000.' });
+    }
+    if (error) throw error;
+
+    // 0 linhas no MARCAR = já estava presente (o `.is` barrou). Idempotente:
+    // relê e devolve o estado atual em vez de erro.
+    if (!data) {
+      const { data: atual } = await supabase.from('apresentacao_criancas')
+        .select('id, presente_em').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+      if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada' });
+      return res.json(atual);
+    }
+    res.json(data);
+  } catch (e) {
+    console.error('[totemKids] apresentacao checkin:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar o check-in' });
   }
 });
 
