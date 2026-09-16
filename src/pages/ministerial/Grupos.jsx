@@ -2561,7 +2561,11 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
 
           <div>
             <Label>Rede</Label>
-            <ShadSelect value={form.rede_id || '__none__'} onValueChange={v => set('rede_id', v === '__none__' ? '' : v)}>
+            {/* ⚠️⚠️ "Sem rede" precisa ser um PEDIDO explícito (`rede_limpar`), não
+                um campo vazio: o servidor deixou de apagar rede por ausência
+                depois que 41 grupos perderam a deles em saves que nem falavam
+                de rede. Escolher aqui desvincula normalmente. */}
+            <ShadSelect value={form.rede_id || '__none__'} onValueChange={v => setForm(f => ({ ...f, rede_id: v === '__none__' ? '' : v, rede_limpar: v === '__none__' }))}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="__none__">Sem rede</SelectItem>
