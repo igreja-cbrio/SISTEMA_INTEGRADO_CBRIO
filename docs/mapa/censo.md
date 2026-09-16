@@ -41,6 +41,7 @@ Guard: `authorizeModule('censo', 1 | 2 | 4 | 5)`
 
 **Réguas puras (backend/utils)**
 
+- `backend/utils/censoCampoCadastro.js`
 - `backend/utils/censoGrafico.js`
 - `backend/utils/censoPerguntas.js`
 - `backend/utils/censoRelatorioDados.js`
