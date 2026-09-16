@@ -236,20 +236,13 @@ export default function AbaPerfil({ pesquisaId }: { pesquisaId: string | null })
                         ...v, neutra: false,
                         pct: d.respondentes ? Math.round((v.total / d.respondentes) * 1000) / 10 : 0,
                       }))} />
-                    {/* ⚠️ A PROCEDÊNCIA fica colada na barra, não num rodapé.
-                        O sexo do cadastro é preenchido por várias portas e,
-                        para 38% dos respondentes de 2026, veio de palpite de
-                        IA pelo primeiro nome confirmado em lote. Quem cita o
-                        percentual precisa ver isso na mesma tela. */}
-                    {k === 'genero' && d.sexo_fonte && (
-                      <p className="text-[11px] text-muted-foreground mt-1.5 leading-relaxed">
-                        {d.sexo_fonte.declarado > 0
-                          ? <><strong>{d.sexo_fonte.declarado}</strong> declararam nesta pesquisa</>
-                          : <>Ninguém declarou nesta pesquisa</>}
-                        {d.sexo_fonte.cadastro > 0 && <> · <strong>{d.sexo_fonte.cadastro}</strong> vieram do cadastro</>}
-                        {d.sexo_fonte.sem > 0 && <> · {d.sexo_fonte.sem} sem informação</>}
-                      </p>
-                    )}
+                    {/* ⚠️ A linha de procedência do sexo ("N declararam nesta
+                        pesquisa · N vieram do cadastro") foi RETIRADA a pedido
+                        do Marcos em 16/09, depois que a auditoria daquele dia
+                        fechou os 28 cadastros errados e ele passou a conhecer a
+                        origem do número. NÃO recolocar achando que sumiu por
+                        engano — `sexo_fonte` continua vindo do servidor e
+                        rendê-lo de novo é uma linha, se um dia fizer falta. */}
                   </div>
                 )
               ))}

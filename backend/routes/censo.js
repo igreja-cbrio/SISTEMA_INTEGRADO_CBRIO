@@ -1190,9 +1190,11 @@ router.get('/perfil', authorizeModule('censo', 1), async (req, res) => {
       // mentia. Unificar o denominador com a aba Cobertura (que conta só
       // concluídas) exige mexer na view — follow-up, não este PR.
       respondentes: demo.length,
-      // ⚠️ Vai SEMPRE, com ou sem pergunta de sexo no questionário: sem
-      // pergunta, `declarado` é 0 e a tela diz que o sexo inteiro veio do
-      // cadastro — que é exatamente o que ninguém sabia até 16/09/2026.
+      // ⚠️ A TELA deixou de MOSTRAR isto em 16/09 (pedido do Marcos, depois que
+      // a auditoria fechou os 28 cadastros errados), mas o campo CONTINUA saindo:
+      // ele é a única coisa que distingue "declarado na pesquisa" de "veio do
+      // cadastro", e o cálculo já acontece de qualquer forma para a fusão da
+      // barra. Custo zero, e é o que permite voltar a exibir em uma linha.
       sexo_fonte: fonteSexo,
       graficos,
       identificacao,
