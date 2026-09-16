@@ -19614,3 +19614,150 @@ foram ligadas (`VolCheckin`, `VolSelfCheckin`, `VolTotem`).
 - A máscara de telefone do diálogo importa `tirarCodigoPais` de `@/lib/inscricao`
   e normaliza **de novo** no envio: autofill pode escapar do `onChange`, e o que
   o servidor recebe é o que persiste (lei de 31/07).
+
+## ⚠️⚠️ VOLUNTARIADO × MEMBRESIA · UM DADO SÓ (2026-09-16 · migration `20260916180000`)
+
+Pedido do Marcos, no dia seguinte ao modal de completar cadastro: *"essa junção
+que voce disse de vol_profiles + mem_membros, garanta que tudo seja sempre um
+dado só, para que nós nunca tenhamos dados divergentes da mesma pessoa, encontre
+porque isso acontece e resolva na raiz, sem duplicar e quebrar dados."*
+
+### ⚠️⚠️ O DIAGNÓSTICO INVERTEU A PREMISSA: não há divergência, há VAZIO
+
+| | |
+|---|---|
+| CPF divergente entre as 2 tabelas | **0** |
+| telefone divergente | **0** |
+| e-mail divergente | **0** |
+| nome "divergente" | 339 — mas é nome CURTO do PCO × nome legal |
+
+`vol_profiles` tem CPF em **26 de 954** e telefone em **11 de 954**; o membro
+vinculado tem 523 e 562. Ninguém sobrescreveu nada — os dois lados foram
+preenchidos por **portas diferentes** e nada nunca os ligou.
+
+⚠️⚠️ **A prova do desenho está no e-mail**: ele é o ÚNICO campo com trigger de
+sincronia (`20260702230000`) **e o único com zero divergência**. Esta migration
+não inventa padrão — estende o que já funcionou a CPF e telefone.
+
+### ⚠️ A RAIZ: 943 dos 954 perfis vêm do Planning Center, que não traz CPF/telefone
+
+`upsertVolunteerProfiles` (`services/planningCenter.js`) faz upsert por
+`planning_center_id` com **`full_name`, `email`, `avatar_url`, `origem`,
+`allocation_status` — e nada mais**. Nunca houve CPF nem telefone ali, e o sync
+**nunca chama o matcher**, então os **327 perfis sem `membresia_id` são 100%
+origem `planning_center`**.
+
+### ⚠️⚠️ POR QUE AS COLUNAS NÃO PODEM VIRAR SÓ FK (a pergunta do Marcos)
+
+*"Esses dados devem sempre ser chave estrangeira tirada de membresia."* É o
+desenho certo **enquanto existe vínculo** — mas as colunas têm DOIS papéis, e o
+segundo impede dropá-las:
+
+1. **cópia** do dado do membro (redundante quando ligado) — é aqui que mora o
+   risco de divergência, e é isto que o trigger resolve;
+2. ⚠️⚠️ **matéria-prima do MATCHER quando ainda NÃO há vínculo**:
+   `voluntariado.js:2191` (`/vincular-membros`) passa `v.cpf, v.email, v.phone`
+   para `acharMembroGuardado` — é o CPF do perfil que **ACHA** o membro. Sem as
+   colunas, o caminho de ligar perfil a cadastro deixa de existir.
+
+⇒ **Modelo: com `membresia_id`, as colunas são ESPELHO (o cadastro manda e o
+trigger restaura); sem vínculo, são o dado bruto que serve pra achar a pessoa.**
+Medido antes de decidir: ~30 pontos de código leem `vol_profiles.cpf/phone` —
+dropar coluna não era opção nesta leva.
+
+### As leis do mecanismo
+
+- **TELEFONE é bidirecional** (canônico desce · provisório sobe SÓ-ONDE-VAZIO),
+  igual ao e-mail. Seguro porque `mem_membros.telefone` **não tem unique** —
+  medido: **744 telefones compartilhados** entre membros vivos, que é o telefone
+  da casa e o caso NORMAL do Contrato de porta.
+- ⚠️⚠️ **CPF SÓ DESCE, e a assimetria é o ponto mais importante.**
+  `mem_membros.cpf` tem UNIQUE e a lei de 16/07 diz "nunca raw-update de CPF;
+  conflito vira `identidade_pendencias`". Se o trigger subisse CPF, um CPF já
+  pertencente a outro membro levantaria **23505 dentro de um AFTER trigger** —
+  abortando o statement inteiro, ou seja **o check-in do voluntário falharia por
+  causa de uma sincronia** — e a fila humana nunca seria alimentada. Quem promove
+  CPF é `reconciliarCpfTardio`, no app.
+- ⚠️⚠️ **`telefone_digits` (coluna GERADA · 20260817160000) é a régua, NUNCA um
+  regexp próprio**: ela remove o `55` do país só quando o resto tem 12–13 dígitos,
+  porque **DDD 55 é Santa Maria/RS**. Lida da TABELA, não de `NEW`, pra não
+  depender de coluna gerada estar materializada no registro do trigger.
+- **O NOME fica de fora, de propósito.** Os 339 "divergentes" são nome curto do
+  PCO ("Lucas Melo") × nome legal ("Lucas Batista Gomes de Melo Araujo"). Forçar
+  o legal faria o voluntário **não achar o próprio nome no tablet do check-in**;
+  forçar o curto apagaria o nome legal da membresia. São dois conceitos.
+- ⚠️ **A migration NÃO liga ninguém**: vincular perfil a cadastro segue decisão
+  humana (caso Palladino, 25/08 — o e-mail do perfil do FILHO era o do cadastro
+  do PAI).
+
+### Impacto do backfill, MEDIDO antes de aplicar
+
+| UPDATE | linhas |
+|---|---|
+| CPF desce (`vol_profiles.cpf`) | 508 |
+| telefone desce (`vol_profiles.phone`) | 559 |
+| telefone sobe (`mem_membros.telefone`) | **0** |
+
+⚠️ **ZERO CPF sobrescrito com valor diferente.** O único telefone que "muda" é
+`21 964268062` → `21964268062` — o mesmo número, sem o espaço.
+⚠️ O backfill roda **depois** dos triggers, então eles disparam nas 1.067 linhas
+e encontram tudo já sincronizado (no-op) — a própria migration exercita a régua
+contra o dado real.
+⚠️ O perfil que aponta pra membro soft-deletado (`". f"`) fica **de fora** pelo
+filtro `deleted_at IS NULL`.
+
+### ⚠️ O tablet: `checked_in_by` é a CONTA LOGADA, não quem opera
+
+Correção do Marcos: *"o check-in é feito por um tablet, são as pessoas reais que
+entram e acham seus nomes e clicam nelas mesmas"*. Confirmado no dado — os 2.396
++ 285 check-ins de Ariel e Jessica são a **sessão do tablet**. Não muda a
+conclusão da leva anterior (`VolCheckin.tsx` é a superfície certa), mas muda a
+leitura: **não são 2 operadoras digitando, é o voluntário se auto-atendendo.**
+
+### ⚠️⚠️ Os 3 "voluntários" de nome impossível eram TESTE — e o padrão se repete
+
+O Marcos desconfiou (*"parecem pessoas irreais"*) e estava certo nos três:
+
+| nome | perfil criado | check-ins | membro |
+|---|---|---|---|
+| `. f` | 15/07 22:18 | 1, no mesmo dia | **soft-deletado em 04/08** |
+| `kar` | 02/08 12:02 | **3, todos em 02/08** | vivo, tudo nulo |
+| `roza` | 26/08 22:35 | 1, no mesmo dia | vivo, `origem_cadastro='voluntariado_perfil'` |
+
+⚠️ **A assinatura é sempre a mesma**: perfil criado e check-in feito no mesmo
+minuto, nome sem sobrenome, todos os campos nulos. É alguém testando o botão de
+check-in — e os 3 são `origem='manual'`, não `planning_center`.
+⚠️ **Não foram apagados**: são 3 pessoas-fantasma na base do voluntariado, e
+apagar cadastro é decisão do Marcos (lei "apagar pessoa só com ok").
+
+### Sexo pelo nome · `backend/utils/sexoPeloNome.js`
+
+⚠️⚠️ **A LEI DE 10/08 CONTINUA VALENDO** ("nunca inferir sexo por nome e gravar
+como DECLARADO"): o que o script grava fica marcado como
+`origem='sexo_inferido_nome'` em `mem_identidade_observacoes`. Quem auditar daqui
+a um ano precisa distinguir palpite confirmado de declaração da pessoa.
+
+- **O dicionário foi APRENDIDO da própria base** (1.856 membros com gênero
+  preenchido · 706 primeiros nomes), não de lista genérica de internet. Entrou
+  quem tinha ≥2 casos e 100% de concordância, ou ≥4 e ≥90%.
+- ⚠️⚠️ **VALIDAÇÃO FORTE: zero divergência contra os 309 voluntários que JÁ têm
+  sexo.** O classificador não contradiz nenhum dado humano existente.
+- ⚠️⚠️ **NÃO existe regra de terminação**, e é decisão: "termina em A ⇒ mulher"
+  erra em Cauã, Luca, Nicola, Sasha — e erra CALADO, gravando identidade errada
+  na ficha de uma pessoa real.
+- ⚠️ **`AMBIGUOS` é trava absoluta**: nome unissex de verdade (Ariel, Darci,
+  Jaci, Cris, Dani…) devolve `null` mesmo que a base local esteja 100% de um lado
+  — 8 Ariel homens não fazem a 9ª Ariel ser homem. **A própria coordenadora do
+  voluntariado é a Ariel.**
+- ⚠️ A trava de apelido curto vem **DEPOIS** das listas: "Ana" e "Eva" têm 3
+  letras e são nomes inteiros; checar tamanho primeiro reprovava as duas.
+- ⚠️ O aprendizado também achou **erro no que já estava gravado**: 1 "isabela"
+  como masculino e 1 "caio" como feminino. Por isso a régua exige CONCORDÂNCIA e
+  não maioria simples — com maioria simples esses dois erros virariam lei.
+- **Resultado**: 95 resolvidos · **10 para a Ariel** (`kar`, `roza`, Dudu
+  Bernardo, Mére Balthar, Dani Damasceno, Lohrane Nascimento Lomeu, Cris Krpoun,
+  Carrilho Neto, Gilvani Peçanha da Rocha, Aniel da Silva Souza).
+- `backend/scripts/_sexo_pelo_nome_voluntarios.cjs` (dry-run · `--exec` · backup
+  em Downloads). SÓ-ONDE-VAZIO com `.is('genero', null)` como guarda de corrida:
+  0 linhas = a pessoa respondeu no meio do caminho, e **a declaração dela vence o
+  nosso palpite**.
