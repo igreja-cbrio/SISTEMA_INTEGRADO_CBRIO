@@ -272,14 +272,24 @@ describe('⚠️⚠️ PUB-01 · cadastro público não liga a conta de quem cha
     expect(util).toMatch(/users\.length\s*<\s*PER_PAGE/);
   });
 
-  // varredura 2026-09: PUB-01 — a MESMA dupla de asserções para o gêmeo. Sem
-  // ela, reintroduzir `supabase.auth.admin.listUsers()` cru no /devocional/login
-  // passava verde: o guarda cobria um dos dois chamadores da régua única.
-  it('⚠️ o /devocional/login usa a MESMA régua paginada (era o outro chamador)', () => {
-    const login = blocoDaRota(fonte.devocional, "router.post('/login'");
-    expect(fonte.devocional).toContain("require('../utils/authUsers')");
-    expect(login, 'o login do devocional não passa mais pela régua única').toContain('acharAuthUserPorEmail(');
-    expect(login, 'voltou o listUsers() sem paginação no devocional').not.toMatch(/listUsers\(\s*\)/);
+  // varredura 2026-09: PUB-01 — aqui morava o gêmeo desta asserção, para o
+  // `/devocional/login`, que era o OUTRO chamador da régua paginada.
+  //
+  // ⚠⚠ A ROTA FOI REMOVIDA em 16/09/2026 (REM-02): ela mandava um magic link
+  // que nunca saiu — `generateLink` gera e devolve o link, não envia — e a porta
+  // que ela servia deixou de existir quando o devocional migrou pro app. Como
+  // era pública e criava auth user + `profiles`, o conserto foi tirar, não
+  // remendar. O que sobrou no arquivo é o `GET /hoje` do widget iOS.
+  //
+  // A asserção vira o seu oposto: o arquivo não pode voltar a procurar usuário
+  // no auth de jeito nenhum — nem paginado, nem cru. A guarda de que o login
+  // não volta vive em `src/test/magicLinkEnvio.test.ts`.
+  it('⚠️ o devocional não procura mais usuário no auth (a rota saiu)', () => {
+    expect(fonte.devocional, 'voltou o login do devocional — ver magicLinkEnvio.test.ts').not.toContain("router.post('/login'");
+    expect(fonte.devocional, 'voltou o listUsers() no devocional').not.toMatch(/listUsers\(/);
+    expect(fonte.devocional, 'o devocional voltou a mexer no auth').not.toContain('acharAuthUserPorEmail(');
+    // Sanidade: o arquivo continua servindo o versículo do dia pro widget iOS.
+    expect(fonte.devocional, 'sumiu o GET /hoje — o widget do app depende dele').toContain("router.get('/hoje'");
   });
 
   it('a fila de cadastros NÃO perde o `duplicado_de_id` — só deixa de virar acesso', () => {

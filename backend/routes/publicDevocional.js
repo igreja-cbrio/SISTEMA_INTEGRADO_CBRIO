@@ -1,145 +1,36 @@
 /**
- * Rotas publicas do devocional do membro.
+ * Rota publica do devocional.
  *
- * Fluxo:
- *   1. Membro acessa /devocional pelo celular sem login
- *   2. Digita o email
- *   3. Backend valida que existe em mem_membros, garante auth user +
- *      profile (com is_membro_only=true se profile não existir ainda)
- *      e dispara magic link via Supabase
- *   4. Membro clica no email -> redirect pra /devocional/hoje autenticado
+ * Sobrou UMA: `GET /hoje`, o versículo do dia, sem login — igual pra todo
+ * mundo e consumido pelo WIDGET iOS do app. O login por magic link saiu em
+ * 16/09/2026 junto com as telas web (ver o bloco REM-02 abaixo).
  */
 
 const router = require('express').Router();
-const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
-// varredura 2026-09: PUB-01 — a busca do auth user por e-mail é PAGINADA e vive
-// num lugar só (utils/authUsers.js), compartilhada com publicMembresia.js.
-const { acharAuthUserPorEmail } = require('../utils/authUsers');
 
-const publicLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'Muitas tentativas. Aguarde alguns minutos.' },
-});
-
-function ehEmailValido(email) {
-  if (!email || typeof email !== 'string') return false;
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
-}
-
-function maskEmail(email) {
-  if (!email) return '';
-  const [local, domain] = email.split('@');
-  if (!domain) return email;
-  const visible = local.slice(0, Math.min(2, local.length));
-  return `${visible}***@${domain}`;
-}
-
-function getFrontendUrl() {
-  if (process.env.FRONTEND_URL) return process.env.FRONTEND_URL.replace(/\/+$/, '');
-  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
-  return 'http://localhost:5173';
-}
-
-// ── POST /api/public/devocional/login ────────────────────────────
-// body: { email }
-// 1) busca mem_membros pelo email
-// 2) garante auth user + profile (cria com is_membro_only=true se novo)
-// 3) linka profile.membro_id
-// 4) gera magic link redirecionando pra /devocional/hoje
-router.post('/login', publicLimiter, async (req, res) => {
-  try {
-    const rawEmail = (req.body?.email || '').trim().toLowerCase();
-    if (!ehEmailValido(rawEmail)) {
-      return res.status(400).json({ error: 'Email invalido' });
-    }
-
-    // 1) Achar mem_membros pelo email
-    const { data: membro, error: mErr } = await supabase
-      .from('mem_membros')
-      .select('id, nome, email, active, status')
-      .ilike('email', rawEmail)
-      .eq('active', true)
-      .maybeSingle();
-
-    if (mErr) {
-      console.error('[PublicDevocional] mem_membros lookup:', mErr.message);
-      return res.status(500).json({ error: 'Erro ao buscar cadastro' });
-    }
-    if (!membro) {
-      return res.status(404).json({ error: 'Email não cadastrado como membro. Procure um líder.' });
-    }
-
-    // 2) Achar auth user
-    let authUserId = null;
-    // varredura 2026-09: PUB-01 — `listUsers()` SEM paginação lia só a 1ª página
-    // (50 no supabase-js 2.x) e não enxergava ~155 dos 205 usuários: quem JÁ
-    // TINHA conta mas estava fora dela caía no ramo de CRIAR e o login morria
-    // com "user already registered" — porta fechada pra quem tem direito de
-    // entrar. Mesmo helper da porta da membresia, uma régua só.
-    const existing = await acharAuthUserPorEmail(rawEmail);
-    if (existing) {
-      authUserId = existing.id;
-    } else {
-      const { data: created, error: createErr } = await supabase.auth.admin.createUser({
-        email: rawEmail,
-        email_confirm: true,
-        user_metadata: { source: 'devocional', membro_id: membro.id },
-      });
-      if (createErr) {
-        console.error('[PublicDevocional] createUser:', createErr.message);
-        return res.status(500).json({ error: 'Erro ao criar acesso' });
-      }
-      authUserId = created.user?.id;
-    }
-    if (!authUserId) return res.status(500).json({ error: 'Erro ao obter usuário' });
-
-    // 3) Garantir profile + linkar
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('id, role, membro_id, is_membro_only')
-      .eq('id', authUserId)
-      .maybeSingle();
-
-    if (!profile) {
-      await supabase.from('profiles').insert({
-        id: authUserId,
-        email: rawEmail,
-        name: membro.nome,
-        role: null,
-        membro_id: membro.id,
-        is_membro_only: true,
-        active: true,
-      });
-    } else if (!profile.membro_id) {
-      await supabase.from('profiles')
-        .update({ membro_id: membro.id })
-        .eq('id', authUserId);
-    }
-
-    // 4) Magic link
-    const frontendUrl = getFrontendUrl();
-    const redirectTo = `${frontendUrl}/devocional/hoje`;
-    const { error: linkErr } = await supabase.auth.admin.generateLink({
-      type: 'magiclink',
-      email: rawEmail,
-      options: { redirectTo },
-    });
-    if (linkErr) {
-      console.error('[PublicDevocional] generateLink:', linkErr.message);
-      return res.status(500).json({ error: 'Erro ao enviar link de acesso' });
-    }
-
-    console.log(`[PublicDevocional] Magic link enviado para ${maskEmail(rawEmail)}`);
-    return res.json({ ok: true, maskedEmail: maskEmail(rawEmail) });
-  } catch (e) {
-    console.error('[PublicDevocional] login:', e.message);
-    res.status(500).json({ error: 'Erro ao processar login' });
-  }
-});
+// ── POST /api/public/devocional/login — REMOVIDA em 16/09/2026 ────────
+// REM-02 da auditoria do banco. A rota mandava um magic link — só que
+// `supabase.auth.admin.generateLink()` **gera o link e devolve**, quem envia é
+// quem chama, e aqui o `action_link` era descartado (só o `error` era lido).
+// Nenhuma função de envio era chamada, e mesmo assim o servidor logava
+// “Magic link enviado” e devolvia 200. Quebrado em silêncio.
+//
+// ⚠⚠ O CONSERTO NÃO FOI FAZER O ENVIO FUNCIONAR: **a porta que ela servia não
+// existe mais.** As telas web do devocional (login/hoje/histórico) foram
+// removidas quando o devocional migrou pro app — `/devocional` hoje renderiza
+// `DevocionalMovido` e as outras duas redirecionam pra ele. A rota ficou órfã,
+// e órfã com poder: pública, sem login, **criava auth user e `profiles`** a
+// partir de um e-mail que batesse com `mem_membros`.
+//
+// O que continua vivo é o `GET /hoje` logo abaixo (widget iOS). Conferido
+// antes de remover: no app (`targets/widget/widgets.swift:25`) o único endpoint
+// público de devocional chamado é `/hoje`; no front, só `src/api.js` declarava
+// o cliente do `/login`, sem nenhuma tela chamando.
+//
+// Se o devocional voltar pro navegador um dia: use `signInWithOtp` (esse envia)
+// ou pegue `data.properties.action_link` e mande por `services/email.js`.
+// ──────────────────────────────────────────────────────────
 
 // ── GET /api/public/devocional/hoje ──────────────────────────────
 // Devocional do dia (planos ativos), SEM auth. Consumido pelo WIDGET

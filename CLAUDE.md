@@ -114,6 +114,38 @@ casar o texto `if (!cepCompleto(cep))` passava verde com o código quebrado —
 era exatamente a forma que estava em produção. O teste conta chaves, acha onde o
 bloco do sexo fecha e exige que o CEP venha depois. Mutante fiel = re-aninhar.
 
+## ⚠⚠ LEI · `generateLink` NÃO MANDA E-MAIL (2026-09-16 · SEM migration)
+
+`supabase.auth.admin.generateLink()` **gera** o link e devolve em
+`data.properties.action_link`. **Quem envia é quem chama.** Escrever
+
+```js
+const { error: linkErr } = await supabase.auth.admin.generateLink({ type: 'magiclink', ... });
+```
+
+é jogar o link fora — e o código em volta costuma logar “Magic link enviado” e
+devolver 200. **Quebra em silêncio dos dois lados**: o servidor acha que enviou,
+a tela diz que enviou, a pessoa não recebe nada. Para enviar de verdade:
+`services/email.js` com o `action_link`, ou `signInWithOtp` (esse envia).
+
+✅ **Fechado (REM-02)**: `POST /api/public/devocional/login` foi **removida**. O
+conserto não foi fazer o envio funcionar — a porta que ela servia não existe
+mais: as telas web do devocional saíram quando ele migrou pro app (`/devocional`
+renderiza `DevocionalMovido`). A rota ficou órfã **com poder**: pública, sem
+login, criava auth user e `profiles`. Continua vivo só o `GET /hoje`, que o
+**widget iOS** consome (`targets/widget/widgets.swift:25`).
+
+⚠⚠ **AINDA ABERTO, e em porta VIVA** (inventário de 16/09, travado por
+`src/test/magicLinkEnvio.test.ts`): `publicVoluntariado.js` (2 pontos — login do
+AUTO CHECK-IN e cadastro novo) e `publicMembresia.js` (1 ponto — a conta criada
+pela porta pública, cujo comentário do PUB-01 diz que “a ENTRADA passa a ser o
+link no e-mail”). **Hipótese forte**: é por isso que 99,9% dos check-ins de
+voluntário são manuais — o auto check-in nunca entregou o link. Decisão de
+produto (implementar o envio muda o que pessoas reais recebem).
+
+⚠️ A guarda **encolhe, nunca cresce**: consertar um ponto mantém verde, abrir
+um ponto novo derruba o gate.
+
 ## ⚠⚠ LEI · backup de reparo NASCE no schema `backups` (2026-09-16 · migration `20260916190000`)
 
 Reparo de dado tira foto do estado anterior numa tabela `_bk_<data>_<assunto>` —
