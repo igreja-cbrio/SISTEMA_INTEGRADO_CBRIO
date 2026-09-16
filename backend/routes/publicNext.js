@@ -60,14 +60,13 @@ router.use(limiter);
  */
 async function turmaEscolhida(turmaId) {
   if (!turmaId || !/^[0-9a-f-]{36}$/i.test(String(turmaId))) return null;
-  // ⚠️⚠️ 15/09/2026 · o id só vale se for A PRÓXIMA turma (pedido do Kevyn).
-  // Aceitar qualquer turma aberta matricularia gente em domingo de dois meses
-  // à frente — que é justamente o que ele pediu pra fechar. Turma vencida ou
-  // distante devolve null e o chamador cai na próxima, que é o único destino
-  // oferecido hoje.
-  const prox = await proximaTurmaAberta();
-  if (!prox || String(turmaId) !== prox.id) return null;
-  return prox;
+  // ⚠️⚠️ O id só vale se for UMA DAS TURMAS OFERECIDAS. Aceitar qualquer turma
+  // aberta matricularia gente em domingo de dois meses à frente — foi isso que
+  // o Kevyn pediu pra fechar em 15/09 (9 abertas, 6 apareciam). Em 16/09 ele
+  // abriu pra TRÊS; o teto continua existindo, só mudou de tamanho.
+  // ⚠️ Turma vencida ou distante devolve null e o chamador cai na próxima.
+  const oferecidas = await turmasOferecidas();
+  return oferecidas.find((t) => String(turmaId) === t.id) || null;
 }
 
 /**
@@ -85,7 +84,7 @@ async function turmaEscolhida(turmaId) {
  * escolher (bundle antigo, ou falha de rede escondendo o campo) caía no domingo
  * mais longe possível, exatamente o problema que o Kevyn relatou.
  */
-async function proximaTurmaAberta() {
+async function turmasOferecidas() {
   const { data, error } = await supabase.from('next_turmas')
     .select('id, nome, next_encontros(data)')
     .eq('status', 'aberta').is('deleted_at', null)
@@ -96,8 +95,21 @@ async function proximaTurmaAberta() {
     const datas = (t.next_encontros || []).map(e => e.data).filter(Boolean).sort();
     return { id: t.id, nome: t.nome, data: datas[0] || null };
   });
-  // ⚠️ A escolha é régua PURA (utils/nextTurmas.proximaTurma · no gate).
-  return proximaTurma(lista, hojeBRT());
+  // ⚠️ O teto e a ordem são régua PURA (utils/nextTurmas · no gate).
+  return proximasTurmas(lista, hojeBRT(), TURMAS_OFERECIDAS);
+}
+
+/**
+ * A PRÓXIMA turma aberta — UMA só.
+ *
+ * ⚠️⚠️ Continua existindo e continua devolvendo uma: é o fallback de quem
+ * envia sem escolher e o destino dos 5 chamadores de `turmaAbertaAtual`.
+ * DELEGA pra `turmasOferecidas` — duas leituras divergiriam no primeiro
+ * ajuste, e aí o formulário ofereceria um domingo e o fallback matricularia
+ * noutro.
+ */
+async function proximaTurmaAberta() {
+  return (await turmasOferecidas())[0] || null;
 }
 
 /**
@@ -120,7 +132,7 @@ async function turmaAbertaAtual() {
 }
 
 // Régua das turmas do Next (1 turma por domingo · culto de 09:30 · 26/08/2026)
-const { HORARIO_NEXT, hojeBRT, proximaTurma } = require('../utils/nextTurmas');
+const { HORARIO_NEXT, hojeBRT, proximaTurma, proximasTurmas, TURMAS_OFERECIDAS } = require('../utils/nextTurmas');
 
 // Contrato de Inscrição (F3.1 · docs/modulo-inscricoes/) — utils da fonte única
 const {
@@ -180,11 +192,11 @@ router.get('/eventos', async (_req, res) => {
 // ----------------------------------------------------------------------------
 router.get('/turmas', async (_req, res) => {
   try {
-    // ⚠️⚠️ SÓ A PRÓXIMA (15/09/2026 · Kevyn). A resposta continua sendo uma
-    // LISTA de propósito: o bundle publicado lê `turmas[]`, e trocar a forma
-    // quebraria quem não recarregou a página. O que mudou é o TAMANHO.
-    const prox = await proximaTurmaAberta();
-    res.json({ horario: HORARIO_NEXT, turmas: prox ? [prox] : [] });
+    // ⚠️⚠️ AS 3 PRÓXIMAS (16/09/2026 · Kevyn mudou de ideia). Em 15/09 era só
+    // a próxima; o teto continua existindo, mudou de 1 para 3. A resposta
+    // sempre foi uma LISTA, e a tela já trata os dois casos — com 1 ela vira
+    // linha de informação, com mais de 1 vira seletor obrigatório.
+    res.json({ horario: HORARIO_NEXT, turmas: await turmasOferecidas() });
   } catch (e) {
     // ⚠️ Erro NÃO vira lista vazia: lista vazia se lê como "não há Next marcado"
     // e o formulário esconderia o campo, matriculando às cegas.

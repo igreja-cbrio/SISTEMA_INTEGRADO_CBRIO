@@ -135,36 +135,69 @@ function domingosInscritiveis(dias, agora = new Date()) {
 }
 
 /**
- * A PRÓXIMA turma — a única que o formulário público oferece desde 15/09/2026.
+ * Quantos domingos o formulário público oferece.
  *
- * ⚠️⚠️ Pedido do Kevyn (via Marcos): "as pessoas não poderem se inscrever em
- * turmas do Next muito futuras, pedir para apenas colocar a opção da próxima
- * turma aberta". Medido em 15/09: **9 turmas abertas e 6 apareciam no
- * formulário** (20/09 a 25/10) — a rotina automática garante o mês corrente E
- * o seguinte (26/08), então a lista só cresce.
+ * ⚠️⚠️ 16/09/2026 · o Kevyn mudou de ideia (via Marcos): *"queria que as
+ * inscrições do next tivessem as 3 próximas datas e não só a próxima (...) a
+ * ideia é poder se inscrever nas 3 próximas turmas apenas"*. Em 15/09 ele tinha
+ * pedido SÓ a próxima, porque **9 turmas estavam abertas e 6 apareciam** (20/09
+ * a 25/10) — a rotina automática garante o mês corrente e o seguinte, então a
+ * lista só cresce. O problema nunca foi "mais de uma": era "sem teto".
+ */
+const TURMAS_OFERECIDAS = 3;
+
+/**
+ * As N PRÓXIMAS turmas, da mais perto para a mais longe.
  *
  * ⚠️⚠️ ORDENA PELA DATA DO ENCONTRO, nunca por quando a turma foi criada. A
  * rotina cria os domingos em ordem, então "a mais recentemente criada" é a MAIS
  * DISTANTE — era esse o resolvedor do fallback e do QR de direcionamento, e ele
- * mandava quem não escolheu para o domingo mais longe possível.
+ * mandava quem não escolheu para o domingo mais longe possível (medido em
+ * 15/09).
  *
  * ⚠️ Turma SEM data de encontro fica de fora: sem saber quando é, ela não pode
- * ser "a próxima" (e a matrícula nasceria num domingo que ninguém sabe qual é).
+ * ser "próxima" (e a matrícula nasceria num domingo que ninguém sabe qual é).
+ *
+ * @param {{id: string, data: string|null}[]} turmas
+ * @param {string} hoje  dia BRT (YYYY-MM-DD)
+ * @param {number} [n]   quantas oferecer (padrão: TURMAS_OFERECIDAS)
+ * @returns {object[]}   lista, possivelmente vazia — nunca null
+ */
+function proximasTurmas(turmas, hoje, n = TURMAS_OFERECIDAS) {
+  if (!Array.isArray(turmas) || !diaValido(hoje)) return [];
+  // ⚠️ `n` inválido ou ≤ 0 devolve LISTA VAZIA, nunca a lista inteira: um teto
+  // que falha aberto é o mesmo que não ter teto — era o estado de antes de 15/09.
+  const teto = Number.isInteger(n) && n > 0 ? n : 0;
+  return turmas
+    .filter((t) => t && diaValido(t.data) && t.data >= hoje)
+    .sort((a, b) => String(a.data).localeCompare(String(b.data)))
+    .slice(0, teto);
+}
+
+/**
+ * A PRÓXIMA turma — a mais perto de acontecer.
+ *
+ * ⚠️⚠️ Continua existindo e continua devolvendo UMA: é ela que resolve o
+ * fallback do formulário e os 5 chamadores de `turmaAbertaAtual` (QR de
+ * direcionamento do fim do encontro, check-in do totem, walk-in). Essas telas
+ * precisam de um destino único — oferecer três a quem está no balcão seria
+ * pedir uma decisão que o atendimento não tem como tomar.
+ *
+ * ⚠️ DELEGA pra `proximasTurmas` de propósito: duas ordenações divergiriam no
+ * primeiro ajuste, e aí o formulário ofereceria um domingo e o fallback
+ * matricularia noutro.
  *
  * @param {{id: string, data: string|null}[]} turmas
  * @param {string} hoje  dia BRT (YYYY-MM-DD)
  * @returns {object|null}
  */
 function proximaTurma(turmas, hoje) {
-  if (!Array.isArray(turmas) || !diaValido(hoje)) return null;
-  return turmas
-    .filter((t) => t && diaValido(t.data) && t.data >= hoje)
-    .sort((a, b) => String(a.data).localeCompare(String(b.data)))[0] || null;
+  return proximasTurmas(turmas, hoje, 1)[0] || null;
 }
 
 module.exports = {
   HORARIO_NEXT, ENCONTROS_POR_TURMA,
   mesValido, diaValido, diaDaSemana, domingosDoMes, mesDe, proximoMes,
   hojeBRT, nomeTurma, turmasPlanejadas, mesesAGarantir, domingosInscritiveis,
-  proximaTurma,
+  proximaTurma, proximasTurmas, TURMAS_OFERECIDAS,
 };

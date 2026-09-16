@@ -1220,7 +1220,44 @@ lote INTEIRO, inclusive o que daria certo.
 **Testado nos dois ramos** (arquivo órfão fabricado): dentro da carência fica
 intocado; forçando o corte, lista no dry-run e apaga no `--exec`.
 
-### ⚠️⚠️ 16/09/2026 · de QUEM é o CPF + aviso de um responsável só (migration `20260916160000`)
+### ⚠️⚠️ Next · o formulário oferece AS 3 PRÓXIMAS turmas (2026-09-16 · sem migration)
+
+O Kevyn mudou de ideia um dia depois, nas palavras do Marcos: *"queria que as
+inscrições do next tivessem as 3 próximas datas e não só a próxima, ele mudou
+agora, a ideia é poder se inscrever nas 3 próximas turmas apenas"*.
+
+⚠️ **O teto continua existindo — só mudou de tamanho (1 → 3).** O problema de
+15/09 nunca foi "mais de uma": foi **sem teto**. Medido naquele dia: **9 turmas
+abertas e 6 apareciam** no formulário (20/09 a 25/10), porque a rotina automática
+garante o mês corrente E o seguinte, então a lista só cresce.
+
+- **`proximasTurmas(turmas, hoje, n = TURMAS_OFERECIDAS)`** em
+  `backend/utils/nextTurmas.js` é a régua; **`proximaTurma` DELEGA** pra ela com
+  `n = 1`. Duas ordenações divergiriam no primeiro ajuste, e aí o formulário
+  ofereceria um domingo e o fallback matricularia noutro.
+- ⚠️⚠️ **`turmaAbertaAtual` continua devolvendo UMA.** Os 5 chamadores (QR de
+  direcionamento do fim do encontro, check-in do totem, walk-in) precisam de um
+  destino ÚNICO — oferecer três a quem está no balcão seria pedir uma decisão
+  que o atendimento não tem como tomar.
+- ⚠️⚠️ **`turmaEscolhida` passou a aceitar qualquer uma das OFERECIDAS**, não só
+  a primeira. Sem isso a pessoa escolheria o 2º domingo no seletor e o servidor
+  a matricularia no 1º, em silêncio.
+- ⚠️⚠️ **Teto inválido (`0`, negativo, fracionário, nulo) devolve LISTA VAZIA**,
+  nunca a lista inteira: teto que falha aberto é o mesmo que não ter teto — o
+  estado de antes de 15/09. Tem teste e mutante (tirando o `.slice`, 4 vermelhos).
+
+### ⚠️ A TELA NÃO MUDOU — e isso foi decisão de 15/09
+
+`InscricaoNext.tsx` já tratava os dois casos: **uma** turma vira linha de
+informação (com o id preenchido sozinho), **mais de uma** vira `<select>`
+obrigatório. O comentário de 15/09 dizia, em voz alta, por que o ramo do select
+tinha ficado: *"sumi-lo agora deixaria a tela sem caminho se a régua mudar"*.
+A régua mudou no dia seguinte, e a mudança **não custou tela nenhuma**.
+⚠️ O texto do caso de UMA turma deixou de dizer "É o próximo NEXT" (que só era
+verdade quando ela era a única oferecida) e passou a dizer **"É o único domingo
+aberto"**.
+
+## ⚠️⚠️ 16/09/2026 · de QUEM é o CPF + aviso de um responsável só (migration `20260916160000`)
 
 Achado do Marcos ao testar a foto: *"ele pede o nome dos dois responsáveis e
 apenas 1 cpf, ou seja algum responsável fica sem, ou pior ele vincula o cpf no
