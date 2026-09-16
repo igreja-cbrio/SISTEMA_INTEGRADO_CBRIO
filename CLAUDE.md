@@ -91,6 +91,78 @@ Uma pessoa = um cadastro (`mem_membros`) = fonte única que todos os módulos
 leem. Módulo NÃO tem "base local de pessoas" — linha-satélite aponta pro
 membro via `membro_id`.
 
+## ⚠️⚠️ CENSO · o bloco "Sexo" NUNCA veio da pesquisa (2026-09-16 · SEM migration)
+
+Dúvida do Marcos: *"no censo não existe pergunta de sexo… porém todas as respostas
+têm sexo respondido, como está sendo gerado esse dado? o quão confiável está?"*
+
+**Não vinha da pesquisa.** `GET /censo/perfil` monta o corte demográfico a partir de
+**`vw_cen_resposta_pessoa`**, que é `cen_resposta LEFT JOIN mem_membros` — `genero`,
+`estado_civil`, `bairro` e faixa etária saem TODOS do CADASTRO. Como 910 dos 940
+respondentes têm o campo preenchido, o bloco parecia dado do censo.
+
+⚠️⚠️ **A composição medida em 16/09 é o que importa** (940 concluídas · 910 com sexo):
+
+| procedência | n | % feminino |
+|---|---|---|
+| declarou na pergunta do censo (13–14/09) | 297 | **62,3%** |
+| outras portas / base legada | 264 | **62,9%** |
+| **palpite de IA pelo primeiro nome, confirmado em lote** | **349 (38,4%)** | **52,4%** |
+| sem sexo | 30 | — |
+
+Os dois blocos com declaração real batem em ~62%; o da IA dá 52,4%. **A margem
+honesta do "% feminino" é 59%–62%, não um número cravado** — e isso vai na tela.
+
+⚠️ Os 349 foram gravados em **13/09 às 16:04, 341 no mesmo minuto**, por
+`gestao@cbrio.com.br`, com a tela oferecendo **"Marcar todas"**. A LEI de 10/08
+("nunca inferir sexo por nome e gravar como declarado") foi cumprida na letra
+(houve confirmação humana) e não no espírito. **Aferição impossível**: só 2
+pessoas têm palpite da IA *e* declaração no censo.
+
+### O conserto: a pergunta voltou, e o número é UM só
+
+- **`backend/scripts/censo_repor_pergunta_sexo.cjs`** (dry-run · `--exec`) repõe a
+  pergunta com **`id: 'sexo'` e opções `Masculino`/`Feminino`** — ⚠️⚠️ **o mesmo id
+  e os mesmos rótulos das 299 respostas já gravadas**, senão elas continuariam
+  órfãs e a tela mostraria DUAS contagens da mesma coisa. `preenche_de: 'genero'`.
+- ⚠️ **NÃO usar `censo_semear_questionario.cjs`**: ele aplica o JSON inteiro (108
+  perguntas) e a pesquisa viva tem 33 — trocaria o questionário de campo.
+- ⚠️⚠️ **A pergunta NÃO vira gráfico próprio.** O laço de `graficos` a PULA e ela
+  alimenta o bloco "Sexo" de *Quem respondeu*, com **declaração na frente do
+  cadastro** por respondente ("somar os números, não criar uma análise extra").
+  Ela vai DECLARADA em `identificacao` com o motivo — pergunta que some da tela
+  sem explicação é o defeito que este módulo já pagou duas vezes.
+- ⚠️ O rótulo é traduzido por `traduzirParaCadastro('genero', …)`: "Feminino" e
+  'feminino' somados crus virariam DUAS barras.
+- **`sexo_fonte` (`declarado` · `cadastro` · `sem`) vai SEMPRE na resposta**, com
+  ou sem pergunta no questionário — sem pergunta, `declarado` é 0 e a tela diz que
+  o sexo inteiro veio do cadastro, que é exatamente o que ninguém sabia.
+- ⚠️ `estado_civil` e `bairro` **seguem duplicados** (gráfico + bloco demográfico).
+  Não foi tocado: o pedido era sobre sexo, e `bairro` tem tetos diferentes nos dois
+  lugares.
+
+### ⚠️⚠️ A auditoria nome a nome: o risco NÃO está na IA
+
+Varredura dos **931 pares nome→sexo** da base (1.856 pessoas com o campo), a pedido
+dele (*"se for errado vamos ter um constrangimento quando a pessoa for se
+inscrever"*). **28 suspeitos — e ZERO vieram da IA.**
+
+- **9 linhas / 8 pessoas com nome inequívoco × sexo trocado** (Cesar Dezouzart=F ·
+  Jefferson Patrick=F · Juliana Farias=M · Cintia Kesseles=M **em 2 linhas
+  duplicadas** · Isabela Macedo=M · Isabella Amaral=M · CAIO CESAR=F · Keith
+  Matsumoto=F). ⚠️ 4 delas **declararam o sexo errado numa porta** — o formulário
+  é que foi preenchido errado, então corrigir exige falar com a pessoa.
+- **12 nomes que o nome não decide** (Alex, Ariel, Chrystian Kelly, Haryel Anna,
+  Jo, Ellis, Ecimar, Lucimar, Sued, Syogi, Vauclides) — conferir com quem conhece.
+- **7 linhas que não são pessoa** (Teste da Silva ×2, App Review, Apple Review,
+  Revisor App Store, um e-mail no campo nome, "Mergulho inesquecível …").
+
+⚠️⚠️ **Por que a IA saiu limpa**: o filtro `confianca === 'alta'` de
+`sexoDeclarado.palpitesUsaveis` derruba nome unissex, e os 239 primeiros nomes
+distintos que ela palpitou são todos inequívocos em pt-BR. **Alex, Ariel, Jean e
+Yuri estão na base — e NENHUM veio da IA.** O mecanismo que o Marcos temia é o que
+menos errou; quem errou foram as portas e o import.
+
 ## ⚠️⚠️ CENSO · o domingo de 500 respostas simultâneas (2026-09-11 · SEM migration)
 
 Pergunta do Marcos: *"o censo tem os mesmos quesitos de validação que o NPS, que

@@ -22,6 +22,10 @@ const { fetchAllRows } = require('../utils/pagination');
 const { requireCron } = require('../utils/cronAuth');
 const { acharMembroGuardado } = require('../services/membroMatch');
 const { reconciliarCenso } = require('../services/censoReconciliar');
+// Traduz o RÓTULO que a pessoa viu ("Feminino") pro vocabulário da coluna
+// ('feminino'). É o mesmo tradutor que o reconciliador usa pra gravar — usar
+// outro aqui faria a tela somar 'Feminino' e 'feminino' como duas barras.
+const { traduzirParaCadastro } = require('../utils/censoCampoCadastro');
 const { montarPerfil, montarCruzamentos, CRUZAMENTOS } = require('../utils/censoRelatorioDados');
 const { gerarRelatorio } = require('../services/censoRelatorioIA');
 const {
@@ -1014,6 +1018,46 @@ router.get('/perfil', authorizeModule('censo', 1), async (req, res) => {
     const perguntas = validarPerguntas(pesquisa.data.perguntas || []).perguntas;
     const porId = new Map(perguntas.map((p) => [p.id, p]));
 
+    // ── SEXO · UMA barra só, declaração na frente do cadastro ───────────────
+    //
+    // ⚠️⚠️ O bloco "Sexo" de "Quem respondeu" SEMPRE veio de
+    // `mem_membros.genero` — a view faz LEFT JOIN no cadastro —, NUNCA desta
+    // pesquisa. Isso passou despercebido enquanto não havia pergunta de sexo:
+    // 100% das respostas "tinham sexo" e parecia dado do censo.
+    //
+    // Quando a pergunta voltou ao questionário (16/09/2026), o laço de
+    // `graficos` abaixo desenharia uma SEGUNDA barra de sexo: a mesma coisa
+    // medida de dois jeitos, com números diferentes (299 declarações × 910
+    // cadastros preenchidos), e ninguém saberia qual citar. Pedido do Marcos:
+    // "somar os números dessa que já temos, não criar uma análise extra".
+    //
+    // A régua: para quem RESPONDEU, vale a declaração; para quem não
+    // respondeu, continua valendo o cadastro. Uma barra, todo mundo dentro.
+    //
+    // ⚠️ E a PROCEDÊNCIA vai declarada na resposta. Medido em 16/09/2026, o
+    // sexo do cadastro dos respondentes era 32,6% declarado no censo, 29% de
+    // outras portas e **38,4% palpite de IA pelo primeiro nome confirmado em
+    // lote**. "58,7% feminino" e "58,7% feminino declarado" não são a mesma
+    // frase, e a tela não pode deixar confundir uma com a outra.
+    const pSexo = perguntas.find((p) => p.preenche_de === 'genero') || null;
+    const sexoDeclarado = new Map(); // resposta_id → vocabulário da coluna
+    if (pSexo) {
+      const itensSexo = await fetchAllRows(
+        () => supabase.from('cen_resposta_item')
+          .select('resposta_id, valor_texto')
+          .eq('pesquisa_id', pesquisaId)
+          .eq('pergunta_id', pSexo.id)
+          .order('resposta_id'),
+        { max: TETO_DEMO },
+      );
+      for (const i of itensSexo) {
+        // ⚠️ Traduzido, nunca cru: a opção da tela é "Feminino" e a coluna
+        // guarda 'feminino'. Somar os dois sem traduzir faz DUAS barras.
+        const t = traduzirParaCadastro('genero', i.valor_texto);
+        if (t.ok) sexoDeclarado.set(i.resposta_id, t.valor);
+      }
+    }
+
     const linhasPorPergunta = new Map();
     for (const l of agregado) {
       if (!linhasPorPergunta.has(l.pergunta_id)) linhasPorPergunta.set(l.pergunta_id, []);
@@ -1026,6 +1070,15 @@ router.get('/perfil', authorizeModule('censo', 1), async (req, res) => {
     const identificacao = [];
     for (const p of perguntas) {
       if (p.tipo === 'secao') { graficos.push({ tipo: 'secao', id: p.id, texto: p.texto }); continue; }
+
+      // A pergunta de sexo NÃO vira gráfico próprio — ela alimenta o bloco
+      // "Sexo" de "Quem respondeu" (ver o comentário lá em cima). Vai
+      // DECLARADA em `identificacao` com o motivo, porque pergunta que some da
+      // tela sem explicação é o defeito que este arquivo já pagou duas vezes.
+      if (pSexo && p.id === pSexo.id) {
+        identificacao.push({ id: p.id, texto: p.texto, tipo: p.tipo, no_bloco_demografico: true });
+        continue;
+      }
 
       const classe = classificar(p.tipo);
       // ⚠️ Campo de identificação NUNCA vira barra, e o valor sequer foi lido do
@@ -1093,9 +1146,18 @@ router.get('/perfil', authorizeModule('censo', 1), async (req, res) => {
 
     // Cortes demográficos, contados aqui.
     const cortes = { faixa_etaria: {}, genero: {}, estado_civil: {}, bairro: {}, status_membro: {} };
+    // Procedência do sexo: quantos responderam nesta pesquisa, quantos vieram
+    // do cadastro e quantos continuam sem. Sai junto com a barra.
+    const fonteSexo = { declarado: 0, cadastro: 0, sem: 0 };
     for (const r of demo) {
       for (const k of Object.keys(cortes)) {
-        const v = r[k] || '(não informado)';
+        let v = r[k] || '(não informado)';
+        if (k === 'genero') {
+          const declarado = sexoDeclarado.get(r.resposta_id);
+          if (declarado) { v = declarado; fonteSexo.declarado += 1; }
+          else if (r.genero) fonteSexo.cadastro += 1;
+          else fonteSexo.sem += 1;
+        }
         cortes[k][v] = (cortes[k][v] || 0) + 1;
       }
     }
@@ -1128,6 +1190,10 @@ router.get('/perfil', authorizeModule('censo', 1), async (req, res) => {
       // mentia. Unificar o denominador com a aba Cobertura (que conta só
       // concluídas) exige mexer na view — follow-up, não este PR.
       respondentes: demo.length,
+      // ⚠️ Vai SEMPRE, com ou sem pergunta de sexo no questionário: sem
+      // pergunta, `declarado` é 0 e a tela diz que o sexo inteiro veio do
+      // cadastro — que é exatamente o que ninguém sabia até 16/09/2026.
+      sexo_fonte: fonteSexo,
       graficos,
       identificacao,
       orfas,
