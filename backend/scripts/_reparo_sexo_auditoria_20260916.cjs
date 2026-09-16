@@ -35,6 +35,9 @@ const { supabase } = require('../utils/supabase');
 const { nomeNormalizado } = require('../services/identidadeProgressiva');
 
 const exec = process.argv.includes('--exec');
+// ⚠️ Gate PRÓPRIO: rodar o script de novo NÃO reabre a decisão do Marcos por
+// acidente. Quem quer aquelas 3 trocas tem que pedir por elas.
+const decisaoMarcos = process.argv.includes('--decisao-marcos');
 
 // id · sexo ATUAL esperado · sexo CORRETO · a evidência que sustenta a troca.
 // ⚠️ `de` não é enfeite: ele vai no UPDATE como guarda de corrida. Se alguém
@@ -54,6 +57,33 @@ const CORRECOES = [
     evidencia: 'nome inequivoco em pt-BR, sem nenhuma declaracao em contrario' },
   { id: '96c3467e', de: 'masculino', para: 'feminino',
     evidencia: 'nome inequivoco em pt-BR, sem nenhuma declaracao em contrario' },
+];
+
+// ── DECISÃO DO MARCOS que SOBREPÕE a declaração da pessoa ───────────────────
+// ⚠️⚠️ Estes 3 são diferentes de tudo acima: aqui a pessoa DECLAROU o sexo que
+// está no cadastro, e a troca é decisão de gestão, não evidência. Só roda com
+// `--decisao-marcos`, e a procedência grava isso — pra quem ler daqui a um ano
+// saber que NÃO foi o sistema que concluiu.
+//
+// ⚠️ Medido em 16/09, e é o que torna esta troca uma DECISÃO e não um conserto:
+//  · `genero` NÃO está em nenhuma das listas de prefill do censo
+//    (`utils/censoPrefill.js` · CAMPOS_COM_TOKEN e CAMPOS_SEM_TOKEN), então a
+//    resposta do censo foi DIGITADA, nunca eco do cadastro.
+//  · CAIO CESAR respondeu 13/09 19:19 BRT — ~2h35 DEPOIS de a pergunta entrar
+//    (16:44 UTC), foi a 113a de 301 pessoas, numa sessao de 189s. Viu a
+//    pergunta e escolheu "Feminino".
+//  · Isabella Amaral: o cadastro estava SEM sexo ate 18/08, quando o script
+//    `_reparo_sexo_das_portas` colheu `masculino` do pendente que ELA preencheu
+//    em 05/08 — nao havia nada a ecoar.
+//  · Isabela Macedo: o cadastro NASCEU do formulario de batismo (21/08) com o
+//    `M` digitado ali. Tem 14 anos; provavelmente um adulto preencheu.
+const DECISAO_MARCOS = [
+  { id: '4e6d0a6c', de: 'feminino', para: 'masculino',
+    evidencia: 'DECISAO do Marcos 16/09 · sobrepoe a resposta "Feminino" que a propria pessoa deu no censo em 13/09' },
+  { id: 'fb6ab266', de: 'masculino', para: 'feminino',
+    evidencia: 'DECISAO do Marcos 16/09 · sobrepoe o "masculino" que a propria pessoa preencheu no formulario de membresia em 05/08' },
+  { id: '889a5768', de: 'masculino', para: 'feminino',
+    evidencia: 'DECISAO do Marcos 16/09 · sobrepoe o "M" preenchido no formulario de batismo em 21/08 (pessoa de 14 anos)' },
 ];
 
 // ── Nome que é um ENDEREÇO DE E-MAIL ────────────────────────────────────────
@@ -99,7 +129,8 @@ async function main() {
 
   const plano = [];
   const problemas = [];
-  for (const c of CORRECOES) {
+  const fila = decisaoMarcos ? [...CORRECOES, ...DECISAO_MARCOS] : CORRECOES;
+  for (const c of fila) {
     const achados = membros.filter((m) => m.id.startsWith(c.id));
     if (achados.length !== 1) {
       problemas.push(`${c.id}: esperava 1 cadastro vivo, achei ${achados.length}`);
@@ -206,7 +237,9 @@ async function main() {
   // que ja foi gravado e pior.
   const obs = aplicados.map((p) => ({
     membro_id: p.uuid,
-    origem: 'sexo_correcao_auditoria',
+    // ⚠️ Origem DIFERENTE quando a troca sobrepõe declaração da pessoa: é isso
+    // que permite, daqui a um ano, distinguir conserto de decisão de gestão.
+    origem: /^DECISAO/.test(p.evidencia) ? 'sexo_decisao_gestao' : 'sexo_correcao_auditoria',
     nome: String(p.nome).trim().slice(0, 250),
     nome_normalizado: nomeNormalizado(p.nome) || null,
     dados: { genero: p.para, genero_anterior: p.de, motivo: p.evidencia, auditoria: '2026-09-16' },

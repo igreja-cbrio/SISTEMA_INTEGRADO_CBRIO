@@ -180,6 +180,26 @@ Sobrescrever o que alguém declarou de si porque o nome "parece" de outro sexo �
 existe pra evitar, na direção oposta. ⇒ dos 9 "erros prováveis" do relatório,
 **3 saíram** e entraram 2 achados novos por evidência (abaixo). Ficam **7**.
 
+⚠️⚠️ **E "declaração" aqui é DIGITADA, não eco — foi medido, não suposto.**
+`genero` **não está em nenhuma das duas listas de prefill do censo**
+(`utils/censoPrefill.js` · `CAMPOS_COM_TOKEN` e `CAMPOS_SEM_TOKEN`), então a
+resposta da pergunta de sexo nunca vem preenchida do cadastro. Nos 3 casos:
+**CAIO CESAR** respondeu **13/09 às 19:19 BRT — ~2h35 DEPOIS de a pergunta
+entrar** (16:44 UTC), foi a **113ª de 301** pessoas e levou **189 s** na sessão ·
+**Isabella Amaral** tinha o cadastro **SEM sexo até 18/08**, quando
+`_reparo_sexo_das_portas` colheu o `masculino` do pendente que ELA preencheu em
+05/08 (não havia o que ecoar) · **Isabela Macedo** teve o cadastro **CRIADO pelo
+formulário de batismo** com o `M` digitado ali.
+⚠️ Isto derruba a hipótese natural ("veio de cadastro antigo e ninguém
+reconfirmou"): **os três foram digitados**.
+
+⚠️⚠️ **Decisão do Marcos (16/09), COM esses números na mão: trocar os 3 assim
+mesmo.** Ela vive atrás do gate próprio **`--decisao-marcos`** (rodar o script de
+novo não a reabre por acidente) e grava procedência com origem
+**`sexo_decisao_gestao`**, distinta de `sexo_correcao_auditoria` — é essa
+distinção que permite rever a decisão daqui a um ano sabendo que **não foi o
+sistema que concluiu**.
+
 ⚠️⚠️ **E o sinal mais forte não é o nome — é o PAPEL no Kids.**
 `kids_responsaveis.parentesco` (`pai`/`mae`) é declaração operacional de terceiro
 sobre um fato verificável, e resolveu 2 casos que o nome não resolvia:
