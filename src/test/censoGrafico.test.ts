@@ -8,7 +8,8 @@
 // bug virou o vazamento.
 import { describe, it, expect } from 'vitest';
 import {
-  classificar, aplicarTeto, TIPOS_PARA_BUSCAR, TIPOS_IDENTIFICACAO, TETO_VALORES,
+  classificar, aplicarTeto, cortarDemografia, SEM_DADO_DEMOGRAFIA,
+  TIPOS_PARA_BUSCAR, TIPOS_IDENTIFICACAO, TETO_VALORES,
 } from '../../backend/utils/censoGrafico.js';
 
 describe('o que vira gráfico', () => {
@@ -80,5 +81,59 @@ describe('teto de valores por pergunta', () => {
   it('lista vazia não quebra', () => {
     expect(aplicarTeto([]).valores).toEqual([]);
     expect(aplicarTeto(undefined as never).valores).toEqual([]);
+  });
+});
+
+// ⚠️⚠️ Achado do Marcos em 16/09/2026: "o campo de bairro somando todos os nomes
+// dá bem menos que 960 respostas". Dava mesmo — o corte de bairro fazia um
+// `slice(0, 12)` cru e escondia 205 pessoas em 108 bairros de 973 respondentes,
+// 21%, sem nada na tela. Se algum destes casos ficar vermelho, a soma das barras
+// voltou a não fechar com o total de respondentes.
+describe('corte demográfico declara o que o teto escondeu', () => {
+  // A distribuição REAL de bairro medida em 16/09 (a cauda comprimida).
+  const bairrosReais = {
+    'Barra da Tijuca': 274, 'Recreio dos Bandeirantes': 145, 'Barra Olímpica': 125,
+    'Freguesia (Jacarepaguá)': 60, 'Jacarepaguá': 48, 'Pechincha': 33, 'Taquara': 19,
+    'Tijuca': 17, 'Realengo': 15, 'Centro': 13, 'Vargem Pequena': 11, 'Vargem Grande': 8,
+    'Curicica': 8, 'Copacabana': 8, 'Campo Grande': 8, 'Anil': 7,
+    '(não informado)': 7, 'Vila Isabel': 6, 'Bangu': 5, 'Tanque': 5,
+  };
+  const totalReal = Object.values(bairrosReais).reduce((s, n) => s + n, 0);
+
+  it('visíveis + escondidos FECHAM com o total de pessoas', () => {
+    const r = cortarDemografia(bairrosReais, 12);
+    const soma = r.valores.reduce((s, v) => s + v.total, 0);
+    expect(soma + r.ocultos_pessoas).toBe(totalReal);
+  });
+
+  it('declara quantos valores e quantas PESSOAS ficaram de fora', () => {
+    const r = cortarDemografia(bairrosReais, 12);
+    expect(r.ocultos).toBeGreaterThan(0);
+    expect(r.ocultos_pessoas).toBeGreaterThan(0);
+  });
+
+  it('"(não informado)" NUNCA é cortado, mesmo caindo na cauda', () => {
+    // Na distribuição real ele tem 7 pessoas e ficaria fora do top 12.
+    const r = cortarDemografia(bairrosReais, 12);
+    expect(r.valores.some((v) => v.valor === SEM_DADO_DEMOGRAFIA)).toBe(true);
+    // e ele não consome uma das 12 vagas dos bairros de verdade
+    expect(r.valores.filter((v) => v.valor !== SEM_DADO_DEMOGRAFIA)).toHaveLength(12);
+  });
+
+  it('sem estourar o teto, não esconde nada', () => {
+    const r = cortarDemografia({ a: 3, b: 2, c: 1 }, 12);
+    expect(r.ocultos).toBe(0);
+    expect(r.ocultos_pessoas).toBe(0);
+    expect(r.valores).toHaveLength(3);
+  });
+
+  it('ordena do maior para o menor', () => {
+    const r = cortarDemografia({ a: 1, b: 9, c: 5 }, 12);
+    expect(r.valores.map((v) => v.valor)).toEqual(['b', 'c', 'a']);
+  });
+
+  it('entrada vazia não quebra', () => {
+    expect(cortarDemografia({}, 12).valores).toEqual([]);
+    expect(cortarDemografia(undefined as never, 12).valores).toEqual([]);
   });
 });

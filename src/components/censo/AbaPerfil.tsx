@@ -48,6 +48,8 @@ type Mapa = {
 type Perfil = {
   titulo: string; respondentes: number; graficos: Grafico[];
   demografia: Record<string, { valor: string; total: number }[]>;
+  /** O que o teto de cada corte escondeu. Ver censo.js /perfil. */
+  demografia_ocultos?: Record<string, { valores: number; pessoas: number }>;
   sexo_fonte?: FonteSexo;
   // ⚠️ Opcionais: o mock do teste e um backend mais antigo não os mandam.
   identificacao?: Identificacao[]; orfas?: Orfa[]; leitura_incompleta?: boolean;
@@ -243,6 +245,18 @@ export default function AbaPerfil({ pesquisaId }: { pesquisaId: string | null })
                         origem do número. NÃO recolocar achando que sumiu por
                         engano — `sexo_fonte` continua vindo do servidor e
                         rendê-lo de novo é uma linha, se um dia fizer falta. */}
+
+                    {/* ⚠️⚠️ O que o teto escondeu. Sem isto a soma das barras de
+                        bairro não fecha com o total de respondentes e nada
+                        explica — foi exatamente o que o Marcos notou em 16/09
+                        ("somando todos dá bem menos que 960"). Mesmo texto que
+                        os gráficos já usam para `valores_ocultos`. */}
+                    {(d.demografia_ocultos?.[k]?.valores || 0) > 0 && (
+                      <p className="text-[11px] text-muted-foreground mt-1.5 leading-relaxed">
+                        + {d.demografia_ocultos?.[k]?.valores} outros valores
+                        ({d.demografia_ocultos?.[k]?.pessoas} pessoas) fora das barras
+                      </p>
+                    )}
                   </div>
                 )
               ))}
