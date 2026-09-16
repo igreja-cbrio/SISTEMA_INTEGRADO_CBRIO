@@ -625,3 +625,58 @@ describe('janelaCorrecaoPassada · o dia que já tem chamada sai da janela', () 
     ).toEqual(['2026-08-13']);
   });
 });
+
+// ⚠️⚠️ Marcos · 28/08/2026: *"a temporada de grupos abriu 02/08, nenhum grupo
+// reuniu antes disso; coloque essa contagem para abrir junto com a temporada e
+// fechar junto com ela também."* O PISO já existia (`desdeISO`, 25/08); o TETO
+// não — medido no grupo da Mariana, a T2 acaba em 31/12/2026 e a agenda
+// oferecia 16/01, 13/02 e 13/03 de **2027**.
+describe('a agenda vive DENTRO da temporada · teto em `ateISO`', () => {
+  const AGORA = new Date('2026-08-28T12:00:00-03:00');
+  const base = { diaSemana: 6, horario: '10:00', recorrencia: 'mensal' as const, ancoraISO: '2026-08-01' };
+
+  it('futuro: não propõe encontro depois do fim da temporada', () => {
+    const com = proximasOcorrencias({ ...base, agora: AGORA, quantas: 8, ateISO: '2026-12-31' });
+    expect(com.map(o => o.data)).toEqual(['2026-08-29', '2026-09-26', '2026-10-24', '2026-11-21', '2026-12-19']);
+    expect(com.every(o => o.data <= '2026-12-31')).toBe(true);
+  });
+
+  // ⚠️ Sem teto o comportamento é o de ANTES — chamador que não sabe a temporada
+  // (ou temporada sem `data_fim`) não pode ficar sem agenda nenhuma.
+  it('sem `ateISO`, nada muda', () => {
+    expect(proximasOcorrencias({ ...base, agora: AGORA, quantas: 8 }).length).toBe(8);
+  });
+
+  // ⚠️⚠️ O corte olha a data ORIGINAL, não a remarcada: adiar o último encontro
+  // em dois dias não pode fazê-lo sumir da agenda.
+  it('encontro remarcado para depois do fim CONTINUA na lista', () => {
+    const r = proximasOcorrencias({
+      ...base, agora: AGORA, quantas: 8, ateISO: '2026-12-31',
+      excecoes: [{ data_original: '2026-12-19', status: 'remarcado', nova_data: '2027-01-03' }],
+    });
+    expect(r.map(o => o.data)).toContain('2027-01-03');
+  });
+
+  it('passado: temporada encerrada para de acumular pendência', () => {
+    // grupo da T1 (fim 31/07): sem teto, seguiria cobrando agosto inteiro
+    const semTeto = ocorrenciasPassadas({
+      diaSemana: 6, horario: '10:00', recorrencia: 'semanal',
+      agora: AGORA, quantas: 12, desdeISO: '2026-07-01',
+    });
+    const comTeto = ocorrenciasPassadas({
+      diaSemana: 6, horario: '10:00', recorrencia: 'semanal',
+      agora: AGORA, quantas: 12, desdeISO: '2026-07-01', ateISO: '2026-07-31',
+    });
+    expect(semTeto.some(o => o.data_original > '2026-07-31')).toBe(true);
+    expect(comTeto.every(o => o.data_original <= '2026-07-31')).toBe(true);
+    expect(comTeto.length).toBeGreaterThan(0);
+  });
+
+  it('o piso continua valendo junto com o teto', () => {
+    const r = ocorrenciasPassadas({
+      diaSemana: 6, horario: '10:00', recorrencia: 'semanal',
+      agora: AGORA, quantas: 20, desdeISO: '2026-08-01', ateISO: '2026-12-31',
+    });
+    expect(r.every(o => o.data_original >= '2026-08-01')).toBe(true);
+  });
+});
