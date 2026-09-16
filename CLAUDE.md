@@ -17976,6 +17976,98 @@ quiosque e cair na sessão logada. O one-shot `UNLOCK_KEY` do
 `/cadastro-membresia?from=totem` perdeu a função (continua sendo consumido pra
 não sobrar chave velha; quem o grava é a outra página).
 
+## ⚠️⚠️ Próximos passos · status "Contato impossível" (2026-09-16 · migration `20260916180000`)
+
+Pedido do Marcelo, duas opções novas no dropdown: *"contato impossível"* e
+*"não atendeu"*. **Medindo antes de construir, metade do pedido já existia.**
+
+### "Não atendeu" JÁ ESTAVA LÁ — e o rótulo é que confunde
+
+`nao_atendido` é a 3ª opção do dropdown desde sempre, com **12 registros**.
+⚠️ O rótulo **"Não atendido"** (passivo) lê-se como *"a pessoa não foi atendida
+por nós"*; o que ele significa no sistema é *"ela não pegou o telefone"* — tanto
+que o valor conta como **contato FEITO**. O Marcos decidiu **manter como está**
+(16/09) e avisar o Marcelo. ⏳ Se voltar a confundir, o conserto é só o rótulo:
+mesmo valor, zero migration.
+
+### "Contato impossível" · o caso já estava na base, marcado ERRADO
+
+A razão, nas palavras do Marcos: *"existem pessoas do online que nós temos apenas
+o id do youtube e o contato não é possível"*.
+
+⚠️⚠️ **MEDIDO em 16/09: 6 linhas de 14/09, área `online`, com o NOME sendo o
+handle do YouTube** (`@leandrobeanes3264`, `@mimirivelli`…), **telefone de dígito
+repetido** (falso) e todas em **`contactada`** — que conta como contato feito em
+todos os espelhos. **O indicador de contato estava contando 6 contatos que são
+impossíveis.** (Das 461 linhas vivas, só 2 não têm telefone utilizável, e as duas
+são `sede`: o caso do online se disfarça com telefone falso, não com campo vazio.)
+
+- ⚠️⚠️ **NÃO conta como contato feito** e **não carimba `primeiro_contato_em`**:
+  nenhuma mensagem saiu, porque não há para onde mandar.
+- ⚠️⚠️ **NÃO confundir com `numero_errado`**: lá existe um número e ele é de
+  outra pessoa. Aqui não existe número nenhum — existe um id de vídeo.
+- ⚠️ **Sai do DENOMINADOR do `atendido_pct`**, como o `numero_errado` já saía.
+  Os dois viraram o Set `INALCANCAVEL` em `routes/cuidados.js`: cobrar
+  atendimento de quem a equipe não tinha como alcançar é cobrar o que não está
+  na mão dela.
+- ⚠️ O `PATCH /cuidados/convertidos/:id` devolve **409 dizendo o motivo** quando
+  o banco recusa o status (23514 · migration não aplicada), nunca 500 genérico.
+
+### ⚠️ O vocabulário saiu da tela pra `src/lib/primeiroContato.ts`
+
+A lista vivia dentro de `Cuidados.tsx`, e o **`PainelVisitantes.tsx` — que mostra
+o MESMO campo — não alcançava**: imprimia o valor CRU (`nao_atendido` em vez de
+"Não atendido"). Duas telas sobre o mesmo dado, uma sabendo traduzir e a outra
+não. Agora as duas importam da lib (teste + mutante: pôr `contato_impossivel` no
+Set de contato feito deixa o portão vermelho).
+⚠️ Os espelhos do BACKEND continuam existindo (`routes/cuidados.js`,
+`routes/painel.js`, `routes/nextConvite.js`, `services/agentePrimeiroContato.js`)
+— a lib unifica o que é do NAVEGADOR, não o sistema inteiro.
+
+### ⚠️⚠️ A RÉGUA VIROU ÚNICA · e a divergência tinha uma CAUSA, não descuido
+
+Decisão do Marcos ao ler o achado: *"o contato impossível deve ser a mesma coisa
+de número errado, não altera o % de contato feito, pois essas pessoas não são
+possíveis de contatar, elas devem sair do número total, pois são pessoas que não
+erramos o processo, elas simplesmente não podem ser alcançadas."*
+
+Isso obrigou a alinhar os espelhos — e aí apareceu **por que** eles divergiam.
+`numero_errado` estava em 3 das 4 cópias do backend e fora da do front, e nenhum
+dos lados estava errado:
+
+| pergunta | quem usa | `numero_errado` |
+|---|---|---|
+| **A mensagem chegou na pessoa?** | indicador · jornada · percentual | **não** |
+| **Ainda preciso contatar essa pessoa?** | FILA do agente | **não** (não adianta insistir) |
+
+⚠️⚠️ **Um Set só não conseguia dizer as duas coisas.** Quem usava pra fila
+precisava de `numero_errado` DENTRO; quem usava pro indicador precisava dele
+FORA. Com um nome só, cada arquivo escolheu um lado — e o mesmo dado saía **98%
+no front e 100% no backend**.
+
+⇒ **`backend/utils/primeiroContatoRegua.js`** tem os dois conceitos com nomes que
+dizem qual pergunta respondem: `contatoFoiFeito` (indicador) e `precisaDeContato`
+(fila), mais `INALCANCAVEL` e `pctAlcancavel`. As 4 cópias
+(`routes/cuidados.js`, `routes/painel.js`, `routes/nextConvite.js`,
+`services/agentePrimeiroContato.js`) importam dela. O front espelha em
+`src/lib/primeiroContato.ts`.
+
+⚠️⚠️ **O percentual sai sobre o TOTAL ALCANÇÁVEL.** Antes o front somava
+`numero_errado` ao NUMERADOR e mantinha no denominador ("contato resolvido");
+agora sai dos dois. **Somar ao numerador E tirar do denominador daria acima de
+100%** — tem teste pra isso.
+
+⚠️⚠️ **TERCEIRO ESTADO no semáforo da jornada: `inalcancavel`.** Tirando
+`numero_errado` do ramo "feito" sem isto, ele cairia no `else` e a jornada
+passaria a cobrar contato de quem não tem como ser contatado — trocaria uma
+mentira por outra. Rótulo "Sem contato possível", cinza: não é conquista nem
+cobrança.
+
+⚠️ `next_pos_contato` (painel) é *"dos que RECEBERAM o 1º contato, quantos foram
+a um encontro"*: quem nunca foi alcançado sai do numerador **e** do denominador.
+O número muda — é correção, não efeito colateral.
+
+
 ## ⚠️ Próximos passos · status "Contactada" + coluna Culto (2026-09-01 · migration `20260901130000`)
 
 Dois pedidos do Marcelo (via Marcos) na aba Próximos passos do `/ministerial/cuidados`:

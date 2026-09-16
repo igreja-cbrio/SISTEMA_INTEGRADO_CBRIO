@@ -37,13 +37,13 @@ import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Cart
 import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
 import { opcoesAno, ehAno, anoDe } from '../../lib/janelaPeriodo';
+import {
+  PCONTATO_OPCOES, PCONTATO_LABEL, PCONTATO_COR, PCONTATO_FEITO, PCONTATO_INALCANCAVEL,
+} from '../../lib/primeiroContato';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ef476f' };
-// Cor por status do 1º contato (dashboard · Próximos passos)
-const PP_COR: Record<string, string> = {
-  atendido_respondido: '#10b981', contactada: '#3b82f6', nao_respondeu: '#f59e0b', nao_atendido: '#64748b',
-  numero_errado: '#94a3b8', pendente: '#ef476f',
-};
+// Cor por status do 1º contato (dashboard · Próximos passos) · régua em lib.
+const PP_COR = PCONTATO_COR;
 
 // Filtro de período do dashboard (bate com DASH_DIAS_VALIDOS no backend)
 const DASH_PERIODOS = [
@@ -530,31 +530,18 @@ const DIRECIONAMENTO_LABEL: Record<string, string> = {
 // respondido". A meta é 100% contatado → o que falta pra 100% é quem está SEM marcação
 // ("—"). Ordem: do estado inicial ao melhor desfecho.
 // ⚠️ 'contactada' exige a migration 20260901130000 (CHECK vivo recusa valor novo).
-const PCONTATO_OPCOES: { v: string; label: string; positivo?: boolean }[] = [
-  { v: 'contactada',          label: 'Contactada (aguardando resposta)' },
-  { v: 'nao_respondeu',       label: 'Não respondeu' },
-  { v: 'nao_atendido',        label: 'Não atendido' },
-  { v: 'numero_errado',       label: 'Número errado' },
-  { v: 'atendido_respondido', label: 'Atendido e respondido', positivo: true },
-];
+// ⚠️ A lista saiu daqui pra `src/lib/primeiroContato.ts` em 16/09: o
+// PainelVisitantes mostra o MESMO campo e não alcançava esta constante,
+// então imprimia o valor cru.
 // Labels de TODOS os status (inclui os legados da planilha antiga já importada) ·
 // usado só pra EXIBIR registros que vieram com esses valores (não são mais oferecidos).
-const PCONTATO_LABEL: Record<string, string> = {
-  contactada: 'Contactada (aguardando resposta)',
-  nao_respondeu: 'Não respondeu',
-  nao_atendido: 'Não atendido',
-  atendido_respondido: 'Atendido e respondido',
-  respondeu: 'Respondeu',
-  nao_compareceu: 'Não compareceu',
-  sem_retorno: 'Sem retorno do responsável',
-  numero_errado: 'Número errado',
-};
+
 // Status que indicam que o PRIMEIRO CONTATO foi feito (a pessoa recebeu a mensagem,
 // independente da resposta) → balão "Contato" verde. "sem_retorno" e "numero_errado"
 // (e vazio) NÃO contam como contato feito.
 // ⚠️ ESPELHOS deste Set no backend: routes/cuidados.js · routes/painel.js ·
 // routes/nextConvite.js · services/agentePrimeiroContato.js — mudou aqui, muda lá.
-const CONTATO_FEITO = new Set(['contactada', 'respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido']);
+const CONTATO_FEITO = PCONTATO_FEITO;
 
 // Semáforo da jornada (contato/batismo/Next) · espelha o JornadaConvertidos
 const JORNADA_ST: Record<string, { label: string; color: string }> = {
@@ -565,6 +552,9 @@ const JORNADA_ST: Record<string, { label: string; color: string }> = {
   no_prazo:       { label: 'No prazo',     color: '#94a3b8' },
   vencendo:       { label: 'Vencendo',     color: '#f59e0b' },
   atrasado:       { label: 'Atrasado',     color: '#ef4444' },
+  // ⚠️ Nem feito nem atrasado: a equipe não tinha como alcançar. Cinza de
+  // propósito — não é conquista nem cobrança.
+  inalcancavel:   { label: 'Sem contato possível', color: '#94a3b8' },
 };
 function JornadaPill({ label, m }: { label: string; m: any }) {
   const st = JORNADA_ST[m?.status] || JORNADA_ST.no_prazo;
@@ -2132,7 +2122,8 @@ export default function Cuidados() {
     const cur: any = convertidos.find((x: any) => x.id === id);
     const patch: any = { primeiro_contato_status: v };
     if (v === 'atendido_respondido') patch.atendido_apos_culto = true;
-    if (v === 'numero_errado') patch.atendido_apos_culto = false; // número errado nunca é "atendido"
+    // ⚠️ Inalcançável nunca é "atendido após o culto" — não houve atendimento.
+    if (v && PCONTATO_INALCANCAVEL.has(v)) patch.atendido_apos_culto = false;
     if (v && CONTATO_FEITO.has(v)) {
       if (!cur?.primeiro_contato_em) patch.primeiro_contato_em = new Date().toISOString();
     } else {
@@ -2261,12 +2252,17 @@ export default function Cuidados() {
     const corte = convertPeriodoCorte;
     const jById = new Map<string, any>((jornadaData?.itens || []).map((i: any) => [i.id, i]));
     const periodo = convertidos.filter((c: any) => !corte || (c.data_culto || '') >= corte);
-    const contataveis = periodo.filter((c: any) => c.primeiro_contato_status !== 'numero_errado');
-    const numErrado = periodo.length - contataveis.length;
-    const total = contataveis.length;        // denominador de atendido/batismo/next (exclui número errado)
-    const totalContato = periodo.length;      // denominador de "contato feito" (inclui número errado)
+    // ⚠️⚠️ DECISÃO DO MARCOS (16/09): quem não dava pra contatar SAI DO TOTAL, em
+    // vez de ser somado ao numerador como "resolvido". *"São pessoas que não
+    // erramos o processo, elas simplesmente não podem ser alcançadas."*
+    // Antes, `numero_errado` entrava nos dois lados da conta (numerador + total);
+    // agora sai dos dois, junto com `contato_impossivel`.
+    const contataveis = periodo.filter((c: any) => !PCONTATO_INALCANCAVEL.has(c.primeiro_contato_status));
+    const numErrado = periodo.length - contataveis.length;   // inalcançáveis (nº errado + contato impossível)
+    const total = contataveis.length;        // denominador de atendido/batismo/next
+    const totalContato = contataveis.length;  // denominador de "contato feito" — o MESMO
     const feitosOk = contataveis.filter((c: any) => CONTATO_FEITO.has(c.primeiro_contato_status) || c.primeiro_contato_em).length;
-    const feitos = feitosOk + numErrado;      // número errado conta como contato resolvido
+    const feitos = feitosOk;
     const pendentes = periodo.filter((c: any) => !c.primeiro_contato_status && !c.primeiro_contato_em).length; // só "—"
     const atendidos = periodo.filter((c: any) => c.primeiro_contato_status === 'atendido_respondido').length;
     const batismos = contataveis.filter((c: any) => jById.get(c.id)?.batismo?.feito).length;

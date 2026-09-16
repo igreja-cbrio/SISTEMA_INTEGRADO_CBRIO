@@ -22,8 +22,12 @@ router.use(authenticate);
 // "contactada" (Marcelo · 2026-09-01) = mensagem enviada, aguardando resposta — é o
 // estado real do dia seguinte ao culto; conta como contato feito.
 // ⚠️ ESPELHOS: painel.js · nextConvite.js · agentePrimeiroContato.js · Cuidados.tsx.
-const CONTATO_FEITO_STATUS = new Set(['contactada', 'respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
-const contatoFoiFeito = (c) => !!c.primeiro_contato_em || CONTATO_FEITO_STATUS.has(c.primeiro_contato_status);
+// ⚠️⚠️ A régua saiu daqui pra `utils/primeiroContatoRegua.js` em 16/09: as 4
+// cópias do backend DIVERGIAM sobre `numero_errado` (3 contavam como contato
+// feito, 1 não), porque um Set só respondia duas perguntas diferentes — ver o
+// cabeçalho de lá.
+const { contatoFoiFeito, ehInalcancavel, pctAlcancavel } = require('../utils/primeiroContatoRegua');
+
 
 // Mensagem automática de WhatsApp · pedido de aconselhamento pastoral
 // (config/edição em /whatsapp-auto/* · gerencia a chave 'cuidados_aconselhamento')
@@ -273,26 +277,34 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
     }));
 
     // ── Próximos passos · distribuição por status do 1º contato + relatório por responsável (janela toda) ──
-    const PP_STATUS_LABEL = { atendido_respondido: 'Atendido e respondido', contactada: 'Contactada (aguardando resposta)', nao_respondeu: 'Não respondeu', nao_atendido: 'Não atendido', numero_errado: 'Número errado', pendente: 'Pendente' };
-    const ppCount = { atendido_respondido: 0, contactada: 0, nao_respondeu: 0, nao_atendido: 0, numero_errado: 0, pendente: 0 };
+    // ⚠️ Espelho de `src/lib/primeiroContato.ts` — mudou lá, muda aqui.
+    const PP_STATUS_LABEL = { atendido_respondido: 'Atendido e respondido', contactada: 'Contactada (aguardando resposta)', nao_respondeu: 'Não respondeu', nao_atendido: 'Não atendido', numero_errado: 'Número errado', contato_impossivel: 'Contato impossível', pendente: 'Pendente' };
+    const ppCount = { atendido_respondido: 0, contactada: 0, nao_respondeu: 0, nao_atendido: 0, numero_errado: 0, contato_impossivel: 0, pendente: 0 };
     const respMap = new Map();
     for (const c of convertidos) {
       const k = (c.primeiro_contato_status && ppCount[c.primeiro_contato_status] !== undefined) ? c.primeiro_contato_status : 'pendente';
       ppCount[k]++;
       const r = (c.responsavel_atendimento || '').trim() || '— sem responsável';
-      const o = respMap.get(r) || { responsavel: r, total: 0, contato: 0, atendido: 0, numero_errado: 0 };
+      const o = respMap.get(r) || { responsavel: r, total: 0, contato: 0, atendido: 0, numero_errado: 0, inalcancavel: 0 };
       o.total++;
       if (contatoFoiFeito(c)) o.contato++;
       if (c.primeiro_contato_status === 'atendido_respondido') o.atendido++;
       if (c.primeiro_contato_status === 'numero_errado') o.numero_errado++;
+      // ⚠️⚠️ INALCANÇÁVEL sai do denominador do atendimento. `numero_errado`
+      // já saía; `contato_impossivel` (16/09) entra na mesma família — nos dois
+      // a equipe não tinha como alcançar a pessoa, e cobrar disso é cobrar o
+      // que não está na mão dela.
+      if (ehInalcancavel(c)) o.inalcancavel++;
       respMap.set(r, o);
     }
     const statusDist = Object.keys(PP_STATUS_LABEL).map(k => ({ status: k, label: PP_STATUS_LABEL[k], n: ppCount[k] }));
-    // contato_pct = feitos ÷ todos (número errado conta como feito); atendido_pct exclui número errado do denominador
+    // ⚠️⚠️ OS DOIS percentuais saem sobre o total ALCANÇÁVEL (decisão do Marcos,
+    // 16/09): quem não dava pra contatar sai do total, em vez de ser somado ao
+    // numerador como "resolvido". Somar E tirar do denominador daria acima de 100%.
     const porResponsavel = [...respMap.values()].map(o => ({
       ...o,
-      contato_pct: o.total ? Math.round(o.contato / o.total * 100) : 0,
-      atendido_pct: (o.total - o.numero_errado) > 0 ? Math.round(o.atendido / (o.total - o.numero_errado) * 100) : 0,
+      contato_pct: pctAlcancavel(o.contato, o.total, o.inalcancavel) ?? 0,
+      atendido_pct: pctAlcancavel(o.atendido, o.total, o.inalcancavel) ?? 0,
     })).sort((a, b) => b.total - a.total);
 
     // Cards de cobertura (toda a janela) · "com dados" = telefone preenchido (dá pra contatar)
@@ -1289,6 +1301,15 @@ router.patch('/convertidos/:id', authorizeModule('cuidados', 3), async (req, res
       .is('deleted_at', null)
       .select()
       .single();
+    // ⚠️⚠️ 23514 é o CHECK do banco recusando um status que ele ainda não
+    // conhece — acontece quando a tela já oferece a opção e a migration não
+    // subiu. 409 DIZENDO o motivo, nunca 500 genérico: quem clicou precisa
+    // saber que o problema não é o dado dele. (A lei do check-in, 15/09.)
+    if (error && error.code === '23514' && 'primeiro_contato_status' in patch) {
+      return res.status(409).json({
+        error: `O status "${patch.primeiro_contato_status}" ainda não está disponível — falta aplicar a migration do Próximos passos.`,
+      });
+    }
     if (error) throw error;
     res.json(data);
   } catch (e) {
@@ -2098,8 +2119,14 @@ router.get('/jornada-convertidos', authorizeModule('jornada-convertidos', 1), as
       if (c.primeiro_contato_em) {
         const d = Math.floor((new Date(c.primeiro_contato_em).getTime() - new Date(c.data_culto + 'T12:00:00').getTime()) / DIA);
         contato = { feito: true, status: d <= 3 ? 'feito_no_prazo' : 'feito_atrasado', dias: d };
-      } else if (CONTATO_FEITO_STATUS.has(c.primeiro_contato_status)) {
+      } else if (contatoFoiFeito(c)) {
         contato = { feito: true, status: 'feito', dias: ddesde };
+      } else if (ehInalcancavel(c)) {
+        // ⚠️⚠️ TERCEIRO estado, nem feito nem atrasado. Antes `numero_errado`
+        // entrava no ramo de cima e aparecia como FEITO; tirando-o de lá sem
+        // isto aqui, ele cairia no `else` e a jornada passaria a cobrar contato
+        // de quem não tem como ser contatado — trocar uma mentira por outra.
+        contato = { feito: false, status: 'inalcancavel', dias: ddesde };
       } else {
         contato = { feito: false, status: ddesde > 3 ? 'atrasado' : (ddesde >= 2 ? 'vencendo' : 'no_prazo'), dias: ddesde };
       }
