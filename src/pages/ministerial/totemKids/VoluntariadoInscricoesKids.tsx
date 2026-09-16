@@ -2,9 +2,10 @@
 // indicando o Kids (vol_inscricoes.area='kids'). A coordenação do Kids
 // (Mariane Gaia / Milena) vê, contata (WhatsApp) e encaminha ao ministério.
 // Integrar (com verificação de antecedentes · ECA/LGPD) é no módulo Voluntariado.
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef, type MouseEvent as ReactMouseEvent } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { hrefConversa } from '@/lib/conversas';
+import { cliqueAbreFicha } from './lib/cliqueFicha';
 import { totemKids as api } from '../../../api';
 import { Card } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
@@ -54,6 +55,29 @@ export default function VoluntariadoInscricoesKids() {
   const [copiado, setCopiado] = useState<string | null>(null);
   // Ficha da pessoa. Só abre quando a inscrição está vinculada a um cadastro (membro_id).
   const [ficha, setFicha] = useState<{ id: string; nome: string } | null>(null);
+  // ⚠️ ref, não estado, na dependência do handler: senão o useCallback se
+  //    recria a cada anotação aberta e o onClick de 272 cards junto.
+  const notaIdRef = useRef<string | null>(null);
+  useEffect(() => { notaIdRef.current = notaId; }, [notaId]);
+
+  /**
+   * Clique no CARD abre a ficha — mas o card tem botões dentro (WhatsApp,
+   * Anotação, Encaminhar, copiar e-mail).
+   * ⚠️ Sem a 1ª guarda, clicar em "Encaminhar ao ministério" também abriria a
+   * ficha por cima da ação. Sem a 2ª, selecionar o e-mail com o mouse para
+   * copiar abriria a ficha ao soltar o botão.
+   * O nome continua sendo um <button> de verdade: é por ele que teclado e
+   * leitor de tela chegam na ficha — o card é atalho de mouse, não a via única.
+   */
+  const abrirFicha = useCallback((e: ReactMouseEvent<HTMLElement>, i: Insc, nome: string) => {
+    const pode = cliqueAbreFicha({
+      alvo: e.target as Element | null,
+      temSelecao: !!window.getSelection()?.toString(),
+      temFicha: !!i.membro_id,
+      editandoNota: notaIdRef.current === i.id,
+    });
+    if (pode) setFicha({ id: i.membro_id as string, nome });
+  }, []);
 
   const carregar = useCallback(() => {
     setLoading(true);
@@ -148,7 +172,9 @@ export default function VoluntariadoInscricoesKids() {
             const saving = salvandoId === i.id;
             const integrado = i.status === 'integrado';
             return (
-              <Card key={i.id} className="p-3.5 space-y-2.5">
+              <Card key={i.id}
+                onClick={(e) => abrirFicha(e, i, nome)}
+                className={`p-3.5 space-y-2.5 transition ${i.membro_id && notaId !== i.id ? 'cursor-pointer hover:border-primary/50 hover:bg-muted/30' : ''}`}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="min-w-0">
                     {nome ? (
