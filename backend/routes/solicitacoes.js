@@ -876,7 +876,7 @@ router.get('/', async (req, res) => {
       const mkBase = () => {
         let b = supabase
           .from('solicitacoes')
-          .select('*, solicitacao_itens(*)')
+          .select('*, solicitacao_itens(id, descricao, quantidade, unidade, valor_estimado, link_referencia, imagem_url, ordem)')
           .is('deleted_at', null)
           .order('created_at', { ascending: false });
         if (categoria) b = b.eq('categoria', categoria);
@@ -932,7 +932,7 @@ router.get('/', async (req, res) => {
     } else {
       let q = supabase
         .from('solicitacoes')
-        .select('*, solicitacao_itens(*)')
+        .select('*, solicitacao_itens(id, descricao, quantidade, unidade, valor_estimado, link_referencia, imagem_url, ordem)')
         .is('deleted_at', null)
         .order('created_at', { ascending: false });
 
@@ -1015,6 +1015,13 @@ router.get('/', async (req, res) => {
         }
         q = q.or(orParts.join(','));
       }
+
+      // Paginação real (opt-in) · sem limit/offset o comportamento é o de
+      // sempre (cap implícito de 1000 do PostgREST). Com eles, o front pode
+      // pedir "carregar mais" em vez de trazer o período inteiro de uma vez.
+      const limitParam = Math.min(parseInt(req.query.limit, 10) || 0, 1000);
+      const offsetParam = Math.max(parseInt(req.query.offset, 10) || 0, 0);
+      if (limitParam > 0) q = q.range(offsetParam, offsetParam + limitParam - 1);
 
       const { data: rows, error } = await q;
       if (error) throw error;
