@@ -24,6 +24,8 @@ const { avaliarProntidao } = require('../utils/prontidaoCadastro');
 // helper local aqui; virou util compartilhada porque o /devocional/login fazia a
 // MESMA pergunta com o bug da 1ª página. Uma régua só, um lugar só.
 const { acharAuthUserPorEmail } = require('../utils/authUsers');
+// REM-03: o link de acesso passa pela régua única, que GERA e ENVIA.
+const { enviarLinkDeAcesso } = require('../utils/magicLink');
 const { canonizarBairro } = require('../services/bairroCanonico');
 
 const uploadMw = multer({
@@ -1263,17 +1265,40 @@ router.post('/cadastro', cadastroLimiter, contaPorEmailLimiter, async (req, res)
           // (mesmo desenho do publicDevocional.js): é ele que prova a posse do
           // endereço. Best-effort — o cadastro já está gravado e não se desfaz
           // porque o envio falhou; a pessoa entra depois pelo /devocional/login.
+          // ⚠⚠ REM-03 (17/09/2026) — DOIS defeitos aqui, e o segundo é pior.
+          //
+          // 1) O link era GERADO E DESCARTADO: `generateLink` devolve o link em
+          //    `data.properties.action_link` e NÃO manda e-mail. Combinado com
+          //    o PUB-01 logo acima (`createUser` **sem senha** e com
+          //    `email_confirm: false`), a conta nascia sem NENHUM caminho de
+          //    entrada: sem senha, sem confirmação e sem o link que a tela
+          //    prometia. Todo cadastro desta porta desde 09/09 caiu nisso.
+          //
+          // 2) O destino era `/devocional/hoje`, que NÃO EXISTE MAIS — as telas
+          //    web do devocional saíram quando ele migrou pro app. Mesmo se o
+          //    e-mail tivesse saído, o link pousava na página de “migrou pro
+          //    app”. Agora pousa em `/redefinir-senha`: a pessoa chega logada
+          //    pelo link, define a senha e passa a conseguir entrar no APP —
+          //    que é exatamente o que o comentário do PUB-01 já mandava fazer
+          //    (“quem quiser senha define depois, autenticado, pelo
+          //    /redefinir-senha”).
+          //
+          // ⚠️ Best-effort de propósito, ao contrário das portas do voluntário:
+          // o cadastro e o consentimento LGPD JÁ ESTÃO GRAVADOS, e derrubá-los
+          // porque o e-mail falhou é o contrário da política deste arquivo. A
+          // equipe cria o acesso depois, pela fila.
           if (authUserNovo) {
-            try {
-              const { error: linkErr } = await supabase.auth.admin.generateLink({
-                type: 'magiclink',
-                email: emailLimpo,
-                options: { redirectTo: `${getFrontendUrl()}/devocional/hoje` },
-              });
-              if (linkErr) console.error('[PUBLIC CADASTRO] magic link:', linkErr.message);
-            } catch (linkEx) {
-              console.error('[PUBLIC CADASTRO] magic link:', linkEx.message);
-            }
+            const envioLink = await enviarLinkDeAcesso({
+              email: emailLimpo,
+              redirectTo: `${getFrontendUrl()}/redefinir-senha`,
+              nome: nome.trim(),
+              assunto: 'Seu acesso · Comunidade Batista do Rio',
+              chamada: 'Recebemos seu cadastro. Para criar sua senha e usar o aplicativo da igreja, toque no botão abaixo — ele já abre você logado.',
+              textoBotao: 'Criar minha senha',
+              rodape: 'O link é pessoal e vale por pouco tempo. Se não foi você que se cadastrou, pode ignorar este e-mail.',
+              tag: 'PUBLIC CADASTRO',
+            });
+            if (!envioLink.ok) console.error('[PUBLIC CADASTRO] link de acesso nao saiu:', envioLink.motivo);
           }
           // varredura 2026-09: PUB-01 — sempre `false`: sem `membro_id`, e sem
           // senha, ninguém "entra na hora" a partir desta porta. A tela cai no
