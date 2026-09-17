@@ -4,6 +4,8 @@ import {
   caminhoSeguro,
   caminhosDosCampos,
   aplicarAssinaturas,
+  caminhoDeUrlPublica,
+  separarCaminhosPorBucket,
 } from '../../backend/utils/storagePath.js';
 
 const BASE = 'https://hhntwfawfnxvuobhdfkb.supabase.co/storage/v1/object/public';
@@ -135,5 +137,95 @@ describe('aplicarAssinaturas', () => {
   it('tolera objeto nulo e campo ausente', () => {
     expect(aplicarAssinaturas(null, ['x'], 'solicitacoes', mapa)).toBeNull();
     expect(aplicarAssinaturas({ a: 1 }, ['imagens_url'], 'solicitacoes', mapa)).toEqual({ a: 1 });
+  });
+});
+
+// ============================================================================
+// Bucket LEGADO convivendo com o atual na MESMA coluna (2026-09-17)
+//
+// ⚠️⚠️ O `rh_documentos.storage_path` guarda TRÊS formatos ao mesmo tempo: URL
+// pública do `rh-fotos` (legado, de quando o bucket era público), caminho
+// relativo do `documentos-rh` (o que o código grava hoje) e link do SharePoint.
+// Assinar o caminho relativo no bucket ERRADO devolve uma URL assinada
+// perfeitamente válida apontando para um objeto que não existe — link morto,
+// sem erro e sem log. É esta a falha que estes casos existem para impedir.
+// ============================================================================
+describe('separarCaminhosPorBucket · legado × atual', () => {
+  const ATUAL = 'documentos-rh';
+  const LEGADO = 'rh-fotos';
+  // O objeto REAL que estava no bucket público (medido em 2026-09-17).
+  const URL_LEGADA =
+    `${BASE}/rh-fotos/documentos/4df5e38b-9991-4cdd-9119-47b0e4a93de4/1787073838182_RG.pdf`;
+  const CAMINHO_LEGADO = 'documentos/4df5e38b-9991-4cdd-9119-47b0e4a93de4/1787073838182_RG.pdf';
+
+  it('URL pública do bucket legado vai para o LEGADO', () => {
+    const r = separarCaminhosPorBucket([URL_LEGADA], ATUAL, LEGADO);
+    expect(r.legado).toEqual([CAMINHO_LEGADO]);
+    expect(r.atual).toEqual([]);
+  });
+
+  it('⚠️⚠️ caminho CRU vai para o ATUAL, nunca para o legado', () => {
+    // Só o código novo grava caminho relativo, então ele é do bucket novo por
+    // construção. Mandá-lo para o legado é o link morto silencioso.
+    const r = separarCaminhosPorBucket(['documentos/abc/rg.pdf'], ATUAL, LEGADO);
+    expect(r.atual).toEqual(['documentos/abc/rg.pdf']);
+    expect(r.legado).toEqual([]);
+  });
+
+  it('URL pública do bucket ATUAL vai para o atual', () => {
+    const r = separarCaminhosPorBucket([`${BASE}/documentos-rh/a/b.pdf`], ATUAL, LEGADO);
+    expect(r.atual).toEqual(['a/b.pdf']);
+    expect(r.legado).toEqual([]);
+  });
+
+  it('⚠️ link do SharePoint e URL de terceiro não entram em lista nenhuma', () => {
+    const r = separarCaminhosPorBucket(
+      ['https://cbrio.sharepoint.com/x/RG.pdf', 'https://exemplo.com/a.pdf', null, ''],
+      ATUAL, LEGADO,
+    );
+    expect(r.atual).toEqual([]);
+    expect(r.legado).toEqual([]);
+  });
+
+  it('os três formatos convivendo: cada um no seu balde', () => {
+    const r = separarCaminhosPorBucket(
+      [URL_LEGADA, 'documentos/novo/cpf.pdf', 'https://cbrio.sharepoint.com/x.pdf'],
+      ATUAL, LEGADO,
+    );
+    expect(r.legado).toEqual([CAMINHO_LEGADO]);
+    expect(r.atual).toEqual(['documentos/novo/cpf.pdf']);
+  });
+
+  it('deduplica dentro de cada bucket', () => {
+    const r = separarCaminhosPorBucket([URL_LEGADA, URL_LEGADA, 'a/b.pdf', 'a/b.pdf'], ATUAL, LEGADO);
+    expect(r.legado).toHaveLength(1);
+    expect(r.atual).toHaveLength(1);
+  });
+
+  it('⚠️ sem bucket legado declarado, nada cai no legado', () => {
+    const r = separarCaminhosPorBucket([URL_LEGADA], ATUAL, null);
+    expect(r.legado).toEqual([]);
+  });
+
+  it('⚠️ travessia não vira caminho em bucket nenhum', () => {
+    const r = separarCaminhosPorBucket(
+      [`${BASE}/rh-fotos/../secreto.pdf`, '../fora.pdf'], ATUAL, LEGADO,
+    );
+    expect(r.atual).toEqual([]);
+    expect(r.legado).toEqual([]);
+  });
+});
+
+describe('caminhoDeUrlPublica · exige a marca do Storage', () => {
+  it('caminho cru devolve null (é o que separa legado de atual)', () => {
+    expect(caminhoDeUrlPublica('a/b.pdf', 'rh-fotos')).toBeNull();
+  });
+
+  it('URL pública daquele bucket devolve o caminho', () => {
+    expect(caminhoDeUrlPublica(`${BASE}/rh-fotos/a/b.pdf`, 'rh-fotos')).toBe('a/b.pdf');
+  });
+
+  it('URL pública de OUTRO bucket devolve null', () => {
+    expect(caminhoDeUrlPublica(`${BASE}/avatars/a/b.pdf`, 'rh-fotos')).toBeNull();
   });
 });
