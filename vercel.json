@@ -204,6 +204,7 @@
     { "source": "/censo/p/(.*)", "destination": "/censo.html" },
     { "source": "/privacidade", "destination": "/privacidade.html" },
     { "source": "/aplicativo", "destination": "/aplicativo.html" },
+    { "source": "/natal", "destination": "/natal.html" },
     { "source": "/((?!api/|r/|assets/|_vercel/).*)", "destination": "/index.html" }
   ],
   "headers": [

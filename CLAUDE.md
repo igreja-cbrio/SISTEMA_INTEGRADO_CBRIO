@@ -5783,7 +5783,8 @@ Janeiro`). Isso é, ao mesmo tempo, "não explica propósito" e "o nome não bat
   console exige renomear aqui**, senão o motivo 2 volta. O acoplamento está
   escrito no comentário do topo do arquivo.
 - Rotas públicas servidas por rewrite estático hoje: `/privacidade`,
-  `/aplicativo`. As por rota React: `/suporte`, `/politica-reembolso`.
+  `/aplicativo`, `/natal` (temporária, ver seção do Natal 2026). As por rota
+  React: `/suporte`, `/politica-reembolso`.
 - ⚠️ **Lição de método (erro meu, registrado):** procurei `"/privacidade"` no
   bundle de produção, não achei e concluí que a página não existia — ela existe,
   como arquivo estático. **Ausência de rota no bundle não prova ausência de
@@ -5794,6 +5795,32 @@ Janeiro`). Isso é, ao mesmo tempo, "não explica propósito" e "o nome não bat
   estão verificados no **Search Console por outra conta Google** ("Play Console
   org"). Se uma verificação futura falhar por propriedade de domínio, é isso — e
   o conserto é adicionar a conta do console como proprietária, não é código.
+
+## 🎄 `/natal` · cronograma público e TEMPORÁRIO do Natal 2026 (2026-09-17)
+
+`cbrio.org/natal` é o cronograma do Natal 2026 (CBLab), aberto **sem login** para
+ser mandado a voluntários, músicos e parceiros que não têm conta no sistema.
+Mesmo padrão de `/privacidade` e `/aplicativo`: **`public/natal.html`** + rewrite
+`"/natal" → "/natal.html"` no `vercel.json`, **antes** do catch-all do SPA.
+
+- ⚠️⚠️ **REMOVER DEPOIS DE 25/12/2026.** É página de evento, não de produto. A
+  limpeza são dois passos: apagar `public/natal.html` e tirar a linha do rewrite.
+  O prazo também está no comentário do topo do arquivo.
+- **Não carrega nenhum dado sensível e não fala com o backend.** Os 25 marcos do
+  cronograma estão embutidos como JSON literal dentro do próprio HTML — zero
+  `fetch`, zero `/api/`, zero Supabase. Por isso ela pode ser aberta: não há o
+  que vazar. **Se alguém pedir "puxa a agenda do banco", isso deixa de valer** e
+  a página passa a precisar de porta pública de verdade (padrão `/r/`).
+- O que cada visitante marcar (entregue, em andamento, marco novo) fica no
+  **`localStorage` do aparelho dele** — não é compartilhado e não sobe pra lugar
+  nenhum. A versão oficial é a que está commitada aqui; mudar o plano de todo
+  mundo = editar `public/natal.html` e deployar.
+- `<meta name="robots" content="noindex, nofollow">`: aberta por link, mas fora
+  do Google — `public/robots.txt` é `Allow: /`, então o controle é na página.
+- Origem: o arquivo nasceu como HTML solto gerado fora do repo. A tentativa de
+  publicar como artifact do Claude falhou porque **artifact com estado
+  compartilhado (`db`) não pode ser tornado público** e o workspace da CBRio tem
+  compartilhamento público de artifact desligado — daí ter vindo pro sistema.
 
 ## ⚠️ Google Tag Manager · SÓ no domínio público, nunca no ERP (2026-07-29)
 
