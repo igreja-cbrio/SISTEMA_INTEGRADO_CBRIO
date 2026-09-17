@@ -2071,12 +2071,14 @@ function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], 
     if (file.size > 5 * 1024 * 1024) { setUploadError('A imagem deve ter no máximo 5MB'); return; }
     setUploading(true);
     try {
-      const ext = file.name.split('.').pop();
-      const filePath = `colaboradores/${crypto.randomUUID()}.${ext}`;
-      const { error } = await supabase.storage.from('rh-fotos').upload(filePath, file, { upsert: true });
-      if (error) throw error;
-      const { data: { publicUrl } } = supabase.storage.from('rh-fotos').getPublicUrl(filePath);
-      upd('foto_url', publicUrl);
+      // ⚠️⚠️ Sobe pelo BACKEND, nunca direto do browser. O upload direto exigia
+      // policies de INSERT/UPDATE/DELETE abertas para QUALQUER conta
+      // `authenticated` no bucket — e o auth é compartilhado com o app dos
+      // membros, então qualquer pessoa com login no app podia sobrescrever ou
+      // apagar arquivo de RH sabendo o caminho. Essas policies foram revogadas.
+      const r = await rh.uploadFotoNova(file);
+      if (!r?.foto_url) throw new Error('resposta sem foto_url');
+      upd('foto_url', r.foto_url);
     } catch (err) {
       console.error('Erro upload:', err);
       setUploadError('Erro ao enviar foto. Tente novamente.');

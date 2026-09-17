@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const multer = require('multer');
+const crypto = require('crypto'); // rota POST /foto (admissão sobe a foto antes de existir o id)
 const { authenticate, authorizeModule, applyAccessFilter, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED, sanitizePath } = require('../services/storageService');
@@ -9,7 +10,7 @@ const { chamarModelo: organogramaIA } = require('../services/organogramaIA');
 const { aplicarCobertura, encerrarCobertura } = require('../services/cobertura');
 const rhOnboardingEnvios = require('../services/rhOnboardingEnvios');
 const { escapePostgrestValue } = require('../utils/sanitize'); // varredura 2026-09: RHP-11 — `_` e `%` sao curinga no ilike do PostgREST
-const { caminhoNoBucket, aplicarAssinaturas } = require('../utils/storagePath'); // varredura 2026-09: RHP-01 documento de RG servido por URL pública — precisa derivar o caminho e assinar na leitura
+const { BUCKET_DOCS_RH, assinarDocumentosRh } = require('../services/anexosRhDocumentos'); // varredura 2026-09: RHP-01 · régua ÚNICA, compartilhada com o app do Staff
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -1266,6 +1267,33 @@ router.post('/onboarding/disparar', authorizeModule('rh', 5), async (req, res) =
   }
 });
 
+const BUCKET_FOTOS_PESSOAS = 'avatars';
+
+// POST /api/rh/foto — upload de foto ANTES de o colaborador existir.
+// ⚠️ Existe porque o modal de admissão sobe a foto e só depois salva o cadastro:
+// sem esta rota, o front não tem `:id` para chamar e volta a subir direto do
+// browser com a anon key — que é exatamente o que as policies abertas do
+// `rh-fotos` permitiam e este PR está fechando.
+router.post('/foto', authorizeModule('rh', 3), uploadMw.single('foto'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Arquivo "foto" obrigatorio' });
+    if (!req.file.mimetype?.startsWith('image/')) {
+      return res.status(400).json({ error: 'Arquivo precisa ser uma imagem' });
+    }
+    const ext = (req.file.originalname?.split('.').pop() || 'jpg').toLowerCase().slice(0, 5);
+    const path = `colaboradores/${crypto.randomUUID()}.${ext}`;
+    const { error: upErr } = await supabase.storage
+      .from(BUCKET_FOTOS_PESSOAS)
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (upErr) return res.status(500).json({ error: 'Falha ao salvar imagem: ' + upErr.message });
+    const { data: urlData } = supabase.storage.from(BUCKET_FOTOS_PESSOAS).getPublicUrl(path);
+    res.json({ foto_url: urlData.publicUrl });
+  } catch (e) {
+    console.error('[RH] Upload foto (sem id):', e.message);
+    res.status(500).json({ error: 'Erro ao enviar foto' });
+  }
+});
+
 // POST /api/rh/funcionarios/:id/foto — upload foto de perfil (multipart 'foto')
 router.post('/funcionarios/:id/foto', uploadMw.single('foto'), async (req, res) => {
   try {
@@ -1277,12 +1305,18 @@ router.post('/funcionarios/:id/foto', uploadMw.single('foto'), async (req, res) 
     const ext = (req.file.originalname?.split('.').pop() || 'jpg').toLowerCase().slice(0, 5);
     const path = `funcionarios/${req.params.id}/avatar-${Date.now()}.${ext}`;
 
+    // ⚠️⚠️ A FOTO vai para `avatars` (público), não para `documentos-rh`.
+    // Decisão declarada: foto de perfil de PESSOA já é pública por convenção da
+    // casa (`fotos-membros` tem 652, `avatars` 38, e `rh_funcionarios.foto_url`
+    // já cai no `mem_membros.foto_url` quando está vazia). O que precisa de
+    // cofre é DOCUMENTO (RG, contrato, comprovante bancário), não retrato.
+    // Isso é o que permite FECHAR o `rh-fotos` sem quebrar avatar nenhum.
     const { error: upErr } = await supabase.storage
-      .from('rh-fotos')
+      .from(BUCKET_FOTOS_PESSOAS)
       .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
     if (upErr) return res.status(500).json({ error: 'Falha ao salvar imagem: ' + upErr.message });
 
-    const { data: urlData } = supabase.storage.from('rh-fotos').getPublicUrl(path);
+    const { data: urlData } = supabase.storage.from(BUCKET_FOTOS_PESSOAS).getPublicUrl(path);
     const foto_url = urlData.publicUrl;
 
     const { error: updErr } = await supabase
@@ -1307,30 +1341,9 @@ router.post('/funcionarios/:id/foto', uploadMw.single('foto'), async (req, res) 
 // LEITURA — mesmo padrão de `services/anexosLogArquivos`. `caminhoNoBucket` é
 // idempotente e fail-closed, então o histórico misto (URL antiga do `rh-fotos`,
 // link do SharePoint) passa INTACTO e nada quebra.
-const BUCKET_DOCS_RH = 'documentos-rh';
-const DOCS_RH_TTL_SEG = 60 * 60; // 1h: a pessoa abre a ficha e clica em seguida
-async function assinarDocumentosRh(linhas) {
-  if (!Array.isArray(linhas) || !linhas.length) return linhas;
-  const caminhos = [...new Set(
-    linhas.map((l) => caminhoNoBucket(l?.storage_path, BUCKET_DOCS_RH)).filter(Boolean)
-  )];
-  if (!caminhos.length) return linhas;
-  const { data, error } = await supabase.storage
-    .from(BUCKET_DOCS_RH).createSignedUrls(caminhos, DOCS_RH_TTL_SEG);
-  // ⚠️ Falhou a assinatura: devolve o valor original (mostra que o anexo
-  // existe) em vez de sumir com o documento da ficha.
-  if (error) {
-    console.warn('[RH] createSignedUrls documentos-rh falhou:', error.message);
-    return linhas;
-  }
-  const mapa = {};
-  for (const item of (data || [])) {
-    const url = item?.signedUrl || item?.signedURL; // o SDK já usou as duas grafias
-    if (item?.path && url && !item.error) mapa[item.path] = url;
-  }
-  if (!Object.keys(mapa).length) return linhas;
-  return linhas.map((l) => aplicarAssinaturas(l, ['storage_path'], BUCKET_DOCS_RH, mapa));
-}
+// ⚠️ A régua de assinatura foi EXTRAÍDA para services/anexosRhDocumentos: o app
+// do Staff escreve e lê os MESMOS documentos por caminho próprio, e duas cópias
+// divergiriam (o documento abriria aqui e daria link morto lá).
 // POST /api/rh/funcionarios/:id/documentos — aceita JSON ou multipart com arquivo
 router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (req, res) => {
   try {
