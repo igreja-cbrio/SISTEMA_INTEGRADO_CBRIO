@@ -20460,9 +20460,18 @@ cf-cache-status: HIT · cache-control: public, max-age=3600
 <mesma URL com ?cb=aleatório>  ->  HTTP 400 {"code":"NoSuchBucket"}
 ```
 
-⇒ **O origin fechou na hora; o EDGE do Cloudflare continua servindo a URL exata
-por até 1 hora.** Só URL já cacheada sobrevive — qualquer outra do bucket responde
-400 imediatamente.
+⇒ **O origin fechou na hora; o EDGE do Cloudflare continua servindo a URL exata.**
+Só URL já cacheada sobrevive — qualquer outra do bucket responde 400 imediatamente.
+
+⚠️⚠️ **E o `max-age` declarado NÃO é o prazo.** Medido na mesma sessão: o objeto
+seguia `cf-cache-status: HIT` **~50 min depois do fechamento e ~85 min depois do
+primeiro acesso**, com `max-age=3600` — ou seja o Edge TTL do Cloudflare do
+Supabase é **maior que o `cache-control` que ele devolve**, e o header `age` não
+vem, então **não dá para saber quanto falta**. Tratar "1 hora" como prazo é
+promessa que a medição não sustenta: o correto é dizer *"até o edge expirar, e
+não sabemos quando"*.
+⚠️ Bater na URL repetidamente **não acelera nada** e só arrisca renovar a
+entrada — monitorar com intervalo largo.
 
 **A régua que fica:** ao fechar bucket público, `public = false` é o **começo** da
 janela, não o fim. Até o TTL expirar, todo link que já circulou **continua
@@ -20470,8 +20479,14 @@ funcionando**. Corolários:
 - **Conferir o efeito com cache-buster** (`?cb=`), nunca só a URL nua — a URL nua
   mede o cache, não o origin.
 - Se o conteúdo for sensível **e o link tiver circulado**, fechar o bucket **não
-  é contenção suficiente**: o caminho é **trocar o objeto de lugar** (a URL antiga
-  vira 404 no origin e o cache morre com ela), não só fechar.
+  é contenção suficiente**. ⚠️ E **mover o objeto também não resolve o já
+  cacheado** — a entrada no edge é chaveada pela URL, não pelo objeto: mover faz
+  a URL virar 404 **no origin**, e o edge segue servindo o que guardou. Contenção
+  IMEDIATA de link já cacheado exige **purge no CDN**, que no Supabase é do lado
+  deles (suporte), não nosso. O que mover resolve é o **depois**.
+- ⇒ **A ordem certa é a inversa**: para conteúdo sensível, **nunca deixar entrar
+  em bucket público**. Depois que entrou e o link circulou, não existe desfazer
+  completo — só encurtar a exposição.
 - Vale para a régua já registrada de que **a cópia local é irrevogável**: o edge
   é mais uma cópia que o `UPDATE` não alcança.
 
