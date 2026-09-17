@@ -1392,7 +1392,12 @@ function ListaSolicitacoes({ items, onOpen, profileId, emptyMsg, comTracker = fa
                 textual sai da linha de badges — o stepper + "está com quem" já contam
                 a história (menos ruído). Urgência "Normal" não vira badge (é o padrão). */}
             <div className="flex items-start justify-between gap-3">
-              <p className="text-[15px] font-semibold leading-snug text-foreground min-w-0 flex-1 line-clamp-2">{item.titulo}</p>
+              <p className="text-[15px] font-semibold leading-snug text-foreground min-w-0 flex-1 line-clamp-2">
+                {item.numero_sequencial != null && (
+                  <span className="text-muted-foreground font-normal">#{item.numero_sequencial} · </span>
+                )}
+                {item.titulo}
+              </p>
               <span className="text-xs text-muted-foreground shrink-0 mt-0.5">{date}</span>
             </div>
             <div className="flex flex-wrap items-center gap-1.5 mt-2">
@@ -3279,6 +3284,9 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
         <HeaderW>
           <TitleW className="flex items-center gap-2">
             <Badge className={cat.color}>{cat.label}</Badge>
+            {item.numero_sequencial != null && (
+              <span className="text-muted-foreground font-normal">#{item.numero_sequencial}</span>
+            )}
             {item.titulo}
           </TitleW>
         </HeaderW>
