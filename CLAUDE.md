@@ -20392,3 +20392,122 @@ já tem nascimento, **o valor digitado é descartado**. O dado existente vence.
 nascimento** — e o modal vai pedir de novo, porque o perfil não está ligado. É
 honesto (não dá pra afirmar que é a mesma pessoa), e o só-onde-vazio protege o
 valor bom no momento em que o vínculo acontecer.
+
+## ⚠️⚠️ RH · o documento pessoal saiu do bucket PÚBLICO, e o bucket FECHOU (2026-09-17 · migrations `rh_fotos_revogar_escrita_authenticated` + `rh_fotos_bucket_privado`)
+
+Autorizado pelo Matheus (*"pode fechar o bucket e revogar as policies"*), ao
+desenhar onde a **Ficha Cadastral da Contratada (Anexo II)** ficaria no RH.
+
+### O que estava aberto, medido antes de tocar
+
+| | |
+|---|---|
+| objetos no `rh-fotos` | **1** — um RG em PDF, 288.582 bytes, de 18/08 |
+| funcionários com foto | **0** (`foto_url` nulo em todas as linhas vivas) |
+| policies do bucket | **3**, `INSERT/UPDATE/DELETE` para **`authenticated`**, sem escopo de pasta |
+
+⚠️⚠️ **O RG de um colaborador real baixava com `curl`, sem nenhum header de
+autenticação** — HTTP 200, 288 KB. A URL pública estava gravada em
+`rh_documentos.storage_path`.
+
+⚠️⚠️ **E a escrita era pior que a leitura**: o auth do Supabase é **compartilhado
+com o app dos membros**, então qualquer pessoa que baixasse o app e criasse conta
+podia **sobrescrever ou apagar documento de RH** sabendo o caminho do objeto. É a
+mesma família da lei nº 11 (`GRANT` amplo em `profiles`): permissão de escrita
+concedida a um papel que qualquer pessoa alcança.
+
+⚠️ **A varredura RHP-01 (09/2026) já tinha corrigido o módulo RH do sistema — o
+app do Staff ficou de fora por ter caminho próprio de upload.** Régua: ao fechar
+um bucket, procurar **todos** os escritores, não só o do módulo que deu origem.
+
+### ⚠️⚠️ A ORDEM é load-bearing, e cada passo espera o DEPLOY do anterior
+
+1. **código para de ESCREVER** no bucket (PR #2967) → deploy confirmado **pelo SHA da main**
+2. **as 3 policies revogadas** — revogar antes do passo 1 quebraria o upload de foto do RH
+3. **backend aprende a ASSINAR o bucket legado** (PR #2968) → deploy confirmado
+4. **bucket privado** — fechar antes do passo 3 transformaria o RG em **link morto**
+
+### ⚠️ O arquivo NÃO foi movido, e é decisão
+
+Mover exigiria a `service_role` fora do servidor (não há `.env` com ela nesta
+máquina; o `.env` da raiz só tem `MAGIC_API_KEY`). E `backend/utils/storagePath.js`
+foi escrito em 16/08 **exatamente para o caso oposto** — o cabeçalho dele diz
+*"derivar o caminho na LEITURA e assinar na hora (...) assim o bucket fecha sem
+migração de dados"*. Então `anexosRhDocumentos` passou a assinar **nos dois
+buckets**, e `BUCKET_DOCS_RH_LEGADO` **fica enquanto houver linha apontando para
+a URL pública antiga** — removê-la transforma esses documentos em link morto.
+
+⚠️⚠️ **`caminhoNoBucket` aceita caminho CRU para qualquer bucket** (é o que a
+torna idempotente), então usá-la para decidir *"isto é do bucket antigo?"* manda
+todo caminho relativo — que é do bucket **NOVO** por construção, porque só o
+código novo grava assim — para o bucket velho. O resultado é uma **URL assinada
+perfeitamente válida apontando para objeto que não existe**: link morto, sem erro
+e sem log. Por isso existe `caminhoDeUrlPublica`, que **exige a marca do
+Storage** — a URL pública é a única evidência que carrega o nome do bucket dentro
+do valor.
+
+⚠️ E a decisão mora em **`separarCaminhosPorBucket`, no módulo PURO do gate**,
+não no serviço que lê o banco: é a lição de 01/09 — *guarda que decide algo e
+vive em código impuro é guarda que nenhum teste alcança*.
+
+### ⚠️⚠️ LEI NOVA · fechar bucket público NÃO expulsa o que já está no CDN
+
+O `success: true` da migration e o catálogo (`public = false`) diziam fechado, e
+**o mesmo `curl` continuou baixando o RG**. A medição dos headers explicou:
+
+```
+cf-cache-status: HIT · cache-control: public, max-age=3600
+<mesma URL com ?cb=aleatório>  ->  HTTP 400 {"code":"NoSuchBucket"}
+```
+
+⇒ **O origin fechou na hora; o EDGE do Cloudflare continua servindo a URL exata
+por até 1 hora.** Só URL já cacheada sobrevive — qualquer outra do bucket responde
+400 imediatamente.
+
+**A régua que fica:** ao fechar bucket público, `public = false` é o **começo** da
+janela, não o fim. Até o TTL expirar, todo link que já circulou **continua
+funcionando**. Corolários:
+- **Conferir o efeito com cache-buster** (`?cb=`), nunca só a URL nua — a URL nua
+  mede o cache, não o origin.
+- Se o conteúdo for sensível **e o link tiver circulado**, fechar o bucket **não
+  é contenção suficiente**: o caminho é **trocar o objeto de lugar** (a URL antiga
+  vira 404 no origin e o cache morre com ela), não só fechar.
+- Vale para a régua já registrada de que **a cópia local é irrevogável**: o edge
+  é mais uma cópia que o `UPDATE` não alcança.
+
+### ⚠️ Onde a foto de colaborador passou a morar
+
+Bucket **`avatars`** (convenção da casa: `fotos-membros` tem 652 objetos,
+`avatars` 38, e `rh_funcionarios.foto_url` **já cai** em `mem_membros.foto_url`).
+É isso que permitiu fechar o `rh-fotos` **inteiro** sem quebrar avatar nenhum —
+com 0 funcionários com foto, nunca ia ser tão barato.
+
+⚠️ **`POST /api/rh/foto` não tem `:id`** de propósito: o modal de admissão envia
+a foto **antes** de o funcionário existir, então não há id para pendurar. Era por
+isso que o `RH.jsx` subia do browser.
+
+### Verificação
+
+`typecheck` sem cache · `build` · `vitest` (**4.391**) · **os 29 scripts** do
+gate · `lint:hooks` · os 3 módulos **carregados de verdade** (`node --check` não
+pega `ReferenceError` de import faltando) · `grep` por `rh-fotos` em `src/` e
+`backend/` sobrando **só comentários**.
+
+**4 mutantes RODADOS, 3 mortos**: legado aceitando caminho cru → **8 vermelhos** ·
+sem dedup → 2 · legado ignorando o bucket declarado → 2.
+⚠️ O 4º (**inverter a ordem dos baldes**) **SOBREVIVEU e está DECLARADO no
+código**: é equivalente **por construção** — nenhum valor casa nos dois baldes,
+porque `caminhoNoBucket` recusa URL pública de outro bucket. O `continue` fica
+como defesa para o dia em que isso mudar. Não afirmar cobertura que não existe.
+
+⚠️ **CORREÇÃO DE REGISTRO**: este arquivo diz, em pontos diferentes, que o gate
+tem 8, 10, 12, 13, 16, 20 ou 21 scripts. Em **17/09/2026 são 29**. **Contar no
+`.github/workflows/deploy-vercel.yml`, nunca decorar** — cada número que este
+arquivo já registrou envelheceu, este inclusive.
+
+### ⏳ Pendente de GENTE (não é código)
+
+O RG legado segue **fisicamente no `rh-fotos`**, servido por signed URL de 1h.
+Quando a equipe reenviar aquele documento pela ficha (agora o upload vai direto
+para o `documentos-rh`), o objeto antigo pode ser apagado e
+`BUCKET_DOCS_RH_LEGADO` sai do código. **É 1 arquivo.**
