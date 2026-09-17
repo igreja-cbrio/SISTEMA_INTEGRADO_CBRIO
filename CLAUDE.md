@@ -114,6 +114,27 @@ casar o texto `if (!cepCompleto(cep))` passava verde com o código quebrado —
 era exatamente a forma que estava em produção. O teste conta chaves, acha onde o
 bloco do sexo fecha e exige que o CEP venha depois. Mutante fiel = re-aninhar.
 
+## ✅ AUDITORIA DO BANCO · as 3 migrations manuais entraram no repo (2026-09-17)
+
+Rodaram à mão no SQL Editor e só agora viraram arquivo aqui — o repo estava
+descrevendo um banco que não era o de produção:
+
+| arquivo | o que a conferência do Marcos devolveu |
+|---|---|
+| `20260909130000_logistica_policies...` | as 7 tabelas `log_*` com **RLS ligada, 5 policies do molde, 0 estranhas** |
+| `20260623000000_patrimonio_baseline...` | as 6 `pat_*` com **RLS ligada e ACL toda `false`** (anon e authenticated sem select/insert/update/delete) ⇒ o arquivo é no-op em produção, como ele previa |
+| `20260909140000_devocionais_indice_unico_parcial` | `uq_mem_devocionais_dia ... WHERE (deleted_at IS NULL)` — **o índice virou parcial** |
+
+⚠️ **O carimbo do patrimônio é 23/06 de propósito** (16 migrations posteriores
+citam as `pat_*`; com carimbo de setembro o replay de um banco novo morria em
+junho). Ele só pode viver aqui **depois do PASSO 5**, que registra a migration à
+mão em `supabase_migrations.schema_migrations` — sem isso um `supabase db push`
+vê uma migration não registrada e mais velha que o histórico e tenta rodar de novo.
+
+⚠️ O baseline do patrimônio **não faz um ambiente novo subir até o fim**: destrava
+o replay até 10/08, e em `20260818160000` a cadeia ainda morre (13 linhas em
+`plan_locais` com UUIDs de produção chumbados). É o próximo tampão.
+
 ## ⚠⚠ LEI · `generateLink` NÃO MANDA E-MAIL (2026-09-16 · SEM migration)
 
 `supabase.auth.admin.generateLink()` **gera** o link e devolve em
