@@ -244,8 +244,16 @@ describe('⚠️⚠️ PUB-01 · cadastro público não liga a conta de quem cha
   it('a entrada passa a ser o link no e-mail, e só para a conta CRIADA agora', () => {
     // Disparar magic link para conta PREEXISTENTE transformaria uma porta
     // anônima em gatilho de e-mail para o endereço de qualquer um.
-    expect(conta).toContain('generateLink');
-    expect(conta).toMatch(/type\s*:\s*'magiclink'/);
+    //
+    // ⚠⚠ 17/09/2026 (REM-03): o `generateLink` cru saiu daqui. Ele GERAVA o
+    // link e JOGAVA FORA — não envia e-mail — e o destino era
+    // `/devocional/hoje`, tela que nem existe mais. Com o `createUser` sem
+    // senha e sem confirmação (as duas linhas acima, do próprio PUB-01), a
+    // conta nascia SEM NENHUM caminho de entrada. Agora passa pela régua
+    // única `utils/magicLink.js`, que gera E ENVIA.
+    expect(conta, 'o link de acesso saiu do ramo da conta nova').toContain('enviarLinkDeAcesso(');
+    expect(conta, 'voltou o generateLink cru — ele não envia e-mail').not.toContain('auth.admin.generateLink');
+    expect(conta, 'o link voltou a pousar no devocional web, que foi removido').not.toContain('/devocional/hoje');
     expect(conta).toMatch(/if\s*\(\s*authUserNovo\s*\)/);
   });
 

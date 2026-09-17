@@ -114,6 +114,28 @@ casar o texto `if (!cepCompleto(cep))` passava verde com o código quebrado —
 era exatamente a forma que estava em produção. O teste conta chaves, acha onde o
 bloco do sexo fecha e exige que o CEP venha depois. Mutante fiel = re-aninhar.
 
+## ⚠⚠ LEI · `mem_grupos` tem privilégio POR COLUNA (2026-09-17 · migration `20260917150000`)
+
+`authenticated` **não tem mais `SELECT` de tabela** em `mem_grupos`: tem uma
+lista de 34 colunas. Ficaram de fora **`complemento`** (apto/bloco da casa do
+anfitrião · 12 grupos) e **`observacoes`** (nota interna).
+
+**Por quê (REM-04):** medido em 17/09 com a conta de teste — um membro comum
+logado lia as 36 colunas dos 109 grupos pelo PostgREST. É o mesmo dado que o
+PR #2941 acabou de tirar do deep-link público; a porta dos fundos continuava
+aberta. E com o signup do provedor de auth ABERTO (AUTH-01), “qualquer conta
+logada” = qualquer pessoa da internet. **Rua e número seguem visíveis de
+propósito** (decisão da Natasha); o que sai é o complemento.
+
+⚠⚠ **COLUNA NOVA NASCE SEM PRIVILÉGIO.** Ao adicionar coluna em `mem_grupos`
+que o APP precise ler, acrescente no `GRANT SELECT (...)` — senão a tela do
+grupo leva **42501** e o defeito aparece no celular do líder, não aqui.
+
+⚠⚠ **`select('*')` em `mem_grupos` agora é erro.** O app pede colunas
+explícitas (`grupo-detalhe.tsx`, `grupo-editar.tsx`, `lib/jornada.ts`) e o front
+web não lê a tabela direto — travado por `src/test/magicLinkEnvio.test.ts`.
+`is_lider_grupo()` é `security definer`, então a foto de capa não depende disto.
+
 ## ✅ AUDITORIA DO BANCO · as 3 migrations manuais entraram no repo (2026-09-17)
 
 Rodaram à mão no SQL Editor e só agora viraram arquivo aqui — o repo estava

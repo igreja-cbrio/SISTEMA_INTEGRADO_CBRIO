@@ -25,21 +25,18 @@ import { semComentariosJs } from './_semComentarios';
 const DIR = resolve(__dirname, '../../backend/routes');
 
 /**
- * Pontos conhecidos que geram link e NÃO enviam — inventário de 16/09/2026,
- * levantado quando o REM-02 foi fechado. Cada um é uma porta que diz à pessoa
- * "enviamos um link" sem enviar nada:
+ * ✅ A LISTA ESTÁ VAZIA DESDE 17/09/2026 — e é esse o ponto.
  *
- *  · `publicVoluntariado.js` (2 pontos) — o login do AUTO CHECK-IN do
- *    voluntário e o cadastro novo. A tela `/voluntariado/self-checkin` existe e
- *    é chamada; o e-mail nunca chega.
- *  · `publicMembresia.js` (1 ponto) — a conta criada pela porta pública. O
- *    comentário do PUB-01 diz que "a ENTRADA passa a ser o link no e-mail", e
- *    ela não passa.
+ * Os três pontos que descartavam o link foram consertados: `publicVoluntariado`
+ * (login do AUTO CHECK-IN e cadastro novo) e `publicMembresia` (a conta da porta
+ * pública) passaram a chamar `utils/magicLink.js`, que gera E ENVIA pelo canal
+ * da casa. O do membresia ainda apontava para `/devocional/hoje`, que não existe
+ * mais; agora pousa em `/redefinir-senha`.
  *
- * Decisão de produto pendente do Marcos (implementar o envio muda o que pessoas
- * reais recebem), por isso estão listados em vez de consertados.
+ * ⚠️ A lista existe pra ENCOLHER. Se algum dia um ponto precisar entrar aqui
+ * de volta, entre com data e motivo — mas o normal é usar o helper.
  */
-const DESCARTAM_O_LINK = new Set(['publicVoluntariado.js', 'publicMembresia.js']);
+const DESCARTAM_O_LINK = new Set<string>([]);
 
 function arquivosDeRota(): string[] {
   return readdirSync(DIR).filter((f) => f.endsWith('.js'));
@@ -87,5 +84,75 @@ describe('magic link · quem gera tem que enviar', () => {
       'o login por magic link do devocional voltou — as telas web dele não existem mais (`/devocional` renderiza DevocionalMovido) e a rota criava auth user + profile a partir de uma chamada pública',
     ).toBe(false);
     expect(src.includes("router.post(")).toBe(false);
+  });
+});
+
+describe('a régua única do link de acesso', () => {
+  const HELPER = resolve(__dirname, '../../backend/utils/magicLink.js');
+  const src = () => semComentariosJs(readFileSync(HELPER, 'utf8'));
+
+  it('o helper GERA e ENVIA — as duas metades', () => {
+    const c = src();
+    expect(c, 'o helper parou de gerar o link').toContain('generateLink');
+    expect(c, 'o helper parou de ler o action_link — é ele que vai no e-mail').toContain('properties?.action_link');
+    expect(c, 'o helper parou de ENVIAR, que é a razão de ele existir').toMatch(/enviarEmail\(/);
+  });
+
+  it('⚠⚠ o link NUNCA vai pro log nem pra resposta HTTP (é credencial)', () => {
+    const c = src();
+    // Um clique no action_link loga a pessoa. Log de servidor e corpo de
+    // resposta são lugares onde ele não pode existir.
+    expect(c, 'o action_link foi parar num console.* — um clique nele loga qualquer um').not.toMatch(/console\.[a-z]+\([^)]*link/);
+    expect(c.match(/return \{[^}]*link[^}]*\}/g) || [], 'o helper passou a devolver o link para quem chama').toEqual([]);
+  });
+
+  it('as portas públicas usam o helper, não o generateLink cru', () => {
+    for (const arq of ['publicVoluntariado.js', 'publicMembresia.js']) {
+      const c = semComentariosJs(readFileSync(resolve(DIR, arq), 'utf8'));
+      expect(c, `${arq} voltou a chamar generateLink direto`).not.toContain('auth.admin.generateLink');
+      expect(c, `${arq} parou de usar a régua única`).toContain('enviarLinkDeAcesso(');
+    }
+  });
+
+  it('o link do cadastro público não pousa mais numa tela que não existe', () => {
+    const c = semComentariosJs(readFileSync(resolve(DIR, 'publicMembresia.js'), 'utf8'));
+    expect(c, 'o link voltou a apontar pro devocional web, que foi removido').not.toContain('/devocional/hoje');
+    expect(c, 'sumiu o destino /redefinir-senha do link de acesso').toContain('/redefinir-senha');
+  });
+});
+
+/**
+ * REM-04 · o privilégio de `mem_grupos` virou LISTA DE COLUNAS (migration
+ * `20260917150000`), porque `complemento` (apto/bloco) e `observacoes` estavam
+ * indo para qualquer conta logada — o mesmo dado que o PR #2941 tirou do
+ * deep-link público.
+ *
+ * ⚠️⚠️ A CONSEQUÊNCIA QUE ESTA GUARDA PROTEGE: com privilégio por coluna,
+ * `select('*')` em `mem_grupos` passa a levar 42501. O front web hoje não lê
+ * essa tabela direto (fala com o backend, que usa `service_role`), e é assim
+ * que tem que continuar — a alternativa é descobrir pela tela do usuário.
+ */
+describe('mem_grupos · o front web não fala direto com a tabela', () => {
+  const SRC = resolve(__dirname, '../../src');
+
+  function arquivosDeCodigo(dir: string): string[] {
+    const out: string[] = [];
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      const p = resolve(dir, e.name);
+      if (e.isDirectory()) { if (e.name !== 'test') out.push(...arquivosDeCodigo(p)); }
+      else if (/\.(ts|tsx|js|jsx)$/.test(e.name)) out.push(p);
+    }
+    return out;
+  }
+
+  it('nenhuma tela do ERP lê `mem_grupos` pelo supabase-js', () => {
+    const culpados = arquivosDeCodigo(SRC).filter((f) => {
+      const c = semComentariosJs(readFileSync(f, 'utf8'));
+      return /\.from\(\s*['"]mem_grupos['"]\s*\)/.test(c);
+    });
+    expect(
+      culpados.map((f) => f.replace(SRC, 'src')),
+      'tela lendo `mem_grupos` direto — o privilégio agora é por COLUNA, então `select(\'*\')` leva 42501; passe pelo backend',
+    ).toEqual([]);
   });
 });
