@@ -1961,6 +1961,11 @@ export const patrimonio = {
 };
 
 export const rh = {
+  // ⚠️ Foto de colaborador sobe pelo BACKEND (o upload direto do browser exigia
+  // policies abertas no bucket para qualquer conta `authenticated`, incluindo as
+  // do app dos membros — revogadas). Sem `:id` porque o modal de admissão envia
+  // a foto antes de o cadastro existir.
+  uploadFotoNova: (file) => { const fd = new FormData(); fd.append('foto', file); return requestFile('/rh/foto', fd); },
   dashboard: () => get('/rh/dashboard'),
   dashboardSeries: (meses = 12) => get(`/rh/dashboard/series?meses=${meses}`),
   acessos: () => get('/rh/acessos'),
