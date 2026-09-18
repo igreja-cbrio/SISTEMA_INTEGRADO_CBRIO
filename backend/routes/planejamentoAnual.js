@@ -202,6 +202,42 @@ router.put('/ciclos/:id/avaliadores', authorizeModule(MOD, 5), async (req, res) 
   res.json({ resultados });
 });
 
+// Remove uma diretoria do quórum de avaliação (ela deixa de contar em
+// `avaliadores.length` — o quórum das propostas cai). Não apaga notas já
+// enviadas por ela (ficam como registro histórico).
+router.delete('/ciclos/:id/avaliadores/:diretoria', authorizeModule(MOD, 5), async (req, res) => {
+  const { error } = await supabase
+    .from('plan_ciclo_avaliadores')
+    .delete().eq('ciclo_id', req.params.id).eq('diretoria', req.params.diretoria);
+  if (error) return res.status(500).json({ error: 'Erro ao remover o assento' });
+  res.json({ ok: true });
+});
+
+// Quem tem acesso ao orçamento do ciclo (ver/compor/enviar) — independente
+// de ser avaliador de notas. Ver comentário em `podeCompoOrcamento`.
+router.get('/ciclos/:id/orcamento/responsaveis', authorizeModule(MOD, 5), async (req, res) => {
+  const { data, error } = await supabase
+    .from('plan_orcamento_responsaveis')
+    .select('id, profile_id, profiles:profile_id (id, name, email)')
+    .eq('ciclo_id', req.params.id);
+  if (error) return res.status(500).json({ error: 'Erro ao listar os responsáveis pelo orçamento' });
+  res.json((data || []).map((r) => ({ id: r.id, profile_id: r.profile_id, nome: r.profiles?.name || null, email: r.profiles?.email || null })));
+});
+
+router.put('/ciclos/:id/orcamento/responsaveis', authorizeModule(MOD, 5), async (req, res) => {
+  const profileIds = Array.isArray(req.body?.profile_ids) ? req.body.profile_ids.filter(Boolean) : [];
+  const { error: eDel } = await supabase
+    .from('plan_orcamento_responsaveis').delete().eq('ciclo_id', req.params.id);
+  if (eDel) return res.status(500).json({ error: 'Erro ao atualizar os responsáveis pelo orçamento' });
+  if (profileIds.length) {
+    const { error: eIns } = await supabase
+      .from('plan_orcamento_responsaveis')
+      .insert(profileIds.map((profile_id) => ({ ciclo_id: req.params.id, profile_id })));
+    if (eIns) return res.status(500).json({ error: 'Erro ao salvar os responsáveis pelo orçamento' });
+  }
+  res.json({ ok: true });
+});
+
 // ── Propostas ────────────────────────────────────────────────────────────
 router.get('/ciclos/:id/propostas', authorizeModule(MOD, 1), async (req, res) => {
   const ciclo = await carregarCiclo(req.params.id);
@@ -912,14 +948,33 @@ router.post('/ciclos/:id/publicar', authorizeModule(MOD, 1), async (req, res) =>
 });
 
 // ── Orçamento do ciclo ───────────────────────────────────────────────────
+// ⚠️ 2026-09-18: acesso ao orçamento é DECOUPLED do assento de avaliador de
+// notas (migration `20260918130000`). Antes as duas coisas eram o MESMO
+// assento em `plan_ciclo_avaliadores` (diretoria='financeiro') — foi assim
+// que o Pr. Pedro Junior acabou preso a avaliar notas só por compor o
+// orçamento. Hoje: `assentoFinanceiro` segue valendo (se um dia a diretoria
+// Financeiro tiver avaliador de novo, ele também compõe o orçamento por
+// tabela), mas quem realmente autoriza é `plan_orcamento_responsaveis`.
 async function assentoFinanceiro(req, cicloId) {
   const avaliadores = await carregarAvaliadores(cicloId);
   return avaliadores.find((a) => a.diretoria === 'financeiro' && a.profile_id === req.user.id) || null;
 }
 
+async function ehResponsavelOrcamento(req, cicloId) {
+  const { data } = await supabase
+    .from('plan_orcamento_responsaveis')
+    .select('id').eq('ciclo_id', cicloId).eq('profile_id', req.user.id).maybeSingle();
+  return Boolean(data);
+}
+
+async function podeCompoOrcamento(req, cicloId) {
+  if (await assentoFinanceiro(req, cicloId)) return true;
+  return ehResponsavelOrcamento(req, cicloId);
+}
+
 router.get('/ciclos/:id/orcamento', authorizeModule(MOD, 1), async (req, res) => {
-  const fin = await assentoFinanceiro(req, req.params.id);
-  if (!fin && !(await ehPastorOuSuper(req))) {
+  const pode = await podeCompoOrcamento(req, req.params.id);
+  if (!pode && !(await ehPastorOuSuper(req))) {
     return res.status(403).json({ error: 'O orçamento do ciclo é preenchido pela diretoria Financeira e avaliado pelo Pastor presidente.' });
   }
   const [{ data: header }, { data: valores }] = await Promise.all([
@@ -935,8 +990,9 @@ router.get('/ciclos/:id/orcamento', authorizeModule(MOD, 1), async (req, res) =>
 });
 
 router.put('/ciclos/:id/orcamento', authorizeModule(MOD, 1), async (req, res) => {
-  const fin = await assentoFinanceiro(req, req.params.id);
-  if (!fin) return res.status(403).json({ error: 'Só a diretoria Financeira compõe o orçamento do ciclo' });
+  if (!(await podeCompoOrcamento(req, req.params.id))) {
+    return res.status(403).json({ error: 'Só a diretoria Financeira compõe o orçamento do ciclo' });
+  }
 
   const valores = Array.isArray(req.body?.valores) ? req.body.valores : [];
   for (const v of valores) {
@@ -962,8 +1018,9 @@ router.put('/ciclos/:id/orcamento', authorizeModule(MOD, 1), async (req, res) =>
 });
 
 router.post('/ciclos/:id/orcamento/enviar', authorizeModule(MOD, 1), async (req, res) => {
-  const fin = await assentoFinanceiro(req, req.params.id);
-  if (!fin) return res.status(403).json({ error: 'Só a diretoria Financeira envia o orçamento ao Pastor' });
+  if (!(await podeCompoOrcamento(req, req.params.id))) {
+    return res.status(403).json({ error: 'Só a diretoria Financeira envia o orçamento ao Pastor' });
+  }
   const { error } = await supabase.from('plan_orcamentos').upsert({
     ciclo_id: req.params.id,
     enviado_em: new Date().toISOString(),
