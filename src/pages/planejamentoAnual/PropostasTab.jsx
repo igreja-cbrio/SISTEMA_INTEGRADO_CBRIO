@@ -6,6 +6,7 @@ import {
   C, cardStyle, btn, input, label, hint, Badge, EstadoBadge, fmtBRL, fmtData, fmtQuando,
   NATUREZAS, RECORRENCIAS, DIAS_SEMANA, thStyle, tdStyle, rotuloArea,
 } from './comum';
+import PessoaAutocomplete from './PessoaAutocomplete';
 
 const FORM_VAZIO = {
   nome: '', natureza: 'evento', area: '', lider_id: '', mes_inicio: '', dia_inicio: '',
@@ -187,18 +188,26 @@ export default function PropostasTab({ ciclo, constantes, locais, areas, recarre
             </div>
             <div>
               <span style={label}>Área *</span>
-              <select style={input} value={form.area} onChange={(e) => set('area', e.target.value)}>
+              <select
+                style={input}
+                value={form.area}
+                onChange={(e) => {
+                  const novaArea = e.target.value;
+                  const liderPadrao = areas.find((a) => a.area === novaArea)?.lider_id;
+                  // Só sugere o líder da área quando o campo ainda está vazio —
+                  // trocar de área numa proposta já em edição não pode apagar
+                  // uma escolha manual (ex.: "o assistente" em vez do líder).
+                  setForm((f) => ({ ...f, area: novaArea, lider_id: f.lider_id || liderPadrao || '' }));
+                }}
+              >
                 <option value="">Selecione…</option>
                 {areas.map((a) => <option key={a.area} value={a.area}>{a.rotulo || a.area}</option>)}
               </select>
             </div>
             <div>
               <span style={label}>Líder responsável *</span>
-              <select style={input} value={form.lider_id} onChange={(e) => set('lider_id', e.target.value)}>
-                <option value="">Selecione…</option>
-                {pessoas.map((u) => <option key={u.id} value={u.id}>{u.name || u.email}</option>)}
-              </select>
-              <div style={hint}>Em regra o líder da área ou seu assistente.</div>
+              <PessoaAutocomplete pessoas={pessoas} value={form.lider_id} onChange={(v) => set('lider_id', v)} />
+              <div style={hint}>Em regra o líder da área ou seu assistente — sugerido automaticamente ao escolher a área, mas pode trocar.</div>
             </div>
             <div>
               <span style={label}>Mês de início *</span>
