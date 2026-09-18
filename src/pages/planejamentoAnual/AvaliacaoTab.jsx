@@ -217,7 +217,7 @@ export default function AvaliacaoTab({ ciclo, constantes, minhaDiretoria, locais
           <span style={{ fontSize: 13, color: C.t2 }}>
             Sua soma: <strong style={{ color: C.text }}>{minhaSoma} / 35</strong>
             {quorumCompleto && aberta.soma != null && <> · soma das médias <strong style={{ color: C.primary }}>{Number(aberta.soma).toFixed(2)} / 35</strong></>}
-            {!quorumCompleto && <> · a soma das médias aparece quando as quatro diretorias enviarem</>}
+            {!quorumCompleto && <> · a soma das médias aparece quando todas as diretorias enviarem</>}
           </span>
           <button style={btn('primary')} disabled={salvando} onClick={enviar}>
             <ClipboardCheck size={14} /> {aberta.minha_avaliacao ? 'Atualizar pontuação' : 'Enviar pontuação'}

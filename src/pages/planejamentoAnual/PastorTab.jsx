@@ -229,7 +229,7 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
             </tbody>
           </table>
         ) : (
-          <p style={{ ...hint, marginTop: 6 }}>Aguardando o quórum das quatro diretorias ({p.avaliacoes_recebidas}/{p.quorum}).</p>
+          <p style={{ ...hint, marginTop: 6 }}>Aguardando o quórum das diretorias ({p.avaliacoes_recebidas}/{p.quorum}).</p>
         )}
         {quorumCompleto && p.soma != null && (
           <div style={{ marginTop: 6, fontSize: 13 }}>Soma das médias: <strong style={{ color: C.primary }}>{Number(p.soma).toFixed(2)} / 35</strong></div>
@@ -422,7 +422,7 @@ function Retificacoes({ ciclo, recarregarCiclo }) {
               <button style={btn('danger')} disabled={salvando} onClick={() => agir(p, 'arquivada')}>Reprovar em definitivo</button>
               <button style={btn('ghost')} disabled={salvando} onClick={() => agir(p, 'reaberta_diretores')}>Reabrir para os diretores</button>
             </div>
-            <span style={hint}>Reabrir devolve a proposta ao painel das quatro diretorias e apaga as notas antigas.</span>
+            <span style={hint}>Reabrir devolve a proposta ao painel das diretorias e apaga as notas antigas.</span>
           </div>
         );
       })}
