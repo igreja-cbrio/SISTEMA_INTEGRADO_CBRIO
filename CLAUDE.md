@@ -7685,14 +7685,57 @@ confundir, não misturar estratégico com rotina:
 (migrations `20260609120000` e `20260610120000`). Nunca renomear slug/rota (quebra
 ROUTE_MODULE_MAP, matriz de permissões e bookmarks).
 
-### Legado REMOVIDO (não funciona mais assim · não tratar como ativo)
-O antigo **"Planejamento Anual"** (propostas → aprovação diretor→diretoria → materializa em
-event/project) foi **aposentado** — nunca foi usado (0 propostas). Removidos: telas
-`/planejamento/anual` (`AnualCiclos.jsx` + `AnualCicloDetalhe.jsx`) e `Planejamento.jsx` (PMO);
-tabelas `planejamento_propostas`/`_audit`/`_setores`/`_areas_setor` **dropadas** (migration
-`20260610130000`). **Mantidos:** `event_liturgia_templates` (o hub usa) e `planejamento_ciclos`
-(dormente · pode virar portão "ano aberto/fechado"). As colunas `events.proposta_id`/
-`projects.proposta_id` ficaram (só a FK saiu · inócuas).
+### Legado REMOVIDO em 2026-06-10, RECONSTRUÍDO desde então · "Planejamento Anual" (correção de registro 2026-08-26)
+O `Planejamento Anual` original (propostas → aprovação diretor→diretoria → materializa em
+event/project) foi de fato **aposentado em 2026-06-10** — nunca havia sido usado (0 propostas).
+Removidos naquele momento: telas `/planejamento/anual` (`AnualCiclos.jsx` +
+`AnualCicloDetalhe.jsx`) e `Planejamento.jsx` (PMO); tabelas `planejamento_propostas`/`_audit`/
+`_setores`/`_areas_setor` **dropadas** (migration `20260610130000`). `event_liturgia_templates`
+(o hub usa) e `planejamento_ciclos` (dormente) sobreviveram; as colunas `events.proposta_id`/
+`projects.proposta_id` ficaram órfãs (só a FK saiu · inócuas). **Isso é história — não confundir
+com o que existe hoje.**
+
+⚠️⚠️ **Um módulo NOVO e DISTINTO nasceu depois com o MESMO nome** ("Planejamento Anual" · commits
+`e8ae2fbe` "telas do módulo (fase 4)" e `f00b833a` "gráfico na decisão, calendário do ano e régua
+2026-2030" — ou seja, teve fases 1-3 anteriores nunca registradas aqui). **Está VIVO, em produção,
+e é o fluxo oficial validado com o Yago em 2026-08-26.** Achado por investigação direta (grep +
+leitura de código + banco vivo), não por este arquivo — que ficou 2+ meses desatualizado nesse
+ponto. Módulo: `src/pages/planejamentoAnual/` · rotas `/api/planejamento-anual`
+(`backend/routes/planejamentoAnual.js`) · tabelas `plan_ciclos`, `plan_propostas`,
+`plan_avaliacoes`, `plan_decisoes`, `plan_apontamentos`, `plan_ciclo_avaliadores`,
+`plan_areas_diretoria`, `plan_locais`, `plan_orcamentos`, `plan_orcamento_valores`,
+`plan_calendario_itens`, `plan_conflitos_aceitos` — **sem nenhuma relação** com as tabelas
+`planejamento_propostas*` dropadas acima.
+
+**Fluxo (validado com o Yago 2026-08-26 · só as datas de abertura/fechamento de cada fase ainda
+podem mudar):**
+1. **Ciclo por ano** (2026-2030): o Pastor (cargo `pastor-presidente`, ou super-admin) cria o
+   ciclo e abre/fecha as janelas de **submissão** e **avaliação** independentemente.
+2. **Proposta**: qualquer proponente cria em `rascunho`, edita livremente, e **envia** — o envio
+   é validado no SERVIDOR contra a janela de submissão (não só na tela).
+3. **Avaliação cega por diretoria**: cada diretoria (ministerial, criativo, financeiro etc.) tem
+   um assento (`plan_ciclo_avaliadores`) e dá notas nos 7 critérios sem ver a nota das outras,
+   até completar o quórum (todas as diretorias avaliarem).
+4. **Decisão — exclusiva do Pastor**: com quórum completo, o Pastor vê o ranking e decide por
+   proposta (ou em lote): `aprovada` · `aprovada_ressalvas` (com responsável e prazo) ·
+   `reprovada` (com exigência e prazo) · `arquivada`.
+5. **Retificação**: proposta reprovada tem **1 rodada de 5 dias** para o proponente corrigir; o
+   Pastor decide de novo (aprovar/ressalvas/arquivar em definitivo, ou reabrir para as diretorias
+   reavaliarem do zero).
+6. **Calendário e conflitos**: propostas aprovadas entram no calendário do ciclo; o sistema
+   detecta conflitos de local/data e o Pastor pode aceitá-los com justificativa, ou remanejar a
+   proposta.
+7. **Orçamento**: a diretoria Financeiro preenche o orçamento mensal do ciclo (linhas fixas +
+   caixa livre) e envia ao Pastor, que vê uma visão orçamentária consolidada (inclusive
+   simulando o efeito de aprovar uma proposta isolada).
+8. **Publicação**: travas automáticas (quórum, conflitos não aceitos) bloqueiam a publicação até
+   estarem resolvidas; ao publicar, o calendário definitivo é congelado numa versão
+   (`fn_plan_publicar_ciclo`), e divergências futuras (proposta que saiu/mudou/entrou depois) são
+   detectadas contra esse snapshot.
+
+⚠️ **Lição de método**: este é um caso vivo da própria regra deste arquivo ("validar contra o
+código/banco vivo antes de tratar qualquer afirmação como verdade") — a seção acima ficou errada
+por dois meses porque ninguém confirmou contra o código depois que o módulo novo nasceu.
 
 ### Dívida técnica (código morto · sem chamador · NÃO é referência viva)
 Para não arriscar a liturgia (arquivo de 760 linhas), ficaram intactos mas **órfãos**: o

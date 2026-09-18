@@ -2015,6 +2015,10 @@ export const rh = {
     create: (funcId, data) => post(`/rh/funcionarios/${funcId}/ferias`, data),
     update: (id, data) => patch(`/rh/ferias/${id}`, data),
     remove: (id) => del(`/rh/ferias/${id}`),
+    // Vínculo com o backbone de Solicitações (categoria ferias/licenca) ·
+    // ver "RH · aponta pro RH de forma acionável" no CLAUDE.md.
+    porSolicitacao: (solicitacaoId) => get(`/rh/solicitacoes/${solicitacaoId}/ferias`),
+    registrarDeSolicitacao: (solicitacaoId, data) => post(`/rh/solicitacoes/${solicitacaoId}/ferias`, data),
   },
   // Cobertura de férias/licença (substituto herda módulos operacionais · expira sozinho)
   coberturas: {

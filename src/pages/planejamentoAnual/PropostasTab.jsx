@@ -8,8 +8,18 @@ import {
 } from './comum';
 import PessoaAutocomplete from './PessoaAutocomplete';
 
+const MES_INICIO_MIN = '2027-01';
+const MES_INICIO_MAX = '2027-12';
+
+function ultimoDiaDoMes(mesStr) {
+  if (!mesStr) return '';
+  const [ano, mes] = mesStr.split('-').map(Number);
+  if (!ano || !mes) return '';
+  return String(new Date(ano, mes, 0).getDate()).padStart(2, '0');
+}
+
 const FORM_VAZIO = {
-  nome: '', natureza: 'evento', area: '', lider_id: '', mes_inicio: '', dia_inicio: '',
+  nome: '', natureza: 'evento', area: '', lider_id: '', mes_inicio: MES_INICIO_MIN, dia_inicio: '',
   multi_dia: false, mes_fim: '', dia_fim: '', recorrencia: 'unica', dia_semana: '',
   hora_inicio: '', hora_fim: '', local_id: '', mais_de_um_local: false, locais_adicionais_ids: [],
   local_fora_detalhe: '', publico_alvo: '', descricao: '',
@@ -211,12 +221,38 @@ export default function PropostasTab({ ciclo, constantes, locais, areas, recarre
             </div>
             <div>
               <span style={label}>Mês de início *</span>
-              <input style={input} type="month" value={form.mes_inicio} onChange={(e) => { set('mes_inicio', e.target.value); if (form.dia_inicio && !e.target.value) set('dia_inicio', ''); }} />
+              <input
+                style={input}
+                type="month"
+                min={MES_INICIO_MIN}
+                max={MES_INICIO_MAX}
+                value={form.mes_inicio}
+                onChange={(e) => {
+                  let v = e.target.value;
+                  if (v && v < MES_INICIO_MIN) v = MES_INICIO_MIN;
+                  else if (v && v > MES_INICIO_MAX) v = MES_INICIO_MAX;
+                  set('mes_inicio', v);
+                  if (form.dia_inicio && form.dia_inicio.slice(0, 7) !== v) set('dia_inicio', '');
+                }}
+              />
+              <div style={hint}>Só é possível iniciar em 2027 — de janeiro a dezembro.</div>
             </div>
             <div>
               <span style={label}>Dia de início (opcional)</span>
-              <input style={input} type="date" value={form.dia_inicio} onChange={(e) => { set('dia_inicio', e.target.value); if (e.target.value) set('mes_inicio', e.target.value.slice(0, 7)); }} />
-              <div style={hint}>Sem o dia, o conflito só aparece no mês.</div>
+              <input
+                style={input}
+                type="date"
+                disabled={!form.mes_inicio}
+                min={form.mes_inicio ? `${form.mes_inicio}-01` : undefined}
+                max={form.mes_inicio ? `${form.mes_inicio}-${ultimoDiaDoMes(form.mes_inicio)}` : undefined}
+                value={form.dia_inicio}
+                onChange={(e) => { set('dia_inicio', e.target.value); if (e.target.value) set('mes_inicio', e.target.value.slice(0, 7)); }}
+              />
+              <div style={hint}>
+                {form.mes_inicio
+                  ? `Sem o dia, o conflito só aparece no mês. Somente dias de ${form.mes_inicio}.`
+                  : 'Selecione o mês de início primeiro.'}
+              </div>
             </div>
           </div>
 
@@ -226,8 +262,42 @@ export default function PropostasTab({ ciclo, constantes, locais, areas, recarre
           </label>
           {form.multi_dia && (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 }}>
-              <div><span style={label}>Mês de encerramento</span><input style={input} type="month" value={form.mes_fim} onChange={(e) => set('mes_fim', e.target.value)} /></div>
-              <div><span style={label}>Dia de encerramento (opcional)</span><input style={input} type="date" value={form.dia_fim} onChange={(e) => { set('dia_fim', e.target.value); if (e.target.value) set('mes_fim', e.target.value.slice(0, 7)); }} /></div>
+              <div>
+                <span style={label}>Mês de encerramento</span>
+                <input
+                  style={input}
+                  type="month"
+                  min={form.mes_inicio || MES_INICIO_MIN}
+                  max={MES_INICIO_MAX}
+                  value={form.mes_fim}
+                  onChange={(e) => {
+                    let v = e.target.value;
+                    const minPermitido = form.mes_inicio || MES_INICIO_MIN;
+                    if (v && v < minPermitido) v = minPermitido;
+                    else if (v && v > MES_INICIO_MAX) v = MES_INICIO_MAX;
+                    set('mes_fim', v);
+                    if (form.dia_fim && form.dia_fim.slice(0, 7) !== v) set('dia_fim', '');
+                  }}
+                />
+                <div style={hint}>Não pode ser antes do mês de início nem depois de dezembro de 2027.</div>
+              </div>
+              <div>
+                <span style={label}>Dia de encerramento (opcional)</span>
+                <input
+                  style={input}
+                  type="date"
+                  disabled={!form.mes_fim}
+                  min={form.mes_fim ? `${form.mes_fim}-01` : undefined}
+                  max={form.mes_fim ? `${form.mes_fim}-${ultimoDiaDoMes(form.mes_fim)}` : undefined}
+                  value={form.dia_fim}
+                  onChange={(e) => { set('dia_fim', e.target.value); if (e.target.value) set('mes_fim', e.target.value.slice(0, 7)); }}
+                />
+                <div style={hint}>
+                  {form.mes_fim
+                    ? `Somente dias de ${form.mes_fim}, sem passar de 31/12/2027.`
+                    : 'Selecione o mês de encerramento primeiro.'}
+                </div>
+              </div>
             </div>
           )}
 
