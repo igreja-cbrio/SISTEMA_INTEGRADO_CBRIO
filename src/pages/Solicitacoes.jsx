@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useRef, Fragment } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { solicitacoes as api, marketing as marketingApi } from '../api';
+import { solicitacoes as api, marketing as marketingApi, rh as rhApi } from '../api';
+import { TIPO_FERIAS, FERIAS_STATUS } from '../lib/theme';
 import NovaSolicitacaoForm, { CATEGORIAS, DocDropzone } from '../components/solicitacoes/NovaSolicitacaoForm';
 import useConfirmarSaida from '../hooks/useConfirmarSaida';
 import { playSuccessSound } from '../lib/sounds';
@@ -1388,7 +1389,12 @@ function ListaSolicitacoes({ items, onOpen, profileId, emptyMsg, comTracker = fa
                 textual sai da linha de badges — o stepper + "está com quem" já contam
                 a história (menos ruído). Urgência "Normal" não vira badge (é o padrão). */}
             <div className="flex items-start justify-between gap-3">
-              <p className="text-[15px] font-semibold leading-snug text-foreground min-w-0 flex-1 line-clamp-2">{item.titulo}</p>
+              <p className="text-[15px] font-semibold leading-snug text-foreground min-w-0 flex-1 line-clamp-2">
+                {item.numero_sequencial != null && (
+                  <span className="text-muted-foreground font-normal">#{item.numero_sequencial} · </span>
+                )}
+                {item.titulo}
+              </p>
               <span className="text-xs text-muted-foreground shrink-0 mt-0.5">{date}</span>
             </div>
             <div className="flex flex-wrap items-center gap-1.5 mt-2">
@@ -2137,7 +2143,12 @@ function CardMacro({ item, canAgir, concluido = false, rejeitado = false, onStat
             {sla && <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${sla.color}`}>{sla.label}</span>}
           </div>
         </div>
-        <p className={`text-sm font-semibold leading-snug mt-1.5 mb-2 line-clamp-2 ${concluido ? 'text-muted-foreground' : 'text-foreground'}`}>{item.titulo}</p>
+        <p className={`text-sm font-semibold leading-snug mt-1.5 mb-2 line-clamp-2 ${concluido ? 'text-muted-foreground' : 'text-foreground'}`}>
+          {item.numero_sequencial != null && (
+            <span className="text-muted-foreground font-normal">#{item.numero_sequencial} · </span>
+          )}
+          {item.titulo}
+        </p>
         <div className="flex items-center justify-between gap-2">
           <span className="inline-flex items-center gap-1.5 min-w-0">
             <span className="h-5 w-5 rounded-full bg-muted text-[9px] font-semibold text-muted-foreground inline-flex items-center justify-center shrink-0">{iniciais(solic)}</span>
@@ -2198,7 +2209,12 @@ function SolicitacaoCard({ item, isAdmin, onStatusChange, onClick, draggable }) 
         <Badge className={`text-[10px] px-1.5 py-0.5 ${cat.color}`}>{cat.label}</Badge>
         <span className="text-[10px] text-muted-foreground whitespace-nowrap">{date}</span>
       </div>
-      <p className="text-sm font-medium text-foreground line-clamp-2 mb-1.5">{item.titulo}</p>
+      <p className="text-sm font-medium text-foreground line-clamp-2 mb-1.5">
+        {item.numero_sequencial != null && (
+          <span className="text-muted-foreground font-normal">#{item.numero_sequencial} · </span>
+        )}
+        {item.titulo}
+      </p>
       <div className="flex items-center justify-between gap-1.5 flex-wrap">
         <span className="text-[11px] text-muted-foreground truncate max-w-[160px] inline-flex items-center gap-1">
           {solicitante}
@@ -3115,7 +3131,123 @@ function AprovarNaAlcadaBloco({ item, onAprovado }) {
   );
 }
 
+// Categorias Férias/Licença apontam pro RH de forma ACIONÁVEL: em vez de só
+// notificar, o RH registra aqui o pedido oficial em rh_ferias_licencas,
+// vinculado a esta Solicitação. Aprovar/rejeitar lá (PATCH /rh/ferias/:id)
+// fecha o loop sozinho — atualiza o status desta Solicitação e avisa quem
+// pediu (ver backend/routes/rh.js).
+function RegistroRhFeriasBloco({ item, podeRegistrar, onRefresh }) {
+  const [carregando, setCarregando] = useState(true);
+  const [vinculo, setVinculo] = useState(null);
+  const [mostrarForm, setMostrarForm] = useState(false);
+  const [tipo, setTipo] = useState('ferias');
+  const [dataInicio, setDataInicio] = useState('');
+  const [dataFim, setDataFim] = useState('');
+  const [obs, setObs] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [erro, setErro] = useState(null);
+
+  useEffect(() => {
+    let vivo = true;
+    setCarregando(true);
+    rhApi.ferias.porSolicitacao(item.id)
+      .then(v => { if (vivo) setVinculo(v || null); })
+      .catch(() => { if (vivo) setVinculo(null); })
+      .finally(() => { if (vivo) setCarregando(false); });
+    return () => { vivo = false; };
+  }, [item.id]);
+
+  async function registrar() {
+    if (!tipo || !dataInicio || !dataFim) { setErro('Tipo, data início e data fim são obrigatórios.'); return; }
+    setSalvando(true); setErro(null);
+    try {
+      const criado = await rhApi.ferias.registrarDeSolicitacao(item.id, {
+        tipo, data_inicio: dataInicio, data_fim: dataFim, observacoes: obs.trim() || undefined,
+      });
+      setVinculo(criado);
+      setMostrarForm(false);
+      toast.success('Registrado no RH · aparece na aba Férias/Licenças.');
+      onRefresh?.();
+    } catch (e) {
+      setErro(e.message || 'Não foi possível registrar.');
+    } finally {
+      setSalvando(false);
+    }
+  }
+
+  if (carregando) return null;
+
+  if (vinculo) {
+    const tipoInfo = TIPO_FERIAS[vinculo.tipo] || vinculo.tipo;
+    const statusInfo = FERIAS_STATUS[vinculo.status] || { label: vinculo.status, color: undefined, bg: undefined };
+    return (
+      <div className="p-3 rounded-lg border border-border bg-muted/20 space-y-1">
+        <p className="text-xs text-muted-foreground">Registro no RH</p>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          <Badge style={{ color: statusInfo.color, backgroundColor: statusInfo.bg }}>{statusInfo.label}</Badge>
+          <span className="font-medium">{tipoInfo}</span>
+          <span className="text-muted-foreground">
+            {new Date(vinculo.data_inicio + 'T12:00:00').toLocaleDateString('pt-BR')} a {new Date(vinculo.data_fim + 'T12:00:00').toLocaleDateString('pt-BR')}
+          </span>
+        </div>
+        <p className="text-[11px] text-muted-foreground">
+          A aprovação/rejeição no módulo RH atualiza esta Solicitação automaticamente.
+        </p>
+      </div>
+    );
+  }
+
+  if (!podeRegistrar) return null;
+
+  return (
+    <div className="p-3 rounded-lg border border-cyan-500/40 bg-cyan-500/10 space-y-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="text-sm text-cyan-900 dark:text-cyan-300">
+          <span className="font-medium">Ainda não há registro no RH.</span>
+          <p className="text-xs mt-0.5 opacity-90">Registre pra que apareça na aba Férias/Licenças e a aprovação feche o loop aqui.</p>
+        </div>
+        {!mostrarForm && (
+          <Button size="sm" variant="outline" onClick={() => setMostrarForm(true)}>Registrar no RH</Button>
+        )}
+      </div>
+
+      {mostrarForm && (
+        <div className="space-y-2">
+          <div className="space-y-1">
+            <Label className="text-xs">Tipo *</Label>
+            <Select value={tipo} onValueChange={setTipo}>
+              <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+              <SelectContent className="z-[1200]">
+                {Object.entries(TIPO_FERIAS).map(([v, label]) => (
+                  <SelectItem key={v} value={v}>{label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            <div className="space-y-1">
+              <Label className="text-xs">Data início *</Label>
+              <DatePicker value={dataInicio} onChange={setDataInicio} />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-xs">Data fim *</Label>
+              <DatePicker value={dataFim} onChange={setDataFim} />
+            </div>
+          </div>
+          <Textarea rows={2} placeholder="Observação (opcional)" value={obs} onChange={e => setObs(e.target.value)} className="text-sm" />
+          {erro && <p className="text-xs text-destructive">{erro}</p>}
+          <div className="flex gap-2 justify-end">
+            <Button size="sm" variant="ghost" onClick={() => { setMostrarForm(false); setErro(null); }}>Cancelar</Button>
+            <Button size="sm" onClick={registrar} disabled={salvando}>{salvando ? 'Registrando…' : 'Registrar'}</Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, onNpsSubmit, onItemRefresh, asSheet = false }) {
+  const { getAccessLevel } = useAuth();
   const [actionPending, setActionPending] = useState(null); // e.g. 'aprovado', 'rejeitado', 'concluído', 'em_analise'
   const [obsText, setObsText] = useState('');
   const [atenderEstoque, setAtenderEstoque] = useState(false); // ponte estoque (Fase 3a-2)
@@ -3143,6 +3275,18 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
     aguardando_entrega: 'Confirmar',
   };
 
+  // Pendente aqui NÃO é decisão de aprovação — é o pedido já aprovado na origem
+  // chegando na fila de quem vai executar. "Aprovar"/"Rejeitar" nesse ponto lê
+  // como se a área estivesse decidindo se autoriza o pedido (que já foi decidido
+  // pelo diretor de origem), quando na verdade é "vou atender" / "não vou atender".
+  function actionLabel(target) {
+    if (item.status === 'pendente') {
+      if (target === 'aprovado') return 'Iniciar atendimento';
+      if (target === 'rejeitado') return 'Recusar atendimento';
+    }
+    return ACTION_LABELS[target];
+  }
+
   function confirmAction() {
     if (!actionPending) return;
     onStatusChange(item.id, actionPending, obsText.trim() || undefined);
@@ -3162,6 +3306,9 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
         <HeaderW>
           <TitleW className="flex items-center gap-2">
             <Badge className={cat.color}>{cat.label}</Badge>
+            {item.numero_sequencial != null && (
+              <span className="text-muted-foreground font-normal">#{item.numero_sequencial}</span>
+            )}
             {item.titulo}
           </TitleW>
         </HeaderW>
@@ -3171,6 +3318,16 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
             <AprovarNaAlcadaBloco
               item={item}
               onAprovado={() => { onItemRefresh?.(); onClose(); }}
+            />
+          )}
+
+          {/* Férias/Licença · aponta pro RH de forma acionável (registro real,
+              não só notificação) e recebe de volta a decisão de lá. */}
+          {['ferias', 'licenca'].includes(item.categoria) && (
+            <RegistroRhFeriasBloco
+              item={item}
+              podeRegistrar={isAdmin || getAccessLevel(['rh']) >= 3}
+              onRefresh={onItemRefresh}
             />
           )}
 
@@ -3479,7 +3636,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
                   {ehAguardandoPagamento && <Button size="sm" className="bg-teal-600 hover:bg-teal-700" onClick={() => setActionPending('aguardando_entrega')}>Marcar como pago</Button>}
                   {ehAguardandoEntrega && <Button size="sm" className="bg-emerald-600 hover:bg-emerald-700" onClick={() => setActionPending('concluido')}>Confirmar entrega</Button>}
                   {!fluxoCompra && podeAprovar && (
-                    <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('aprovado')}>Aprovar</Button>
+                    <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('aprovado')}>{actionLabel('aprovado')}</Button>
                   )}
                   {!fluxoCompra && item.status === 'aprovado' && <Button size="sm" className="bg-green-600 hover:bg-green-700" onClick={() => setActionPending('concluido')}>Concluir</Button>}
                   {!fluxoCompra && item.status === 'pendente' && <Button size="sm" variant="outline" onClick={() => setActionPending('em_analise')}>Analisar</Button>}
@@ -3494,7 +3651,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
                     <span className="inline-flex items-center gap-1 text-xs text-emerald-600 self-center font-medium">✓ Lançado{item.fin_vinculo_status === 'conciliado' ? ' · conciliado' : ' · pendente'}</span>
                   )}
                   {podeRejeitar && (
-                    <Button size="sm" variant="destructive" onClick={() => setActionPending('rejeitado')}>Rejeitar</Button>
+                    <Button size="sm" variant="destructive" onClick={() => setActionPending('rejeitado')}>{actionLabel('rejeitado')}</Button>
                   )}
                 </div>
               </div>
@@ -3559,7 +3716,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
           {actionPending && (
             <div className="space-y-3 pt-2 border-t border-border">
               <p className="text-sm font-medium text-foreground">
-                Confirmar ação: <span className="text-primary">{ACTION_LABELS[actionPending]}</span>
+                Confirmar ação: <span className="text-primary">{actionLabel(actionPending)}</span>
               </p>
               <div className="space-y-2">
                 <Label className="text-sm">Comentário (opcional · fica no histórico)</Label>
@@ -3572,7 +3729,7 @@ function DetailDialog({ item, onClose, isAdmin, currentUserId, onStatusChange, o
               </div>
               <div className="flex gap-2 justify-end">
                 <Button size="sm" variant="outline" onClick={cancelAction}>Cancelar</Button>
-                <Button size="sm" onClick={confirmAction}>{ACTION_LABELS[actionPending]}</Button>
+                <Button size="sm" onClick={confirmAction}>{actionLabel(actionPending)}</Button>
               </div>
             </div>
           )}

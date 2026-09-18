@@ -1978,6 +1978,10 @@ export const rh = {
     create: (funcId, data) => post(`/rh/funcionarios/${funcId}/ferias`, data),
     update: (id, data) => patch(`/rh/ferias/${id}`, data),
     remove: (id) => del(`/rh/ferias/${id}`),
+    // Vínculo com o backbone de Solicitações (categoria ferias/licenca) ·
+    // ver "RH · aponta pro RH de forma acionável" no CLAUDE.md.
+    porSolicitacao: (solicitacaoId) => get(`/rh/solicitacoes/${solicitacaoId}/ferias`),
+    registrarDeSolicitacao: (solicitacaoId, data) => post(`/rh/solicitacoes/${solicitacaoId}/ferias`, data),
   },
   // Cobertura de férias/licença (substituto herda módulos operacionais · expira sozinho)
   coberturas: {
@@ -4608,6 +4612,7 @@ export const planejamentoAnual = {
     propostas: (id, params) => get(`/planejamento-anual/ciclos/${id}/propostas` + (params ? '?' + new URLSearchParams(params) : '')),
     ranking: (id) => get(`/planejamento-anual/ciclos/${id}/ranking`),
     conflitos: (id) => get(`/planejamento-anual/ciclos/${id}/conflitos`),
+    insights: (id) => get(`/planejamento-anual/ciclos/${id}/insights`),
     aceitarConflito: (id, corpo) => post(`/planejamento-anual/ciclos/${id}/conflitos/aceitar`, corpo),
     reabrirConflito: (id, aceiteId) => del(`/planejamento-anual/ciclos/${id}/conflitos/aceites/${aceiteId}`),
     calendario: (id) => get(`/planejamento-anual/ciclos/${id}/calendario`),

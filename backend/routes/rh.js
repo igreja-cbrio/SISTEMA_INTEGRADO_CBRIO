@@ -1455,6 +1455,100 @@ router.post('/funcionarios/:id/ferias', async (req, res) => {
   }
 });
 
+// GET /api/rh/solicitacoes/:solicitacaoId/ferias — o registro de férias/licença
+// vinculado a esta Solicitação (categoria ferias/licenca), se já foi lançado.
+router.get('/solicitacoes/:solicitacaoId/ferias', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('rh_ferias_licencas')
+      .select('id, tipo, data_inicio, data_fim, status, observacoes, funcionario_id')
+      .eq('solicitacao_id', req.params.solicitacaoId)
+      .maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || null);
+  } catch (e) {
+    console.error('[RH] Buscar férias por solicitação:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar vínculo com o RH' });
+  }
+});
+
+// POST /api/rh/solicitacoes/:solicitacaoId/ferias — o RH registra a férias/
+// licença oficial a partir de uma Solicitação (categoria ferias/licenca) já
+// aberta. É isso que torna a Solicitação ACIONÁVEL no RH (antes só chegava
+// como aviso, sem virar registro nenhum) — a partir daqui, aprovar/rejeitar em
+// PATCH /ferias/:id abaixo fecha o loop e atualiza a própria Solicitação.
+router.post('/solicitacoes/:solicitacaoId/ferias', async (req, res) => {
+  try {
+    if (!(['admin', 'diretor'].includes(req.user.role) || getEffectiveLevel(req, 'rh') >= 3)) {
+      return res.status(403).json({ error: 'Sem permissão para registrar férias/licença (exige RH nível ≥ 3).' });
+    }
+    const { solicitacaoId } = req.params;
+    const { tipo, data_inicio, data_fim, observacoes, substituto_id } = req.body || {};
+    if (!tipo || !data_inicio || !data_fim) {
+      return res.status(400).json({ error: 'Tipo, data início e data fim são obrigatórios' });
+    }
+
+    const { data: sol, error: solErr } = await supabase
+      .from('solicitacoes')
+      .select('id, categoria, solicitante_id')
+      .eq('id', solicitacaoId)
+      .maybeSingle();
+    if (solErr) return res.status(400).json({ error: solErr.message });
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada' });
+    if (!['ferias', 'licenca'].includes(sol.categoria)) {
+      return res.status(400).json({ error: 'Esta solicitação não é de férias/licença' });
+    }
+
+    const { data: jaVinculado } = await supabase
+      .from('rh_ferias_licencas')
+      .select('id')
+      .eq('solicitacao_id', solicitacaoId)
+      .maybeSingle();
+    if (jaVinculado) {
+      return res.status(409).json({ error: 'Esta solicitação já tem um registro de férias/licença vinculado no RH' });
+    }
+
+    // Resolve o funcionário a partir de quem abriu a solicitação — mesma
+    // chave usada em toda a casa (e-mail case-insensitive contra
+    // rh_funcionarios, espelho de current_user_funcionario_id()). Nunca
+    // adivinha por nome.
+    const { data: solicitanteProfile } = await supabase
+      .from('profiles')
+      .select('id, email')
+      .eq('id', sol.solicitante_id)
+      .maybeSingle();
+    if (!solicitanteProfile?.email) {
+      return res.status(404).json({ error: 'Não foi possível identificar o e-mail de quem abriu a solicitação' });
+    }
+    const { data: func } = await supabase
+      .from('rh_funcionarios')
+      .select('id, nome, email')
+      .ilike('email', solicitanteProfile.email)
+      .maybeSingle();
+    if (!func) {
+      return res.status(404).json({ error: 'Quem abriu esta solicitação não está cadastrado como funcionário no RH' });
+    }
+
+    const { data, error } = await supabase
+      .from('rh_ferias_licencas')
+      .insert({
+        funcionario_id: func.id,
+        tipo, data_inicio, data_fim,
+        observacoes: observacoes || null,
+        substituto_id: substituto_id || null,
+        solicitacao_id: solicitacaoId,
+      })
+      .select()
+      .single();
+
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ...data, funcionario_nome: func.nome });
+  } catch (e) {
+    console.error('[RH] Registrar férias a partir de solicitação:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar férias/licença' });
+  }
+});
+
 // PATCH /api/rh/ferias/:id — aprovar/rejeitar e/ou editar o período
 // (data_inicio/data_fim/tipo/observacoes/substituto_id · edição sem status
 // não mexe no fluxo de aprovação nem dispara cobertura/notificação)
@@ -1546,6 +1640,55 @@ router.patch('/ferias/:id', async (req, res) => {
       severidade: status === 'aprovado' ? 'info' : 'aviso',
       chaveDedup: `ferias_${status}_${data.id}`,
     }).catch(() => {});
+
+    // Fecha o loop com a Solicitação que originou este registro (quando veio
+    // de lá via POST /solicitacoes/:id/ferias): aprovar/rejeitar aqui muda o
+    // status da Solicitação aberta e avisa quem pediu — sem isso, o pedido
+    // ficava "pendente" pra sempre na tela de Solicitações mesmo já decidido
+    // no RH. Mesmo padrão do Marketing (`aprovar-entrega`): escreve o status
+    // direto em `solicitacoes` + notifica com `targetIds` explícito.
+    if (data.solicitacao_id) {
+      const novoStatusSolicitacao = status === 'aprovado' ? 'concluido' : 'rejeitado';
+      const { data: solVinculada } = await supabase
+        .from('solicitacoes')
+        .select('id, status, solicitante_id, titulo')
+        .eq('id', data.solicitacao_id)
+        .maybeSingle();
+      if (solVinculada && solVinculada.status !== novoStatusSolicitacao) {
+        await supabase
+          .from('solicitacoes')
+          .update({
+            status: novoStatusSolicitacao,
+            ...(status === 'aprovado' ? { concluido_em: new Date().toISOString() } : {}),
+          })
+          .eq('id', data.solicitacao_id);
+
+        await supabase.from('solicitacoes_eventos').insert({
+          solicitacao_id: data.solicitacao_id,
+          status_anterior: solVinculada.status,
+          status_novo: novoStatusSolicitacao,
+          ator_id: req.user?.userId || req.user?.id || null,
+          observacao: `${tipoLabel} ${statusLabel} pelo RH.`,
+        }).catch(() => {});
+
+        if (solVinculada.solicitante_id) {
+          notificar({
+            modulo: 'rh',
+            tipo: status === 'aprovado' ? 'solicitacao_avaliar' : 'solicitacao_status',
+            titulo: status === 'aprovado'
+              ? `${tipoLabel} aprovada: ${solVinculada.titulo}`
+              : `${tipoLabel} recusada: ${solVinculada.titulo}`,
+            mensagem: status === 'aprovado'
+              ? `Sua solicitação de ${tipoLabel.toLowerCase()} (${data.data_inicio} a ${data.data_fim}) foi aprovada pelo RH.`
+              : `Sua solicitação de ${tipoLabel.toLowerCase()} foi recusada pelo RH.${observacoes ? ` Motivo: ${observacoes}` : ''}`,
+            link: '/solicitacoes',
+            severidade: status === 'aprovado' ? 'info' : 'alta',
+            chaveDedup: `solicitacao_status_${data.solicitacao_id}_${novoStatusSolicitacao}`,
+            targetIds: [solVinculada.solicitante_id],
+          }).catch(() => {});
+        }
+      }
+    }
 
     res.json(data);
   } catch (e) {

@@ -121,9 +121,18 @@ router.get('/aux/locais', authorizeModule(MOD, 1), async (_req, res) => {
 });
 
 router.get('/aux/areas', authorizeModule(MOD, 1), async (_req, res) => {
-  const { data } = await supabase
+  // `lider_id` é lido em consulta própria e tolera a migration ausente (deploy
+  // em 2 etapas): pedir a coluna dentro do select principal faria o PostgREST
+  // recusar a query inteira se ela não existir ainda (lição do `parcelas_max`).
+  const base = await supabase
     .from('plan_areas_diretoria').select('area, diretoria, rotulo, ativo').order('area');
-  res.json((data || []).filter((a) => a.ativo !== false));
+  const lista = (base.data || []).filter((a) => a.ativo !== false);
+  const comLider = await supabase.from('plan_areas_diretoria').select('area, lider_id');
+  if (!comLider.error) {
+    const porArea = new Map((comLider.data || []).map((r) => [r.area, r.lider_id]));
+    for (const a of lista) a.lider_id = porArea.get(a.area) || null;
+  }
+  res.json(lista);
 });
 
 router.get('/aux/constantes', authorizeModule(MOD, 1), (_req, res) => {

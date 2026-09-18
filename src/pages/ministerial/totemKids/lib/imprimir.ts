@@ -420,6 +420,17 @@ function escapeHtml(s: string): string {
 
 type ResultadoImpressao = { status: 'enviada' | 'sucesso' };
 
+// Telas de teste/edição de layout (EditarEtiquetaModal, TotemKidsTesteEtiqueta)
+// imprimem de verdade fora de um check-in real, com um checkinId fixo tipo
+// 'preview'/'preview-only' — o backend exige checkin_id como uuid e rejeitava
+// com 500 [22P02] "invalid input syntax for type uuid". A impressão em si não
+// deve falhar por causa do log de auditoria: só logamos quando o id é um uuid
+// de verdade (check-in real).
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function checkinIdValido(id: string | undefined | null): boolean {
+  return !!id && UUID_RE.test(id);
+}
+
 function imprimirHtml(html: string, preview = false): Promise<ResultadoImpressao> {
   if (preview) {
     // Modo preview · abre popup visível pro usuário conferir layout antes de
@@ -537,6 +548,7 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incl
 
   const resultado = await imprimirHtml(documento(fragmentos, d.layout), preview);
   if (preview) return;  // não loga impressão em modo preview
+  if (!checkinIdValido(d.checkinId)) return;  // impressão de teste (sem check-in real) · não loga
 
   totemKids.etiquetas.log({
     checkin_id: d.checkinId,
@@ -613,6 +625,7 @@ export async function imprimirEtiquetasLote(
 
   const eventos: Record<string, unknown>[] = [];
   itens.forEach(({ d, incluirRecibo }, i) => {
+    if (!checkinIdValido(d.checkinId)) return;  // impressão de teste (sem check-in real) · não loga
     eventos.push({
       checkin_id: d.checkinId,
       estacao_id: d.estacaoId,
@@ -639,7 +652,7 @@ export async function imprimirEtiquetasLote(
       });
     }
   });
-  totemKids.etiquetas.logLote(eventos).catch(() => {});
+  if (eventos.length) totemKids.etiquetas.logLote(eventos).catch(() => {});
 }
 
 // Reimpressao (etiqueta rasgou ou impressora falhou) — 1 etiqueta, 1 job.

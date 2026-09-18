@@ -350,6 +350,32 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+// ── Health check do BANCO ──
+// Nasceu em 2026-09-16: algo externo já vinha batendo HEAD/GET aqui e
+// caindo no 404 genérico (ou pior, sem nenhuma rota registrada) — visível
+// como "HEAD /api/health/db · HTTP 503" na aba Web & API do /sistema. Em vez
+// de só devolver 404, a rota passou a existir de verdade: confere se o
+// PostgREST responde dentro de um teto curto, e falha CLARO (503 com motivo
+// entregue via `falhaInterna`) em vez de silencioso.
+app.get('/api/health/db', async (req, res) => {
+  const { supabase } = require('./utils/supabase');
+  const { falhaInterna } = require('./utils/responderFalha');
+  if (!supabase) {
+    return falhaInterna(res, 'Banco não configurado neste runtime.', new Error('supabase_client_ausente'), { status: 503 });
+  }
+  const inicio = Date.now();
+  try {
+    const consulta = supabase.from('modulos').select('id', { count: 'exact', head: true }).limit(1);
+    const teto = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout_5s')), 5000));
+    const { error } = await Promise.race([consulta, teto]);
+    if (error) throw error;
+    setSystemJobOutcome(res, { status: 'success', effectStatus: 'confirmed', outputCount: 1, result: 'db_healthy' });
+    return res.json({ status: 'ok', db: true, latency_ms: Date.now() - inicio, timestamp: new Date().toISOString() });
+  } catch (erro) {
+    return falhaInterna(res, 'Banco de dados indisponível.', erro, { status: 503 });
+  }
+});
+
 // ── API 404 (evita fallback HTML para rotas inexistentes) ──
 app.use('/api', (req, res) => {
   res.status(404).json({
