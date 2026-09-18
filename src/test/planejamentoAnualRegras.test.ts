@@ -123,10 +123,10 @@ describe('cegueira até o quórum (teste 1 e 9 do spec)', () => {
     expect(proj.soma).toBeCloseTo(28, 5); // 7 critérios × média 4
   });
 
-  it('o Pastor também fica cego antes do quórum (sem exceção no spec)', () => {
+  it('2026-09-18: o Pastor SEMPRE recebe as avaliações, mesmo parciais (revoga a cegueira anterior)', () => {
     const proj = projetarProposta({ proposta: p, avaliacoes: tres, decisoes: [], apontamentos: [], quorum: QUORUM, papel: 'pastor' });
-    expect(proj.avaliacoes).toBeNull();
-    expect(proj.medias).toBeNull();
+    expect(proj.avaliacoes).toHaveLength(3);
+    expect(proj.medias).not.toBeNull();
   });
 
   it('avaliação soft-deletada (reaberta pros diretores) não conta pro quórum', () => {
@@ -585,5 +585,101 @@ describe('estados derivados e decisão vigente', () => {
     expect(horariosSobrepoem({ hora_inicio: '19:00', hora_fim: null }, { hora_inicio: '19:30', hora_fim: '21:00' })).toBe(false);
     expect(horariosSobrepoem({ hora_inicio: '19:00', hora_fim: '20:00' }, { hora_inicio: '20:00', hora_fim: '21:00' })).toBe(false); // encosta, não sobrepõe
     expect(horariosSobrepoem({ hora_inicio: '19:00', hora_fim: '20:30' }, { hora_inicio: '20:00', hora_fim: '21:00' })).toBe(true);
+  });
+});
+
+// ── Apontamento do Pastor (custo/recorrência/data · 2026-09-18) ─────────
+describe('valorEfetivoProposta · apontado vence o original quando presente', () => {
+  const {
+    valorEfetivoProposta, custoAnualizado, distribuirCustoPorMes,
+    custoMensalTodasPropostas, custoMensalAprovadas, MULTIPLICADOR_RECORRENCIA,
+  } = PA as any;
+
+  it('sem apontamento nenhum, devolve os valores originais', () => {
+    const p = prop({ custo: 1000, recorrencia: 'mensal', dia_semana: 2, data_inicio: '2027-05-01', precisao_inicio: 'mes' });
+    expect(valorEfetivoProposta(p)).toEqual({
+      custo: 1000, recorrencia: 'mensal', diaSemana: 2, dataInicio: '2027-05-01', precisaoInicio: 'mes',
+    });
+  });
+
+  it('apontamento presente vence o original, campo a campo', () => {
+    const p = prop({
+      custo: 1000, recorrencia: 'unica', data_inicio: '2027-05-01', precisao_inicio: 'dia',
+      custo_apontado: 500, recorrencia_apontada: 'mensal', dia_semana_apontado: 3,
+      data_inicio_apontada: '2027-06-01', precisao_inicio_apontada: 'mes',
+    });
+    expect(valorEfetivoProposta(p)).toEqual({
+      custo: 500, recorrencia: 'mensal', diaSemana: 3, dataInicio: '2027-06-01', precisaoInicio: 'mes',
+    });
+  });
+
+  it('custoAnualizado aplica o multiplicador certo por recorrência', () => {
+    expect(custoAnualizado(100, 'unica')).toBe(100);
+    expect(custoAnualizado(100, 'diaria')).toBe(36500);
+    expect(custoAnualizado(100, 'semanal')).toBe(5200);
+    expect(custoAnualizado(100, 'mensal')).toBe(1200);
+    expect(custoAnualizado(100, 'trimestral')).toBe(400);
+    expect(custoAnualizado(100, 'semestral')).toBe(200);
+    expect(custoAnualizado(100, 'personalizada')).toBe(100);
+    expect(MULTIPLICADOR_RECORRENCIA.mensal).toBe(12);
+  });
+
+  it('distribuirCustoPorMes: única distribui nos meses ocupados (via rateioMensal)', () => {
+    const p = prop({ custo: 1200, recorrencia: 'unica', data_inicio: '2027-03-10', precisao_inicio: 'dia', multi_dia: false });
+    const porMes = distribuirCustoPorMes(p, { usarApontamento: false });
+    expect(porMes[2]).toBe(1200); // março = índice 2
+    expect(porMes.reduce((s: number, v: number) => s + v, 0)).toBe(1200);
+  });
+
+  it('distribuirCustoPorMes: recorrente distribui o anualizado / 12 em todos os meses', () => {
+    const p = prop({ custo: 120, recorrencia: 'mensal' });
+    const porMes = distribuirCustoPorMes(p, { usarApontamento: false });
+    porMes.forEach((v: number) => expect(v).toBe(120)); // 120*12/12 = 120
+  });
+
+  it('usarApontamento:false NUNCA usa o valor apontado (linha imutável)', () => {
+    const p = prop({ custo: 100, recorrencia: 'unica', data_inicio: '2027-04-05', precisao_inicio: 'dia', custo_apontado: 999999 });
+    const porMes = distribuirCustoPorMes(p, { usarApontamento: false });
+    expect(porMes.reduce((s: number, v: number) => s + v, 0)).toBe(100);
+  });
+
+  it('usarApontamento:true usa o valor apontado quando presente', () => {
+    const p = prop({ custo: 100, recorrencia: 'unica', data_inicio: '2027-04-05', precisao_inicio: 'dia', custo_apontado: 500 });
+    const porMes = distribuirCustoPorMes(p, { usarApontamento: true });
+    expect(porMes.reduce((s: number, v: number) => s + v, 0)).toBe(500);
+  });
+
+  it('custoMensalTodasPropostas inclui tudo exceto rascunho/arquivada, sempre sem apontamento', () => {
+    const p1 = prop({ estado: 'enviada', custo: 100, recorrencia: 'unica', data_inicio: '2027-01-15', precisao_inicio: 'dia' });
+    const p2 = prop({ estado: 'rascunho', custo: 999, recorrencia: 'unica', data_inicio: '2027-01-15', precisao_inicio: 'dia' });
+    const p3 = prop({ estado: 'arquivada', custo: 999, recorrencia: 'unica', data_inicio: '2027-01-15', precisao_inicio: 'dia' });
+    const p4 = prop({ estado: 'reprovada', custo: 50, recorrencia: 'unica', data_inicio: '2027-01-15', precisao_inicio: 'dia' });
+    const total = custoMensalTodasPropostas([p1, p2, p3, p4]);
+    expect(total[0]).toBe(150); // só p1 (100) + p4 (50) contam
+  });
+
+  it('custoMensalAprovadas soma só aprovada/aprovada_ressalvas, usando apontamento', () => {
+    const p1 = prop({ estado: 'aprovada', custo: 100, custo_apontado: 200, recorrencia: 'unica', data_inicio: '2027-02-10', precisao_inicio: 'dia' });
+    const p2 = prop({ estado: 'aprovada_ressalvas', custo: 50, recorrencia: 'unica', data_inicio: '2027-02-10', precisao_inicio: 'dia' });
+    const p3 = prop({ estado: 'enviada', custo: 999, recorrencia: 'unica', data_inicio: '2027-02-10', precisao_inicio: 'dia' });
+    const total = custoMensalAprovadas([p1, p2, p3]);
+    expect(total[1]).toBe(250); // p1 usa o apontado (200) + p2 (50); p3 fora
+  });
+});
+
+describe('projetarProposta · papel pastor sempre recebe avaliações (mesmo parciais)', () => {
+  const p = prop();
+  it('pastor recebe avaliações parciais (quórum incompleto)', () => {
+    const avs = [aval('ministerial', 4)];
+    const r = projetarProposta({ proposta: p, avaliacoes: avs, decisoes: [], apontamentos: [], quorum: QUORUM, papel: 'pastor' });
+    expect(r.avaliacoes).toHaveLength(1);
+    expect(r.medias).not.toBeNull();
+  });
+
+  it('avaliador continua cego até o quórum completo (não regride)', () => {
+    const avs = [aval('ministerial', 4)];
+    const r = projetarProposta({ proposta: p, avaliacoes: avs, decisoes: [], apontamentos: [], quorum: QUORUM, papel: 'avaliador', minhaDiretoria: 'ministerial' });
+    expect(r.avaliacoes).toBeNull();
+    expect(r.minha_avaliacao).not.toBeNull();
   });
 });

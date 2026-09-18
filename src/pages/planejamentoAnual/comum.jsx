@@ -119,3 +119,30 @@ export function fmtQuando(p) {
 
 export const thStyle = { textAlign: 'left', padding: '8px 10px', fontSize: 11.5, fontWeight: 700, color: 'var(--cbrio-text3)', textTransform: 'uppercase', letterSpacing: 0.4, borderBottom: '1px solid var(--hairline)' };
 export const tdStyle = { padding: '9px 10px', fontSize: 13, color: 'var(--cbrio-text)', borderBottom: '1px solid var(--hairline)', verticalAlign: 'top' };
+
+// Evidência do proponente exibida ao lado de cada critério (protótipo ·
+// coluna "Informado pelo proponente"). Extraída de AvaliacaoTab.jsx
+// (2026-09-18) para ser compartilhada com PastorTab.jsx — mesma lógica,
+// um lugar só. Para o critério `custo`, considera o valor APONTADO pelo
+// Pastor quando presente (custo_apontado) — campos que só existem na
+// proposta vista pelo Pastor; em AvaliacaoTab (sem esses campos) cai no
+// fallback normal, sem mudar nada do comportamento de lá.
+export function evidenciaCriterio(chave, p) {
+  if (!p) return '';
+  switch (chave) {
+    case 'relevancia': return `Alcance estimado ${p.alcance_pct ?? '—'}% de ${p.publico_considerado === 'recorte_geracional' ? 'recorte geracional' : 'igreja inteira'}`;
+    case 'pertencimento': return p.pertencimento || '—';
+    case 'transformacao': return (Array.isArray(p.valores) && p.valores.length)
+      ? p.valores.map((v) => `${v.nome}: ${v.justificativa || '—'}`).join(' · ') : 'Nenhum valor marcado';
+    case 'visao': return p.visao_explique || '—';
+    case 'impacto': return p.impacto || '—';
+    case 'custo': {
+      const temApontamento = p.custo_apontado !== undefined && p.custo_apontado !== null;
+      const custoEfetivo = temApontamento ? p.custo_apontado : p.custo;
+      const selo = temApontamento ? ' (apontado)' : '';
+      return `Custo ${fmtBRL(custoEfetivo)}${selo} · arrecadação ${p.tem_arrecadacao ? fmtBRL(p.arrecadacao_prevista) : 'nenhuma'} · líquido ${fmtBRL(p.liquido_exibicao ?? p.liquido)}`;
+    }
+    case 'sustentabilidade': return p.custeio?.rotulo || '—';
+    default: return '';
+  }
+}
