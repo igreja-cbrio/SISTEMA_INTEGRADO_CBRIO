@@ -383,6 +383,7 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
           </p>
         </div>
 
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
         {/* Custo */}
         <div style={{ display: 'grid', gap: 6 }}>
           <span style={{ fontSize: 12.5, fontWeight: 600, color: C.text }}>Custo</span>
@@ -455,6 +456,7 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
           ) : (
             <button style={{ ...btn('ghost'), width: 'fit-content' }} onClick={() => setApontEditando('data')}>Apontar novo valor</button>
           )}
+        </div>
         </div>
       </div>
 
