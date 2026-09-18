@@ -310,7 +310,7 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
           )}
           {ressalva && (
             <div style={{ display: 'grid', gap: 8 }}>
-              <span style={hint}>A proposta entra no calendário depois que você verificar a ressalva.</span>
+              <span style={hint}>A proposta já entra no calendário. A ressalva vira uma notificação pro proponente e um item de acompanhamento seu (verificar/reabrir).</span>
               <textarea style={{ ...input, minHeight: 54 }} placeholder="Ressalva" value={ressalva.texto} onChange={(e) => setRessalva({ ...ressalva, texto: e.target.value })} />
               <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                 <select style={{ ...input, width: 240 }} value={ressalva.responsavel_id} onChange={(e) => setRessalva({ ...ressalva, responsavel_id: e.target.value })}>
@@ -444,7 +444,8 @@ function Ressalvas({ ciclo, recarregarCiclo }) {
   return (
     <div style={{ display: 'grid', gap: 12 }}>
       <p style={{ margin: 0, fontSize: 12.5, color: C.t3 }}>
-        Uma proposta aprovada com ressalvas só entra no calendário depois que você verificar o cumprimento.
+        Uma proposta aprovada com ressalvas já está no calendário. Esta aba é só o acompanhamento — marcar
+        cumprida quando o combinado for atendido, ou reabrir se precisar.
       </p>
       {!lista.length && <p style={{ fontSize: 13, color: C.t3 }}>Nenhuma ressalva no ciclo.</p>}
       {lista.map((p) => (
@@ -456,7 +457,7 @@ function Ressalvas({ ciclo, recarregarCiclo }) {
             {p.ressalva?.verificada ? (
               <button style={btn('ghost')} onClick={async () => { await api.propostas.reabrirRessalva(p.id); toast.success('Ressalva reaberta'); await carregar(); recarregarCiclo?.(); }}>Reabrir</button>
             ) : (
-              <button style={btn('primary')} onClick={async () => { await api.propostas.verificarRessalva(p.id); toast.success('Ressalva verificada · proposta liberada pro calendário'); await carregar(); recarregarCiclo?.(); }}>Marcar cumprida</button>
+              <button style={btn('primary')} onClick={async () => { await api.propostas.verificarRessalva(p.id); toast.success('Ressalva verificada'); await carregar(); recarregarCiclo?.(); }}>Marcar cumprida</button>
             )}
           </div>
         </div>
