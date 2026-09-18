@@ -14,7 +14,7 @@
 - `backend/routes/painelRh.js`
 - `backend/routes/rh.js`
 Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
-<details><summary>Endpoints (96)</summary>
+<details><summary>Endpoints (98)</summary>
 - `DELETE /api/events/:id`
 - `DELETE /api/events/attachments/:attachId`
 - `DELETE /api/events/risks/:riskId`
@@ -57,6 +57,7 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 - `GET /api/rh/funcionarios/:id/pagamentos`
 - `GET /api/rh/kpis`
 - `GET /api/rh/onboarding/pendentes`
+- `GET /api/rh/solicitacoes/:solicitacaoId/ferias`
 - `GET /api/rh/treinamentos`
 - `PATCH /api/events/:id/occurrences/:occId`
 - `PATCH /api/events/:id/status`
@@ -102,6 +103,7 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 - `POST /api/rh/onboarding/preview`
 - `POST /api/rh/organograma/ia`
 - `POST /api/rh/organograma/ia/aplicar`
+- `POST /api/rh/solicitacoes/:solicitacaoId/ferias`
 - `POST /api/rh/treinamentos`
 - `POST /api/rh/treinamentos/:id/inscrever`
 - `PUT /api/events/:id`
@@ -174,6 +176,8 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 - `rh_treinamentos`
 - `rh_treinamentos_funcionarios`
 - `simple_event_task_templates`
+- `solicitacoes`
+- `solicitacoes_eventos`
 - `usuarios`
 - `v_events_dashboard`
 - `vw_fin_transacoes_completa`
