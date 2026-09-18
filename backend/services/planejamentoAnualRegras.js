@@ -19,9 +19,11 @@ const SUPOSICOES = {
   // [SUPOSIÇÃO 1] Conflito de ESPAÇO vale entre naturezas DIFERENTES
   // (restrição física de local · não confirmado com a diretoria).
   espacoEntreNaturezasDiferentes: true,
-  // [SUPOSIÇÃO 2] Aprovada com ressalvas SÓ entra no calendário depois
-  // que o Pastor marca a ressalva como verificada.
-  ressalvaVerificadaAntesDoCalendario: true,
+  // [DECISÃO · Marcos, 2026-09-18] Aprovada com ressalvas ENTRA no
+  // calendário/orçamento na hora da decisão, igual a "aprovada" — a
+  // ressalva vira só notificação ao proponente + acompanhamento do Pastor
+  // (verificar/reabrir), nunca um portão que segura o calendário.
+  ressalvaVerificadaAntesDoCalendario: false,
   // [SUPOSIÇÃO 3] Rateio orçamentário UNIFORME do líquido pelos meses
   // ocupados (evolução prevista: cronograma de desembolso por proposta).
   rateioUniforme: true,
@@ -401,7 +403,12 @@ function aplicarAceites(conflitos, aceites) {
   }));
 }
 
-// ── As 5 travas de publicação (textos exatos do protótipo) ──────────────
+// ── Travas de publicação (textos exatos do protótipo) ───────────────────
+// [DECISÃO · Marcos, 2026-09-18] Ressalva não verificada NÃO bloqueia
+// publicação — a proposta já está aprovada e no calendário; a ressalva é
+// só acompanhamento do Pastor (aba Ressalvas), não trava de publicação.
+// `ressalva` segue calculada e devolvida em `detalhe` (informativa), fora
+// da lista de `motivos`.
 function validarTravas({ propostas, avaliacoesPorProposta, decisoesPorProposta, quorum, locaisById, aceites, suposicoes = SUPOSICOES }) {
   const vivas = (propostas || []).filter((p) => !p.deleted_at);
   const avsDe = (p) => (avaliacoesPorProposta[p.id] || []).filter((a) => !a.deleted_at);
@@ -420,7 +427,6 @@ function validarTravas({ propostas, avaliacoesPorProposta, decisoesPorProposta, 
   if (semQuorum.length) motivos.push(`${semQuorum.length} proposta(s) sem quórum de avaliação`);
   if (semDecisao.length) motivos.push(`${semDecisao.length} proposta(s) sem decisão`);
   if (retificacao.length) motivos.push(`${retificacao.length} retificação(ões) em andamento`);
-  if (ressalva.length) motivos.push(`${ressalva.length} ressalva(s) não verificada(s)`);
   if (conflitos.length) motivos.push(`${conflitos.length} conflito(s) confirmado(s) e não aceito(s) no calendário`);
 
   return {
