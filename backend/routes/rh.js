@@ -11,6 +11,7 @@ const { aplicarCobertura, encerrarCobertura } = require('../services/cobertura')
 const rhOnboardingEnvios = require('../services/rhOnboardingEnvios');
 const { escapePostgrestValue } = require('../utils/sanitize'); // varredura 2026-09: RHP-11 — `_` e `%` sao curinga no ilike do PostgREST
 const { BUCKET_DOCS_RH, assinarDocumentosRh } = require('../services/anexosRhDocumentos'); // varredura 2026-09: RHP-01 · régua ÚNICA, compartilhada com o app do Staff
+const { semFalhar } = require('../utils/semFalhar'); // PostgrestFilterBuilder não é Promise: nunca `.catch()` na cadeia — ver src/test/postgrestCatch.test.ts
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -1872,13 +1873,13 @@ router.patch('/ferias/:id', podeDecidirFerias(), async (req, res) => {
           })
           .eq('id', data.solicitacao_id);
 
-        await supabase.from('solicitacoes_eventos').insert({
+        await semFalhar(supabase.from('solicitacoes_eventos').insert({
           solicitacao_id: data.solicitacao_id,
           status_anterior: solVinculada.status,
           status_novo: novoStatusSolicitacao,
           ator_id: req.user?.userId || req.user?.id || null,
           observacao: `${tipoLabel} ${statusLabel} pelo RH.`,
-        }).catch(() => {});
+        }), '[RH] registrar evento da solicitação:');
 
         if (solVinculada.solicitante_id) {
           notificar({
