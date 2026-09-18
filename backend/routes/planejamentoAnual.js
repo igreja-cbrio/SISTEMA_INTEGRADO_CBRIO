@@ -1094,11 +1094,13 @@ router.get('/ciclos/:id/orcamento/pastor', authorizeModule(MOD, 1), async (req, 
     supabase.from('plan_orcamentos').select('*').eq('ciclo_id', req.params.id).maybeSingle(),
     supabase.from('plan_orcamento_valores').select('linha, mes, valor').eq('ciclo_id', req.params.id),
   ]);
-  if (!header?.enviado_em) {
-    return res.json({ sem_orcamento: true, mensagem: 'A diretoria Financeira ainda não enviou o orçamento do ciclo. Sem ele, esta tela não tem referência de caixa.' });
-  }
+  const semOrcamento = !header?.enviado_em;
+  // 2026-09-18: sem orçamento enviado pelo Financeiro NÃO bloqueia mais a
+  // tela inteira — só a linha "caixa livre" (e o saldo, que depende dela)
+  // ficam ausentes. "Todas as propostas" e "aprovado em tempo real" são
+  // deriváveis das próprias propostas do ciclo, sem depender do Financeiro.
   const ctx = await contextoCalendario(req.params.id);
-  const caixa = PA.caixaLivreMensal(valores || []);
+  const caixa = semOrcamento ? null : PA.caixaLivreMensal(valores || []);
 
   let propostas = ctx.propostas;
   const simular = req.query.simular; // efeito de UMA proposta isolada (tela de decisão)
@@ -1125,16 +1127,20 @@ router.get('/ciclos/:id/orcamento/pastor', authorizeModule(MOD, 1), async (req, 
   // conter só a proposta simulada + as já aprovadas.
   const todasPropostas = PA.custoMensalTodasPropostas(ctx.propostas);
   res.json({
-    caixa_livre: caixa,
+    sem_orcamento: semOrcamento,
+    mensagem: semOrcamento
+      ? 'A diretoria Financeira ainda não enviou o orçamento do ciclo. Sem ele, não há referência de caixa livre — mas as linhas de "todas as propostas" e "aprovado em tempo real" abaixo já refletem os dados do ciclo.'
+      : null,
+    caixa_livre: caixa, // null quando sem_orcamento
     comprometido: comprometidoComApontamento,
     todas_propostas: todasPropostas,
     propostos: visao.propostos,
-    saldo: visao.saldo,
-    meses_negativos: visao.mesesNegativos,
-    enviado_por: header.enviado_por,
-    enviado_em: header.enviado_em,
-    premissas: header.premissas || [],
-    obs: header.obs || null,
+    saldo: semOrcamento ? null : visao.saldo, // sem caixa livre, "saldo" mentiria
+    meses_negativos: semOrcamento ? null : visao.mesesNegativos,
+    enviado_por: header?.enviado_por || null,
+    enviado_em: header?.enviado_em || null,
+    premissas: header?.premissas || [],
+    obs: header?.obs || null,
     itens: visao.aprovadas.map((p) => ({ id: p.id, nome: p.nome, rateio: PA.distribuirCustoPorMes(p, { usarApontamento: true }) })),
     pendentes: visao.pendentes.map((p) => ({ id: p.id, nome: p.nome, rateio: PA.rateioMensal(p) })),
   });

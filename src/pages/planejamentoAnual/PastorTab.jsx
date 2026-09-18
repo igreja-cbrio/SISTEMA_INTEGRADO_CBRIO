@@ -21,12 +21,15 @@ import CalendarioAno from './CalendarioAno';
 function GraficoOrcamento({ visao, alturaPx = 260, rotuloPendente = 'Aguardando decisão' }) {
   const dados = MESES.map((m, i) => ({
     mes: m,
-    caixa: visao.caixa_livre?.[i] ?? 0,
+    caixa: visao.caixa_livre?.[i] ?? null,
     aprovado: visao.comprometido?.[i] ?? 0,
     pendente: visao.propostos?.[i] ?? 0,
     todas: visao.todas_propostas?.[i] ?? null,
   }));
   const temTodas = Array.isArray(visao.todas_propostas);
+  // Sem orçamento enviado pelo Financeiro não há caixa livre — a linha some
+  // (em vez de aparecer zerada, o que mentiria "não há dinheiro nenhum").
+  const temCaixa = Array.isArray(visao.caixa_livre);
   return (
     <div style={{ height: alturaPx }}>
       <ResponsiveContainer width="100%" height="100%">
@@ -38,7 +41,9 @@ function GraficoOrcamento({ visao, alturaPx = 260, rotuloPendente = 'Aguardando 
           <ReferenceLine y={0} stroke="var(--hairline)" />
           <Bar dataKey="aprovado" name="Aprovado (tempo real)" stackId="c" fill={C.primary} />
           <Bar dataKey="pendente" name={rotuloPendente} stackId="c" fill={C.amber} fillOpacity={0.55} />
-          <Line dataKey="caixa" name="Orçamento livre" stroke={C.text} strokeWidth={2} dot={false} />
+          {temCaixa && (
+            <Line dataKey="caixa" name="Orçamento livre" stroke={C.text} strokeWidth={2} dot={false} />
+          )}
           {temTodas && (
             <Line dataKey="todas" name="Todas as propostas" stroke={C.purple} strokeWidth={2} strokeDasharray="6 4" dot={false} />
           )}
@@ -262,12 +267,25 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
         <button style={btn('ghost')} onClick={aoVoltar}>Voltar ao ranking</button>
       </div>
 
-      {/* ── B) Critérios ─────────────────────────────────────────────── */}
+      {/* ── B) Critérios (notas e argumentações por diretoria, lado a lado) ─
+           Visão exclusiva do Pastor: cada diretoria vira uma coluna, com a
+           nota e o comentário daquele critério — diretorias NUNCA veem a
+           coluna umas das outras (isso só existe aqui, na tela do Pastor). */}
       <div style={{ ...cardStyle, padding: 14, overflowX: 'auto' }}>
         <strong style={{ fontSize: 13, color: C.text }}>Critérios</strong>
-        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 8, minWidth: 560 }}>
+        <p style={{ ...hint, marginTop: 2 }}>
+          Notas e argumentações aparecem conforme cada diretoria avalia — visível só a você.
+          As diretorias continuam sem ver a nota ou o comentário umas das outras.
+        </p>
+        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 8, minWidth: 760 }}>
           <thead><tr>
-            <th style={thStyle}>Critério</th><th style={thStyle}>Informado pelo proponente</th>
+            <th style={{ ...thStyle, minWidth: 190 }}>Critério</th>
+            <th style={{ ...thStyle, minWidth: 200 }}>Informado pelo proponente</th>
+            {avaliacoesParciais.map((a) => (
+              <th key={a.id} style={{ ...thStyle, textAlign: 'center', minWidth: 150 }}>{rotuloDiretoria(a.diretoria)}</th>
+            ))}
+            <th style={{ ...thStyle, textAlign: 'center' }}>Média</th>
+            <th style={thStyle}></th>
           </tr></thead>
           <tbody>
             <tr>
@@ -278,31 +296,33 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
                 {' · '}{fmtQuando(p)}
                 {p.data_inicio_apontada != null && <>{' → '}{fmtData(p.data_inicio_apontada)} <Badge texto="apontado" cor={C.amber} /></>}
               </td>
+              {avaliacoesParciais.map((a) => <td key={a.id} style={tdStyle} />)}
+              <td style={tdStyle} />
+              <td style={tdStyle} />
             </tr>
-            {criterios.map((c) => (
-              <tr key={c.chave}>
-                <td style={{ ...tdStyle, fontWeight: 600 }}>{c.titulo}</td>
-                <td style={{ ...tdStyle, color: C.t2 }}>{evidenciaCriterio(c.chave, p)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-
-      {/* ── C) Apontamentos e pontuação ──────────────────────────────── */}
-      <div style={{ ...cardStyle, padding: 14, overflowX: 'auto', display: 'grid', gap: 10 }}>
-        <strong style={{ fontSize: 13, color: C.text }}>Apontamentos e pontuação</strong>
-        {quorumCompleto ? (
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
-            <thead><tr>
-              <th style={thStyle}>Critério</th><th style={{ ...thStyle, textAlign: 'center' }}>Média das diretorias</th><th style={thStyle}></th>
-            </tr></thead>
-            <tbody>
-              {criterios.map((c, i) => (
+            {criterios.map((c, i) => {
+              const notasDoCriterio = avaliacoesParciais.map((a) => a['nota_' + c.chave]).filter((n) => n != null);
+              const mediaParcial = notasDoCriterio.length ? notasDoCriterio.reduce((s, n) => s + Number(n), 0) / notasDoCriterio.length : null;
+              const media = quorumCompleto ? Number((p.medias || [])[i] ?? 0) : mediaParcial;
+              return (
                 <Fragment key={c.chave}>
                   <tr>
-                    <td style={{ ...tdStyle, fontWeight: 600 }}>{c.titulo}</td>
-                    <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 700, color: C.primary }}>{Number((p.medias || [])[i]).toFixed(2)}</td>
+                    <td style={{ ...tdStyle, width: 190 }}>
+                      <strong style={{ display: 'block', fontSize: 13 }}>{i + 1}. {c.titulo}</strong>
+                      <span style={{ fontSize: 11.5, color: C.t3 }}>{c.descricao}</span>
+                    </td>
+                    <td style={{ ...tdStyle, fontSize: 12.5, color: C.t2, maxWidth: 240 }}>{evidenciaCriterio(c.chave, p)}</td>
+                    {avaliacoesParciais.map((a) => (
+                      <td key={a.id} style={{ ...tdStyle, textAlign: 'center', fontSize: 12.5 }}>
+                        <strong style={{ fontSize: 14, color: C.text }}>{a['nota_' + c.chave] ?? '—'}</strong>
+                        {a.coment_criterios?.[c.chave] && (
+                          <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>{a.coment_criterios[c.chave]}</div>
+                        )}
+                      </td>
+                    ))}
+                    <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 700, color: C.primary }}>
+                      {media != null ? media.toFixed(2) : '—'}
+                    </td>
                     <td style={tdStyle}>
                       <button style={btn('ghost')} onClick={() => { setApAbertoCriterio(apAbertoCriterio === c.chave ? null : c.chave); setApTextoCriterio(''); }}>
                         {apAbertoCriterio === c.chave ? 'Cancelar' : 'Apontar'}
@@ -311,7 +331,7 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
                   </tr>
                   {apAbertoCriterio === c.chave && (
                     <tr>
-                      <td colSpan={3} style={tdStyle}>
+                      <td colSpan={4 + avaliacoesParciais.length} style={tdStyle}>
                         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
                           <textarea style={{ ...input, flex: 1, minWidth: 220, minHeight: 44 }} placeholder={`Apontamento sobre "${c.titulo}"`} value={apTextoCriterio} onChange={(e) => setApTextoCriterio(e.target.value)} />
                           <button style={btn('soft')} onClick={() => apontarCriterio(c)}>Salvar apontamento</button>
@@ -320,37 +340,37 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
                     </tr>
                   )}
                 </Fragment>
-              ))}
-            </tbody>
-          </table>
-        ) : (
-          <p style={hint}>Aguardando o quórum das diretorias ({p.avaliacoes_recebidas}/{p.quorum}) para consolidar a pontuação. Os apontamentos por critério abrem quando a pontuação estiver completa.</p>
+              );
+            })}
+          </tbody>
+        </table>
+        {!avaliacoesParciais.length && <p style={{ ...hint, marginTop: 8 }}>Nenhuma diretoria avaliou ainda.</p>}
+        {!quorumCompleto && avaliacoesParciais.length > 0 && (
+          <p style={{ ...hint, marginTop: 8 }}>Aguardando o quórum das diretorias ({p.avaliacoes_recebidas}/{p.quorum}) — a média acima já considera quem avaliou até agora.</p>
         )}
 
-        <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
-          <strong style={{ fontSize: 12.5, color: C.text }}>Argumentação dos diretores</strong>
-          {avaliacoesParciais.length ? (
-            avaliacoesParciais.map((a) => (
+        {avaliacoesParciais.some((a) => a.comentario_geral) && (
+          <div style={{ display: 'grid', gap: 6, marginTop: 10 }}>
+            <strong style={{ fontSize: 12.5, color: C.text }}>Comentário geral</strong>
+            {avaliacoesParciais.filter((a) => a.comentario_geral).map((a) => (
               <div key={a.id} style={{ fontSize: 12.5, color: C.t2 }}>
-                <Badge texto={rotuloDiretoria(a.diretoria)} cor={C.blue} />{' '}
-                {[...Object.entries(a.coment_criterios || {}).filter(([, t]) => t).map(([k, t]) => `${k}: ${t}`), a.comentario_geral].filter(Boolean).join(' · ') || '—'}
+                <Badge texto={rotuloDiretoria(a.diretoria)} cor={C.blue} /> {a.comentario_geral}
               </div>
-            ))
-          ) : (
-            <span style={hint}>Nenhuma diretoria avaliou ainda.</span>
-          )}
-        </div>
+            ))}
+          </div>
+        )}
+      </div>
 
-        <div style={{ display: 'grid', gap: 6, marginTop: 4 }}>
-          <strong style={{ fontSize: 12.5, color: C.text }}>Histórico de apontamentos</strong>
-          {(p.apontamentos || []).length ? (p.apontamentos || []).map((a) => (
-            <div key={a.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, color: C.t2 }}>
-              <Badge texto={campos.find((c) => c.chave === a.campo)?.rotulo || a.campo} cor={C.blue} />
-              <span style={{ flex: 1 }}>{a.texto}</span>
-              <button style={btn('ghost')} onClick={async () => { await api.propostas.removerApontamento(a.id); await carregar(); }}>remover</button>
-            </div>
-          )) : <span style={hint}>Nenhum apontamento ainda.</span>}
-        </div>
+      {/* ── C) Histórico de apontamentos ─────────────────────────────── */}
+      <div style={{ ...cardStyle, padding: 14, display: 'grid', gap: 8 }}>
+        <strong style={{ fontSize: 13, color: C.text }}>Histórico de apontamentos</strong>
+        {(p.apontamentos || []).length ? (p.apontamentos || []).map((a) => (
+          <div key={a.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, color: C.t2 }}>
+            <Badge texto={campos.find((c) => c.chave === a.campo)?.rotulo || a.campo} cor={C.blue} />
+            <span style={{ flex: 1 }}>{a.texto}</span>
+            <button style={btn('ghost')} onClick={async () => { await api.propostas.removerApontamento(a.id); await carregar(); }}>remover</button>
+          </div>
+        )) : <span style={hint}>Nenhum apontamento ainda.</span>}
       </div>
 
       {/* ── D) Apontamento de custo, recorrência e data ──────────────── */}
@@ -439,18 +459,21 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
       </div>
 
       {/* ── E) Gráfico de orçamento ───────────────────────────────────── */}
-      {simulacao && !simulacao.sem_orcamento && (
+      {simulacao && (
         <div style={{ ...cardStyle, padding: 14, display: 'grid', gap: 6 }}>
           <div>
             <strong style={{ fontSize: 13, color: C.text }}>
               {p.situacao_decisao ? 'Efeito desta proposta no orçamento' : 'Efeito no orçamento, se você aprovar'}
             </strong>
             <p style={{ ...hint, marginTop: 2 }}>
-              A parte sólida é o que já está no calendário; a hachurada é o custo desta proposta.
-              Quando a coluna passa da linha do caixa livre, o mês estoura. Demais propostas
-              pendentes ficam de fora desta simulação.
+              A parte sólida é o que já está aprovado (em tempo real, com os apontamentos); a hachurada é o custo
+              desta proposta. A linha tracejada é "todas as propostas", se todas fossem aprovadas — imutável, sempre
+              com os valores originais. Demais propostas pendentes ficam de fora desta simulação.
             </p>
           </div>
+          {simulacao.sem_orcamento && (
+            <p style={{ ...hint, margin: 0, color: C.amber }}>{simulacao.mensagem}</p>
+          )}
           <GraficoOrcamento visao={simulacao} alturaPx={230} rotuloPendente="Esta proposta" />
           {simulacao.meses_negativos > 0 && (
             <span style={{ fontSize: 12.5, color: C.red, fontWeight: 600 }}>
@@ -458,12 +481,6 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
             </span>
           )}
         </div>
-      )}
-      {simulacao?.sem_orcamento && (
-        <p style={{ ...hint, margin: 0 }}>
-          Sem o orçamento do ciclo (a diretoria Financeira ainda não enviou), não há referência de
-          caixa pra simular o efeito desta proposta.
-        </p>
       )}
 
       {!p.situacao_decisao && quorumCompleto && (
@@ -655,20 +672,25 @@ function OrcamentoPastor({ ciclo }) {
   };
 
   if (!visao) return <p style={{ fontSize: 13, color: C.t3 }}>Carregando…</p>;
-  if (visao.sem_orcamento) return <p style={{ fontSize: 13, color: C.t3 }}>{visao.mensagem}</p>;
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      <p style={{ margin: 0, fontSize: 12.5, color: C.t3, maxWidth: 800 }}>
-        Caixa livre enviado pela diretoria Financeira em {fmtData(String(visao.enviado_em).slice(0, 10))}, contra o custo
-        líquido rateado por mês. A linha de aprovados cobre o que já está no calendário; a de propostos cobre o que
-        ainda aguarda sua decisão. Propostas de vários meses têm o líquido dividido igualmente entre os meses que ocupam.
-      </p>
-      <div style={{ fontSize: 13, fontWeight: 600, color: visao.meses_negativos ? C.red : C.green }}>
-        {visao.meses_negativos
-          ? `${visao.meses_negativos} mês(es) com saldo projetado negativo. Remaneje na tabela do fim da página ou pese isso nas decisões pendentes.`
-          : 'Nenhum mês estoura o caixa livre no cenário atual.'}
-      </div>
+      {visao.sem_orcamento ? (
+        <p style={{ margin: 0, fontSize: 12.5, color: C.amber, maxWidth: 800 }}>{visao.mensagem}</p>
+      ) : (
+        <p style={{ margin: 0, fontSize: 12.5, color: C.t3, maxWidth: 800 }}>
+          Caixa livre enviado pela diretoria Financeira em {fmtData(String(visao.enviado_em).slice(0, 10))}, contra o custo
+          líquido rateado por mês. A linha de aprovados cobre o que já está no calendário; a de propostos cobre o que
+          ainda aguarda sua decisão. Propostas de vários meses têm o líquido dividido igualmente entre os meses que ocupam.
+        </p>
+      )}
+      {!visao.sem_orcamento && (
+        <div style={{ fontSize: 13, fontWeight: 600, color: visao.meses_negativos ? C.red : C.green }}>
+          {visao.meses_negativos
+            ? `${visao.meses_negativos} mês(es) com saldo projetado negativo. Remaneje na tabela do fim da página ou pese isso nas decisões pendentes.`
+            : 'Nenhum mês estoura o caixa livre no cenário atual.'}
+        </div>
+      )}
 
       <div style={{ ...cardStyle, padding: 14 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
@@ -702,11 +724,11 @@ function OrcamentoPastor({ ciclo }) {
             </tr></thead>
             <tbody>
               {[
-                ['Caixa livre', visao.caixa_livre],
+                ...(Array.isArray(visao.caixa_livre) ? [['Caixa livre', visao.caixa_livre]] : []),
                 ['Aprovados no calendário (tempo real)', visao.comprometido],
                 ['Propostos sem decisão', visao.propostos],
                 ...(Array.isArray(visao.todas_propostas) ? [['Todas as propostas (se todas fossem aprovadas)', visao.todas_propostas]] : []),
-                ['Saldo projetado', visao.saldo],
+                ...(Array.isArray(visao.saldo) ? [['Saldo projetado', visao.saldo]] : []),
               ].map(([nome, serie]) => (
                 <tr key={nome}>
                   <td style={{ ...tdStyle, fontWeight: 600, whiteSpace: 'nowrap' }}>{nome}</td>
