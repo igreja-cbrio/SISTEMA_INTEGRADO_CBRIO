@@ -326,7 +326,6 @@ export default function PropostasTab({ ciclo, constantes, locais, areas, recarre
               </select>
               <div style={hint}>Lista controlada. Em texto livre o conflito de espaço não roda.</div>
             </div>
-            <div><span style={label}>Público-alvo</span><input style={input} value={form.publico_alvo} onChange={(e) => set('publico_alvo', e.target.value)} /></div>
           </div>
 
           <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.t2 }}>
@@ -394,6 +393,7 @@ export default function PropostasTab({ ciclo, constantes, locais, areas, recarre
                 <option value="recorte_geracional">Recorte geracional</option>
               </select>
             </div>
+            <div><span style={label}>Público-alvo</span><input style={input} value={form.publico_alvo} onChange={(e) => set('publico_alvo', e.target.value)} /></div>
           </div>
           <div><span style={label}>Pertencimento *</span><textarea style={{ ...input, minHeight: 60 }} value={form.pertencimento} onChange={(e) => set('pertencimento', e.target.value)} /></div>
 
