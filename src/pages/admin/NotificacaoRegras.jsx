@@ -19,6 +19,7 @@ const MODULOS = [
   { id: 'planejamento-anual', label: 'Planejamento Anual', desc: 'Propostas enviadas, quórum completo, decisões do Pastor, devolutivas', color: '#00B39D' },
   { id: 'kpis', label: 'KPIs e Indicadores', desc: 'Metas atingidas, registros de culto e batismo', color: '#f97316' },
   { id: 'cuidados', label: 'Cuidados', desc: 'Novos acompanhamentos, alertas Jornada 180 e capelania', color: '#ef476f' },
+  { id: 'visitantes', label: 'Visitantes', desc: 'Porta do visitante (QR nos cartazes), voucher da cafeteria e pesquisa', color: '#a855f7' },
   { id: 'next', label: 'NEXT', desc: 'Novas inscrições, indicações de batismo/servir/grupo/dízimo', color: '#06b6d4' },
   { id: 'voluntariado', label: 'Voluntariado', desc: 'Novos voluntários, indicações para servir', color: '#14b8a6' },
   { id: 'grupos', label: 'Grupos', desc: 'Novos membros, grupos sem encontro recente, membros sem grupo, indicações via NEXT', color: '#a855f7' },

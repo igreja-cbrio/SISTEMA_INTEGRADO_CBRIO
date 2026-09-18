@@ -13,12 +13,17 @@ import { gruposPublic } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 import { CheckCircle2, AlertTriangle, Users, Check, UserPlus, X } from 'lucide-react';
+import { tirarCodigoPais } from '@/lib/inscricao';
 
 const VERDE = '#00B39D';
 const AMBAR = '#f59e0b';
 
 function mascaraTel(v) {
-  const d = (v || '').replace(/\D/g, '').slice(0, 11);
+  // ⚠️⚠️ `tirarCodigoPais` ANTES do slice: truncar primeiro transforma
+  // "+55 21 99999-8888" em `55219999988` e COME os 2 últimos dígitos —
+  // irrecuperáveis. Medido em 02/09/2026: 21 cadastros assim, o mais
+  // recente do dia anterior. Ver a lei de 31/07 no CLAUDE.md.
+  const d = tirarCodigoPais((v || '').replace(/\D/g, '')).slice(0, 11);
   if (d.length <= 2) return d.length ? `(${d}` : '';
   if (d.length <= 7) return `(${d.slice(0, 2)}) ${d.slice(2)}`;
   if (d.length <= 10) return `(${d.slice(0, 2)}) ${d.slice(2, 6)}-${d.slice(6)}`;

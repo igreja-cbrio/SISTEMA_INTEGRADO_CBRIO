@@ -1,8 +1,8 @@
-import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef, lazy, Suspense } from 'react';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useSearchParams, Link, useNavigate } from 'react-router-dom';
 import { hrefConversa } from '@/lib/conversas';
-import { cuidados as cuidadosApi } from '../../api';
+import { cuidados as cuidadosApi, visitantes as visitantesApi } from '../../api';
 import KpiTaticoOficial from '../../components/kpi/KpiTaticoOficial';
 import Paginacao, { usePaginacaoLocal } from '../../components/Paginacao';
 import useConfirmarSaida from '../../hooks/useConfirmarSaida';
@@ -12,6 +12,16 @@ import AgenteBatismoNext from '../../components/AgenteBatismoNext';
 import NextConvite from '../../components/NextConvite';
 import JornadaTimeline from '../../components/jornada/JornadaTimeline';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
+// ⚠️ LAZY de propósito: o painel puxa qrcode.react (os cartazes), e quem abre
+// o Cuidados pra ver a fila pastoral não deve pagar esse chunk.
+const PainelVisitantes = lazy(() => import('../../components/visitantes/PainelVisitantes'));
+const FluxoVisitante = lazy(() => import('../../components/visitantes/FluxoVisitante'));
+
+// As mesmas carinhas da página pública /visitante/avaliar — a ficha mostra o
+// que a pessoa efetivamente tocou, não um número que ninguém traduz.
+// ⚠️ Escala 1 · 2 · 3 (as mesmas 3 opções dos botões do WhatsApp). Era 1..5
+// até 11/09/2026 — se aparecer 4 ou 5 aqui é linha da régua velha.
+const CARINHA_NOTA: Record<number, string> = { 3: '\u{1F929}', 2: '\u{1F642}', 1: '\u{1F641}' };
 import { Button } from '../../components/ui/button';
 import { Input } from '../../components/ui/input';
 import { DatePicker } from '@/components/ui/date-picker';
@@ -27,13 +37,13 @@ import { ResponsiveContainer, LineChart, Line, BarChart, Bar, XAxis, YAxis, Cart
 import { toast } from 'sonner';
 import { useAuth } from '../../contexts/AuthContext';
 import { opcoesAno, ehAno, anoDe } from '../../lib/janelaPeriodo';
+import {
+  PCONTATO_OPCOES, PCONTATO_LABEL, PCONTATO_COR, PCONTATO_FEITO, PCONTATO_INALCANCAVEL,
+} from '../../lib/primeiroContato';
 
 const C = { primary: '#00B39D', info: '#3b82f6', warn: '#f59e0b', purple: '#8b5cf6', pink: '#ef476f' };
-// Cor por status do 1º contato (dashboard · Próximos passos)
-const PP_COR: Record<string, string> = {
-  atendido_respondido: '#10b981', nao_respondeu: '#f59e0b', nao_atendido: '#64748b',
-  numero_errado: '#94a3b8', pendente: '#ef476f',
-};
+// Cor por status do 1º contato (dashboard · Próximos passos) · régua em lib.
+const PP_COR = PCONTATO_COR;
 
 // Filtro de período do dashboard (bate com DASH_DIAS_VALIDOS no backend)
 const DASH_PERIODOS = [
@@ -507,35 +517,31 @@ const DIRECIONAMENTO_LABEL: Record<string, string> = {
   batismo: 'Batismo',
 };
 
-// Status do PRIMEIRO CONTATO · 4 opções (decisão Marcos · 2026-06-30):
-// Não respondeu · Não atendido · Número errado · Atendido e respondido.
-// "Não respondeu/Não atendido/Atendido e respondido" contam como 1º CONTATO FEITO
-// (a tentativa foi realizada). "Número errado" também conta como contato RESOLVIDO
-// (a equipe tentou; o número é que estava errado) → entra no "Contato feito", mas fica
-// FORA do denominador de "Atendido e respondido" pra não penalizar a equipe por um
-// número errado. A meta é 100% contatado → o que falta pra 100% é quem está SEM
-// marcação ("—"). Ordem do pior desfecho ao melhor.
-const PCONTATO_OPCOES: { v: string; label: string; positivo?: boolean }[] = [
-  { v: 'nao_respondeu',       label: 'Não respondeu' },
-  { v: 'nao_atendido',        label: 'Não atendido' },
-  { v: 'numero_errado',       label: 'Número errado' },
-  { v: 'atendido_respondido', label: 'Atendido e respondido', positivo: true },
-];
+// Status do PRIMEIRO CONTATO · 5 opções (Marcos · 2026-06-30 · "Contactada" em 2026-09-01):
+// Contactada · Não respondeu · Não atendido · Número errado · Atendido e respondido.
+// "Contactada" (pedido do Marcelo · 01/09): a mensagem FOI enviada e a pessoa ainda não
+// respondeu — é o estado real do dia seguinte ao culto. Antes ele só marcava quando havia
+// resposta, então o carimbo de 1º contato saía dias depois e bagunçava o KPI de contato ≤3d.
+// Marcar "Contactada" carimba primeiro_contato_em NA HORA (conta como contato FEITO);
+// quando a pessoa responder, troca pra "Atendido e respondido"/"Não respondeu" SEM
+// re-carimbar a data (o setPcStatus só carimba onde está vazio).
+// "Número errado" conta como contato RESOLVIDO (a equipe tentou; o número é que estava
+// errado) → entra no "Contato feito", mas fica FORA do denominador de "Atendido e
+// respondido". A meta é 100% contatado → o que falta pra 100% é quem está SEM marcação
+// ("—"). Ordem: do estado inicial ao melhor desfecho.
+// ⚠️ 'contactada' exige a migration 20260901130000 (CHECK vivo recusa valor novo).
+// ⚠️ A lista saiu daqui pra `src/lib/primeiroContato.ts` em 16/09: o
+// PainelVisitantes mostra o MESMO campo e não alcançava esta constante,
+// então imprimia o valor cru.
 // Labels de TODOS os status (inclui os legados da planilha antiga já importada) ·
 // usado só pra EXIBIR registros que vieram com esses valores (não são mais oferecidos).
-const PCONTATO_LABEL: Record<string, string> = {
-  nao_respondeu: 'Não respondeu',
-  nao_atendido: 'Não atendido',
-  atendido_respondido: 'Atendido e respondido',
-  respondeu: 'Respondeu',
-  nao_compareceu: 'Não compareceu',
-  sem_retorno: 'Sem retorno do responsável',
-  numero_errado: 'Número errado',
-};
+
 // Status que indicam que o PRIMEIRO CONTATO foi feito (a pessoa recebeu a mensagem,
 // independente da resposta) → balão "Contato" verde. "sem_retorno" e "numero_errado"
 // (e vazio) NÃO contam como contato feito.
-const CONTATO_FEITO = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido']);
+// ⚠️ ESPELHOS deste Set no backend: routes/cuidados.js · routes/painel.js ·
+// routes/nextConvite.js · services/agentePrimeiroContato.js — mudou aqui, muda lá.
+const CONTATO_FEITO = PCONTATO_FEITO;
 
 // Semáforo da jornada (contato/batismo/Next) · espelha o JornadaConvertidos
 const JORNADA_ST: Record<string, { label: string; color: string }> = {
@@ -546,6 +552,9 @@ const JORNADA_ST: Record<string, { label: string; color: string }> = {
   no_prazo:       { label: 'No prazo',     color: '#94a3b8' },
   vencendo:       { label: 'Vencendo',     color: '#f59e0b' },
   atrasado:       { label: 'Atrasado',     color: '#ef4444' },
+  // ⚠️ Nem feito nem atrasado: a equipe não tinha como alcançar. Cinza de
+  // propósito — não é conquista nem cobrança.
+  inalcancavel:   { label: 'Sem contato possível', color: '#94a3b8' },
 };
 function JornadaPill({ label, m }: { label: string; m: any }) {
   const st = JORNADA_ST[m?.status] || JORNADA_ST.no_prazo;
@@ -554,6 +563,43 @@ function JornadaPill({ label, m }: { label: string; m: any }) {
       style={{ background: st.color + '20', color: st.color, border: `1px solid ${st.color}40` }}>
       {label}{m?.feito ? ' ✓' : ''}
     </span>
+  );
+}
+
+// ── Culto do convertido (pedido do Marcelo · 2026-09-01) ──
+// A coluna diz a ORIGEM (Online × Presencial · vem de cui_convertidos.area) e a
+// bolha ao lado do nome diz O CULTO (Quarta/AMI/Bridge/Sede), derivado do NOME do
+// culto (culto_nome, anexado pelo GET /cuidados/convertidos via culto_id).
+// ⚠️ Só 159 dos 436 registros vivos têm culto_id (o trigger passou a gravá-lo
+// depois) — os antigos caem na `area` (sede/ami/bridge/online). Sem sinal nenhum,
+// a bolha simplesmente não aparece (nunca chutar culto).
+const CULTO_COR: Record<string, string> = {
+  Quarta: '#8b5cf6', AMI: '#f59e0b', Bridge: '#ec4899', Sede: '#00B39D', Online: '#3b82f6',
+};
+function cultoDoConvertido(c: any): { origem: 'Online' | 'Presencial'; culto: string | null } {
+  const area = String(c.area || '').toLowerCase();
+  const nome = String(c.culto_nome || '').toLowerCase();
+  let culto: string | null = null;
+  if (/quarta/.test(nome)) culto = 'Quarta';
+  else if (/bridge/.test(nome)) culto = 'Bridge';
+  else if (/\bami\b/.test(nome)) culto = 'AMI';
+  else if (nome) culto = 'Sede';
+  else if (area === 'ami') culto = 'AMI';
+  else if (area === 'bridge') culto = 'Bridge';
+  else if (area === 'online') culto = 'Online';
+  else if (area === 'sede') culto = 'Sede';
+  return { origem: area === 'online' ? 'Online' : 'Presencial', culto };
+}
+function CultoBolha({ c }: { c: any }) {
+  const { culto } = cultoDoConvertido(c);
+  if (!culto) return null;
+  const cor = CULTO_COR[culto] || '#94a3b8';
+  return (
+    <span
+      title={c.culto_nome ? `Culto: ${c.culto_nome}` : `Área: ${culto}`}
+      className="text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap align-middle"
+      style={{ background: cor + '20', color: cor, border: `1px solid ${cor}40` }}
+    >{culto}</span>
   );
 }
 
@@ -692,6 +738,45 @@ function ConvertidoModal({
           <Button variant="outline" onClick={tentarFechar}>Cancelar</Button>
           <Button onClick={save} disabled={saving}>{saving ? 'Salvando...' : editing ? 'Salvar' : 'Registrar'}</Button>
         </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/** Ficha curta do VISITANTE (porta /visitante) dentro de Próximos passos. Só leitura;
+ *  o que se edita aqui (status e responsável) é pela própria linha da tabela. */
+function VisitanteDetailDialog({ visitante, onClose }: { visitante: any | null; onClose: () => void }) {
+  const v = visitante;
+  const LOCAL: Record<string, string> = { lounge: 'Lounge', banheiro: 'Banheiro', estacionamento: 'Estacionamento', templo: 'Templo', outro: 'sem local' };
+  const VOUCHER: Record<string, string> = { emitido: 'a retirar', resgatado: 'retirado', repetido: 'já tinha (visita anterior)' };
+  return (
+    <Dialog open={!!v} onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent className="max-w-md">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            {v?.nome}
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{ background: '#a855f720', color: '#a855f7', border: '1px solid #a855f740' }}>Visitante</span>
+          </DialogTitle>
+        </DialogHeader>
+        {v && (
+          <div className="space-y-2 text-sm">
+            <p><span className="text-muted-foreground">WhatsApp:</span> {v.telefone || '—'}</p>
+            <p><span className="text-muted-foreground">Culto:</span> {v.culto_nome || '—'} · {v.data_culto ? String(v.data_culto).split('-').reverse().join('/') : '—'}</p>
+            <p><span className="text-muted-foreground">Cartaz:</span> {LOCAL[v.local] || v.local || '—'}</p>
+            <p><span className="text-muted-foreground">Voucher da cafeteria:</span> {VOUCHER[v.voucher_status] || v.voucher_status || '—'}</p>
+            <p className="flex items-start gap-1.5">
+              <span className="text-muted-foreground">Pesquisa:</span>
+              {v.pesquisa_nota ? (
+                <span className="flex items-start gap-1.5">
+                  <span className="text-lg leading-none" title={`Nota ${v.pesquisa_nota} de 3`}>{CARINHA_NOTA[v.pesquisa_nota] || ''}</span>
+                  <span><strong>{v.pesquisa_nota}</strong>/3{v.pesquisa_comentario ? <> · “{v.pesquisa_comentario}”</> : null}</span>
+                </span>
+              ) : <span>sem resposta</span>}
+            </p>
+            {!v.membro_id && <p className="text-xs text-amber-600">A pessoa não foi ligada a um cadastro (o matcher não resolveu) — conferir em Entradas.</p>}
+            <p className="text-xs text-muted-foreground pt-2">Registrada pela porta pública /visitante. O resgate do voucher e os QR dos cartazes ficam na aba <strong>Visitantes</strong>, aqui mesmo.</p>
+          </div>
+        )}
       </DialogContent>
     </Dialog>
   );
@@ -1948,16 +2033,23 @@ export default function Cuidados() {
   const [trilhaVersion, setTrilhaVersion] = useState(0);
   const [convertTags, setConvertTags] = useState<string[]>([]);
   const [convertSearch, setConvertSearch] = useState('');
-  const [convertFilter, setConvertFilter] = useState<'todos' | 'sem_responsavel' | 'sem_direcionamento' | 'atrasados'>('todos');
+  const [convertFilter, setConvertFilter] = useState<'todos' | 'sem_responsavel' | 'sem_direcionamento' | 'atrasados' | 'visitantes'>('todos');
+  // VISITANTES (09/09/2026): a porta /visitante entra em Próximos passos como linha ETIQUETADA.
+  // ⚠️ Vive em estado PRÓPRIO, fora de `convertidos`: os 4 cards do topo e a jornada são
+  // sobre CONVERTIDOS (e cui_convertidos é o denominador da NSM) — visitante não entra ali.
+  const [visitantesPP, setVisitantesPP] = useState<any[]>([]);
+  const [detailVisitante, setDetailVisitante] = useState<any | null>(null);
   const [convertFilterStatus, setConvertFilterStatus] = useState<string>(''); // primeiro_contato_status ('' = todos · 'sem' = sem status)
   const [convertPeriodo, setConvertPeriodo] = useState<string>('tudo'); // 30/60/90/180/365/tudo (por data_culto)
 
   async function loadAll() {
-    const [c, jd] = await Promise.all([
+    const [c, jd, vis] = await Promise.all([
       cuidadosApi.convertidos.list().catch(() => []),
       cuidadosApi.jornadaConvertidos().catch(() => null),
+      // best-effort: sem o módulo/endpoint, a lista de convertidos segue inteira
+      visitantesApi.cuidados({ dias: 365 }).catch(() => []),
     ]);
-    setConvertidos(c); setJornadaData(jd);
+    setConvertidos(c); setJornadaData(jd); setVisitantesPP(Array.isArray(vis) ? vis : []);
     // Recarrega as séries do dashboard após mudanças nos dados
     setVisitasVersion(v => v + 1);
   }
@@ -2030,7 +2122,8 @@ export default function Cuidados() {
     const cur: any = convertidos.find((x: any) => x.id === id);
     const patch: any = { primeiro_contato_status: v };
     if (v === 'atendido_respondido') patch.atendido_apos_culto = true;
-    if (v === 'numero_errado') patch.atendido_apos_culto = false; // número errado nunca é "atendido"
+    // ⚠️ Inalcançável nunca é "atendido após o culto" — não houve atendimento.
+    if (v && PCONTATO_INALCANCAVEL.has(v)) patch.atendido_apos_culto = false;
     if (v && CONTATO_FEITO.has(v)) {
       if (!cur?.primeiro_contato_em) patch.primeiro_contato_em = new Date().toISOString();
     } else {
@@ -2043,6 +2136,26 @@ export default function Cuidados() {
       setConvertidos(anterior);
       toast.error(`Não foi possível salvar o status: ${e.message}`);
     }
+  }
+
+  // ── visitantes: os mesmos dois campos, gravados em vis_visitas (rota /visitantes/cuidados) ──
+  async function setPcStatusVisitante(visitaId: string, value: string) {
+    const v = value || null;
+    const anterior = visitantesPP;
+    const cur: any = visitantesPP.find((x: any) => x.visita_id === visitaId);
+    const patch: any = { primeiro_contato_status: v };
+    if (v && CONTATO_FEITO.has(v)) { if (!cur?.primeiro_contato_em) patch.primeiro_contato_em = new Date().toISOString(); }
+    else patch.primeiro_contato_em = null;
+    setVisitantesPP(prev => prev.map((x: any) => x.visita_id === visitaId ? { ...x, ...patch } : x));
+    try { await visitantesApi.atualizarCuidados(visitaId, patch); }
+    catch (e: any) { setVisitantesPP(anterior); toast.error(`Não foi possível salvar o status: ${e.message}`); }
+  }
+  async function setResponsavelVisitante(visitaId: string, value: string) {
+    const v = value || null;
+    const anterior = visitantesPP;
+    setVisitantesPP(prev => prev.map((x: any) => x.visita_id === visitaId ? { ...x, responsavel_atendimento: v } : x));
+    try { await visitantesApi.atualizarCuidados(visitaId, { responsavel_atendimento: v }); }
+    catch (e: any) { setVisitantesPP(anterior); toast.error(`Não foi possível salvar o responsável: ${e.message}`); }
   }
 
   // Responsável do atendimento (otimista · texto · lista fixa na UI)
@@ -2103,6 +2216,31 @@ export default function Cuidados() {
     });
   }, [convertidos, convertSearch, convertFilter, convertFilterStatus, convertPeriodoCorte, jMap]);
 
+  // Visitantes na MESMA tabela: entram em "Todos", "Sem responsável" e "Só visitantes".
+  // "Sem direcionamento" e "Atrasados na jornada" são perguntas sobre convertidos.
+  const visitantesFiltrados = useMemo(() => {
+    if (!['todos', 'sem_responsavel', 'visitantes'].includes(convertFilter)) return [] as any[];
+    const q = convertSearch.trim().toLowerCase();
+    return visitantesPP.filter((c: any) => {
+      if (convertFilter === 'sem_responsavel' && c.responsavel_atendimento) return false;
+      if (convertFilterStatus) {
+        if (convertFilterStatus === 'sem') { if (c.primeiro_contato_status) return false; }
+        else if (c.primeiro_contato_status !== convertFilterStatus) return false;
+      }
+      if (convertPeriodoCorte && (c.data_culto || '') < convertPeriodoCorte) return false;
+      if (q) {
+        const hay = `${c.nome || ''} ${c.telefone || ''} ${c.observacoes || ''} visitante`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [visitantesPP, convertSearch, convertFilter, convertFilterStatus, convertPeriodoCorte]);
+  const linhasTabela = useMemo(() => {
+    const todas = convertFilter === 'visitantes' ? visitantesFiltrados : [...convertidosFiltrados, ...visitantesFiltrados];
+    // mesma ordem da lista original: culto mais recente primeiro
+    return convertFilter === 'visitantes' ? todas : [...todas].sort((a: any, b: any) => (b.data_culto || '') < (a.data_culto || '') ? -1 : (b.data_culto || '') > (a.data_culto || '') ? 1 : 0);
+  }, [convertidosFiltrados, visitantesFiltrados, convertFilter]);
+
   // Resumo dos 4 cards · AO VIVO do estado (atualiza ao mexer no dropdown) e respeitando
   // o PERÍODO selecionado. DOIS denominadores (decisão Marcos · 2026-06-30):
   //  • "Contato feito" usa TODOS do período, incl. "número errado" (= contato resolvido:
@@ -2114,12 +2252,17 @@ export default function Cuidados() {
     const corte = convertPeriodoCorte;
     const jById = new Map<string, any>((jornadaData?.itens || []).map((i: any) => [i.id, i]));
     const periodo = convertidos.filter((c: any) => !corte || (c.data_culto || '') >= corte);
-    const contataveis = periodo.filter((c: any) => c.primeiro_contato_status !== 'numero_errado');
-    const numErrado = periodo.length - contataveis.length;
-    const total = contataveis.length;        // denominador de atendido/batismo/next (exclui número errado)
-    const totalContato = periodo.length;      // denominador de "contato feito" (inclui número errado)
+    // ⚠️⚠️ DECISÃO DO MARCOS (16/09): quem não dava pra contatar SAI DO TOTAL, em
+    // vez de ser somado ao numerador como "resolvido". *"São pessoas que não
+    // erramos o processo, elas simplesmente não podem ser alcançadas."*
+    // Antes, `numero_errado` entrava nos dois lados da conta (numerador + total);
+    // agora sai dos dois, junto com `contato_impossivel`.
+    const contataveis = periodo.filter((c: any) => !PCONTATO_INALCANCAVEL.has(c.primeiro_contato_status));
+    const numErrado = periodo.length - contataveis.length;   // inalcançáveis (nº errado + contato impossível)
+    const total = contataveis.length;        // denominador de atendido/batismo/next
+    const totalContato = contataveis.length;  // denominador de "contato feito" — o MESMO
     const feitosOk = contataveis.filter((c: any) => CONTATO_FEITO.has(c.primeiro_contato_status) || c.primeiro_contato_em).length;
-    const feitos = feitosOk + numErrado;      // número errado conta como contato resolvido
+    const feitos = feitosOk;
     const pendentes = periodo.filter((c: any) => !c.primeiro_contato_status && !c.primeiro_contato_em).length; // só "—"
     const atendidos = periodo.filter((c: any) => c.primeiro_contato_status === 'atendido_respondido').length;
     const batismos = contataveis.filter((c: any) => jById.get(c.id)?.batismo?.feito).length;
@@ -2163,7 +2306,31 @@ export default function Cuidados() {
           <TabsTrigger value="convertidos">Próximos passos</TabsTrigger>
           <TabsTrigger value="devocional">Devocional</TabsTrigger>
           <TabsTrigger value="visitas">Visitas e Atendimentos</TabsTrigger>
+          <TabsTrigger value="visitantes">Visitantes</TabsTrigger>
+          <TabsTrigger value="fluxo">Fluxo da porta</TabsTrigger>
         </TabsList>
+
+        {/* FLUXO DA PORTA (11/09/2026) · "o que a igreja deve fazer com quem
+            entrou, até quando, e se foi feito". Começa com UMA porta, a do
+            visitante; a régua (utils/portaFluxos) já nasce genérica pra receber
+            convertido e Next depois. ⚠️ lazy porque a aba é pesada e quase
+            ninguém abre ela primeiro. */}
+        <TabsContent value="fluxo" className="space-y-4">
+          <Suspense fallback={<div className="text-sm text-muted-foreground">Carregando…</div>}>
+            <FluxoVisitante />
+          </Suspense>
+        </TabsContent>
+
+        {/* Visitantes · a porta pública /visitante. NÃO é módulo (11/09/2026):
+            quem chega pelo QR aparece em Próximos passos, etiquetado; esta aba
+            é a parte operacional — resgatar o voucher da cafeteria e imprimir
+            os cartazes. Mesmo componente que a rota /visitantes, que existe sem
+            menu pra a cafeteria (ela não pode ter o módulo cuidados). */}
+        <TabsContent value="visitantes" className="space-y-4">
+          <Suspense fallback={<p className="text-sm text-muted-foreground">Carregando…</p>}>
+            <PainelVisitantes embutido />
+          </Suspense>
+        </TabsContent>
 
         {/* Dashboard */}
         <TabsContent value="dashboard" className="space-y-5">
@@ -2414,6 +2581,7 @@ export default function Cuidados() {
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm text-muted-foreground">
               <strong className="text-foreground">{convertidos.length}</strong> convertidos
+              {visitantesPP.length > 0 && <> · <strong className="text-foreground">{visitantesPP.length}</strong> visitantes (porta /visitante)</>}
             </div>
             {/* Convertido nasce SEMPRE do culto (princípio · 25/06): "Novo
                 convertido" leva pra Integração registrar a decisão no culto —
@@ -2453,6 +2621,7 @@ export default function Cuidados() {
                 <SelectItem value="sem_responsavel">Sem responsável</SelectItem>
                 <SelectItem value="sem_direcionamento">Sem direcionamento</SelectItem>
                 <SelectItem value="atrasados">Atrasados na jornada</SelectItem>
+                <SelectItem value="visitantes">Só visitantes</SelectItem>
               </SelectContent>
             </Select>
             <Select value={convertFilterStatus || '__all'} onValueChange={(v: any) => setConvertFilterStatus(v === '__all' ? '' : v)}>
@@ -2492,26 +2661,28 @@ export default function Cuidados() {
                   <TableHead>Responsável</TableHead>
                   <TableHead>Direcionamento</TableHead>
                   <TableHead>Jornada</TableHead>
-                  <TableHead>Tags</TableHead>
+                  <TableHead>Culto</TableHead>
                   <TableHead></TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {convertidosFiltrados.length === 0 ? (
+                {linhasTabela.length === 0 ? (
                   <TableRow><TableCell colSpan={8} className="text-center text-muted-foreground py-8">
-                    {convertidos.length === 0 ? 'Nenhum convertido.' : 'Nenhum resultado nos filtros atuais.'}
+                    {convertidos.length === 0 && visitantesPP.length === 0 ? 'Nenhum convertido.' : 'Nenhum resultado nos filtros atuais.'}
                   </TableCell></TableRow>
-                ) : convertidosFiltrados.map(c => {
-                  const tags: string[] = Array.isArray(c.tags) ? c.tags : [];
+                ) : linhasTabela.map(c => {
                   return (
                     <TableRow key={c.id}>
                       <TableCell className="font-medium">
                         <button
                           type="button"
-                          onClick={() => setDetailConvert(c)}
+                          onClick={() => (c._visitante ? setDetailVisitante(c) : setDetailConvert(c))}
                           className="text-left hover:text-primary transition-colors"
                         >
-                          <div className="underline-offset-2 hover:underline">{c.nome}</div>
+                          <div className="underline-offset-2 hover:underline flex items-center gap-1.5 flex-wrap">
+                            <span>{c.nome}</span>
+                            <CultoBolha c={c} />
+                          </div>
                           {c.telefone && <div className="text-xs text-muted-foreground">{c.telefone}</div>}
                         </button>
                       </TableCell>
@@ -2520,7 +2691,7 @@ export default function Cuidados() {
                         {podeEditarCuidados ? (
                           <select
                             value={c.primeiro_contato_status || ''}
-                            onChange={e => setPcStatus(c.id, e.target.value)}
+                            onChange={e => (c._visitante ? setPcStatusVisitante(c.visita_id, e.target.value) : setPcStatus(c.id, e.target.value))}
                             onClick={e => e.stopPropagation()}
                             className="h-8 rounded-md border border-border bg-background text-xs px-1.5 max-w-[160px]"
                             title="Status do primeiro contato"
@@ -2543,7 +2714,7 @@ export default function Cuidados() {
                         {podeEditarCuidados ? (
                           <select
                             value={c.responsavel_atendimento || ''}
-                            onChange={e => setResponsavel(c.id, e.target.value)}
+                            onChange={e => (c._visitante ? setResponsavelVisitante(c.visita_id, e.target.value) : setResponsavel(c.id, e.target.value))}
                             onClick={e => e.stopPropagation()}
                             className="h-8 rounded-md border border-border bg-background text-xs px-1.5 max-w-[150px]"
                             title="Responsável do atendimento"
@@ -2570,7 +2741,9 @@ export default function Cuidados() {
                         )}
                       </TableCell>
                       <TableCell>
-                        {podeEditarCuidados ? (
+                        {c._visitante ? (
+                          <span className="text-xs text-muted-foreground" title="Visitante: o direcionamento (Next, batismo, grupos) começa depois do 1º contato">—</span>
+                        ) : podeEditarCuidados ? (
                           <select
                             value={c.direcionamento || ''}
                             onChange={e => setDirecionamento(c.id, e.target.value)}
@@ -2606,26 +2779,28 @@ export default function Cuidados() {
                         })()}
                       </TableCell>
                       <TableCell>
-                        {tags.length === 0 ? <span className="text-xs text-muted-foreground">—</span> : (
-                          <div className="flex flex-wrap gap-1">
-                            {tags.slice(0, 3).map(t => (
-                              <span key={t} className="text-[10px] px-1.5 py-0.5 rounded-full font-medium" style={{
-                                background: (TAG_COLORS[t] || '#94a3b8') + '20',
-                                color: TAG_COLORS[t] || '#94a3b8',
-                              }}>{TAG_LABELS[t] || t}</span>
-                            ))}
-                            {tags.length > 3 && (
-                              <span className="text-[10px] text-muted-foreground">+{tags.length - 3}</span>
-                            )}
-                          </div>
-                        )}
+                        {/* Origem da decisão (pedido do Marcelo · 01/09): Online × Presencial.
+                            O culto em si (Quarta/AMI/Bridge/Sede) é a bolha ao lado do nome.
+                            As TAGS continuam existindo (modal de edição + detalhe) — só a coluna saiu. */}
+                        {(() => {
+                          const origem = c._visitante ? 'Visitante' : cultoDoConvertido(c).origem;
+                          const cor = c._visitante ? '#a855f7' : origem === 'Online' ? '#3b82f6' : '#00B39D';
+                          return (
+                            <span className="text-[10px] px-1.5 py-0.5 rounded-full font-medium whitespace-nowrap"
+                              style={{ background: cor + '20', color: cor, border: `1px solid ${cor}40` }}>
+                              {origem}
+                            </span>
+                          );
+                        })()}
                       </TableCell>
                       <TableCell className="text-right whitespace-nowrap">
                         {(() => {
                           const tel = String(c.telefone || '').replace(/\D/g, '');
                           if (!tel) return null;
                           const primeiro = String(c.nome || '').trim().split(/\s+/)[0] || '';
-                          const msg = `Olá ${primeiro}! Aqui é da CBRio 🙏 Que alegria te ver no culto e na decisão que você tomou! Queremos te acompanhar nos próximos passos — podemos conversar?`;
+                          const msg = c._visitante
+                            ? `Olá ${primeiro}! Aqui é da CBRio 🙏 Que alegria receber você no culto! Como foi sua visita? Estamos por aqui pra qualquer coisa.`
+                            : `Olá ${primeiro}! Aqui é da CBRio 🙏 Que alegria te ver no culto e na decisão que você tomou! Queremos te acompanhar nos próximos passos — podemos conversar?`;
                           return (
                             <Link
                               to={hrefConversa(`55${tel}`, msg)}
@@ -2637,7 +2812,7 @@ export default function Cuidados() {
                             </Link>
                           );
                         })()}
-                        {podeEditarCuidados && (
+                        {podeEditarCuidados && !c._visitante && (
                           <>
                             <Button variant="ghost" size="sm" onClick={() => { setEditConvert(c); setModalConvert(true); }}>Editar</Button>
                             <Button variant="ghost" size="sm" onClick={async () => { if (confirm('Remover?')) { await cuidadosApi.convertidos.remove(c.id); loadAll(); } }}><Trash2 className="h-3.5 w-3.5 text-destructive" /></Button>
@@ -2680,6 +2855,7 @@ export default function Cuidados() {
         allTags={convertTags}
         initial={editConvert}
       />
+      <VisitanteDetailDialog visitante={detailVisitante} onClose={() => setDetailVisitante(null)} />
       <ConvertidoDetailDialog
         convertido={detailConvert}
         onClose={() => setDetailConvert(null)}

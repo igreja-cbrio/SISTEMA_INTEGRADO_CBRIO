@@ -24,6 +24,7 @@ import EmptyState from '@/components/EmptyState';
 import AbaCobertura from '@/components/censo/AbaCobertura';
 import AbaPerfil from '@/components/censo/AbaPerfil';
 import AbaLeituraIA from '@/components/censo/AbaLeituraIA';
+import AbaRelatorio from '@/components/censo/AbaRelatorio';
 import AbaRespostas from '@/components/censo/AbaRespostas';
 import QrLinkDialog from '@/components/QrLinkDialog';
 import ConstrutorPerguntas from '@/components/censo/ConstrutorPerguntas';
@@ -32,8 +33,7 @@ import { toast } from 'sonner';
 import {
   ClipboardList, Plus, Loader2, Copy, Trash2, Save, ArrowLeft,
   Play, Square, ListChecks, BarChart3, Sparkles, Users, User, HeartHandshake, Lock, Clock,
-  QrCode, Copy as CopyIcon, ExternalLink, AlertTriangle,
-} from 'lucide-react';
+  QrCode, Copy as CopyIcon, ExternalLink, AlertTriangle, FileText} from 'lucide-react';
 
 type Stats = {
   pesquisa_id: string; slug: string; titulo: string; tipo: string; status: string;
@@ -93,13 +93,28 @@ const TIPO_LABEL: Record<string, string> = {
   censo: 'Censo', pulso: 'Pulso', evento: 'Evento', nps: 'NPS', outro: 'Outro',
 };
 
+// ⚠️⚠️ `min` ESPELHA O GATE DO SERVIDOR (14/09/2026). A régua do módulo é
+// nível 1 = número AGREGADO · nível 2 = resposta NOMINAL, e as rotas cobram
+// isso (`/respostas` e `/cuidado` pedem 2; `/pesquisas`, `/cobertura`,
+// `/perfil` e `/ia` pedem 1).
+//
+// O menu e a rota do censo abrem com nível 1, e a aba foi liberada para 43 dos
+// 46 cargos. Sem este filtro, quem entra com nível 1 vê "Respostas", clica, e
+// leva 403 na cara — abrir a porta e deixar um cômodo trancado sem aviso é
+// pior que não abrir. Tabela de níveis no cabeçalho de `routes/censo.js`.
 const TABS = [
-  { id: 'pesquisas', label: 'Pesquisas', icon: ListChecks },
-  { id: 'respostas', label: 'Respostas', icon: User },
-  { id: 'cuidado', label: 'Cuidado', icon: HeartHandshake },
-  { id: 'cobertura', label: 'Cobertura', icon: BarChart3 },
-  { id: 'perfil', label: 'Perfil', icon: Users },
-  { id: 'ia', label: 'Leitura da IA', icon: Sparkles },
+  { id: 'pesquisas', label: 'Pesquisas', icon: ListChecks, min: 1 },
+  { id: 'respostas', label: 'Respostas', icon: User, min: 2 },
+  { id: 'cuidado', label: 'Cuidado', icon: HeartHandshake, min: 2 },
+  { id: 'cobertura', label: 'Cobertura', icon: BarChart3, min: 1 },
+  { id: 'perfil', label: 'Perfil', icon: Users, min: 1 },
+  { id: 'ia', label: 'Leitura da IA', icon: Sparkles, min: 1 },
+  // Aba PRÓPRIA, não um bloco dentro da Leitura da IA: são análises de matéria
+  // -prima diferente (aquela lê texto aberto, esta lê as fechadas agregadas) e
+  // uma existe sem a outra — hoje o censo tem material só para esta.
+  // ⚠️ `min: 1` como as outras de leitura: o relatório é agregado e todos
+  // precisam ler o MESMO. Quem GERA é nível 4, e isso é checado na rota.
+  { id: 'relatorio', label: 'Relatório', icon: FileText, min: 1 },
 ];
 
 const CUIDADO_LABEL: Record<string, string> = {
@@ -168,6 +183,12 @@ export default function Censo() {
 
   const nivel = aux?.nivel ?? nivelLocal;
   const podeEditar = nivel >= 4;
+  // Abas que este nível pode abrir de verdade — ver o comentário de `TABS`.
+  const tabsPermitidas = TABS.filter((t) => nivel >= (t.min ?? 1));
+  // ⚠️ Se o nível cair (ou o `aux` chegar depois dizendo 1), a aba selecionada
+  // pode ter sumido da lista. Sem este fallback o Tabs fica com um valor que
+  // não existe e a tela some inteira.
+  const tabVisivel = tabsPermitidas.some((t) => t.id === tab) ? tab : 'pesquisas';
 
   const carregar = useCallback(async () => {
     try {
@@ -219,9 +240,9 @@ export default function Censo() {
         ) : null}
       />
 
-      <Tabs value={tab} onValueChange={setTab}>
+      <Tabs value={tabVisivel} onValueChange={setTab}>
         <TabsList className="inline-flex flex-wrap h-auto w-auto bg-transparent p-0 gap-1 border-b border-border rounded-none mb-5">
-          {TABS.map((t) => (
+          {tabsPermitidas.map((t) => (
             <TabsTrigger
               key={t.id}
               value={t.id}
@@ -292,7 +313,9 @@ export default function Censo() {
 
         {/* As três abas de análise compartilham o mesmo seletor de pesquisa: o
             número só quer dizer algo junto com "de qual censo". */}
-        {(['respostas', 'cobertura', 'perfil', 'ia'] as const).map((id) => (
+        {(['respostas', 'cobertura', 'perfil', 'ia', 'relatorio'] as const)
+          .filter((id) => tabsPermitidas.some((t) => t.id === id))
+          .map((id) => (
           <TabsContent key={id} value={id}>
             <div className="space-y-4">
               {(lista || []).length > 1 && (
@@ -318,7 +341,18 @@ export default function Censo() {
               )}
               {id === 'cobertura' && <AbaCobertura pesquisaId={pesquisaEscolhida} />}
               {id === 'perfil' && <AbaPerfil pesquisaId={pesquisaEscolhida} />}
-              {id === 'ia' && <AbaLeituraIA pesquisaId={pesquisaEscolhida} />}
+              {id === 'ia' && (
+                <AbaLeituraIA
+                  pesquisaId={pesquisaEscolhida}
+                  aoIrParaRelatorio={() => setTab('relatorio')}
+                />
+              )}
+              {id === 'relatorio' && (
+                <AbaRelatorio
+                  pesquisaId={pesquisaEscolhida}
+                  titulo={lista?.find((p) => p.pesquisa_id === pesquisaEscolhida)?.titulo}
+                />
+              )}
             </div>
           </TabsContent>
         ))}

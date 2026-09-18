@@ -22,6 +22,18 @@
 //    node backend/scripts/censo_carga.cjs --pessoas 500
 //    node backend/scripts/censo_carga.cjs --latencia-banco 25 # ms por query
 //    node backend/scripts/censo_carga.cjs --rampa 60          # chegam em 60s
+//    node backend/scripts/censo_carga.cjs --na-base 60         # % já cadastrada
+//
+//  ⚠️⚠️ ESTE SCRIPT MEDIU 400 EM 100% DAS PESSOAS DE 07/08 A 11/09/2026.
+//  Quando o CPF virou obrigatório (decisão do Matheus, 07/08), o gerador
+//  continuou escrevendo "Pessoa Numero 42" no campo de CPF — que tem
+//  `formato: 'cpf'` e dígito verificador cobrado em `montarItens`. Resultado:
+//  toda simulação parava no 400 ANTES do insert, e as 500 "respostas" do
+//  relatório eram rascunhos. O caminho de gravação (itens, cuidado, UNIQUE,
+//  idempotência) ficou um mês sem ser exercitado, e nada acusou — o script
+//  imprimia "✔ nenhum erro 5xx" com orgulho, porque 400 não é 5xx.
+//  LEI: teste de carga tem que AFIRMAR o status esperado, não só a ausência de
+//  5xx. Ver a checagem no fim do relatório.
 // ════════════════════════════════════════════════════════════════════════════
 
 const path = require('path');
@@ -39,7 +51,16 @@ const PORTA = arg('porta', 3899);
 // salvar rascunho a cada bloco, enviar) em vez de só o envio. É o que de fato
 // acontece no culto: o envio é o último de ~15 requisições por pessoa.
 const JORNADA = process.argv.includes('--jornada');
-const BLOCOS = 13;
+// Quantos rascunhos a pessoa salva no caminho = quantos BLOCOS o questionário
+// tem. ⚠️ Configurável porque o questionário VIVO encurtou: o seed do repo tem
+// 13 seções, a pesquisa em produção em 11/09 tem 3 — e a diferença muda a carga
+// em 4x. Rode os dois: 13 é o pior caso, 3 é o domingo que vem.
+//   node backend/scripts/censo_carga.cjs --pessoas 500 --jornada --blocos 3
+const BLOCOS = arg('blocos', 13);
+// Fatia que JÁ está na base (os outros caem no criador de pessoa, que é o
+// caminho mais caro do envio). A base viva tem 3.972 cadastros para uma igreja
+// de ~2.500 no culto, mas boa parte de quem escaneia o QR é visitante.
+const NA_BASE_PCT = arg('na-base', 60);
 
 const RAIZ = path.join(__dirname, '..');
 process.env.CENSO_TOKEN_SECRET = 'carga-teste';
@@ -50,8 +71,14 @@ const doc = require(path.join(RAIZ, 'data', 'censoQuestionario2026.json'));
 // ── Banco simulado, com contabilidade ─────────────────────────────────────
 const metricas = {
   queries: 0, porTabela: {}, respostas: 0, itens: 0, cuidados: 0,
-  duplicatas: 0, repetidos: 0,
+  duplicatas: 0, repetidos: 0, achadas_por_cpf: 0, pessoas_criadas: 0,
 };
+
+/** Esta pessoa já está na base? Determinístico pelo CPF. */
+function jaEstaNaBase(cpf) {
+  const b = crypto.createHash('md5').update(String(cpf)).digest()[0];
+  return (b / 255) * 100 < NA_BASE_PCT;
+}
 const vistos = { envios: new Set(), membros: new Set() };
 const espera = () => new Promise((r) => setTimeout(r, LATENCIA_BANCO));
 
@@ -80,6 +107,15 @@ require.cache[supaPath] = { id: supaPath, filename: supaPath, loaded: true, expo
         if (t === 'cen_pesquisa') return { data: PESQ, error: null };
         if (t === 'cen_resposta' && f.envio_id) {
           return { data: vistos.envios.has(f.envio_id) ? { id: 'ja' } : null, error: null };
+        }
+        // ⚠️ A busca por CPF tem que ACHAR parte das pessoas: é o que separa o
+        // caminho barato (1 query e segue) do caro (criar cadastro). Devolver
+        // null para todo mundo fazia o teste medir só o pior caso — e, com o
+        // criador de pessoa fora do mock, medir caso nenhum.
+        if (t === 'mem_membros' && f.cpf) {
+          if (!jaEstaNaBase(f.cpf)) return { data: null, error: null };
+          metricas.achadas_por_cpf += 1;
+          return { data: { id: crypto.randomUUID() }, error: null };
         }
         return { data: null, error: null };
       },
@@ -124,6 +160,19 @@ require.cache[mmPath] = { id: mmPath, filename: mmPath, loaded: true, exports: {
     const achou = crypto.createHash('md5').update(String(nome)).digest()[0] < 153;
     return achou ? { membro_id: crypto.randomUUID(), matched_by: 'nome+nascimento' } : null;
   },
+  // ⚠️⚠️ ESTA FALTAVA (11/09/2026), e é o caminho MAIS CARO do envio: quem não
+  // está na base tem o cadastro criado na hora (decisão do Matheus, 07/08).
+  // Sem o mock, `acharOuCriarGuardado is not a function` era engolido pelo
+  // try/catch da rota e o teste media o envio como se ninguém fosse novo.
+  // Custo real medido no serviço: busca por cpf + candidatos por e-mail +
+  // candidatos por telefone + insert do cadastro + observação do contato.
+  acharOuCriarGuardado: async () => {
+    for (let i = 0; i < 4; i += 1) { contar('select', 'mem_membros(criar)'); await espera(); }
+    contar('insert', 'mem_membros'); await espera();
+    contar('insert', 'mem_contatos'); await espera();
+    metricas.pessoas_criadas += 1;
+    return { membro_id: crypto.randomUUID(), criado: true };
+  },
 }};
 const recPath = require.resolve(path.join(RAIZ, 'services', 'censoReconciliar.js'));
 require.cache[recPath] = { id: recPath, filename: recPath, loaded: true, exports: {
@@ -144,6 +193,22 @@ const { perguntas } = validarPerguntas(doc.perguntas);
 
 const TEXTO = 'Resposta escrita no celular, com o tamanho que uma pessoa realmente escreve quando está com pressa mas quer ser sincera.';
 
+/** CPF VÁLIDO e determinístico por pessoa.
+ *  ⚠️ Sem isto o envio morre em `400 {faltando:['cpf']}` e o teste não mede
+ *  NADA do caminho de gravação — foi exatamente o que aconteceu por um mês. */
+function cpfDaPessoa(n) {
+  const base = String(10000000000 + (n * 7919) % 88888888).slice(0, 9);
+  const d = base.split('').map(Number);
+  const dv = (arr, peso) => {
+    const soma = arr.reduce((a, v, i) => a + v * (peso - i), 0);
+    const r = (soma * 10) % 11;
+    return r === 10 ? 0 : r;
+  };
+  const d1 = dv(d, 10);
+  const d2 = dv([...d, d1], 11);
+  return `${base}${d1}${d2}`;
+}
+
 /** Uma pessoa preenchendo: percorre em ordem e só responde o que está visível. */
 function pessoa(n) {
   const R = {};
@@ -162,6 +227,8 @@ function pessoa(n) {
       case 'data': R[p.id] = `19${70 + (d % 30)}-0${1 + (d % 9)}-1${d % 9}`; break;
       case 'texto_curto': R[p.id] = p.formato === 'email' ? `pessoa${n}@exemplo.com`
         : p.formato === 'telefone' ? `2199${String(900000 + n).slice(0, 6)}`
+        : p.formato === 'cpf' ? cpfDaPessoa(n)
+        : p.formato === 'cep' ? '20000-000'
         : `Pessoa Numero ${n}`; break;
       default: R[p.id] = TEXTO;
     }
@@ -255,6 +322,7 @@ const srv = app.listen(PORTA, async () => {
   console.log(`\nGRAVADO`);
   console.log(`  respostas: ${fmt(metricas.respostas)} · itens: ${fmt(metricas.itens)} · pedidos de cuidado: ${fmt(metricas.cuidados)}`);
   console.log(`  duplicatas barradas: ${metricas.duplicatas} · reenvios devolvidos: ${metricas.repetidos}`);
+  console.log(`  vínculo por CPF na hora: ${fmt(metricas.achadas_por_cpf)} · cadastros CRIADOS no envio: ${fmt(metricas.pessoas_criadas)}`);
   console.log(`\nIDAS AO BANCO`);
   console.log(`  total: ${fmt(metricas.queries)} · por resposta: ${(metricas.queries / PESSOAS).toFixed(1)} · pico: ${(metricas.queries / dur).toFixed(0)} queries/s`);
   for (const [k, v] of Object.entries(metricas.porTabela).sort((a, b) => b[1] - a[1])) {
@@ -266,5 +334,21 @@ const srv = app.listen(PORTA, async () => {
   } else {
     console.log('\n✔ nenhum erro 5xx nem falha de rede');
   }
+
+  // ⚠️⚠️ A AFIRMAÇÃO QUE FALTAVA. "Nenhum 5xx" era verdade enquanto 100% das
+  // pessoas tomavam 400 e nada era gravado. O teste agora FALHA (exit 1) quando
+  // o envio não é aceito, e diz o que veio no lugar.
+  const aceitas = status['201'] || 0;
+  const ok = aceitas === PESSOAS && metricas.itens > 0;
+  console.log(ok
+    ? `
+✔ VEREDITO: ${fmt(aceitas)}/${fmt(PESSOAS)} respostas ACEITAS (201) · ${fmt(metricas.itens)} itens gravados`
+    : `
+✘ VEREDITO: só ${fmt(aceitas)} de ${fmt(PESSOAS)} envios aceitos (201) · itens gravados: ${fmt(metricas.itens)}`
+      + `
+  status recebidos: ${JSON.stringify(status)}`
+      + `
+  ⚠️ Envio recusado não mede carga de gravação. Conserte o gerador antes de acreditar nos números.`);
+  if (!ok) process.exitCode = 1;
   srv.close();
 });

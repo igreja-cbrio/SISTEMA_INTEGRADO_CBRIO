@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-382 arquivos.
+432 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -44,13 +44,13 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/dashboard.js` | rota backend | — | `/api/dashboard` |
 | `backend/routes/dashboardSemanal.js` | rota backend | — | `/api/dashboard-semanal` |
 | `backend/routes/destaques.js` | rota backend | marketing | `/api/destaques` |
-| `backend/routes/devocionais.js` | rota backend | — | `/api/devocionais` |
+| `backend/routes/devocionais.js` | rota backend | devocionais | `/api/devocionais` |
 | `backend/routes/devocionalMembro.js` | rota backend | — | `/api/devocional-membro` |
 | `backend/routes/devocionalPlanos.js` | rota backend | — | `/api/devocional-planos` |
 | `backend/routes/encaminhamentos.js` | rota backend | — | `/api/encaminhamentos` |
 | `backend/routes/estrategia.js` | rota backend | — | `/api/estrategia` |
 | `backend/routes/eventosExternos.js` | rota backend | eventos-externos | `/api/eventos-externos` |
-| `backend/routes/events.js` | rota backend | rh | `/api/events` |
+| `backend/routes/events.js` | rota backend | events | `/api/events` |
 | `backend/routes/expansion.js` | rota backend | — | `/api/expansion` |
 | `backend/routes/face.js` | rota backend | face | `/api/face` |
 | `backend/routes/feedback.js` | rota backend | — | `/api/feedback` |
@@ -62,7 +62,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/inscricoes.js` | rota backend | inscricoes | `/api/inscricoes` |
 | `backend/routes/integracao.js` | rota backend | integracao | `/api/integracao` |
 | `backend/routes/jornada.js` | rota backend | membresia | `/api/jornada` |
-| `backend/routes/kpis.js` | rota backend | — | `/api/kpis` |
+| `backend/routes/kpis.js` | rota backend | batismo-leitura | `/api/kpis` |
 | `backend/routes/kpisV2.js` | rota backend | — | `/api/kpis/v2` |
 | `backend/routes/lgpd.js` | rota backend | membresia | `/api/lgpd` |
 | `backend/routes/links.js` | rota backend | links | `/api/links` |
@@ -79,20 +79,20 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/nps.js` | rota backend | nps | `/api/nps` |
 | `backend/routes/nsm.js` | rota backend | — | `/api/nsm` |
 | `backend/routes/occurrences.js` | rota backend | — | `/api/occurrences` |
-| `backend/routes/online.js` | rota backend | — | `/api/online` |
+| `backend/routes/online.js` | rota backend | online | `/api/online` |
 | `backend/routes/pagamentosWebhook.js` | rota backend | — | `/api/pagamentos-webhook` |
-| `backend/routes/painel.js` | rota backend | — | `/api/painel` |
+| `backend/routes/painel.js` | rota backend | painel | `/api/painel` |
 | `backend/routes/painelArea.js` | rota backend | painel-area | `/api/painel-area` |
 | `backend/routes/painelRh.js` | rota backend | rh | `/api/painel-rh` |
 | `backend/routes/patrimonio.js` | rota backend | patrimonio | `/api/patrimonio` |
 | `backend/routes/pcs.js` | rota backend | — | `/api/pcs` |
-| `backend/routes/permissoes.js` | rota backend | — | `/api/permissoes` |
+| `backend/routes/permissoes.js` | rota backend | permissoes | `/api/permissoes` |
 | `backend/routes/pessoas.js` | rota backend | membros | `/api/pessoas` |
 | `backend/routes/planejamento.js` | rota backend | — | `/api/planejamento` |
 | `backend/routes/planejamentoAnual.js` | rota backend | — | `/api/planejamento-anual` |
 | `backend/routes/processos.js` | rota backend | — | `/api/processos` |
 | `backend/routes/producao.js` | rota backend | producao | `/api/producao` |
-| `backend/routes/projects.js` | rota backend | — | `/api/projects` |
+| `backend/routes/projects.js` | rota backend | projects | `/api/projects` |
 | `backend/routes/propostas.js` | rota backend | propostas | `/api/propostas` |
 | `backend/routes/publicApresentacao.js` | rota backend | — | `/api/public/apresentacao-criancas` |
 | `backend/routes/publicBatismo.js` | rota backend | — | `/api/public/batismo` |
@@ -110,6 +110,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/publicNext.js` | rota backend | — | `/api/public/next` |
 | `backend/routes/publicNps.js` | rota backend | — | `/api/public/nps` |
 | `backend/routes/publicRhOnboarding.js` | rota backend | — | `/api/public/rh-onboarding` |
+| `backend/routes/publicVisitante.js` | rota backend | — | `/api/public/visitante` |
 | `backend/routes/publicVolEmail.js` | rota backend | — | `/api/public/vol-email` |
 | `backend/routes/publicVoluntariado.js` | rota backend | — | `/api/public/voluntariado` |
 | `backend/routes/publicWhatsapp.js` | rota backend | — | `/api/whatsapp/webhook` |
@@ -132,6 +133,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/totem.js` | rota backend | — | `/api/totem` |
 | `backend/routes/totemKids.js` | rota backend | kids | `/api/totem-kids` |
 | `backend/routes/tutorial.js` | rota backend | — | `/api/tutorial` |
+| `backend/routes/visitantes.js` | rota backend | cuidados | `/api/visitantes` |
 | `backend/routes/volEmails.js` | rota backend | voluntariado | `(não montado)` |
 | `backend/routes/voluntariado-sync.js` | rota backend | voluntariado | `/api/voluntariado` |
 | `backend/routes/voluntariado.js` | rota backend | membresia | `/api/voluntariado` |
@@ -143,6 +145,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/wifi.js` | rota backend | wifi | `/api/wifi` |
 | `backend/utils/acaoNotificacao.js` | régua pura | — | `src/test/acaoNotificacao.test.ts` |
 | `backend/utils/acessibilidadeBatismo.js` | régua pura | — | `src/test/acessibilidadeBatismo.test.ts` |
+| `backend/utils/acordarDispatcher.js` | régua pura | — | `src/test/acordarDispatcher.test.ts` |
 | `backend/utils/agendaGrupo.js` | régua pura | — | `src/test/agendaGrupo.test.ts` |
 | `backend/utils/agentDiagnostico.js` | régua pura | — | `src/test/agentDiagnostico.test.ts` |
 | `backend/utils/agradecimento.js` | régua pura | — | `src/test/agradecimento.test.ts` |
@@ -152,41 +155,56 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/appPushDestino.js` | régua pura | — | `src/test/appPushDestino.test.ts` |
 | `backend/utils/appRateLimit.js` | régua pura | — | `src/test/appRateLimit.test.ts` |
 | `backend/utils/apresentacaoHistorico.js` | régua pura | — | `src/test/apresentacaoHistorico.test.ts` |
+| `backend/utils/apresentacaoHorario.js` | régua pura | — | `src/test/apresentacaoHorario.test.ts` |
 | `backend/utils/assuntoGrupoConversa.js` | régua pura | — | `src/test/assuntoGrupoConversa.test.ts` |
 | `backend/utils/atividadeVoluntario.js` | régua pura | — | `src/test/atividadeVoluntario.test.ts` |
+| `backend/utils/authUsers.js` | régua pura | — | `src/test/portasPublicasPii.test.ts` |
+| `backend/utils/avaliacaoAnonimato.js` | régua pura | — | `src/test/avaliacaoAnonimato.test.ts` |
 | `backend/utils/avisoAgregado.js` | régua pura | — | `src/test/avisoAgregado.test.ts` |
 | `backend/utils/avisoComprovante.js` | régua pura | — | `src/test/avisoComprovante.test.ts` |
 | `backend/utils/avisoEscala.js` | régua pura | — | `src/test/avisoEscala.test.ts` |
 | `backend/utils/avisoGrupoApp.js` | régua pura | — | `src/test/avisoGrupoApp.test.ts` |
 | `backend/utils/batismoHorario.js` | régua pura | — | `src/test/batismoHorario.test.ts` |
+| `backend/utils/blocoCulto.js` | régua pura | — | `src/test/blocoCulto.test.ts` |
+| `backend/utils/botIaRegras.js` | régua pura | — | `src/test/botIaRegras.test.ts` |
 | `backend/utils/cadastrosKids.js` | régua pura | — | `src/test/cadastrosKids.test.ts` |
 | `backend/utils/campanhaAgradecimento.js` | régua pura | — | `backend/services/campanhaDigito.test.js` |
+| `backend/utils/campanhaDoacao.js` | régua pura | — | `src/test/campanhaDoacao.test.ts` |
+| `backend/utils/campanhaIdentidade.js` | régua pura | — | `src/test/campanhaIdentidade.test.ts` |
 | `backend/utils/campanhaProgresso.js` | régua pura | — | `backend/services/campanhaDigito.test.js` |
 | `backend/utils/campanhaPublico.js` | régua pura | — | `backend/services/campanhaDigito.test.js` |
 | `backend/utils/campoKey.js` | régua pura | — | `src/test/campoKey.test.ts` |
 | `backend/utils/camposCondicionais.js` | régua pura | — | `src/test/camposCondicionais.test.ts` |
-| `backend/utils/camposContato.js` | régua pura | — | `src/test/saneamentoInscricaoApp.test.ts` |
+| `backend/utils/camposContato.js` | régua pura | — | `src/test/paginacaoExtrato.test.ts` |
 | `backend/utils/capacidadeCulto.js` | régua pura | — | `src/test/capacidadeCulto.test.ts` |
 | `backend/utils/censoCampoCadastro.js` | régua pura | — | `src/test/censoCampoCadastro.test.ts` |
+| `backend/utils/censoConsentimento.js` | régua pura | — | `src/test/censoConsentimento.test.ts` |
 | `backend/utils/censoConvite.js` | régua pura | — | `src/test/censoConvite.test.ts` |
-| `backend/utils/censoPerguntas.js` | régua pura | — | `src/test/censoFormEspelho.test.ts` |
+| `backend/utils/censoGrafico.js` | régua pura | — | `src/test/censoGrafico.test.ts` |
+| `backend/utils/censoIaFiltro.js` | régua pura | — | `src/test/censoIaSemPerguntaAberta.test.ts` |
+| `backend/utils/censoPerguntas.js` | régua pura | — | `src/test/censoConsentimento.test.ts` |
 | `backend/utils/censoPrefill.js` | régua pura | — | `src/test/censoPrefill.test.ts` |
+| `backend/utils/censoRelatorioDados.js` | régua pura | — | `src/test/censoRelatorioDados.test.ts` |
 | `backend/utils/censoRespostaToken.js` | régua pura | — | `src/test/censoRespostaToken.test.ts` |
 | `backend/utils/censoToken.js` | régua pura | — | `src/test/censoRespostaToken.test.ts` |
 | `backend/utils/censoVocabulario.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/checkinAutoatendimento.js` | régua pura | — | `src/test/checkinAutoatendimento.test.ts` |
 | `backend/utils/checkoutExterno.js` | régua pura | — | `src/test/checkoutExterno.test.ts` |
+| `backend/utils/comunicacaoDashboard.js` | régua pura | — | `src/test/comunicacaoDashboard.test.ts` |
+| `backend/utils/conexaoWhatsapp.js` | régua pura | — | `src/test/conexaoWhatsapp.test.ts` |
 | `backend/utils/contextoFalha.js` | régua pura | — | `src/test/fetchFalhaDb.test.ts` |
 | `backend/utils/corsPolicy.js` | régua pura | — | `backend/middleware/errorHandler.test.js` |
 | `backend/utils/cotaMeta.js` | régua pura | — | `src/test/cotaMeta.test.ts` |
-| `backend/utils/cpf.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/cpf.js` | régua pura | — | `src/test/censoFormEspelho.test.ts` |
+| `backend/utils/cpfResponsavel.js` | régua pura | — | `src/test/cpfResponsavel.test.ts` |
 | `backend/utils/criancaApresentacao.js` | régua pura | — | `src/test/cultoApresentacao.test.ts` |
-| `backend/utils/cronAuth.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/cronAuth.js` | régua pura | — | `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/cultoJanela.js` | régua pura | — | `src/test/cultoJanela.test.ts` |
 | `backend/utils/cultoToken.js` | régua pura | — | `src/test/checkinAutoatendimento.test.ts` |
 | `backend/utils/cursorLote.js` | régua pura | — | `src/test/cursorLote.test.ts` |
 | `backend/utils/dadosDoCadastro.js` | régua pura | — | `backend/services/membroMatchInsert.test.js` |
 | `backend/utils/dadosSensiveisPessoa.js` | régua pura | — | `src/test/dadosSensiveisPessoa.test.ts` |
+| `backend/utils/dataBr.js` | régua pura | — | `src/test/paginacaoExtrato.test.ts` |
 | `backend/utils/decendioComparativo.js` | régua pura | — | `src/test/decendioComparativo.test.ts` |
 | `backend/utils/decisaoCampos.js` | régua pura | — | `src/test/decisaoCampos.test.ts` |
 | `backend/utils/decisaoToken.js` | régua pura | — | `src/test/decisaoToken.test.ts` |
@@ -194,17 +212,29 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/diagnosticoAutonomia.js` | régua pura | — | `src/test/diagnosticoAutonomia.test.ts` |
 | `backend/utils/digitoCampanha.js` | régua pura | — | `backend/services/campanhaDigito.test.js` |
 | `backend/utils/divisorMandala.js` | régua pura | — | `src/test/divisorMandala.test.ts` |
+| `backend/utils/doacaoPrefill.js` | régua pura | — | `src/test/doacaoPrefill.test.ts` |
+| `backend/utils/doacaoToken.js` | régua pura | — | `src/test/doacaoPrefill.test.ts` |
+| `backend/utils/documentoBr.js` | régua pura | — | `src/test/documentoBr.test.ts` |
 | `backend/utils/dsOnline.js` | régua pura | — | `src/test/dsOnline.test.ts` |
+| `backend/utils/eInscricao.js` | régua pura | — | `src/test/eInscricao.test.ts` |
+| `backend/utils/elegibilidadeVol.js` | régua pura | — | `src/test/elegibilidadeVol.test.ts` |
+| `backend/utils/enderecoGrupoPublico.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/entradaGrupoApp.js` | régua pura | — | `src/test/entradaGrupoApp.test.ts` |
+| `backend/utils/equipeAtendimento.js` | régua pura | — | `src/test/equipeAtendimento.test.ts` |
+| `backend/utils/escalaLinhaEquipe.js` | régua pura | — | `src/test/escalaLinhaEquipe.test.ts` |
 | `backend/utils/escalaToken.js` | régua pura | — | `src/test/escalaToken.test.ts` |
+| `backend/utils/escopoFicha.js` | régua pura | — | `src/test/escopoFicha.test.ts` |
 | `backend/utils/eventoCheckinToken.js` | régua pura | — | `src/test/checkinAutoatendimento.test.ts` |
 | `backend/utils/exclusaoInscricaoLote.js` | régua pura | — | `src/test/exclusaoInscricaoLote.test.ts` |
+| `backend/utils/falhaInfra.js` | régua pura | — | `src/test/falhaInfra.test.ts` |
+| `backend/utils/fotoApresentacao.js` | régua pura | — | `src/test/fotoApresentacao.test.ts` |
 | `backend/utils/fotoVoluntario.js` | régua pura | — | `src/test/fotoVoluntario.test.ts` |
 | `backend/utils/freioBot.js` | régua pura | — | `src/test/freioBot.test.ts` |
 | `backend/utils/grupoCapaApp.js` | régua pura | — | `src/test/grupoCapaApp.test.ts` |
 | `backend/utils/grupoEdicaoApp.js` | régua pura | — | `src/test/grupoEdicaoApp.test.ts` |
 | `backend/utils/grupoOnline.js` | régua pura | — | `src/test/assuntoGrupoConversa.test.ts` |
 | `backend/utils/gruposToken.js` | régua pura | — | `src/test/gruposToken.test.ts` |
+| `backend/utils/idFila.js` | régua pura | — | `src/test/idFila.test.ts` |
 | `backend/utils/inscricaoDaPessoa.js` | régua pura | — | `src/test/inscricaoDaPessoa.test.ts` |
 | `backend/utils/inscricaoMenor.js` | régua pura | — | `src/test/inscricaoMenor.test.ts` |
 | `backend/utils/isoWeek.js` | régua pura | — | `SEM TESTE` |
@@ -212,6 +242,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/janelaPeriodo.js` | régua pura | — | `src/test/janelaPeriodoBackend.test.ts` |
 | `backend/utils/jornadaMarcadores.js` | régua pura | — | `src/test/jornadaMarcadores.test.ts` |
 | `backend/utils/jornadaTempo.js` | régua pura | — | `src/test/engajouOutroValor.test.ts` |
+| `backend/utils/kidsConversaoFila.js` | régua pura | — | `src/test/kidsConversaoFila.test.ts` |
 | `backend/utils/kidsFrequencia.js` | régua pura | — | `src/test/kidsFrequencia.test.ts` |
 | `backend/utils/kidsResponsavel.js` | régua pura | — | `backend/routes/incidentRemediation.test.js` |
 | `backend/utils/kidsSituacao.js` | régua pura | — | `src/test/kidsSituacao.test.ts` |
@@ -219,6 +250,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/lentesDomingo.js` | régua pura | — | `src/test/lentesDomingo.test.ts` |
 | `backend/utils/linkInscricaoApp.js` | régua pura | — | `src/test/linkInscricaoApp.test.ts` |
 | `backend/utils/lotesEvento.js` | régua pura | — | `src/test/lotesEvento.test.ts` |
+| `backend/utils/magicLink.js` | régua pura | — | `src/test/magicLinkEnvio.test.ts` |
 | `backend/utils/marcoAtribuicao.js` | régua pura | — | `src/test/marcoAtribuicao.test.ts` |
 | `backend/utils/marketingCores.js` | régua pura | — | `src/test/marketingCores.test.ts` |
 | `backend/utils/marketingOcupacao.js` | régua pura | — | `src/test/marketingOcupacao.test.ts` |
@@ -228,10 +260,15 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/mlAvisoEntrega.js` | régua pura | — | `src/test/mlAvisoEntrega.test.ts` |
 | `backend/utils/moduloDaAreaEvento.js` | régua pura | — | `src/test/moduloDaAreaEvento.test.ts` |
 | `backend/utils/motivoFalha.js` | régua pura | — | `src/test/motivoFalha.test.ts` |
+| `backend/utils/nextGestaoApp.js` | régua pura | — | `src/test/nextGestaoApp.test.ts` |
+| `backend/utils/nextGuardNivel.js` | régua pura | — | `src/test/nextGuardNivel.test.ts` |
 | `backend/utils/nextTurmas.js` | régua pura | — | `src/test/nextTurmas.test.ts` |
 | `backend/utils/nfeArquivo.js` | régua pura | — | `src/test/nfeArquivo.test.ts` |
 | `backend/utils/nfeXml.js` | régua pura | — | `src/test/nfeXml.test.ts` |
+| `backend/utils/novoEnvio.js` | régua pura | — | `src/test/novoEnvio.test.ts` |
 | `backend/utils/onlineDiag.js` | régua pura | — | `src/test/onlineDiag.test.ts` |
+| `backend/utils/origemRegistro.js` | régua pura | — | `src/test/origemRegistro.test.ts` |
+| `backend/utils/paginacaoExtrato.js` | régua pura | — | `src/test/paginacaoExtrato.test.ts` |
 | `backend/utils/pagination.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/paresDuplicados.js` | régua pura | — | `src/test/paresDuplicados.test.ts` |
 | `backend/utils/patrimonioDepreciacao.js` | régua pura | — | `SEM TESTE` |
@@ -239,23 +276,30 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/periodoDoacoes.js` | régua pura | — | `src/test/periodoDoacoes.test.ts` |
 | `backend/utils/periodoYtd.js` | régua pura | — | `src/test/periodoYtd.test.ts` |
 | `backend/utils/pessoaDiretaCampos.js` | régua pura | — | `src/test/grupoPessoaDireta.test.ts` |
+| `backend/utils/portaFluxos.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/primeiroContatoRegua.js` | régua pura | — | `src/test/primeiroContatoRegua.test.ts` |
 | `backend/utils/prontidaoCadastro.js` | régua pura | — | `src/test/cadastroPessoaCompleto.test.ts` |
 | `backend/utils/pushLotes.js` | régua pura | — | `src/test/pushLotes.test.ts` |
+| `backend/utils/redePatchGrupo.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/remetenteEmail.js` | régua pura | — | `src/test/remetenteEmail.test.ts` |
 | `backend/utils/resilientFetch.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/responderFalha.js` | régua pura | — | `src/test/telemetria500.test.ts` |
 | `backend/utils/respostaEscala.js` | régua pura | — | `src/test/respostaEscala.test.ts` |
 | `backend/utils/respostaGrupoAgenda.js` | régua pura | — | `src/test/assuntoGrupoConversa.test.ts` |
+| `backend/utils/respostaOpcoes.js` | régua pura | — | `src/test/respostaOpcoes.test.ts` |
+| `backend/utils/respostaPesquisaVisitante.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/rhOnboardingProntidao.js` | régua pura | — | `src/test/rhOnboardingProntidao.test.ts` |
 | `backend/utils/rodizioCulto.js` | régua pura | — | `backend/services/rodizioCulto.test.js` |
 | `backend/utils/roteamentoDisparo.js` | régua pura | — | `src/test/roteamentoDisparo.test.ts` |
 | `backend/utils/rpcsCliente.js` | régua pura | — | `src/test/rpcsCliente.test.ts` |
 | `backend/utils/saneamentoInscricaoApp.js` | régua pura | — | `src/test/saneamentoInscricaoApp.test.ts` |
 | `backend/utils/sanitize.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/saudeBanco.js` | régua pura | — | `src/test/saudeBanco.test.ts` |
 | `backend/utils/saudeCrianca.js` | régua pura | — | `src/test/portasAlinhadas.test.ts` |
 | `backend/utils/semFalhar.js` | régua pura | — | `src/test/postgrestCatch.test.ts` |
 | `backend/utils/sentry.js` | régua pura | — | `backend/middleware/errorHandler.test.js` |
 | `backend/utils/sexoDeclarado.js` | régua pura | — | `src/test/sexoDeclarado.test.ts` |
+| `backend/utils/sexoPeloNome.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/solicitacaoStatusLabel.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/storagePath.js` | régua pura | — | `src/test/storagePath.test.ts` |
 | `backend/utils/supabase.js` | régua pura | — | `src/test/anexosLogArquivos.test.ts` |
@@ -268,6 +312,9 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/vigenciaTipoCulto.js` | régua pura | — | `src/test/vigenciaTipoCulto.test.ts` |
 | `backend/utils/vinculoMlSolicitacao.js` | régua pura | — | `src/test/vinculoMlSolicitacao.test.ts` |
 | `backend/utils/vinculosDuplicados.js` | régua pura | — | `src/test/vinculosDuplicados.test.ts` |
+| `backend/utils/visitanteRegras.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/visitanteToken.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/volCadastroCheckin.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/volCobertura.js` | régua pura | — | `src/test/volCobertura.test.ts` |
 | `backend/utils/volDisponibilidade.js` | régua pura | — | `src/test/volDisponibilidade.test.ts` |
 | `backend/utils/volIntegradoEm.js` | régua pura | — | `src/test/volIntegradoEm.test.ts` |
@@ -324,7 +371,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/ministerial/GruposSupervisao` | tela ERP | grupos | `/grupos/supervisao` |
 | `src/pages/ministerial/Integracao` | tela ERP | — | `/ministerial/integracao` |
 | `src/pages/ministerial/NextBatismo` | tela ERP | next-batismo | `/entradas` |
-| `src/pages/ministerial/Online` | tela ERP | — | `/online` |
+| `src/pages/ministerial/Online` | tela ERP | online | `/online` |
 | `src/pages/ministerial/PainelAmi` | tela ERP | ami | `/ami` |
 | `src/pages/ministerial/PainelBridge` | tela ERP | bridge | `/bridge` |
 | `src/pages/ministerial/PainelKids` | tela ERP | kids | `/kids` |
@@ -334,6 +381,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/ministerial/totemKids/BatismosKids` | tela ERP | kids | `/ministerial/totem-kids/batismos` |
 | `src/pages/ministerial/totemKids/EstoqueKids` | tela ERP | kids | `/ministerial/totem-kids/estoque` |
 | `src/pages/ministerial/totemKids/GestaoCriancas` | tela ERP | kids | `/ministerial/totem-kids/criancas` |
+| `src/pages/ministerial/totemKids/KidsDecisoesRegistro` | tela ERP | kids | `/ministerial/totem-kids/decisoes-registro` |
 | `src/pages/ministerial/totemKids/KidsFrequencia` | tela ERP | kids | `/ministerial/totem-kids/frequencia` |
 | `src/pages/ministerial/totemKids/KidsHub` | tela ERP | kids | `/ministerial/kids` |
 | `src/pages/ministerial/totemKids/TotemKidsCheckin` | tela ERP | kids | `/ministerial/totem-kids` |
@@ -393,6 +441,8 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/public/QuemSomos` | tela ERP | — | `/novosite/quem-somos` |
 | `src/pages/public/Suporte` | tela ERP | — | `/suporte` |
 | `src/pages/public/Suporte` | tela ERP | — | `/suporte` |
+| `src/pages/public/VisitanteAvaliar` | tela ERP | — | `/visitante/avaliar/:token` |
+| `src/pages/public/VisitantePublico` | tela ERP | — | `/visitante` |
 | `src/pages/public/WalletPage` | tela ERP | — | `/wallet` |
 | `src/pages/RevisaoDetalhe` | tela ERP | — | `/revisao/:tipo/:id` |
 | `src/pages/RevisaoEstrategica` | tela ERP | — | `/revisao` |

@@ -401,7 +401,15 @@ function ResultsList({ grupos, loading, selectedGrupoId, onSelect, isMobile = fa
                   : (g.lideres_nomes && g.lideres_nomes.length ? g.lideres_nomes : [g.lider_nome])).filter(Boolean);
                 return nomes.length ? <span><UserIcon size={10} style={{ display: 'inline', marginRight: 2 }} /> {nomes.join(' · ')}</span> : null;
               })()}
-              {g.bairro && <span><MapPin size={10} style={{ display: 'inline', marginRight: 2 }} /> {g.bairro}</span>}
+              {/* Rua + NÚMERO na frente do bairro (Natasha · 16/09): "Barra da
+                  Tijuca" não localiza ninguém — a Av. das Américas tem ~20 km.
+                  `endereco_publico` já vem do servidor sem apartamento/bloco. */}
+              {(g.endereco_publico || g.bairro) && (
+                <span>
+                  <MapPin size={10} style={{ display: 'inline', marginRight: 2 }} />
+                  {' '}{[g.endereco_publico, g.bairro].filter(Boolean).join(' · ')}
+                </span>
+              )}
               {ehDiario(g)
                 ? <span><Clock size={10} style={{ display: 'inline', marginRight: 2 }} /> Diário{g.horario ? ` ${g.horario.slice(0, 5)}` : ''}</span>
                 : <>

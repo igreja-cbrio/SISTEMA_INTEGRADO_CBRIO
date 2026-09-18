@@ -72,10 +72,27 @@ describe('escolaridade · coluna nova, sem CHECK', () => {
   it.each([
     ['Ensino Fundamental', 'fundamental'],
     ['Ensino Médio', 'medio'],
-    ['Superior', 'superior'],
+    ['Superior completo', 'superior_completo'],
     ['Pós graduação', 'pos_graduacao'],
   ])('%s → %s', (rotulo, esperado) => {
     expect(traduzirParaCadastro('escolaridade', rotulo)).toEqual({ ok: true, valor: esperado });
+  });
+
+  // ⚠️⚠️ O CASO QUE CRIOU DOIS SLUGS PARA A MESMA COISA (14/09/2026).
+  // A opção se chamava "Superior" e virou "Superior completo". O mapa mandava a
+  // antiga para `superior` e a nova caía no fallback `superior_completo`:
+  // medido em produção, 310 de um lado e 7 do outro, duas barras no gráfico
+  // para a mesma escolaridade. Toda grafia de graduação tem que cair no MESMO
+  // slug — menos "incompleto", que é outra coisa.
+  it.each(['Superior', 'Superior completo', 'Ensino Superior', 'Graduação', 'Faculdade'])(
+    '"%s" é a mesma escolaridade de sempre', (rotulo) => {
+      expect(traduzirParaCadastro('escolaridade', rotulo)).toEqual({ ok: true, valor: 'superior_completo' });
+    },
+  );
+
+  it('incompleto NÃO vira completo', () => {
+    expect(traduzirParaCadastro('escolaridade', 'Superior incompleto'))
+      .toEqual({ ok: true, valor: 'superior_incompleto' });
   });
 
   it('opção nova não se perde: cai no slug', () => {

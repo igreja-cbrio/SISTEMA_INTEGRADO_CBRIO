@@ -19,20 +19,10 @@ const wpp = require('../services/whatsappService');
 // esperar o evento real.
 router.post('/test-disparo', podeGerir, async (req, res) => {
   try {
-    const chave = req.body?.chave || 'pedido_atualizado';
-    const { data: prof } = await supabase.from('profiles').select('name, membro_id').eq('id', req.user.userId).maybeSingle();
-    if (!prof?.membro_id) return res.json({ ok: false, motivo: 'Seu perfil não está ligado a um membro (sem telefone para enviar).' });
-    const nome = (prof.name || '').trim().split(/\s+/)[0] || 'Olá';
-    const PARAMS = {
-      pedido_atualizado: [nome, 'Solicitação de teste', 'em andamento', 'Disparo de teste do sistema.', 'https://cbrio.org/solicitacoes'],
-      inscricao_confirmada: [nome, 'Evento de teste'],
-      kids_precheckin: ['TESTE12'],
-      batismo_lembrete: ['amanhã', '19h'],
-      aniversario: [nome],
-      kids_vinculo: ['Criança Teste', 'aprovado'],
-    };
-    const r = await wpp.notificarMembro(prof.membro_id, chave, PARAMS[chave] || [nome]);
-    res.json({ ok: !!r?.sent, chave, resultado: r });
+    // Régua extraída em 09/09/2026 (F4 da Comunicação): a MESMA que a aba
+    // Configurações → Templates usa (POST /comunicacao/templates/testar).
+    const { testarDisparoPara } = require('../services/whatsappTesteDisparo');
+    res.json(await testarDisparoPara(req.user.userId, req.body?.chave));
   } catch (e) {
     console.error('[WPP] test-disparo:', e.message);
     res.status(500).json({ error: e.message });

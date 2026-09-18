@@ -24,7 +24,7 @@ const soDigitos = (v) => String(v ?? '').replace(/\D/g, '');
  * ⚠️ Devolve objeto, NUNCA lança: a régua de negócio decide o texto, e quem
  * decide o status HTTP é o handler. É o padrão do `fn_insc_inscrever`.
  */
-function validarDecisao(body, { hoje } = {}) {
+function validarDecisao(body, { hoje, nascimentoObrigatorio = true } = {}) {
   const nome = String(body?.nome ?? '').trim();
   if (nome.length < 2) {
     return { ok: false, campo: 'nome', erro: 'Informe seu nome.' };
@@ -33,8 +33,15 @@ function validarDecisao(body, { hoje } = {}) {
   // ⚠️ Nascimento passa pela régua ÚNICA do Contrato de porta: ela recusa
   // 31/02, ano < 1900 e data no futuro. Uma segunda régua de nascimento aqui
   // divergiria da das outras 10 portas.
+  //
+  // ⚠️ `nascimentoObrigatorio: false` é do TOTEM de novo convertido (pedido do
+  // Marcos · 01/09: "deixar a data de nascimento como opcional nesse fluxo").
+  // A porta ONLINE continua exigindo (default true · mutante rodado) — flag
+  // explícita, nunca afrouxar o default. Opcional segue a política do CEP:
+  // valor inválido ou pela metade vira null em vez de recusar — ninguém perde
+  // a decisão por um campo que o fluxo declarou opcional.
   const dataNascimento = validarNascimento(body?.data_nascimento, hoje);
-  if (!dataNascimento) {
+  if (!dataNascimento && nascimentoObrigatorio) {
     return {
       ok: false,
       campo: 'data_nascimento',

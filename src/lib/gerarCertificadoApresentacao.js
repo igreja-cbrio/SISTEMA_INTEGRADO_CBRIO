@@ -3,6 +3,7 @@
 // Substitui SÓ o nome da criança, os pais, a data e a concordância de gênero —
 // layout, fontes e cores ficam idênticos ao modelo.
 import JSZip from 'jszip';
+import { nomesDosPaisUnicos } from './apresentacaoPais';
 
 const MESES = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
   'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
@@ -47,7 +48,10 @@ async function carregarTemplateBuffer() {
 // Aplica os dados de UMA criança sobre o modelo e devolve o blob do .pptx.
 async function montarCertificadoBlob({ criancaNome, nomePai, nomeMae, dataApresentacao, genero = 'menino' }, templateBuffer) {
   const fem = genero === 'menina';
-  const pais = [nomePai, nomeMae].map(s => (s || '').trim()).filter(Boolean).join(' e ') || '_______________';
+  // ⚠️ Sem repetição (08/09/2026 · caso Isabella: a mãe preencheu o próprio nome
+  // nos DOIS campos e saiu "Aline Lazaro e Aline Lazaro"). Régua única do front
+  // em `lib/apresentacaoPais` — a mesma da lista do Kids.
+  const pais = nomesDosPaisUnicos(nomePai, nomeMae).join(' e ') || '_______________';
 
   // slice(0) clona o buffer — JSZip consome o ArrayBuffer, então reusar o mesmo
   // no lote exige passar uma cópia a cada iteração.

@@ -872,11 +872,14 @@ router.get('/metricas-cuidados', async (req, res) => {
       { data: checkins7d },
       { data: checkins30d },
     ] = await Promise.all([
-      supabase.from('mem_devocionais').select('id', { count: 'exact', head: true }).eq('data_devocional', hoje),
+      // varredura 2026-09: A04 — o DELETE de mem_devocionais virou soft-delete; sem `deleted_at`
+      // os três números de adesão do plano (hoje, 7d, 30d) seguiriam contando check-in apagado,
+      // divergindo da lista do módulo de devocionais, que já filtra.
+      supabase.from('mem_devocionais').select('id', { count: 'exact', head: true }).eq('data_devocional', hoje).is('deleted_at', null),
       supabase.from('devocional_planos').select('id', { count: 'exact', head: true }).eq('ativo', true),
       supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('is_membro_only', true).not('membro_id', 'is', null),
-      supabase.from('mem_devocionais').select('membro_id, data_devocional').gte('data_devocional', d7),
-      supabase.from('mem_devocionais').select('membro_id').gte('data_devocional', d30),
+      supabase.from('mem_devocionais').select('membro_id, data_devocional').gte('data_devocional', d7).is('deleted_at', null),
+      supabase.from('mem_devocionais').select('membro_id').gte('data_devocional', d30).is('deleted_at', null),
     ]);
 
     const checkins7dCount = (checkins7d || []).length;

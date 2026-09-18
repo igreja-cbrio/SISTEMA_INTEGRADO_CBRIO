@@ -10,7 +10,7 @@
 //   · sem o `sobrando`, quem foi escalado à mão fora da composição sumiria da
 //     tela — e a coordenação escalaria outra pessoa no lugar dela.
 import { describe, it, expect } from 'vitest';
-import { montarCobertura, contarStatus } from '../../backend/utils/volCobertura.js';
+import { montarCobertura, contarStatus, cultoCompativel } from '../../backend/utils/volCobertura.js';
 
 const item = (over: any = {}) => ({
   id: over.id || 'i1',
@@ -193,5 +193,84 @@ describe('recusa reabre a vaga', () => {
     expect(r.itens[0].preenchidas).toBe(0);
     expect(r.itens[0].faltam).toBe(2);
     expect(r.resumo.cobertura_pct).toBe(0);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// O EIXO DO HORÁRIO (03/09/2026 · split por celebração)
+//
+// Um time `vol_teams.split_por_horario` tem DUAS vagas do mesmo (equipe,
+// função) no domingo de manhã — uma do 09:30 e uma do 11:30. Sem a régua de
+// compatibilidade, o fallback por par casaria a pessoa do 09:30 na vaga do
+// 11:30 e a tela mostraria coberto um horário vazio.
+//
+// ⚠️ MUTANTES:
+//  · compatibilidade sempre true → a pessoa do 09:30 preenche o 11:30 (o bug);
+//  · NULL deixando de ser curinga → quem serve os DOIS horários (culto_id NULL)
+//    não preencheria vaga nenhuma, e a tela pediria reposição de quem está lá;
+//  · filtrar horário TAMBÉM no vínculo explícito → escala amarrada de propósito
+//    cairia em `sobrando`.
+// ═══════════════════════════════════════════════════════════════════════════
+describe('cultoCompativel · régua do eixo de horário', () => {
+  it('NULL de qualquer lado é curinga', () => {
+    expect(cultoCompativel(null, 'c930')).toBe(true);
+    expect(cultoCompativel('c930', null)).toBe(true);
+    expect(cultoCompativel(null, null)).toBe(true);
+  });
+
+  it('mesmo culto casa; culto diferente NÃO casa', () => {
+    expect(cultoCompativel('c930', 'c930')).toBe(true);
+    expect(cultoCompativel('c930', 'c1130')).toBe(false);
+  });
+});
+
+describe('montarCobertura · com split por horário', () => {
+  const alvo930 = { ...item({ id: 'i930', quantidade: 1 }), culto_id: 'c930' };
+  const alvo1130 = { ...item({ id: 'i1130', quantidade: 1 }), culto_id: 'c1130' };
+
+  it('⚠️ a pessoa do 09:30 NÃO preenche a vaga do 11:30', () => {
+    const escala = { ...esc({ id: 's930', volunteer_id: 'p1' }), culto_id: 'c930' };
+    const r = montarCobertura([alvo930, alvo1130], [escala]);
+    const i930 = r.itens.find((i: any) => i.id === 'i930');
+    const i1130 = r.itens.find((i: any) => i.id === 'i1130');
+    expect(i930.preenchidas).toBe(1);
+    expect(i930.faltam).toBe(0);
+    expect(i1130.preenchidas).toBe(0);
+    expect(i1130.faltam).toBe(1);
+  });
+
+  it('quem serve os DOIS horários (culto_id NULL) preenche a vaga de qualquer um', () => {
+    const ambos = { ...esc({ id: 'sAmbos', volunteer_id: 'p9' }), culto_id: null };
+    const r = montarCobertura([alvo930], [ambos]);
+    expect(r.itens[0].preenchidas).toBe(1);
+    expect(r.itens[0].faltam).toBe(0);
+  });
+
+  it('vaga de BLOCO (culto_id NULL) é preenchida por quem serve só um horário', () => {
+    const blocoAlvo = { ...item({ id: 'iBloco', quantidade: 2 }), culto_id: null };
+    const so930 = { ...esc({ id: 's930', volunteer_id: 'p1' }), culto_id: 'c930' };
+    const r = montarCobertura([blocoAlvo], [so930]);
+    expect(r.itens[0].preenchidas).toBe(1);
+    expect(r.itens[0].faltam).toBe(1);
+  });
+
+  it('⚠️ o vínculo EXPLÍCITO manda, mesmo com horário divergente', () => {
+    // Quem escalou amarrou esta pessoa nesta vaga de propósito. Filtrar por
+    // horário aqui a jogaria em `sobrando`, como se estivesse fora de tudo.
+    const amarrada = { ...esc({ id: 'sX', volunteer_id: 'p7', escala_culto_item_id: 'i1130' }), culto_id: 'c930' };
+    const r = montarCobertura([alvo1130], [amarrada]);
+    expect(r.itens[0].preenchidas).toBe(1);
+    expect(r.sobrando).toHaveLength(0);
+  });
+
+  it('o item devolve o culto_id, que é o que a tela usa pra agrupar', () => {
+    const r = montarCobertura([alvo930, alvo1130], []);
+    expect(r.itens.map((i: any) => i.culto_id)).toEqual(['c930', 'c1130']);
+  });
+
+  it('sem split, nada muda: culto_id vem null', () => {
+    const r = montarCobertura([item({ id: 'i1' })], [esc({ id: 's1' })]);
+    expect(r.itens[0].culto_id).toBeNull();
+    expect(r.itens[0].preenchidas).toBe(1);
   });
 });

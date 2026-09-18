@@ -16,8 +16,10 @@ const soDigitos = (s) => String(s || '').replace(/\D/g, '');
 const chaveNome = (s) => String(s || '').trim().toLowerCase();
 
 // Mesma régua do cuidados.js: contato feito = status real OU primeiro_contato_em.
-const CONTATO_FEITO_STATUS = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido']);
-const contatoFoiFeito = (c) => !!c.primeiro_contato_em || CONTATO_FEITO_STATUS.has(c.primeiro_contato_status);
+// ⚠️ Espelho da régua de routes/cuidados.js (com 'contactada' desde 2026-09-01).
+// ⚠️ Esta cópia já estava CERTA (sem `numero_errado`) — era a única das quatro.
+// Régua única desde 16/09.
+const { contatoFoiFeito } = require('../utils/primeiroContatoRegua');
 
 router.use(authenticate);
 

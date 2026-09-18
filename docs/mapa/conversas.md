@@ -47,6 +47,7 @@ Guard: `authorizeModule('conversas', 1 | 2 | 3)`
 **Serviços**
 
 - `backend/services/notificar.js`
+- `backend/services/waEquipe.js`
 - `backend/services/waInbox.js`
 - `backend/services/whatsappOrigemConversa.js`
 - `backend/services/whatsappService.js`

@@ -26,6 +26,14 @@ const { dispararAuto } = require('../services/whatsappAuto');
 const wpp = require('../services/whatsappService');
 const { analisarOracao } = require('../services/oracaoAnalise');
 const { acharOuCriarGuardado } = require('../services/membroMatch');
+const campDoacao = require('../utils/campanhaDoacao');
+const doacaoToken = require('../utils/doacaoToken');
+const { basePublica } = require('../utils/linkInscricaoApp');
+const { hojeBrt: hojeBrtCamp } = require('../services/campanhaArrecadacao');
+// ⚠️ Só a FACHADA do núcleo (`criarCobranca`) — nenhum arquivo de provider é
+// importado aqui. É o que faz trocar de PSP custar 1 env, e é a mesma fachada
+// por onde o pagamento do RETIRO passa (não mexer nela).
+const pagamentos = require('../services/pagamentos');
 // Convite de familiar pelo app · junta na mesma família + vínculo de parentesco.
 const { vincularParentesco, entrarNaFamilia, VINC_INVERSO } = require('../services/familiaVinculo');
 // `notificarLiderNovoPedido` é a MESMA função que o formulário público usa —
@@ -35,6 +43,23 @@ const { baseUrl } = gruposWpp;
 // Espelho da matrícula do Next (o app inscreve por ENCONTRO; a gestão vive em
 // TURMA/MATRÍCULA desde o cutover de 17/06) — ver services/nextMatricula.js.
 const { chaveMesMembro } = require('../services/nextMatricula');
+// Portão da GESTÃO do Next no app (matriz de permissão ∪ posse da turma).
+// ⚠️ Régua PURA em utils/ pra entrar no gate — ver o cabeçalho dela.
+const {
+  podeGerenciarNext, podeEscreverNext, podeGerenciarTurmaApp, NIVEL_MINIMO_NEXT_APP,
+} = require('../utils/nextGestaoApp');
+// Direcionamento do fim do encontro: o app é cliente novo da MESMA função que
+// o totem e a aba Pessoas usam. ⚠️ NÃO reimplementar — a régua (horário do
+// batismo obrigatório, áreas do servir, idempotência) vive lá.
+const { direcionarMatricula } = require('../services/nextDirecionar');
+const { horariosDisponiveis: horariosBatismoDisponiveis } = require('../utils/batismoHorario');
+const {
+  horariosConfigurados: batismoHorariosConfiguradosApp,
+  ocupacaoPorHorario: batismoOcupacaoPorHorarioApp,
+  dataProximoBatismo: dataProximoBatismoApp,
+} = require('../services/batismoHorarios');
+const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
+const { cpfValido: cpfValidoApp, emailValido: emailValidoApp } = require('../services/inscricaoContrato');
 // ⚠️ Reuso da porta pública de eventos (espinha): a inscrição pelo app roda a
 // MESMA função do site. Ver o cabeçalho do bloco de eventos mais abaixo.
 const { inscreverEspinha, eventoEspinhaPorId, anexarConfigMenor } = require('./publicEventoExterno');
@@ -3259,41 +3284,335 @@ async function recomputarStatusTurmaApp(turmaId) {
   }
 }
 
-// GET /api/app/next/papel — o membro logado é responsável de alguma turma?
-// { responsavel: boolean, turmas: [...] } (turmas onde responsavel_id = membro.id)
-router.get('/next/papel', authApp, limiterNormal, async (req, res) => {
-  try {
-    const membro = await resolveMembroApp(req);
-    if (!membro) return res.json({ responsavel: false, turmas: [] });
-    const { data: turmas, error } = await supabase.from('next_turmas')
+// ════════════════════════════════════════════════════════════════════════════
+//  NEXT · GESTÃO PELO APP (03/09/2026)
+//
+//  ⚠️⚠️ O portão passou a ser a MATRIZ (módulo `next` >= 2) **EM UNIÃO** com a
+//  posse da turma — ver `backend/utils/nextGestaoApp.js` pro motivo medido (as
+//  44 turmas vivas têm `responsavel_id` NULO, então o gate por posse trancava
+//  a tela de gestão, que já existia, pra TODO MUNDO).
+//
+//  Divisão de superfícies (decisão do Marcos · 03/09): FUNCIONÁRIO usa a aba
+//  Next da Integração (tudo) · VOLUNTÁRIO usa o app (aceitações, datas em
+//  leitura, presença, direcionamento, walk-in) · INSCRITO usa o totem. Nada
+//  foi retirado do funcionário.
+// ════════════════════════════════════════════════════════════════════════════
+
+// Contexto de gestão: níveis na matriz + turmas próprias, numa ida só.
+// ⚠️ Nunca lança regra de negócio — quem decide o HTTP é o chamador.
+async function contextoGestaoNext(req) {
+  const membro = await resolveMembroApp(req);
+  const permissao = await permissaoModuloApp(req, 'next').catch((e) => {
+    console.error('[APP next] permissaoModuloApp:', e.message);
+    return { leitura: 0, escrita: 0 };
+  });
+  const leitura = Number(permissao.leitura || 0);
+  const escrita = Number(permissao.escrita || 0);
+  let turmasProprias = [];
+  if (membro) {
+    const { data, error } = await supabase.from('next_turmas')
       .select('id, nome, status, observacoes, origem_mes, created_at')
       .eq('responsavel_id', membro.id).is('deleted_at', null)
       .order('created_at', { ascending: false }).limit(200);
+    // ⚠️ Falha de leitura NÃO vira "não tem turma própria" — sem isso, uma
+    // instabilidade tiraria o acesso de quem entra POR POSSE. Propaga.
     if (error) throw error;
-    res.json({ responsavel: (turmas || []).length > 0, turmas: turmas || [] });
+    turmasProprias = data || [];
+  }
+  const proprias = turmasProprias.length;
+  return {
+    membro,
+    leitura,
+    escrita,
+    turmasProprias,
+    gerencia: podeGerenciarNext({ leitura, escrita, turmasProprias: proprias }),
+    escreve: podeEscreverNext({ escrita, turmasProprias: proprias }),
+  };
+}
+
+// Middleware de ENTRADA na área (leitura). Espelha o `autorizarGestaoBatismoApp`.
+async function autorizarGestaoNextApp(req, res, next) {
+  try {
+    const ctx = await contextoGestaoNext(req);
+    if (!ctx.gerencia) {
+      return res.status(403).json({ error: 'Esta área é só para quem gerencia o Next.' });
+    }
+    req.nextCtx = ctx;
+    next();
+  } catch (e) {
+    console.error('[APP next/permissao]', e.message);
+    res.status(500).json({ error: 'Erro ao verificar o seu acesso ao Next.' });
+  }
+}
+
+// Middleware de ESCRITA. ⚠️ Separado de propósito: leitura alta na matriz não
+// escreve (é a régua do `authorizeModule` do web). A POSSE segue escrevendo.
+async function autorizarEscritaNextApp(req, res, next) {
+  try {
+    const ctx = req.nextCtx || await contextoGestaoNext(req);
+    if (!ctx.escreve) {
+      return res.status(403).json({
+        error: 'Seu acesso ao Next é somente de leitura.',
+        codigo: 'somente_leitura',
+      });
+    }
+    req.nextCtx = ctx;
+    next();
+  } catch (e) {
+    console.error('[APP next/permissao-escrita]', e.message);
+    res.status(500).json({ error: 'Erro ao verificar o seu acesso ao Next.' });
+  }
+}
+
+// Carrega a turma e confere se ESTE membro pode agir nela.
+// Devolve { turma } ou { erro: {status, msg} } — nunca lança regra de negócio.
+// ⚠️ `escrever: true` exige nível de ESCRITA na matriz (a posse segue valendo).
+async function turmaGerenciavel(ctx, turmaId, { escrever = false } = {}) {
+  const { data: turma, error } = await supabase.from('next_turmas')
+    .select('*').eq('id', turmaId).is('deleted_at', null).maybeSingle();
+  if (error) throw error;
+  if (!turma) return { erro: { status: 404, msg: 'Turma não encontrada' } };
+  const pode = podeGerenciarTurmaApp({
+    leitura: ctx.leitura, escrita: ctx.escrita, escrever,
+    turma, membroId: ctx.membro?.id,
+  });
+  if (!pode) return { erro: { status: 403, msg: 'Você não gerencia esta turma.' } };
+  return { turma };
+}
+
+// GET /api/app/next/papel — LEGADO, mantido pro binário que já está no campo.
+// ⚠️ Shape INTOCADO (`{ responsavel, turmas }`): o app publicado lê essas duas
+// chaves, e mudá-las quebraria quem não recebeu o OTA. Quem gerencia por
+// PERMISSÃO usa `/next/gestao` (abaixo) — aqui `responsavel` continua
+// significando POSSE, que é o que o nome diz.
+router.get('/next/papel', authApp, limiterNormal, async (req, res) => {
+  try {
+    const ctx = await contextoGestaoNext(req);
+    res.json({ responsavel: ctx.turmasProprias.length > 0, turmas: ctx.turmasProprias });
   } catch (e) {
     console.error('[APP next/papel]', e.message);
     res.status(500).json({ error: 'Erro ao carregar suas turmas do NEXT' });
   }
 });
 
-// GET /api/app/next/turmas/:turmaId — detalhe da turma (mesmo shape do web
-// GET /next/turmas/:id). Gate: só se o membro é responsavel_id da turma.
-router.get('/next/turmas/:turmaId', authApp, limiterNormal, async (req, res) => {
+// GET /api/app/next/gestao — o que a tela de gestão precisa, numa ida só:
+// se alcança, por quê, as turmas ABERTAS (não só as próprias) e o tamanho da
+// fila de espera.
+router.get('/next/gestao', authApp, limiterNormal, async (req, res) => {
   try {
-    const membro = await resolveMembroApp(req);
-    if (!membro) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
-    const { turmaId } = req.params;
-    const { data: turma } = await supabase.from('next_turmas')
-      .select('*').eq('id', turmaId).is('deleted_at', null).maybeSingle();
-    if (!turma) return res.status(404).json({ error: 'Turma não encontrada' });
-    if (turma.responsavel_id !== membro.id) {
-      return res.status(403).json({ error: 'Você não é o responsável por esta turma.' });
+    const ctx = await contextoGestaoNext(req);
+    if (!ctx.gerencia) {
+      // ⚠️ 200 com `gerencia: false`, não 403: é a PERGUNTA "eu alcanço isso?",
+      // e o app usa a resposta pra decidir se mostra o cartão de gestão.
+      return res.json({
+        gerencia: false, escreve: false, por_permissao: false,
+        eh_responsavel: false, turmas: [], espera: 0,
+      });
     }
+    const { data: abertas, error } = await supabase.from('next_turmas')
+      .select('id, nome, status, observacoes, origem_mes, responsavel_id, created_at')
+      .eq('status', 'aberta').is('deleted_at', null)
+      .order('created_at', { ascending: false }).limit(200);
+    if (error) throw error;
+
+    // Une as abertas com as próprias (turma encerrada que é minha continua
+    // acessível — é onde o responsável corrige presença depois do encontro).
+    const porId = new Map();
+    (abertas || []).forEach((t) => porId.set(t.id, t));
+    ctx.turmasProprias.forEach((t) => { if (!porId.has(t.id)) porId.set(t.id, t); });
+    const turmas = [...porId.values()];
+
+    // Data do 1º encontro + contagem de matriculados, por turma (leitura).
+    const ids = turmas.map((t) => t.id);
+    const meta = {};
+    if (ids.length) {
+      const [{ data: encs }, { data: mats }] = await Promise.all([
+        supabase.from('next_encontros').select('id, turma_id, numero, data').in('turma_id', ids).order('numero'),
+        supabase.from('next_matriculas').select('turma_id').in('turma_id', ids).is('deleted_at', null).limit(1000),
+      ]);
+      (encs || []).forEach((e) => {
+        const m = meta[e.turma_id] || (meta[e.turma_id] = { encontros: [], matriculados: 0 });
+        m.encontros.push({ id: e.id, numero: e.numero, data: e.data });
+      });
+      (mats || []).forEach((m) => {
+        const x = meta[m.turma_id] || (meta[m.turma_id] = { encontros: [], matriculados: 0 });
+        x.matriculados += 1;
+      });
+    }
+
+    // Fila de espera: contagem só (a lista tem endpoint próprio, com PII).
+    const { count: espera } = await supabase.from('next_matriculas')
+      .select('id', { count: 'exact', head: true })
+      .is('turma_id', null).is('deleted_at', null);
+
+    res.json({
+      gerencia: true,
+      // ⚠️⚠️ `escreve` VIAJA na resposta: sem ele a tela mostraria os botões de
+      // presença/walk-in pra quem só tem leitura (a conta "Revisor App Store",
+      // leitura 3 · escrita 0) e o toque voltaria 403. Quem só lê vê a chamada
+      // e não vê os botões — a régua do servidor continua sendo a que decide.
+      escreve: ctx.escreve,
+      // ⚠️ Nível vem de `max(leitura,escrita)`, nunca de um `ctx.nivel`: o
+      // contexto NÃO tem esse campo (separar leitura de escrita é o ponto), e
+      // ler um campo inexistente aqui dava `undefined >= 2` = false — o app
+      // acharia que TODO MUNDO entra por posse.
+      por_permissao: Math.max(ctx.leitura, ctx.escrita) >= NIVEL_MINIMO_NEXT_APP,
+      eh_responsavel: ctx.turmasProprias.length > 0,
+      espera: Number(espera || 0),
+      turmas: turmas.map((t) => ({
+        ...t,
+        sou_responsavel: !!(ctx.membro?.id && t.responsavel_id === ctx.membro.id),
+        encontros: meta[t.id]?.encontros || [],
+        matriculados: meta[t.id]?.matriculados || 0,
+      })),
+    });
+  } catch (e) {
+    console.error('[APP next/gestao]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a gestão do Next' });
+  }
+});
+
+// GET /api/app/next/lista-espera — quem foi direcionado ao Next e ainda não
+// tem turma. Espelha o web `GET /next/lista-espera`.
+// ⚠️ Carrega PII (telefone) — por isso vive atrás do gate, não no /gestao.
+router.get('/next/lista-espera', authApp, autorizarGestaoNextApp, limiterNormal, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('next_matriculas')
+      .select('id, nome, sobrenome, telefone, observacoes, created_at')
+      .is('turma_id', null).is('deleted_at', null)
+      .order('created_at', { ascending: true }).limit(500);
+    if (error) throw error;
+    res.json({ count: (data || []).length, pessoas: data || [] });
+  } catch (e) {
+    console.error('[APP next/lista-espera]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a lista de espera' });
+  }
+});
+
+// POST /api/app/next/matriculas/:matriculaId/alocar — body { turma_id }.
+// A "aceitação": tira a pessoa da fila e põe numa turma.
+// ⚠️ Superfície ESTREITA de propósito: NÃO é o `PATCH /next/matriculas/:id` do
+// web (que edita nome, cpf, status e indicações). Aqui só `turma_id`, e só de
+// quem está REALMENTE na fila — mover alguém que já tem turma é TRANSFERIR,
+// outra ação, que segue sendo do funcionário.
+router.post('/next/matriculas/:matriculaId/alocar', authApp, autorizarGestaoNextApp, autorizarEscritaNextApp, limiterNormal, async (req, res) => {
+  try {
+    const turmaId = req.body?.turma_id;
+    if (!turmaId) return res.status(400).json({ error: 'Escolha a turma' });
+    const alvo = await turmaGerenciavel(req.nextCtx, turmaId, { escrever: true });
+    if (alvo.erro) return res.status(alvo.erro.status).json({ error: alvo.erro.msg });
+
+    const { data: mat } = await supabase.from('next_matriculas')
+      .select('id, turma_id, nome, sobrenome').eq('id', req.params.matriculaId)
+      .is('deleted_at', null).maybeSingle();
+    if (!mat) return res.status(404).json({ error: 'Pessoa não encontrada' });
+    if (mat.turma_id) {
+      return res.status(409).json({
+        error: 'Esta pessoa já está numa turma. Transferir é feito pelo sistema, com a coordenação.',
+        codigo: 'ja_tem_turma',
+      });
+    }
+
+    // ⚠️ `.is('turma_id', null)` na guarda: dois toques (ou duas pessoas
+    // alocando ao mesmo tempo) não sobrescrevem a alocação que já valeu.
+    const { data, error } = await supabase.from('next_matriculas')
+      .update({ turma_id: turmaId, updated_at: new Date().toISOString() })
+      .eq('id', mat.id).is('turma_id', null).is('deleted_at', null)
+      .select('id, turma_id').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(409).json({ error: 'Alguém já alocou esta pessoa.', codigo: 'corrida' });
+
+    await recomputarStatusTurmaApp(turmaId).catch((e) => console.warn('[APP next alocar] recompute:', e.message));
+    res.json({ ok: true, id: data.id, turma_id: data.turma_id });
+  } catch (e) {
+    console.error('[APP next/alocar]', e.message);
+    res.status(500).json({ error: 'Erro ao alocar na turma' });
+  }
+});
+
+// GET /api/app/next/direcionar-opcoes — o que o direcionamento precisa mostrar:
+// horários ABERTOS do próximo batismo + áreas do "quero servir".
+// ⚠️ Lê os MESMOS catálogos do totem e do formulário público (`batismo_horarios`
+// via services/batismoHorarios · `vol_form_opcoes`). Uma 2ª lista aqui
+// ofereceria opção que o servidor recusa no envio.
+router.get('/next/direcionar-opcoes', authApp, autorizarGestaoNextApp, limiterNormal, async (req, res) => {
+  try {
+    const dataBatismo = await dataProximoBatismoApp();
+    const configurados = await batismoHorariosConfiguradosApp();
+    let batismo = { data_batismo: dataBatismo || null, horarios: [], indisponivel: true };
+    // ⚠️ Falha FECHADA e DECLARADA (igual ao web): sem catálogo/data devolve
+    // lista vazia com `indisponivel`, pra a tela distinguir "a equipe fechou
+    // tudo" de "não conseguimos ler agora".
+    if (dataBatismo && configurados !== null) {
+      const ocup = await batismoOcupacaoPorHorarioApp(dataBatismo);
+      batismo = { data_batismo: dataBatismo, horarios: horariosBatismoDisponiveis(configurados, ocup) };
+    }
+    const { data: opcoes, error: eOp } = await supabase.from('vol_form_opcoes')
+      .select('id, label, area_canonica').eq('ativo', true).order('ordem', { ascending: true });
+    if (eOp) console.warn('[APP next/direcionar-opcoes] vol_form_opcoes:', eOp.message);
+    res.json({ batismo, areas: opcoes || [], areas_indisponivel: !!eOp });
+  } catch (e) {
+    console.error('[APP next/direcionar-opcoes]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar as opções de direcionamento' });
+  }
+});
+
+// POST /api/app/next/matriculas/:matriculaId/direcionar
+// body { destinos: ['batismo'|'voluntarios'|'grupos'], areas?: [], horario_batismo? }
+//
+// ⚠️⚠️ Roda a MESMA `direcionarMatricula` do totem e da aba Pessoas — o app é
+// cliente novo da porta, não uma 2ª régua. É lá que vivem: horário do batismo
+// OBRIGATÓRIO (conferido ANTES de qualquer escrita), resolução das áreas do
+// servir contra `vol_form_opcoes`, idempotência e os encaminhamentos.
+//
+// ⚠️ `permitir` espelha o TOTEM (grupos/voluntarios/batismo). Devocional segue
+// fora (Fase 2b, com o app do Matheus) — igual ao `publicNext`.
+router.post('/next/matriculas/:matriculaId/direcionar', authApp, autorizarGestaoNextApp, autorizarEscritaNextApp, limiterNormal, async (req, res) => {
+  try {
+    const { data: mat } = await supabase.from('next_matriculas')
+      .select('id, turma_id').eq('id', req.params.matriculaId).is('deleted_at', null).maybeSingle();
+    if (!mat) return res.status(404).json({ error: 'Pessoa não encontrada' });
+    // ⚠️ Sem turma não há o que gerenciar: quem está na FILA ainda não passou
+    // pelo encontro. Aloque primeiro — dizer só "não pode" deixaria sem saída.
+    if (!mat.turma_id) {
+      return res.status(409).json({
+        error: 'Esta pessoa ainda está na lista de espera. Aloque numa turma antes de direcionar.',
+        codigo: 'sem_turma',
+      });
+    }
+    const alvo = await turmaGerenciavel(req.nextCtx, mat.turma_id, { escrever: true });
+    if (alvo.erro) return res.status(alvo.erro.status).json({ error: alvo.erro.msg });
+
+    const r = await direcionarMatricula({
+      matriculaId: mat.id,
+      destinos: req.body?.destinos,
+      areas: req.body?.areas,
+      horarioBatismo: req.body?.horario_batismo || null,
+      userId: req.user?.id || null,
+      permitir: ['grupos', 'voluntarios', 'batismo'],
+    });
+    res.json(r);
+  } catch (e) {
+    // ⚠️ `direcionarMatricula` LANÇA regra de negócio com `status`/`codigo`
+    // (horário do batismo ausente = 400 · lotado = 409). Propagar o código é o
+    // que deixa a tela pedir o horário em vez de dizer "erro".
+    if (e.status) return res.status(e.status).json({ error: e.message, codigo: e.codigo, campo: e.campo });
+    console.error('[APP next/direcionar]', e.message);
+    res.status(500).json({ error: 'Erro ao direcionar' });
+  }
+});
+
+// GET /api/app/next/turmas/:turmaId — detalhe da turma (mesmo shape do web
+// GET /next/turmas/:id). Gate: matriz (`next` >= 2) OU posse da turma.
+router.get('/next/turmas/:turmaId', authApp, autorizarGestaoNextApp, limiterNormal, async (req, res) => {
+  try {
+    const { turmaId } = req.params;
+    const alvo = await turmaGerenciavel(req.nextCtx, turmaId);
+    if (alvo.erro) return res.status(alvo.erro.status).json({ error: alvo.erro.msg });
     const { data: encontros } = await supabase.from('next_encontros')
       .select('*').eq('turma_id', turmaId).order('numero');
     const { data: matriculas } = await supabase.from('next_matriculas')
-      .select('id, nome, sobrenome, telefone, status, check_in_at')
+      .select('id, nome, sobrenome, telefone, status, check_in_at, indicou_batismo, indicou_servir, indicou_grupo')
       .eq('turma_id', turmaId).is('deleted_at', null).order('nome');
     const encIds = (encontros || []).map((e) => e.id);
     let presencas = [];
@@ -3302,21 +3621,145 @@ router.get('/next/turmas/:turmaId', authApp, limiterNormal, async (req, res) => 
         .select('encontro_id, matricula_id, presente').in('encontro_id', encIds);
       presencas = pres || [];
     }
-    res.json({ turma, encontros: encontros || [], matriculas: matriculas || [], presencas });
+    res.json({
+      turma: alvo.turma,
+      encontros: encontros || [],
+      matriculas: matriculas || [],
+      presencas,
+      sou_responsavel: !!(req.nextCtx.membro?.id && alvo.turma.responsavel_id === req.nextCtx.membro.id),
+    });
   } catch (e) {
     console.error('[APP next/turmas/:id]', e.message);
     res.status(500).json({ error: 'Erro ao carregar a turma' });
   }
 });
 
-// POST /api/app/next/encontros/:encontroId/presenca — marca/desmarca UMA pessoa.
-// body { matricula_id, presente }. Espelha o POST web /next/encontros/:id/presenca:
-// remove o par e reinsere só quando presente + carimba next_matriculas.check_in_at.
-// Gate: o encontro pertence a uma turma cujo responsavel_id = membro.id.
-router.post('/next/encontros/:encontroId/presenca', authApp, limiterNormal, async (req, res) => {
+// POST /api/app/next/turmas/:turmaId/matriculas — WALK-IN: quem chegou no
+// encontro sem estar na lista. body { nome, sobrenome?, telefone?, encontro_id? }
+//
+// ⚠️ Política do walk-in (a MESMA do totem, 28/07): "nunca travar o
+// atendimento na hora" — só o NOME é obrigatório. O contrato completo (CPF com
+// DV, e-mail, nascimento, sexo) vale para a INSCRIÇÃO, não para registrar quem
+// já está na sala; cadastro incompleto cai na fila de "faltam dados", que
+// existe pra isso.
+// ⚠️ Passa pelo matcher canônico (`acharOuCriarGuardado`) sem exceção: sem ele
+// esta tela seria uma fábrica de duplicata operada por quem não tem visão
+// nenhuma do cadastro.
+// ⚠️ `limiterStrict` (30/15min por PESSOA) porque esta é porta que CRIA gente —
+// é a régua do `/next/inscrever` e das outras portas. O balde é por usuário e
+// tem nome próprio ('strict'), então marcar presença (limiterNormal) não come
+// dele e um 2º líder noutro aparelho tem cota inteira. Teto medido contra a
+// operação: a turma tem ~30 matriculados, e walk-in é quem NÃO está na lista —
+// 30 numa janela de 15 min por um só operador é folga, não cerco. Se um dia
+// apertar, o caminho é env (`APP_STRICT_RATE_LIMIT_MAX`), nunca tirar o limiter.
+router.post('/next/turmas/:turmaId/matriculas', authApp, autorizarGestaoNextApp, autorizarEscritaNextApp, limiterStrict, async (req, res) => {
   try {
-    const membro = await resolveMembroApp(req);
-    if (!membro) return res.status(404).json({ error: 'Cadastro de membro não encontrado' });
+    const { turmaId } = req.params;
+    const alvo = await turmaGerenciavel(req.nextCtx, turmaId, { escrever: true });
+    if (alvo.erro) return res.status(alvo.erro.status).json({ error: alvo.erro.msg });
+
+    const nome = String(req.body?.nome || '').trim();
+    if (nome.length < 2) return res.status(400).json({ error: 'Informe o nome' });
+    const sobrenome = req.body?.sobrenome ? String(req.body.sobrenome).trim() : null;
+    const cpfBruto = req.body?.cpf ? String(req.body.cpf) : null;
+    const emailBruto = req.body?.email ? String(req.body.email).trim() : null;
+    // Opcional, mas se vier tem que estar certo — dado errado é pior que ausente.
+    if (cpfBruto && String(cpfBruto).replace(/\D/g, '') && !cpfValidoApp(cpfBruto)) {
+      return res.status(400).json({ error: 'CPF inválido — confira os dígitos', campo: 'cpf' });
+    }
+    if (emailBruto && !emailValidoApp(emailBruto)) {
+      return res.status(400).json({ error: 'E-mail inválido', campo: 'email' });
+    }
+    const cpf = cpfBruto ? String(cpfBruto).replace(/\D/g, '') || null : null;
+    const telefone = req.body?.telefone ? String(req.body.telefone).replace(/\D/g, '') || null : null;
+    const email = emailBruto ? emailBruto.toLowerCase() : null;
+    const nomeCompleto = [nome, sobrenome].filter(Boolean).join(' ').trim();
+
+    // Encontro (opcional) — quando vem, marca presença junto.
+    let encontro = null;
+    if (req.body?.encontro_id) {
+      const { data: enc } = await supabase.from('next_encontros')
+        .select('id, turma_id').eq('id', req.body.encontro_id).maybeSingle();
+      if (!enc || enc.turma_id !== turmaId) {
+        return res.status(400).json({ error: 'Encontro não é desta turma', campo: 'encontro_id' });
+      }
+      encontro = enc;
+    }
+
+    let membroId = null;
+    try {
+      const r = await acharOuCriarGuardado({
+        cpf, email, telefone, nome: nomeCompleto,
+        dataNascimento: req.body?.data_nascimento || null,
+        status: 'visitante', origem: 'next_checkin_app',
+      });
+      membroId = r?.membro_id || null;
+    } catch (e) { console.error('[APP next walkin] matcher:', e.message); }
+
+    // Já está na turma? Só marca presença — não duplica (igual ao totem).
+    if (membroId) {
+      const { data: ja } = await supabase.from('next_matriculas').select('id')
+        .eq('turma_id', turmaId).eq('membro_id', membroId).is('deleted_at', null)
+        .limit(1).maybeSingle();
+      if (ja) {
+        await marcarPresencaNextApp(encontro?.id, ja.id, true);
+        return res.json({ ok: true, id: ja.id, ja_inscrito: true });
+      }
+    }
+
+    const { data: mat, error: matErr } = await supabase.from('next_matriculas').insert({
+      turma_id: turmaId, nome, sobrenome, cpf, telefone, email,
+      data_nascimento: req.body?.data_nascimento || null,
+      membro_id: membroId, origem: 'app',
+      // ⚠️ `registered_by` como no web (`next.js` POST /matriculas): walk-in é
+      // cadastro feito POR ALGUÉM na correria do encontro, e sem essa assinatura
+      // a única forma de achar quem digitou seria adivinhar pelo horário.
+      registered_by: req.user?.id ?? null,
+      check_in_at: new Date().toISOString(),
+    }).select('id').single();
+    if (matErr) {
+      if (matErr.code === '23505') return res.json({ ok: true, ja_inscrito: true });
+      throw matErr;
+    }
+    await marcarPresencaNextApp(encontro?.id, mat.id, true);
+    await registrarObservacaoSegura({
+      membroId, origem: 'next_checkin_app', origemId: mat.id,
+      nome: nomeCompleto, cpf, telefone, email,
+      dataNascimento: req.body?.data_nascimento || null,
+    }).catch((e) => console.warn('[APP next walkin] observacao:', e.message));
+    await recomputarStatusTurmaApp(turmaId).catch((e) => console.warn('[APP next walkin] recompute:', e.message));
+    res.status(201).json({ ok: true, id: mat.id, pessoa_nova: !membroId });
+  } catch (e) {
+    console.error('[APP next/walkin]', e.message);
+    res.status(500).json({ error: 'Erro ao registrar quem chegou' });
+  }
+});
+
+// Escrita da presença · EXTRAÍDA porque o walk-in também marca presença.
+// Idempotente: remove o par e reinsere só quando presente (mesma lógica do web).
+// ⚠️ `encontroId` nulo é caso legítimo (walk-in sem encontro escolhido): carimba
+// só o `check_in_at` da matrícula. Duas cópias desta escrita divergiriam, e o
+// sintoma seria "marquei pelo walk-in e a chamada não mostra".
+async function marcarPresencaNextApp(encontroId, matriculaId, presente) {
+  if (encontroId) {
+    await supabase.from('next_presencas').delete()
+      .eq('encontro_id', encontroId).eq('matricula_id', matriculaId);
+    if (presente) {
+      const { error } = await supabase.from('next_presencas')
+        .insert({ encontro_id: encontroId, matricula_id: matriculaId, presente: true });
+      if (error) throw error;
+    }
+  }
+  await supabase.from('next_matriculas')
+    .update({ check_in_at: presente ? new Date().toISOString() : null, updated_at: new Date().toISOString() })
+    .eq('id', matriculaId);
+}
+
+// POST /api/app/next/encontros/:encontroId/presenca — marca/desmarca UMA pessoa.
+// body { matricula_id, presente }. Espelha o POST web /next/encontros/:id/presenca.
+// Gate: matriz (`next` >= 2) OU posse da turma do encontro.
+router.post('/next/encontros/:encontroId/presenca', authApp, autorizarGestaoNextApp, autorizarEscritaNextApp, limiterNormal, async (req, res) => {
+  try {
     const { encontroId } = req.params;
     const matriculaId = req.body?.matricula_id;
     const presente = req.body?.presente !== false; // default true
@@ -3325,23 +3768,18 @@ router.post('/next/encontros/:encontroId/presenca', authApp, limiterNormal, asyn
     const { data: enc } = await supabase.from('next_encontros')
       .select('id, turma_id').eq('id', encontroId).maybeSingle();
     if (!enc) return res.status(404).json({ error: 'Encontro não encontrado' });
-    const { data: turma } = await supabase.from('next_turmas')
-      .select('id, responsavel_id').eq('id', enc.turma_id).is('deleted_at', null).maybeSingle();
-    if (!turma) return res.status(404).json({ error: 'Turma não encontrada' });
-    if (turma.responsavel_id !== membro.id) {
-      return res.status(403).json({ error: 'Você não é o responsável por esta turma.' });
+    const alvo = await turmaGerenciavel(req.nextCtx, enc.turma_id, { escrever: true });
+    if (alvo.erro) return res.status(alvo.erro.status).json({ error: alvo.erro.msg });
+
+    // ⚠️ A matrícula tem que ser DESTA turma: sem isso, um id de outra turma no
+    // corpo marcaria presença de gente que quem gerencia aqui não alcança.
+    const { data: mat } = await supabase.from('next_matriculas')
+      .select('id, turma_id').eq('id', matriculaId).is('deleted_at', null).maybeSingle();
+    if (!mat || mat.turma_id !== enc.turma_id) {
+      return res.status(400).json({ error: 'Pessoa não é desta turma' });
     }
 
-    // idempotente: remove o par e reinsere só quando presente (mesma lógica do web)
-    await supabase.from('next_presencas').delete().eq('encontro_id', encontroId).eq('matricula_id', matriculaId);
-    if (presente) {
-      const { error: insErr } = await supabase.from('next_presencas')
-        .insert({ encontro_id: encontroId, matricula_id: matriculaId, presente: true });
-      if (insErr) throw insErr;
-    }
-    await supabase.from('next_matriculas')
-      .update({ check_in_at: presente ? new Date().toISOString() : null, updated_at: new Date().toISOString() })
-      .eq('id', matriculaId);
+    await marcarPresencaNextApp(encontroId, matriculaId, presente);
     // best-effort: recalcula o status da turma (não bloqueia a resposta se falhar).
     // KPIs continuam a cargo do fluxo web/cron (recalcularKpisNext vive em next.js).
     await recomputarStatusTurmaApp(enc.turma_id).catch((e) => console.warn('[APP next presenca] recompute:', e.message));
@@ -4021,74 +4459,13 @@ router.get('/pense-ultimo', authApp, async (req, res) => {
   }
 });
 
-/**
- * Minutos desde a meia-noite **em BRT** (mesma convenção do `hojeBRT()`:
- * offset fixo −3h, que o Brasil não muda desde 2019).
- */
-function agoraMinutosBRT() {
-  const d = new Date(Date.now() - 3 * 3600 * 1000);
-  return d.getUTCHours() * 60 + d.getUTCMinutes();
-}
-function minutosDaHora(hora) {
-  const [hh, mm] = String(hora || '').split(':');
-  const h = Number(hh), m = Number(mm || 0);
-  return Number.isFinite(h) ? h * 60 + (Number.isFinite(m) ? m : 0) : null;
-}
-
-/**
- * O culto que a pessoa está VIVENDO agora.
- *
- * ⚠️ Isto era `order('hora', desc).limit(1)` do dia em UTC, e os dois pedaços
- * estavam errados (achado 04/08/2026):
- *  1. `new Date().toISOString()` é UTC → das 21h BRT em diante o "hoje" já é
- *     AMANHÃ. No culto de domingo 19h (que passa das 21h) o `culto` vinha nulo
- *     e a decisão de fé era gravada com o dia seguinte — o dedup de 1/dia e a
- *     fila da Integração ficavam desencontrados.
- *  2. Pegar a MAIOR hora do dia significa que, no culto das 08:30, a decisão
- *     era carimbada no culto das 19:00. Atribuição errada de culto na NSM.
- *
- * `ao_vivo` = existe culto cuja janela [hora − 30min, hora + 3h] contém o
- * agora. É o que o app usa pra mostrar (ou não) o "No culto" na Home: fora da
- * janela a tela não tem propósito. Sem janela ativa devolve o PRÓXIMO de hoje
- * (a tela consegue dizer "começa às 19h") com `ao_vivo: false`.
- */
-async function cultoDeAgora() {
-  const hoje = hojeBRT();
-  const { data } = await supabase
-    .from('cultos')
-    .select('id, nome, data, hora')
-    .eq('data', hoje).is('deleted_at', null)
-    .order('hora', { ascending: true });
-  const lista = data || [];
-  if (!lista.length) return { culto: null, ao_vivo: false };
-
-  const agora = agoraMinutosBRT();
-
-  // ⚠️ Os cultos de domingo saem de 90 em 90 min, então uma janela de 3h
-  // SOBREPÕE dois ou três. Por isso: (1) entre os que JÁ COMEÇARAM e ainda
-  // estão na janela, vale o MAIS RECENTE (às 10:30 é o das 10:00, não o das
-  // 08:30 — `find` simples pegava o primeiro e errava a atribuição do culto);
-  // (2) só quando nada começou é que a antecedência de 30 min conta (às 08:15
-  // é o das 08:30). Sem essa ordem, às 09:40 — 08:30 ainda rolando — a decisão
-  // iria pro culto das 10:00.
-  const iniciados = lista.filter((c) => {
-    const ini = minutosDaHora(c.hora);
-    return ini != null && agora >= ini && agora <= ini + 180;
-  });
-  if (iniciados.length) return { culto: iniciados[iniciados.length - 1], ao_vivo: true };
-
-  const chegando = lista.find((c) => {
-    const ini = minutosDaHora(c.hora);
-    return ini != null && agora >= ini - 30 && agora < ini;
-  });
-  if (chegando) return { culto: chegando, ao_vivo: true };
-
-  const proximo = lista.find((c) => {
-    const ini = minutosDaHora(c.hora);
-    return ini != null && ini > agora;
-  });
-  return { culto: proximo || lista[lista.length - 1], ao_vivo: false };
-}
+// "O culto que a pessoa está VIVENDO agora" virou SERVIÇO
+// (services/cultoDeAgora.js) em 2026-09-01, quando o totem de novos
+// convertidos passou a precisar da mesma régua — duas cópias divergiriam na
+// atribuição de culto da decisão de fé, que alimenta a NSM. O histórico do
+// desenho (dia em BRT · o mais recente que começou vence · achado de
+// 04/08/2026) está documentado lá.
+const { cultoDeAgora } = require('../services/cultoDeAgora');
 
 // GET /api/app/culto/agora — Modo Culto: culto de hoje + link ao vivo + se já registrou decisão.
 router.get('/culto/agora', authApp, async (req, res) => {
@@ -6437,6 +6814,12 @@ const {
   separar: _separarApres,
   juntar: _juntarApres,
 } = require('../utils/apresentacaoHistorico');
+// Horário do culto (08/09/2026): a MESMA régua e as MESMAS consultas do
+// formulário público (`services/apresentacaoHorarios`) — 9h30 até o limite,
+// depois 11h30, catálogo `apresentacao_horarios` editável no Kids. Duas cópias
+// é como o app e o web passam a discordar do horário da família.
+const { escolherHorarioPara: _escolherHorarioApres } = require('../services/apresentacaoHorarios');
+const { exigeConfirmacaoPaisIguais: _exigeConfPaisApres, rotuloHorarioApresentacao: _rotuloHorarioApres } = require('../utils/apresentacaoHorario');
 
 /**
  * Quem são os pais/mães de cada criança da lista (id → [ids dos responsáveis]).
@@ -6482,7 +6865,7 @@ async function paisDasCriancas(ids) {
  * se fosse minha. Lei do Contrato de porta.
  */
 async function apresentacoesDaPessoa(membro) {
-  const COLS = 'id, crianca_nome, data_apresentacao, status, crianca_id, created_at';
+  const COLS = 'id, crianca_nome, data_apresentacao, horario_culto, status, crianca_id, created_at';
   const vazio = { vinculo: [], cpf: [], ficha_kids: [] };
   if (!membro?.id) return { linhas: [], incompleto: false };
 
@@ -6598,13 +6981,24 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
 
     const dataApres = _isoData(_proxSegDom());
 
-    // Culto de domingo daquele dia (informativo · o balcão confirma)
-    let cultoId = null;
-    try {
-      const { data: cultos } = await supabase.from('cultos')
-        .select('id').eq('data', dataApres).is('deleted_at', null).order('id').limit(1);
-      if (cultos && cultos[0]) cultoId = cultos[0].id;
-    } catch (e) { /* informativo · não trava o pedido */ }
+    // ⚠⚠ 15/09/2026 · o bloqueio virou CONFIRMAÇÃO, como na porta pública
+    // (publicApresentacao.js). O caso Isabella (08/09) é real, mas a saída
+    // "deixe um campo em branco" nunca foi usada — e a LEITURA já deduplica.
+    // Só no caminho de terceiro: no "é meu filho" os nomes vêm do sexo e nunca
+    // colidem.
+    //
+    // ⚠⚠ BUNDLE ANTIGO DO APP NÃO MANDA A FLAG e continua levando 400 — isso
+    // é o comportamento de hoje, não regressão. A tela do app precisa de OTA
+    // pra oferecer a confirmação (repo Aplicativo-CBRio).
+    if (!p.propria && _exigeConfPaisApres(p.responsavel.nome_pai, p.responsavel.nome_mae, p.pais_iguais_confirmado)
+       ) {
+      return res.status(400).json({ codigo: 'pais_iguais', error: 'O nome do pai e o da mãe estão iguais. Confirme que é a mesma pessoa para seguir.' });
+    }
+
+    // Horário do culto — atribuído pela régua (9h30 até o limite, depois 11h30).
+    // Nunca trava o pedido: sem catálogo entra sem horário e o Kids define.
+    const escolhaHorario = await _escolherHorarioApres(dataApres);
+    const horarioCulto = escolhaHorario.horario;
 
     let criancaMembroId = null;
     let reusou = false;
@@ -6806,19 +7200,21 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
         : { nome_pai: p.responsavel.nome_pai || null, nome_mae: p.responsavel.nome_mae || null }),
       observacoes: p.observacoes,
       data_apresentacao: dataApres,
+      // Culto da família (coluna `horario_culto` · migration 20260908150000).
+      // ⚠️ `culto_id` continua NÃO existindo em `apresentacao_criancas` — mandar
+      // coluna inexistente faz o PostgREST recusar o INSERT INTEIRO (42703).
+      // Só menciona a coluna quando há valor (tolera a migration ausente: com
+      // `horario_culto: null` o PostgREST recusaria o INSERT inteiro · 42703).
+      ...(horarioCulto ? { horario_culto: horarioCulto } : {}),
       registrado_por: req.user?.id || null,
     };
-    // ⚠️ `culto_id` só existe em `apresentacao_bebes`; a tabela do Kids não tem a
-    // coluna, e mandar coluna inexistente faz o PostgREST recusar o INSERT
-    // INTEIRO (42703) — a família perderia o pedido por causa de um informativo.
-    void cultoId;
 
     // ⚠️ Idempotência: reenviar o formulário não cria segundo pedido pra mesma
     // criança na mesma cerimônia. Sem isso, um toque duplo no botão põe a família
     // duas vezes na lista do domingo.
     if (p.propria) {
       const { data: jaTem } = await supabase.from('apresentacao_criancas')
-        .select('id').eq('responsavel_membro_id', membro.id)
+        .select('id, horario_culto').eq('responsavel_membro_id', membro.id)
         .eq('data_apresentacao', dataApres)
         .ilike('crianca_nome', p.crianca.nome)
         .is('deleted_at', null).maybeSingle();
@@ -6827,6 +7223,8 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
           ok: true, ja_inscrito: true, id: jaTem.id,
           data_apresentacao: dataApres, crianca_membro_id: criancaMembroId,
           familia: familiaNome, reusou_crianca: reusou,
+          horario_culto: jaTem.horario_culto || null,
+          horario_rotulo: _rotuloHorarioApres(jaTem.horario_culto, escolhaHorario.configurados),
         });
       }
     }
@@ -6841,7 +7239,8 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
       await notificar({
         modulo: 'kids', tipo: 'apresentacao_crianca',
         titulo: 'Apresentação de criança pelo app',
-        mensagem: `${p.responsavel.nome} pediu a apresentação de ${p.crianca.nome} em ${dataApres.split('-').reverse().join('/')}.`,
+        mensagem: `${p.responsavel.nome} pediu a apresentação de ${p.crianca.nome} em ${dataApres.split('-').reverse().join('/')}`
+          + (horarioCulto ? ` · ${_rotuloHorarioApres(horarioCulto, escolhaHorario.configurados)}.` : '. Sem horário atribuído — definir na tela do Kids.'),
         link: '/kids', severidade: 'info',
         chaveDedup: `apres_app_${criada.id}`,
       });
@@ -6851,6 +7250,9 @@ router.post('/apresentacao-crianca', authApp, limiterStrict, async (req, res) =>
       ok: true, id: criada.id, data_apresentacao: dataApres,
       crianca_membro_id: criancaMembroId, familia: familiaNome,
       reusou_crianca: reusou,
+      // Culto em que a criança será apresentada (nulo = a equipe define e avisa).
+      horario_culto: horarioCulto,
+      horario_rotulo: _rotuloHorarioApres(horarioCulto, escolhaHorario.configurados),
       // A tela AVISA a família que vai receber pager — quem decide é o totem no
       // check-in; aqui é só não deixar a novidade pro domingo de manhã.
       pager_inclusao: precisaPagerPorInclusao(p.crianca.saude),
@@ -7374,6 +7776,203 @@ router.post('/eventos/:id/inscrever', authApp, limiterStrict, async (req, res) =
   } catch (e) {
     console.error('[APP] eventos/inscrever:', e.message);
     res.status(500).json({ error: 'Erro ao inscrever no evento' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  GENEROSIDADE NO APP · campanha ativa aparece e a doação fica vinculada
+//
+//  Pedido do Matheus (01/09/2026): *"toda vez que tivermos campanha ativa, ela
+//  deve ativar e aparecer dentro de generosidade no app dos membros também. E aí
+//  já fica tudo vinculado com o cadastro da pessoa."*
+//
+//  ⚠️⚠️ ESTA ROTA NÃO TOCA NO NÚCLEO DE PAGAMENTOS. Ela é um CHAMADOR novo de
+//  `pagamentos.criarCobranca`, exatamente como o `/doar` do site já é. O núcleo
+//  (`services/pagamentos/*`, o provider do Mercado Pago, o webhook, a máquina de
+//  estados) é o MESMO por onde o RETIRO está sendo pago agora — medido em
+//  01/09/2026: 12 cobranças de inscrição pagas, R$ 5.007, a mais recente HOJE.
+//  Mexer ali para atender a generosidade poria dinheiro de terceiro em risco.
+//
+//  ⚠️⚠️ POR QUE NÃO REUSAR O `/api/public/generosidade/doacao`: aquele é PÚBLICO
+//  e resolve o `membro_id` por MATCHER sobre nome/e-mail digitados. Aqui a pessoa
+//  está autenticada, então o vínculo vem da SESSÃO — que é o "fica tudo vinculado
+//  com o cadastro" que ele pediu, e é mais forte que qualquer match.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Campanhas que podem receber doação agora. Best-effort e LOGADO. */
+async function campanhasParaDoarNoApp() {
+  try {
+    const { data, error } = await supabase
+      .from('camp_campanhas')
+      .select('id, nome, status, data_inicio, data_fim, descricao_curta, aceita_online')
+      .eq('status', 'ativa')
+      .is('deleted_at', null)
+      .order('data_lancamento', { ascending: false });
+    if (error) throw error;
+    return campDoacao.campanhasOfertaveis(data || [], hojeBrtCamp());
+  } catch (e) {
+    // ⚠️ Lista vazia SILENCIOSA se leria como "não há campanha" — por isso o log.
+    console.warn('[app] campanhas para doar indisponíveis:', e.message);
+    return [];
+  }
+}
+
+// GET /api/app/generosidade/config
+router.get('/generosidade/config', limiterNormal, async (req, res) => {
+  try {
+    // ⚠️ `bloqueio` NÃO existe na fachada (conferido nos exports) — o freio é a
+    // combinação de `habilitado` (kill switch `PAG_ENABLED`) e `pspConfigurado`
+    // (credencial do provedor). Chamar um `pagamentos.bloqueio()` inexistente com
+    // guard devolveria `null` sempre, e o app nunca saberia que o pagamento está
+    // desligado: ofereceria doar e a pessoa levaria erro no fim.
+    const aviso = !pagamentos.habilitado()
+      ? 'A doação pelo app está temporariamente indisponível. Tente de novo em alguns minutos.'
+      : !pagamentos.pspConfigurado()
+        ? 'A doação pelo app ainda está sendo preparada.'
+        : null;
+    const campanhas = (await campanhasParaDoarNoApp()).map(campDoacao.paraOApp);
+    res.json({
+      ativo: !aviso,
+      aviso: aviso || null,
+      categorias: campDoacao.CATEGORIAS,
+      // ⚠️ Lista VAZIA é resposta legítima ("não há campanha ativa"), e a tela
+      // esconde a categoria em vez de mostrar um seletor sem opção.
+      campanhas,
+    });
+  } catch (e) {
+    console.error('[app] generosidade/config:', e.message);
+    // ⚠️ 500, nunca `{campanhas: []}`: "não há campanha" e "não deu pra saber"
+    // levam a decisões opostas, e a tela precisa poder dizer qual é.
+    res.status(500).json({ error: 'Não foi possível carregar a generosidade agora.' });
+  }
+});
+
+// GET /api/app/generosidade/link
+//
+// O que o botão "Contribuir no site" abre.
+//
+// ⚠️⚠️ POR QUE UM LINK E NÃO PAGAMENTO NO APP: `FEATURES.generosidade` está
+// FALSE no app desde out/2026 — a doação saiu da submissão da App Store até a
+// aprovação da Benevity (Apple guideline 3.2.2(iv)). O repo do app registra que
+// a chave PIX apareceu ali em 05/08 e foi RETIRADA no mesmo dia. Levar a pessoa
+// pro site é o caminho que a Apple aceita, e é o que o app já faz hoje.
+//
+// ⚠️ O token de prefill vai NA URL e é CURTO (30 min): é ele que faz a tela abrir
+// com os dados da pessoa sem ela digitar nada. Ver `utils/doacaoToken.js`.
+router.get('/generosidade/link', limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    // ⚠️ Sem cadastro o link SAI IGUAL, só sem prefill — a pessoa doa digitando,
+    // como qualquer visitante. Recusar aqui tiraria a doação de quem ainda não
+    // completou o cadastro, o que é o oposto de ajudar.
+    const token = membro?.id ? doacaoToken.emitir(membro.id) : null;
+    const base = `${basePublica()}/doar`;
+    res.json({
+      url: token ? `${base}?t=${encodeURIComponent(token)}` : base,
+      prefill: Boolean(token),
+      // ⚠️ DECLARA por que não houve prefill: "sem cadastro" e "o servidor está
+      // sem o segredo do token" são coisas diferentes, e a segunda é problema de
+      // configuração que precisa aparecer em algum lugar.
+      motivo_sem_prefill: token ? null : (membro?.id ? 'sem_segredo' : 'sem_cadastro'),
+    });
+  } catch (e) {
+    console.error('[app] generosidade/link:', e.message);
+    // ⚠️ Nem aqui devolve link sem token silenciosamente: erro é erro, e o app
+    // cai no link fixo que ele já tem hoje.
+    res.status(500).json({ error: 'Não foi possível montar o link agora.' });
+  }
+});
+
+// POST /api/app/generosidade/doar  { valor_centavos, categoria, campanha_id? }
+router.post('/generosidade/doar', limiterStrict, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req);
+    // ⚠️ Sem cadastro não dá pra vincular, e vincular é o ponto do pedido. O
+    // portão de identidade do app já obriga a completar antes de navegar; esta
+    // guarda é o cinto de segurança, com o caminho DITO.
+    if (!membro?.id) {
+      return res.status(409).json({
+        error: 'Complete seu cadastro para doar pelo app.', codigo: 'sem_cadastro',
+      });
+    }
+
+    // ⚠️ O freio vale no POST também, não só no config: a tela pode ter sido
+    // aberta antes de alguém desligar o pagamento.
+    if (!pagamentos.habilitado() || !pagamentos.pspConfigurado()) {
+      return res.status(503).json({
+        error: 'A doação pelo app está indisponível agora.', codigo: 'pagamento_indisponivel',
+      });
+    }
+
+    const valor = Number(req.body?.valor_centavos);
+    if (!Number.isInteger(valor) || valor <= 0) {
+      return res.status(400).json({ error: 'Valor inválido.', campo: 'valor_centavos' });
+    }
+
+    const ofertaveis = await campanhasParaDoarNoApp();
+    const escolha = campDoacao.validarEscolha({
+      categoria: req.body?.categoria,
+      campanha_id: req.body?.campanha_id,
+      ofertaveis,
+    });
+    if (!escolha.ok) {
+      // ⚠️ O MOTIVO vai pra tela: "escolha a campanha" e "essa campanha não
+      // recebe mais" pedem ações diferentes de quem está com o dedo no botão.
+      const msg = {
+        campanha_nao_escolhida: 'Escolha a campanha.',
+        campanha_indisponivel: 'Esta campanha não está mais recebendo doação.',
+        categoria_invalida: 'Escolha dízimo, oferta ou campanha.',
+      }[escolha.motivo] || 'Não foi possível iniciar a doação.';
+      return res.status(400).json({ error: msg, codigo: escolha.motivo });
+    }
+
+    const { cobranca } = await pagamentos.criarCobranca({
+      origem_tipo: pagamentos.ORIGENS.GENEROSIDADE,
+      // Doação não tem linha de domínio própria — o "objeto" É a cobrança.
+      origem_id: null,
+      valor_centavos: valor,
+      descricao: campDoacao.descricaoDaDoacao({
+        categoria: escolha.categoria, campanha_nome: escolha.campanha_nome,
+      }),
+      pagador_nome: membro.nome || null,
+      pagador_cpf: membro.cpf || null,
+      pagador_email: membro.email || null,
+      pagador_telefone: membro.telefone || null,
+      // ⚠️⚠️ AQUI está o "vinculado com o cadastro": o membro vem da SESSÃO.
+      membro_id: membro.id,
+      metadata: campDoacao.metadataDaDoacao({
+        categoria: escolha.categoria,
+        campanha_id: escolha.campanha_id,
+        campanha_nome: escolha.campanha_nome,
+        canal: 'app',
+      }),
+    });
+
+    // ⚠️⚠️ A tela do app NÃO coleta cartão (LEI nº 5 do núcleo: PAN/CVV nunca
+    // entram no nosso lado). O app abre a página hospedada da COBRANÇA, que é
+    // onde vivem Pix, boleto e o checkout do provedor — a mesma do site.
+    // ⚠️⚠️ A URL COMPLETA é montada NO SERVIDOR (`basePublica()`, a mesma régua
+    // do link de inscrição do app). URL escrita no bundle é URL que ninguém
+    // valida, num aparelho que só se conserta por OTA — e a base é CONSTANTE de
+    // propósito ali (não lê env), justamente para não apontar pro domínio da
+    // Vercel sem ninguém perceber num caminho com dinheiro.
+    res.json({
+      ok: true,
+      token: cobranca.public_token,
+      pagamento_url: `${basePublica()}/pagamento/${cobranca.public_token}`,
+    });
+  } catch (e) {
+    console.error('[app] generosidade/doar:', e.message);
+    notificar({
+      modulo: 'financeiro',
+      tipo: 'doacao_falha_criar',
+      titulo: 'Falha ao criar cobrança de doação (app)',
+      mensagem: `Alguém tentou doar pelo app e a cobrança não foi criada: ${e.message}.`,
+      severidade: 'alerta',
+      link: '/campanhas',
+      chaveDedup: `doacao_falha_criar_app_${new Date().toISOString().slice(0, 10)}`,
+    }).catch(() => {});
+    res.status(502).json({ error: 'Não conseguimos iniciar a doação agora. Tente novamente em alguns minutos.' });
   }
 });
 

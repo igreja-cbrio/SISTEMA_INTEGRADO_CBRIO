@@ -11,7 +11,7 @@
 
 ## Backend
 - `backend/routes/logistica.js`
-Guard: `authorizeModule('logistica', padrão)`
+Guard: `authorizeModule('logistica', 3 | 4 | padrão)`
 <details><summary>Endpoints (51)</summary>
 - `DELETE /api/logistica/compras/:id`
 - `DELETE /api/logistica/estoque/produtos/:id`

@@ -201,7 +201,15 @@ export default function InscricaoNext() {
 
   useEffect(() => {
     nextApi.publicTurmas()
-      .then((r: any) => setTurmas(Array.isArray(r?.turmas) ? r.turmas : []))
+      .then((r: any) => {
+        const lista = Array.isArray(r?.turmas) ? r.turmas : [];
+        setTurmas(lista);
+        // ⚠️⚠️ 15/09/2026 (Kevyn): o servidor passou a devolver SÓ a próxima
+        // turma. Com uma opção só não há o que escolher — o campo vira
+        // informação e o id é preenchido aqui. Um <select> de um item pede
+        // um toque que não decide nada.
+        if (lista.length === 1) setForm(f => ({ ...f, turma_id: lista[0].id }));
+      })
       // ⚠️ Falha de rede NÃO vira "nenhum domingo": o campo fica de fora e a
       // inscrição segue pelo caminho antigo (o servidor resolve a turma). Sumir
       // com o campo é melhor que travar a inscrição inteira.
@@ -306,7 +314,7 @@ export default function InscricaoNext() {
               Inscrição confirmada!
             </h2>
             <p style={{ fontSize: 13, color: C.text3, marginTop: 10, lineHeight: 1.5 }}>
-              Você está inscrito(a) no NEXT, no domingo que você escolheu, às 9h30.
+              Você está inscrito(a) no NEXT{turmas && turmas.length === 1 ? ` — ${rotuloDomingo(turmas[0].data)}` : ", no domingo que você escolheu, às 9h30"}.
               Em breve nossa equipe entrará em contato com mais detalhes. Nos vemos lá!
             </p>
           </div>
@@ -366,7 +374,27 @@ export default function InscricaoNext() {
               </Row>
               <Field id="endereco" label="Endereço (opcional)" value={form.endereco} onChange={set('endereco')} autoComplete="street-address" />
 
-              {(turmas && turmas.length > 0) && (
+              {/* ⚠️⚠️ 16/09/2026 · o servidor devolve AS 3 PRÓXIMAS (Kevyn mudou
+                  de ideia — em 15/09 era só a próxima). Os DOIS ramos seguem:
+                  com uma turma o campo é informação, com mais de uma é seletor
+                  obrigatório. Guardar o ramo do <select> em 15/09 foi o que
+                  fez esta mudança não custar tela nenhuma — e o de uma turma
+                  volta a valer sozinho quando só sobrar um domingo aberto. */}
+              {(turmas && turmas.length === 1) && (
+                <>
+                  <SectionTitle>Quando</SectionTitle>
+                  <div style={{
+                    borderRadius: 12, padding: '12px 14px', fontSize: 14,
+                    background: 'var(--cbrio-input-bg)', border: '1px solid var(--cbrio-border)',
+                  }}>
+                    <div style={{ fontWeight: 700 }}>{rotuloDomingo(turmas[0].data)}</div>
+                    <div style={{ fontSize: 12, opacity: 0.7, marginTop: 2 }}>
+                      É o único domingo aberto. Sua inscrição é para esta data.
+                    </div>
+                  </div>
+                </>
+              )}
+              {(turmas && turmas.length > 1) && (
                 <>
                   <SectionTitle>Qual domingo?</SectionTitle>
                   <SelectField

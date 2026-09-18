@@ -12,8 +12,14 @@ import { toast } from 'sonner';
 import { voluntariado } from '@/api';
 import FormOpcoesManager from './components/FormOpcoesManager';
 import WhatsappAutoConfig from '@/components/WhatsappAutoConfig';
+// varredura 2026-09: B08 — espelha a régua de escrita do servidor.
+import { useVolPodeEscrever } from './hooks/useVolPodeEscrever';
 
 export default function VolAdmin() {
+  // varredura 2026-09: B08 — dar/tirar papel é POST/DELETE /roles (voluntariado>=5);
+  // o resto desta tela (sync do PCO, backfills) é escrita de módulo (>=3).
+  const podeDarPapel = useVolPodeEscrever(5);
+  const podeEscrever = useVolPodeEscrever();
   const { data: users = [], isLoading } = useAllVolUsers();
   const addRole = useAddVolRole();
   const removeRole = useRemoveVolRole();
@@ -165,7 +171,8 @@ export default function VolAdmin() {
           <div className="flex gap-2 flex-wrap">
             <DatePicker value={startDate} onChange={setStartDate} className="w-auto" />
             <DatePicker value={endDate} onChange={setEndDate} className="w-auto" />
-            <Button onClick={handleHistoricalSync} disabled={syncHistorical.isPending}>
+            {/* varredura 2026-09: B08 — POST /voluntariado/sync-historical pede voluntariado>=3. */}
+            <Button onClick={handleHistoricalSync} disabled={syncHistorical.isPending || !podeEscrever}>
               {syncHistorical.isPending ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <History className="h-4 w-4 mr-2" />}
               Sincronizar
             </Button>
@@ -178,7 +185,8 @@ export default function VolAdmin() {
         <CardHeader><CardTitle className="flex items-center gap-2"><History className="h-5 w-5" /> Aniversários do Planning Center</CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground">Puxa a data de nascimento dos voluntários do Planning Center (People) e preenche quem está sem no cadastro — assim o aniversário no WhatsApp funciona. Não sobrescreve quem já tem data.</p>
-          <Button onClick={handleBackfillNascimento} disabled={nascLoading}>
+          {/* varredura 2026-09: B08 — backfill grava em vol_profiles (escrita >=3). */}
+          <Button onClick={handleBackfillNascimento} disabled={nascLoading || !podeEscrever}>
             {nascLoading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <History className="h-4 w-4 mr-2" />}
             Puxar aniversários do PCO
           </Button>
@@ -202,13 +210,16 @@ export default function VolAdmin() {
                   {u.profile.email && <p className="text-sm text-muted-foreground">{u.profile.email}</p>}
                   <div className="flex gap-1 mt-1">
                     {u.roles.map(r => (
-                      <Badge key={r.id} variant="outline" className={`${roleColor(r.role)} cursor-pointer`} onClick={() => handleRemoveRole(u.profile.id, r.role)}>
-                        {r.role} <UserMinus className="h-3 w-3 ml-1" />
+                      // varredura 2026-09: B08 — DELETE /roles/:profileId/:role pede voluntariado>=5;
+                      // sem o gate o badge continuava clicável e devolvia 403.
+                      <Badge key={r.id} variant="outline" className={`${roleColor(r.role)} ${podeDarPapel ? 'cursor-pointer' : 'opacity-60'}`} onClick={() => podeDarPapel && handleRemoveRole(u.profile.id, r.role)}>
+                        {r.role} {podeDarPapel && <UserMinus className="h-3 w-3 ml-1" />}
                       </Badge>
                     ))}
                   </div>
                 </div>
-                <Select onValueChange={(v) => handleAddRole(u.profile.id, v as any)}>
+                {/* varredura 2026-09: B08 — POST /roles pede voluntariado>=5. */}
+                <Select onValueChange={(v) => handleAddRole(u.profile.id, v as any)} disabled={!podeDarPapel}>
                   <SelectTrigger className="w-[130px]"><SelectValue placeholder="+ Role" /></SelectTrigger>
                   <SelectContent>
                     {['volunteer', 'leader', 'admin']
@@ -324,6 +335,8 @@ type LoteVinculo = Omit<RelatorioVinculo, 'aplicado'> & {
  * lido por alguém antes de virar escrita.
  */
 function VincularMembrosCard() {
+  // varredura 2026-09: B08 — POST /vincular-membros pede voluntariado>=3.
+  const podeEscrever = useVolPodeEscrever();
   const [rel, setRel] = useState<RelatorioVinculo | null>(null);
   const [rodando, setRodando] = useState(false);
   const [progresso, setProgresso] = useState<{ feitos: number; total: number } | null>(null);
@@ -404,11 +417,12 @@ function VincularMembrosCard() {
         </p>
 
         <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="sm" disabled={rodando} onClick={() => percorrer(false)}>
+          {/* varredura 2026-09: B08 — simular também bate no POST /vincular-membros. */}
+          <Button variant="outline" size="sm" disabled={rodando || !podeEscrever} onClick={() => percorrer(false)}>
             {rodando && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
             Simular
           </Button>
-          {rel && !rel.aplicado && rel.ligados > 0 && !rodando && (
+          {rel && !rel.aplicado && rel.ligados > 0 && !rodando && podeEscrever && (
             <Button size="sm" className="bg-[#00B39D] hover:bg-[#00B39D]/90"
               onClick={() => {
                 if (!confirm(`Ligar ${rel.ligados} voluntário(s) ao cadastro de pessoa?\n\nOs ${rel.conflitos} conflito(s) e os ${rel.sem_match} sem correspondência NÃO são tocados.`)) return;

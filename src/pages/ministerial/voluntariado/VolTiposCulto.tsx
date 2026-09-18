@@ -13,10 +13,14 @@ import {
 import { Plus, Trash2, Edit2, Calendar, RefreshCw } from 'lucide-react';
 import { toast } from 'sonner';
 import type { VolServiceType } from './types';
+// varredura 2026-09: B08 — espelha a régua de escrita do servidor.
+import { useVolPodeEscrever } from './hooks/useVolPodeEscrever';
 
 const WEEKDAYS = ['Domingo', 'Segunda', 'Terca', 'Quarta', 'Quinta', 'Sexta', 'Sabado'];
 
 export default function VolTiposCulto() {
+  // varredura 2026-09: B08 — POST/PUT/DELETE /service-types pedem voluntariado>=5.
+  const podeMexerNoTipo = useVolPodeEscrever(5);
   const { data: types = [], isLoading } = useVolServiceTypes();
   const [showForm, setShowForm] = useState(false);
   const [editType, setEditType] = useState<VolServiceType | null>(null);
@@ -29,7 +33,8 @@ export default function VolTiposCulto() {
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-bold text-foreground">Tipos de Culto</h1>
-        <Button onClick={() => setShowForm(true)} className="gap-1.5 bg-[#00B39D] hover:bg-[#00B39D]/90">
+        {/* varredura 2026-09: B08 — criar tipo de culto é voluntariado>=5. */}
+        <Button onClick={() => setShowForm(true)} disabled={!podeMexerNoTipo} className="gap-1.5 bg-[#00B39D] hover:bg-[#00B39D]/90">
           <Plus className="h-4 w-4" /> Novo Tipo
         </Button>
       </div>
@@ -65,6 +70,10 @@ export default function VolTiposCulto() {
 }
 
 function ServiceTypeCard({ serviceType, onEdit }: { serviceType: VolServiceType; onEdit: () => void }) {
+  // varredura 2026-09: B08 — editar/apagar tipo é 5; gerar cultos é 3
+  // (POST /service-types/:id/generate cria linhas em vol_services).
+  const podeMexerNoTipo = useVolPodeEscrever(5);
+  const podeGerarCultos = useVolPodeEscrever();
   const generateServices = useGenerateServices();
   const [generating, setGenerating] = useState(false);
 
@@ -87,7 +96,8 @@ function ServiceTypeCard({ serviceType, onEdit }: { serviceType: VolServiceType;
             {serviceType.color && <div className="h-3 w-3 rounded-full" style={{ backgroundColor: serviceType.color }} />}
             <CardTitle className="text-base">{serviceType.name}</CardTitle>
           </div>
-          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onEdit}>
+          {/* varredura 2026-09: B08 — o diálogo de edição só salva/apaga com 5. */}
+          <Button variant="ghost" size="icon" className="h-7 w-7" onClick={onEdit} disabled={!podeMexerNoTipo}>
             <Edit2 className="h-3.5 w-3.5" />
           </Button>
         </div>
@@ -106,8 +116,9 @@ function ServiceTypeCard({ serviceType, onEdit }: { serviceType: VolServiceType;
           {!serviceType.is_active && <Badge variant="destructive">Inativo</Badge>}
         </div>
 
+        {/* varredura 2026-09: B08 — gerar o ano inteiro é escrita de culto (>=3). */}
         {serviceType.recurrence_day != null && serviceType.recurrence_time && (
-          <Button size="sm" variant="outline" className="gap-1 text-xs w-full" disabled={generating} onClick={() => handleGenerate(2026)}>
+          <Button size="sm" variant="outline" className="gap-1 text-xs w-full" disabled={generating || !podeGerarCultos} onClick={() => handleGenerate(2026)}>
             <RefreshCw className={`h-3 w-3 ${generating ? 'animate-spin' : ''}`} /> Gerar 2026 inteiro
           </Button>
         )}

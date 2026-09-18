@@ -11,6 +11,10 @@
  */
 
 const { chavePco } = require('../utils/pcoChave');
+const {
+  chaveNome: chaveNomeEquipe, chaveExataNome, destinoDaOrfa,
+  indexarEquipesAtivas, indexarMapaPco,
+} = require('../utils/escalaLinhaEquipe');
 
 const STATUS_PRIORITY = { confirmed: 4, scheduled: 3, pending: 2, unknown: 1, declined: 0 };
 const STATUS_MAP = { C: 'confirmed', U: 'pending', D: 'declined', S: 'scheduled', P: 'pending', N: 'pending' };
@@ -482,7 +486,101 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
   // Opção A: atribui voluntários às equipes com base nas escalas sincronizadas
   await assignVolunteersToTeams(supabase, memberTeamMap);
 
+  // ⚠️⚠️ RESOLVE `vol_schedules.team_id` pelo NOME. Sem este passo o sync grava
+  // só `team_name` (texto) e o `team_id` fica NULO PARA SEMPRE — medido em
+  // 01/09/2026: 694 escalas assim, e na quarta 02/09 eram as 59 do culto inteiro.
+  // O efeito na tela era a matriz dizer "SEM EQUIPE" para equipe cujo nome ela
+  // tinha na mão, e todas caírem juntas em "Sem área".
+  await resolverTeamIdDasEscalas(supabase);
+
   return { services: typeServices, schedules: typeSchedules, membersFound: typeMembersFound, membersProcessed: typeMembersProcessed, volunteers };
+}
+
+// ── Resolve `vol_schedules.team_id` a partir do `team_name` ────────────────
+//
+// ⚠️⚠️ POR QUE ISTO EXISTE: o PCO manda o nome da equipe, não o id do NOSSO
+// sistema. O upsert grava `team_name` e nunca ligou o `team_id` — então a escala
+// nasce sem equipe vinculada e, por consequência, sem área. Medido em
+// 01/09/2026: 694 escalas com `team_id` nulo e `team_name` preenchido; em 612
+// existe UMA equipe de nome idêntico, ou seja o vínculo só faltava ser feito.
+//
+// ⚠️ Como roda a cada sync, ele também FAZ O BACKFILL do que já está lá — sem
+// script separado. Religar à mão hoje seria esteira: a próxima rodada criaria
+// órfãs de novo.
+//
+// ⚠️⚠️ NOME AMBÍGUO NÃO É RESOLVIDO. Duas equipes com o mesmo nome é resíduo do
+// sync que criou uma equipe por time do PCO (67 escalas caem nisso); escolher
+// uma poria a pessoa na equipe errada, e ninguém audita o que já está
+// preenchido. Fica nulo e a tela mostra "não vinculada".
+//
+// ⚠️ Best-effort: falhar aqui NÃO pode derrubar o sync, que é o que traz a
+// escala. Erro é logado — órfã silenciosa foi exatamente o que durou meses.
+async function resolverTeamIdDasEscalas(supabase) {
+  try {
+    // ⚠️⚠️ O MAPA é a fonte de verdade, não o nome da equipe. Ver o incidente
+    // de 01/09/2026 no cabeçalho de `destinoDaOrfa`: casar por nome manda a
+    // escala para a equipe-espelho APOSENTADA do PCO.
+    const { data: linhasMapa, error: mErr } = await supabase
+      .from('vol_pco_mapa').select('pco_nome, team_id, position_id, ignorar');
+    if (mErr) throw mErr;
+    const mapa = indexarMapaPco(linhasMapa);
+
+    // ⚠️ Fallback SÓ com equipe ATIVA — equipe aposentada nunca recebe escala.
+    const { data: equipes, error: eqErr } = await supabase
+      .from('vol_teams').select('id, name, is_active');
+    if (eqErr) throw eqErr;
+    const { porExatoAtivas, porNomeAtivas } = indexarEquipesAtivas(equipes);
+    if (!mapa.size && !porNomeAtivas.size) return { religadas: 0 };
+
+    // Só as órfãs — paginado, porque `vol_schedules` passa de 6 mil linhas.
+    const orfas = [];
+    for (let off = 0; ; off += 1000) {
+      const { data, error } = await supabase.from('vol_schedules')
+        .select('id, team_name, position_id').is('team_id', null).order('id').range(off, off + 999);
+      if (error) throw error;
+      orfas.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+
+    // Agrupa por DESTINO (equipe + função) pra atualizar em lote.
+    const porDestino = new Map();
+    let ambiguas = 0; let semPar = 0; const vias = { mapa_pco: 0, nome_ativa: 0 };
+    for (const s2 of orfas) {
+      const d = destinoDaOrfa(s2, { mapa, porExatoAtivas, porNomeAtivas });
+      if (d.via === 'ambiguo') { ambiguas += 1; continue; }
+      if (d.via === 'nenhum') { semPar += 1; continue; }
+      vias[d.via] += 1;
+      const chave = `${d.team_id}|${d.position_id || ''}`;
+      if (!porDestino.has(chave)) porDestino.set(chave, { team_id: d.team_id, position_id: d.position_id || null, ids: [] });
+      porDestino.get(chave).ids.push(s2.id);
+    }
+
+    let religadas = 0;
+    for (const { team_id, position_id, ids } of porDestino.values()) {
+      for (let i = 0; i < ids.length; i += 200) {
+        const patch = position_id ? { team_id, position_id } : { team_id };
+        const { data, error } = await supabase.from('vol_schedules')
+          .update(patch)
+          .in('id', ids.slice(i, i + 200))
+          // ⚠️ Guarda de corrida: se alguém (ou outra rodada) já ligou, não
+          // sobrescrevemos a decisão dela.
+          .is('team_id', null)
+          .select('id');
+        if (error) { console.error('[PC] religar team_id:', error.message); continue; }
+        religadas += (data || []).length;
+      }
+    }
+    if (religadas || ambiguas || semPar) {
+      console.log(`[PC] team_id resolvido: ${religadas} religada(s)`
+        + ` (mapa ${vias.mapa_pco} · nome ${vias.nome_ativa})`
+        + (ambiguas ? ` · ${ambiguas} nome ambíguo (fica nulo)` : '')
+        + (semPar ? ` · ${semPar} fora do mapa e sem equipe ativa` : ''));
+    }
+    return { religadas, ambiguas, semPar, vias };
+  } catch (e) {
+    console.error('[PC] resolverTeamIdDasEscalas:', e.message);
+    return { religadas: 0, erro: e.message };
+  }
 }
 
 // ── Batch upsert volunteer QR codes ─────────────────────────────────────────

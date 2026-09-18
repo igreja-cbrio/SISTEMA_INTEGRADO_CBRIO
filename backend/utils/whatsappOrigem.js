@@ -48,6 +48,8 @@ const ROTULOS = [
   ['grupos.fallback_template', 'Grupos · aviso do bot'],
   ['membresia.cadastro_confirmado', 'Membresia · confirmação de cadastro'],
   ['cuidados.devocional_diario', 'Devocional · devocional do dia'],
+  ['cuidados.visitante_pesquisa_obrigado', 'Visitantes · agradecimento da pesquisa'],
+  ['cuidados.visitante_pesquisa', 'Visitantes · pesquisa de satisfação'],
   ['cuidados', 'Cuidado pastoral'],
   ['kids.retirada_codigo', 'Kids · código de retirada'],
   ['kids.resumo_dia', 'Kids · resumo do dia do totem'],
@@ -56,6 +58,11 @@ const ROTULOS = [
   ['solicitacoes', 'Solicitações'],
   ['rh.onboarding_lote', 'RH · formulário de dados pessoais'],
   ['rh', 'RH'],
+  // F3 da Comunicação (09/09/2026): o que sai pela aba Envios (Novo envio /
+  // programadas). O guard do teste exige rótulo pra todo prefixo do MAPA.
+  ['comunicacao.envio_manual', 'Comunicação · envio manual da equipe'],
+  ['comunicacao.agendamento', 'Comunicação · envio programado'],
+  ['comunicacao', 'Comunicação'],
   ['auto', 'Mensagem automática do sistema'],
 ];
 

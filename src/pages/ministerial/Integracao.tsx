@@ -5,6 +5,7 @@ import { integracao as intApi } from '../../api';
 import KpiTaticoOficial from '../../components/kpi/KpiTaticoOficial';
 import { useAuth } from '../../contexts/AuthContext';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../../components/ui/tabs';
+import { modoIntegracao } from '../../lib/integracaoAbas';
 
 const Batismos = lazy(() => import('./Batismos'));
 const VisualizacaoFrequencia = lazy(() => import('./VisualizacaoFrequencia'));
@@ -31,11 +32,17 @@ export default function Integracao() {
   const navigate = useNavigate();
   const { getAccessLevel } = useAuth();
   const podeAprovar = getAccessLevel(['integracao']) >= 3;
-  // Coordenador SÓ-Next: tem o módulo `next` (área Next) mas não `integracao`.
-  // A página abre direto na aba Next e esconde todo o resto da Integração —
-  // é como damos "administrar só o Next" sem liberar a Integração inteira.
-  const soNext = getAccessLevel(['integracao']) < 1;
-  const [tab, setTab] = useState(soNext ? 'next' : 'frequencia');
+  // Quem NÃO tem `integracao` entra em MODO RESTRITO: a página vira monotarefa
+  // do módulo que a pessoa tem (Next ou Batismo) e esconde todo o resto — é como
+  // damos "administrar só o Next" / "só o Batismo" sem liberar a Integração.
+  // ⚠️ A régua é PURA e mora em `lib/integracaoAbas` (no gate): ela é a porta de
+  // quem ficou sem item no menu, e porta que decide algo não fica solta na tela.
+  const { restrito, abaInicial, soNext, soBatismo } = modoIntegracao({
+    integracao: getAccessLevel(['integracao']),
+    next: getAccessLevel(['next']),
+    batismo: getAccessLevel(['batismo']),
+  });
+  const [tab, setTab] = useState<string>(restrito ? abaInicial : 'frequencia');
   const [dashboard, setDashboard] = useState<any>(null);
   const [loadingDash, setLoadingDash] = useState(true);
   const [pendentesCount, setPendentesCount] = useState<number>(0);
@@ -63,32 +70,38 @@ export default function Integracao() {
     } catch { /* noop */ }
   }, [podeAprovar]);
 
-  // Só-Next não tem acesso ao dashboard/pendências da Integração (evita 403).
-  useEffect(() => { if (!soNext) reloadDashboard(); }, [reloadDashboard, soNext]);
+  // ⚠️ Modo restrito não tem acesso ao dashboard/pendências da Integração — são
+  // endpoints de `integracao` e chamá-los daria 403 na cara de quem só tem
+  // Next/Batismo.
+  useEffect(() => { if (!restrito) reloadDashboard(); }, [reloadDashboard, restrito]);
   useEffect(() => { reloadPendentes(); }, [reloadPendentes]);
 
   // Permitir abrir aba via querystring (?tab=batismos)
   useEffect(() => {
-    if (soNext) { setTab('next'); return; } // só-Next: sempre na aba Next
+    if (restrito) { setTab(abaInicial); return; } // restrito: sempre na aba do módulo que a pessoa tem
     const params = new URLSearchParams(window.location.search);
     const t = params.get('tab');
     if (t && ['batismos', 'next', 'frequencia', 'vis_frequencia', 'vis_decisoes', 'historico', 'pendentes'].includes(t)) setTab(t);
-  }, [soNext]);
+  }, [restrito, abaInicial]);
 
   return (
     <div className="p-4 md:p-6 space-y-6 max-w-[1400px] mx-auto">
       <ModuleHeader
         icon={Calendar}
         title="Integração"
-        subtitle={soNext ? 'Coordenação do Next · turmas, matrículas e presenças' : 'Acompanhamento de cultos, decisões e batismos'}
-        actions={soNext ? undefined : (
+        subtitle={soBatismo
+          ? 'Batismo · inscrições, horários, agendamento e check-in'
+          : soNext
+            ? 'Coordenação do Next · turmas, matrículas e presenças'
+            : 'Acompanhamento de cultos, decisões e batismos'}
+        actions={restrito ? undefined : (
           <Button onClick={() => navigate('/integracao/coleta')} className="gap-2">
             <Smartphone className="h-4 w-4" /> Coleta mobile
           </Button>
         )}
       />
 
-      {!soNext && (
+      {!restrito && (
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
         <button onClick={() => abrirPendencias('pendentes')} className="text-left hover:scale-[1.02] transition-transform">
           <StatisticsCard
@@ -125,17 +138,20 @@ export default function Integracao() {
       </div>
       )}
 
-      {!soNext && <KpiTaticoOficial fetchFn={intApi.kpisTaticos} />}
+      {/* ⚠️ `intApi` é endpoint de `integracao`: no modo restrito daria 403. */}
+      {!restrito && <KpiTaticoOficial fetchFn={intApi.kpisTaticos} />}
 
       <Tabs value={tab} onValueChange={setTab}>
         <TabsList className="flex-wrap h-auto" data-tour="integracao-tabs">
-          {!soNext && <TabsTrigger value="frequencia">Cultos</TabsTrigger>}
-          {!soNext && <TabsTrigger value="vis_frequencia">Frequência</TabsTrigger>}
-          {!soNext && <TabsTrigger value="vis_decisoes">Decisões</TabsTrigger>}
-          {!soNext && <TabsTrigger value="batismos">Batismos</TabsTrigger>}
-          <TabsTrigger value="next">Next</TabsTrigger>
-          {!soNext && <TabsTrigger value="historico">Histórico</TabsTrigger>}
-          {!soNext && podeAprovar && (
+          {!restrito && <TabsTrigger value="frequencia">Cultos</TabsTrigger>}
+          {!restrito && <TabsTrigger value="vis_frequencia">Frequência</TabsTrigger>}
+          {!restrito && <TabsTrigger value="vis_decisoes">Decisões</TabsTrigger>}
+          {(!restrito || soBatismo) && <TabsTrigger value="batismos">Batismos</TabsTrigger>}
+          {!soBatismo && <TabsTrigger value="next">Next</TabsTrigger>}
+          {!restrito && <TabsTrigger value="historico">Histórico</TabsTrigger>}
+          {/* ⚠️ `podeAprovar` (integracao>=3) já barraria, mas depender desse acoplamento
+              é frágil: o gate explícito é o modo restrito. */}
+          {!restrito && podeAprovar && (
             <TabsTrigger value="pendentes" className="gap-1.5">
               <ClipboardCheck className="h-3.5 w-3.5" />
               Pendentes

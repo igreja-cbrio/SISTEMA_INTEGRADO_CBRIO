@@ -99,30 +99,6 @@ export const TUTORIALS = [
   },
 
   // ─────────────────────────────────────────────────────────────────────
-  // 3 · Minha Área · KPIs filtrados por área/valor
-  // ─────────────────────────────────────────────────────────────────────
-  {
-    id: 'minha-area',
-    name: 'Minha Área',
-    route: '/minha-area',
-    qualifies: (auth) => auth.canKPIs || auth.isAdmin,
-    steps: [
-      s({
-        target: 'body',
-        placement: 'center',
-        title: 'Minha Área',
-        content: 'Aqui ficam só os indicadores da sua área. Use pra acompanhar o que você lidera.',
-      }),
-      s({
-        target: '[data-tour="minha-area-kpis"]',
-        placement: 'top',
-        title: 'Seus KPIs',
-        content: 'Cada cartão mostra um indicador com o valor atual e a meta. Click pra ver histórico e trajetória.',
-      }),
-    ],
-  },
-
-  // ─────────────────────────────────────────────────────────────────────
   // 4 · Eventos · cards, kanban, ciclo criativo
   // ─────────────────────────────────────────────────────────────────────
   {

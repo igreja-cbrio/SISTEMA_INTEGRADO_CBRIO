@@ -127,8 +127,10 @@ Guard: `authorizeModule('grupos', 1 | 2 | 3 | 4 | 5)`
 
 - `backend/utils/agendaGrupo.js`
 - `backend/utils/cronAuth.js`
+- `backend/utils/enderecoGrupoPublico.js`
 - `backend/utils/grupoOnline.js`
 - `backend/utils/prontidaoCadastro.js`
+- `backend/utils/redePatchGrupo.js`
 - `backend/utils/supabase.js`
 - `backend/utils/vinculosDuplicados.js`
 
@@ -138,6 +140,7 @@ Guard: `authorizeModule('grupos', 1 | 2 | 3 | 4 | 5)`
 - `backend/services/contatoPessoa.js`
 - `backend/services/duplicidadePolicy.js`
 - `backend/services/fusaoCampos.js`
+- `backend/services/fusaoVerificacao.js`
 - `backend/services/grupoAgendaExcecao.js`
 - `backend/services/grupoAncora.js`
 - `backend/services/grupoEncontroApagar.js`

@@ -279,7 +279,6 @@ const PermissoesAdmin = lazyWithRetry(() => import('./pages/admin/Permissoes'));
 const FeedbackAdmin = lazyWithRetry(() => import('./pages/admin/Feedback'));
 const AppAnalytics = lazyWithRetry(() => import('./pages/admin/AppAnalytics'));
 const Sistema = lazyWithRetry(() => import('./pages/sistema/Sistema'));
-const MeusKpis = lazyWithRetry(() => import('./pages/MeusKpis'));
 const Painel = lazyWithRetry(() => import('./pages/Painel'));
 // /painel/kpi/:id removido na Fase 2.5F — agora detalhe abre como modal (KpiDetalheModal)
 const PainelNsmPessoas = lazyWithRetry(() => import('./pages/PainelNsmPessoas'));
@@ -287,7 +286,6 @@ const PainelJornada = lazyWithRetry(() => import('./pages/PainelJornada'));
 const EstruturaOkr = lazyWithRetry(() => import('./pages/admin/EstruturaOkr'));
 const Ritual = lazyWithRetry(() => import('./pages/Ritual'));
 const Gestao = lazyWithRetry(() => import('./pages/Gestao'));
-const MinhaArea = lazyWithRetry(() => import('./pages/MinhaArea'));
 const DadosBrutos = lazyWithRetry(() => import('./pages/DadosBrutos'));
 const DashboardSemanal = lazyWithRetry(() => import('./pages/DashboardSemanal'));
 const MonitoramentoOkr = lazyWithRetry(() => import('./pages/MonitoramentoOkr'));
@@ -312,6 +310,7 @@ const TotemKidsCheckout = lazyWithRetry(() => import('./pages/ministerial/totemK
 const TotemKidsPainel = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsPainel'));
 const TotemKidsTesteEtiqueta = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsTesteEtiqueta'));
 const TotemKidsDecisoes = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsDecisoes'));
+const KidsDecisoesRegistro = lazyWithRetry(() => import('./pages/ministerial/totemKids/KidsDecisoesRegistro'));
 const TotemKidsVinculos = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsVinculos'));
 const TotemKidsPortao = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsPortao'));
 const MarketingDashboard = lazyWithRetry(() => import('./pages/marketing/MarketingDashboard'));
@@ -431,6 +430,10 @@ const InscricaoTotens = lazyWithRetry(() => import('./pages/InscricaoTotens'));
 // algumas horas e foi removida no mesmo dia.
 const NextDirecionar = lazyWithRetry(() => import('./pages/public/NextDirecionar'));
 const DecisaoOnline = lazyWithRetry(() => import('./pages/public/DecisaoOnline'));
+// Porta do VISITANTE (09/09/2026): QR nos cartazes → voucher da cafeteria → pesquisa por token.
+const VisitantePublico = lazyWithRetry(() => import('./pages/public/VisitantePublico'));
+const VisitanteAvaliar = lazyWithRetry(() => import('./pages/public/VisitanteAvaliar'));
+const Visitantes = lazyWithRetry(() => import('./pages/Visitantes'));
 const DecisaoCulto = lazyWithRetry(() => import('./pages/public/DecisaoCulto'));
 const InscricaoVoluntariado = lazyWithRetry(() => import('./pages/public/InscricaoVoluntariado'));
 // /admin/cultura, /kpis, /kpis/guia, /painel-kpis foram substituidos pelo /painel
@@ -574,7 +577,20 @@ function VoluntariadoGuard({ children }: { children: ReactNode }) {
   const auth = useAuth();
   if (auth.loading) return <Loading />;
   if (auth.isVoluntario) return <>{children}</>;
-  if (auth.canMembresia === false) return <Navigate to="/dashboard" replace />;
+  // ⚠️⚠️ Era `auth.canMembresia === false` — a permissão do módulo MEMBRESIA.
+  // E `canAccessModule(nomes, 'leitura', 2)` tem MÍNIMO 2 por padrão, então
+  // coordenador de voluntariado com `membresia` = 1 era mandado pro /dashboard
+  // (é a mesma causa que escondia a aba do Online da Renata, em 02/09).
+  // ⚠️ Medido antes de trocar: ZERO cargos têm membresia >= 2 sem voluntariado
+  // >= 1, então isto não estreita o acesso de ninguém — só destrava os 22
+  // cargos que têm voluntariado e não tinham membresia >= 2.
+  // ⚠️ O `auth.modulePerms &&` é obrigatório: sem ele, quem chega antes das
+  // permissões carregarem é redirecionado (a mesma lei do menu, que não esconde
+  // nada enquanto carrega).
+  if (auth.modulePerms && !auth.isAdmin
+      && !auth.canAccessModule(['voluntariado', 'Voluntariado'], 'leitura', 1)) {
+    return <Navigate to="/dashboard" replace />;
+  }
   return <>{children}</>;
 }
 
@@ -690,6 +706,11 @@ function AppRoutes() {
       <Route path="/next/direcionar/:token" element={<Suspense fallback={<Loading />}><NextDirecionar /></Suspense>} />
       <Route path="/inscricao-voluntariado" element={<Suspense fallback={<Loading />}><InscricaoVoluntariado /></Suspense>} />
       <Route path="/decisao" element={<Suspense fallback={<Loading />}><DecisaoOnline /></Suspense>} />
+      {/* Visitante: o QR dos cartazes (`?local=`) e a pesquisa de satisfação que chega no WhatsApp.
+          ⚠️ NÃO usar prefixo curto tipo `/v/:token` — `/c/:token` e `/e/:token` já existem e o
+          React Router faz o primeiro padrão vencer. */}
+      <Route path="/visitante" element={<Suspense fallback={<Loading />}><VisitantePublico /></Suspense>} />
+      <Route path="/visitante/avaliar/:token" element={<Suspense fallback={<Loading />}><VisitanteAvaliar /></Suspense>} />
       {/* QR gravado no vídeo: o culto vai DENTRO do token, então quem assiste um
           replay de anos atrás cai no culto certo em vez de no culto da semana
           em que ele abriu o vídeo. */}
@@ -776,6 +797,7 @@ function AppRoutes() {
         <Route path="/nps" element={<Suspense fallback={<Loading />}><Nps /></Suspense>} />
         <Route path="/censo" element={<ModuleGuard moduleSlug="censo" nivelMinimo={1}><Suspense fallback={<Loading />}><Censo /></Suspense></ModuleGuard>} />
         <Route path="/links" element={<ModuleGuard moduleSlug="links" nivelMinimo={1}><Suspense fallback={<Loading />}><Links /></Suspense></ModuleGuard>} />
+        <Route path="/visitantes" element={<ModuleGuard moduleSlug="visitantes" nivelMinimo={1}><Suspense fallback={<Loading />}><Visitantes /></Suspense></ModuleGuard>} />
         <Route path="/nps/:id/responder" element={<Suspense fallback={<Loading />}><NpsResponder /></Suspense>} />
         <Route path="/admin/rh" element={<ModuleGuard permKey="canRH"><Suspense fallback={<Loading />}><RH /></Suspense></ModuleGuard>} />
         <Route path="/admin/financeiro" element={<ModuleGuard permKey="canFinanceiro"><Suspense fallback={<Loading />}><Financeiro /></Suspense></ModuleGuard>} />
@@ -801,6 +823,7 @@ function AppRoutes() {
         <Route path="/ministerial/totem-kids/painel" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsPainel /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/teste-etiqueta" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsTesteEtiqueta /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/decisoes" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsDecisoes /></Suspense></ModuleGuard>} />
+        <Route path="/ministerial/totem-kids/decisoes-registro" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><KidsDecisoesRegistro /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/vinculos" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsVinculos /></Suspense></ModuleGuard>} />
         <Route path="/ministerial/totem-kids/configuracoes" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><TotemKidsAdmin /></Suspense></ModuleGuard>} />
         {/* Redirects das URLs antigas (admin separado) · 2026-05-21 */}
@@ -825,7 +848,11 @@ function AppRoutes() {
         <Route path="/wifi" element={<SuperAdminGuard><Suspense fallback={<Loading />}><WifiModulo /></Suspense></SuperAdminGuard>} />
         <Route path="/ministerial/devocional" element={<Navigate to="/ministerial/cuidados?tab=devocional" replace />} />
         <Route path="/ministerial/jornada" element={<Navigate to="/ministerial/membresia" replace />} />
-        <Route path="/ministerial/integracao" element={<ModuleGuard anyOf={['integracao', 'next']}><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
+        {/* ⚠️ `batismo` entrou no anyOf em 03/09/2026: com o item 'Batismo' fora do
+            menu, esta página virou a porta de quem tem SÓ aquele módulo (cargo
+            'Responsável de Batismo' · 1 pessoa). Não amplia nada — ela já via este
+            mesmo componente em /batismo; o modo restrito esconde o resto. */}
+        <Route path="/ministerial/integracao" element={<ModuleGuard anyOf={['integracao', 'next', 'batismo']}><Suspense fallback={<Loading />}><Integracao /></Suspense></ModuleGuard>} />
         <Route path="/batismo" element={<ModuleGuard moduleSlug="batismo"><Suspense fallback={<Loading />}><Batismo /></Suspense></ModuleGuard>} />
         {/* Relatórios virou aba dentro do Dashboard Semanal · mantém link antigo */}
         <Route path="/ministerial/relatorios" element={<Navigate to="/dashboard-semanal" replace />} />
@@ -848,7 +875,7 @@ function AppRoutes() {
         <Route path="/governanca/:sigla" element={<ModuleGuard moduleSlug="governanca" nivelMinimo={1}><Suspense fallback={<Loading />}><GovernancaRitual /></Suspense></ModuleGuard>} />
         <Route path="/next-batismo" element={<Navigate to="/entradas" replace />} />
         {/* Cultos · rotas na raiz (sem prefixo /ministerial) · 2026-05-21 */}
-        <Route path="/online" element={<ModuleGuard permKey="canMembresia"><Suspense fallback={<Loading />}><Online /></Suspense></ModuleGuard>} />
+        <Route path="/online" element={<ModuleGuard moduleSlug="online"><Suspense fallback={<Loading />}><Online /></Suspense></ModuleGuard>} />
         <Route path="/kids" element={<ModuleGuard moduleSlug="kids"><Suspense fallback={<Loading />}><PainelKids /></Suspense></ModuleGuard>} />
         <Route path="/ami" element={<ModuleGuard moduleSlug="ami"><Suspense fallback={<Loading />}><PainelAmi /></Suspense></ModuleGuard>} />
         <Route path="/bridge" element={<ModuleGuard moduleSlug="bridge"><Suspense fallback={<Loading />}><PainelBridge /></Suspense></ModuleGuard>} />
@@ -886,7 +913,7 @@ function AppRoutes() {
         <Route path="/kpis/guia" element={<Navigate to="/painel" replace />} />
         <Route path="/painel-kpis" element={<Navigate to="/painel" replace />} />
         <Route path="/admin/cultura" element={<Navigate to="/painel" replace />} />
-        <Route path="/meus-kpis" element={<Navigate to="/minha-area" replace />} />
+        <Route path="/meus-kpis" element={<Navigate to="/painel" replace />} />
         <Route path="/painel" element={<Suspense fallback={<Loading />}><Painel /></Suspense>} />
         <Route path="/painel/kpi/:id" element={<Navigate to="/painel" replace />} />
         <Route path="/painel/nsm/pessoas" element={<Suspense fallback={<Loading />}><PainelNsmPessoas /></Suspense>} />
@@ -911,8 +938,8 @@ function AppRoutes() {
         <Route path="/permissoes" element={<Navigate to="/admin/permissoes" replace />} />
         <Route path="/ritual" element={<Suspense fallback={<Loading />}><Ritual /></Suspense>} />
         <Route path="/gestao" element={<Suspense fallback={<Loading />}><Gestao /></Suspense>} />
-        <Route path="/minha-area" element={<Suspense fallback={<Loading />}><MinhaArea /></Suspense>} />
-        {/* Redirects · /minha-area virou so visualizador · /dados-brutos so admin */}
+        {/* /minha-area saiu do sistema (2026-09-04) · dashboard por modulo + /painel + /gestao (PMO) cobrem o papel */}
+        <Route path="/minha-area" element={<Navigate to="/painel" replace />} />
         <Route path="/dados-brutos" element={<Suspense fallback={<Loading />}><DadosBrutos /></Suspense>} />
         <Route path="/dashboard-semanal" element={<Suspense fallback={<Loading />}><DashboardSemanal /></Suspense>} />
         <Route path="/monitoramento-okr" element={<Suspense fallback={<Loading />}><MonitoramentoOkr /></Suspense>} />

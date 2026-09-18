@@ -392,7 +392,11 @@ const COLLECTORS = {
   // no período (do módulo de Cuidados → aba Devocional, tabela mem_devocionais)
   'cuidados.devocional_membros': async ({ inicio, fim }) => {
     const data = await fetchAll('mem_devocionais', 'membro_id, concluida',
+      // varredura 2026-09: A04 — o DELETE de mem_devocionais virou soft-delete; sem `deleted_at`
+      // este KPI continuaria contando devocional apagado, divergindo da aba Devocional do
+      // módulo de Cuidados (cuidados.js:333), que já filtra.
       q => q.eq('concluida', true)
+        .is('deleted_at', null)
         .gte('data_devocional', inicio)
         .lt('data_devocional', fim)
         .order('id'));
@@ -920,7 +924,11 @@ const COLLECTORS = {
   // ao menos 1 devocional do tipo 'familiar' no período.
   'devocionais.familias': async ({ inicio, fim }) => {
     const data = await fetchAll('mem_devocionais', 'membro_id, mem_membros(familia_id)',
+      // varredura 2026-09: A04 — o DELETE de mem_devocionais virou soft-delete; sem `deleted_at`
+      // o KID-04 contaria família cujo único devocional familiar foi APAGADO — e o /kpis de
+      // devocionais.js, que já filtra, mostraria outro número pro mesmo indicador.
       q => q.eq('tipo', 'familiar')
+        .is('deleted_at', null)
         .gte('data_devocional', inicio)
         .lt('data_devocional', fim)
         .order('id'));
@@ -938,6 +946,9 @@ const COLLECTORS = {
   'devocionais.checkins': async ({ inicio, fim }) => {
     const { count } = await supabase.from('mem_devocionais')
       .select('id', { count: 'exact', head: true })
+      // varredura 2026-09: A04 — o DELETE de mem_devocionais virou soft-delete; sem `deleted_at`
+      // o DEV-01 contaria check-in apagado e NUNCA cairia quando a pessoa desfaz o check-in.
+      .is('deleted_at', null)
       .gte('data_devocional', inicio)
       .lt('data_devocional', fim);
     return { valor: count || 0, observacao: `${count || 0} check-ins de devocional no período` };
@@ -951,6 +962,9 @@ const COLLECTORS = {
     while (true) {
       const { data } = await supabase.from('mem_devocionais')
         .select('membro_id')
+        // varredura 2026-09: A04 — o DELETE de mem_devocionais virou soft-delete; sem `deleted_at`
+        // o DEV-02 contaria como "pessoa com devocional" quem apagou o único check-in do período.
+        .is('deleted_at', null)
         .gte('data_devocional', inicio)
         .lt('data_devocional', fim)
         .order('id', { ascending: true })

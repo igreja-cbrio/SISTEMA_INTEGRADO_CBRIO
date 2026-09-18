@@ -179,6 +179,13 @@ async function processarEvento(req) {
             return false;
           });
           if (assumida) continue;
+          // Pesquisa do VISITANTE (10/09/2026): botão 1–5 do template ou o texto
+          // que vira comentário — se identifica pelo context.id ou pelo único
+          // disparo recente. Devolve false quando não é dela.
+          const assumiuVisitante = await require('../services/visitantePesquisaResposta')
+            .processarRespostaVisitante(m, { enviarTexto, normalizarTelefone })
+            .catch(err => { console.error('[whatsapp webhook] pesquisa do visitante:', err.message); return false; });
+          if (assumiuVisitante) continue;
         }
         if (!institucional) {
           await inboxDireto(m, pnid).catch(err =>
@@ -261,6 +268,10 @@ async function inboxDireto(m, pnid) {
     phoneNumberId: pnid,
     replyToWaId: m.context?.id || null,
   });
+  // Equipe de atendimento (08/09/2026): neste número não há bot, então a
+  // conversa vai direto pro titular da área dela (ou da Entrada) e só ele é
+  // avisado. Best-effort: o serviço nunca lança.
+  await require('../services/waEquipe').atribuirPelaEquipe({ telefone, origem: 'inbox' });
 }
 
 // C0 · Processa os recibos de status da Meta (value.statuses[]).
@@ -653,12 +664,38 @@ async function processarMensagem(m, cfg, pnid = null, erroCfg = null) {
     // abrindo o menu de setores contra a lei de 12/08 ("não quero bot"), que é
     // exatamente o que aconteceu com a Thalya em 25/08.
     if (!freioBot.botPodeResponder({ cfg, erroConfig: erroCfg })) {
-      await semFalhar(supabase.from('whatsapp_coletas').insert({
-        whatsapp_message_id: messageId, telefone, raw_text: texto,
-        status: 'ignorado',
-        erro: erroCfg ? 'config_indisponivel' : 'respostas_automaticas_desligadas',
-        modulo_destino: 'conversas',
-      }), '[wa-webhook]');
+      // ── BOT DE IA POR ÁREA (Marcos · 08/09/2026) ─────────────────────────
+      // Com o MENU calado, quem pode falar é o bot de IA por área — e só se
+      // `whatsapp_config.bot_ia.ativo` for true (o serviço é fail-closed:
+      // coluna ausente, erro de leitura ou área desligada ⇒ silêncio). Com a
+      // config ILEGÍVEL (erroCfg) ninguém fala: é a lei do freio de 26/08.
+      // A mensagem já está no inbox; o que este bloco decide é só a resposta.
+      let botIa = { acao: 'desligado' };
+      if (!erroCfg) {
+        botIa = await require('../services/botIaResposta')
+          .tratar({ telefone, texto, messageId, phoneNumberId: pnid, cfg })
+          .catch(e => { console.error('[whatsapp webhook] bot ia:', e.message); return { acao: 'erro' }; });
+      }
+      // O serviço grava a própria trilha em `whatsapp_coletas` quando ENTRA
+      // (responder/encaminhar/silêncio/erro). Aqui só registramos quando ele nem
+      // entrou, mantendo a assinatura histórica 'respostas_automaticas_desligadas'.
+      if (botIa.acao === 'desligado') {
+        await semFalhar(supabase.from('whatsapp_coletas').insert({
+          whatsapp_message_id: messageId, telefone, raw_text: texto,
+          status: 'ignorado',
+          erro: erroCfg ? 'config_indisponivel' : 'respostas_automaticas_desligadas',
+          modulo_destino: 'conversas',
+        }), '[wa-webhook]');
+      }
+      // ── EQUIPE DE ATENDIMENTO (Marcos · 08/09/2026) ─────────────────────
+      // Se NINGUÉM respondeu à pessoa (bot desligado, área desligada, teto,
+      // erro), a conversa vai pro titular da área dela — ou da Entrada — e só
+      // ele é avisado. Bot que RESPONDEU ou ENCAMINHOU não aciona a equipe: a
+      // pessoa foi atendida, e avisar o titular a cada resposta da IA seria o
+      // ruído que faz ninguém ler o sino. Best-effort: o serviço nunca lança.
+      if (!['responder', 'encaminhar', 'duplicado'].includes(botIa.acao)) {
+        await require('../services/waEquipe').atribuirPelaEquipe({ telefone, origem: 'inbox' });
+      }
       return;
     }
 

@@ -33,8 +33,13 @@ const VISTA_KEY = 'cbrio_vol_matriz_vista';
 type Celula = { item_id: string | null; alvo: number; faltam: number; pessoas: any[] };
 type Linha = {
   chave: string; team_id: string | null; team: string; area: string; cor: string | null;
+  equipe_vinculada?: boolean;
   position_id: string | null; position: string | null; celulas: Record<string, Celula>;
 };
+
+// Uma equipe dentro da área. `vinculada: false` = o nome veio do Planning
+// Center e não está ligado a uma equipe do sistema (logo, sem área).
+type Subarea = { team_id: string | null; team: string; cor: string | null; vinculada: boolean; linhas: Linha[] };
 
 function IconeStatus({ status }: { status: string }) {
   if (status === 'confirmed') return <CheckCircle2 className="h-3 w-3 text-green-600 shrink-0" />;
@@ -92,13 +97,25 @@ export default function MatrizEscala({ ehMinhaArea, onFixar, serviceIds, context
   // Área → subárea (equipe) → posição. A árvore vem da composição do culto,
   // então também mostra as posições que ainda não têm voluntário.
   const grupos = useMemo(() => {
-    const m = new Map<string, { area: string; subareas: Map<string, { team_id: string | null; team: string; cor: string | null; linhas: Linha[] }> }>();
+    const m = new Map<string, { area: string; subareas: Map<string, Subarea> }>();
     for (const l of linhas) {
       const area = l.area || 'Sem área';
       if (!m.has(area)) m.set(area, { area, subareas: new Map() });
       const subareas = m.get(area)!.subareas;
-      const key = l.team_id || l.team;
-      if (!subareas.has(key)) subareas.set(key, { team_id: l.team_id, team: l.team, cor: l.cor, linhas: [] });
+      // ⚠️ A chave da subárea usa a CHAVE DA LINHA que o servidor já montou
+      // (`id:…` / `nome:…`), não `team_id || team`: com `team_id` nulo, o
+      // fallback pelo nome é justamente o que separa Liderança de Assistentes.
+      const key = l.team_id || `nome:${l.team}`;
+      if (!subareas.has(key)) {
+        subareas.set(key, {
+          team_id: l.team_id, team: l.team, cor: l.cor,
+          // ⚠️ `equipe_vinculada` ausente (backend antigo) conta como VINCULADA:
+          // é o comportamento de hoje, e marcar tudo como "não vinculada" num
+          // deploy em 2 etapas poria selo âmbar em toda a grade.
+          vinculada: l.equipe_vinculada !== false,
+          linhas: [],
+        });
+      }
       subareas.get(key)!.linhas.push(l);
     }
     return [...m.values()].map(g => ({ ...g, subareas: [...g.subareas.values()] }));

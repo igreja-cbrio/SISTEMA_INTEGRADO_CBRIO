@@ -11,6 +11,18 @@
 #  O agente dev existe pra clonar o repositório, escrever código, abrir PR e
 #  mergear — sem git, ele não faz nada, e falha do jeito mais silencioso.
 #
+#  ⚠️⚠️ ESTE ARQUIVO ESTÁ INERTE HOJE (02/09/2026) — LEIA ANTES DE CONFIAR NELE.
+#  A Railway usa o **Railpack** como builder PADRÃO
+#  (https://docs.railway.com/guides/build-configuration: *"Railway uses Railpack
+#  to build your code"*), e o Railpack NÃO lê `nixpacks.toml`. Foi por isso que
+#  o git continuou ausente depois do commit que criou este arquivo: o código
+#  subiu e a config foi ignorada, sem erro nenhum. Quem instala o git hoje é
+#  **`railpack.json`** (`deploy.aptPackages`), ao lado deste arquivo.
+#
+#  ⚠️ Ele FICA porque é aditivo e volta a valer no minuto em que alguém trocar o
+#  builder para Nixpacks no dashboard — mas NÃO é ele que resolve agora. Mexer
+#  aqui achando que conserta o container é perder um ciclo de deploy.
+#
 #  ⚠️ `"..."` é a sintaxe do nixpacks para "mantenha os pacotes padrão e
 #  ACRESCENTE os meus". Trocar por uma lista literal derrubaria o Node.
 # ═══════════════════════════════════════════════════════════════════════════

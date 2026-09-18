@@ -11,16 +11,22 @@ import {
   useVolTeamsManaged, useCreateTeam, useUpdateTeam, useDeleteTeam,
   useImportTeamsFromSchedules, useSyncTeamMembersFromSchedules, useVolTeamMembers, useAddTeamMember,
   useRemoveTeamMember, useVolPositions, useCreatePosition, useDeletePosition,
+  useUpdateTeamMember, useVolServiceTypes,
 } from './hooks';
-import { Plus, Users, Trash2, Edit2, UserPlus, X, Download, Briefcase, ChevronDown, ChevronRight, AlertTriangle } from 'lucide-react';
+import { Plus, Users, Trash2, Edit2, UserPlus, X, Download, Briefcase, ChevronDown, ChevronRight, AlertTriangle, CalendarCheck } from 'lucide-react';
 import { useQuery, useQueryClient, useMutation } from '@tanstack/react-query';
 import { voluntariado } from '@/api';
 import { toast } from 'sonner';
 import type { VolTeam, VolPosition } from './types';
+// varredura 2026-09: B08 — a escrita do módulo passou a exigir `voluntariado>=3`
+// no servidor; sem isto a tela mostrava o botão e o clique voltava 403.
+import { useVolPodeEscrever } from './hooks/useVolPodeEscrever';
 
 const TEAM_COLORS = ['#00B39D', '#3B82F6', '#EF4444', '#F59E0B', '#8B5CF6', '#EC4899', '#10B981', '#6366F1', '#F97316', '#14B8A6'];
 
 export default function VolEquipes() {
+  // varredura 2026-09: B08 — piso de escrita do módulo (espelha o servidor).
+  const podeEscrever = useVolPodeEscrever();
   const { data: teams = [], isLoading } = useVolTeamsManaged();
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -71,7 +77,8 @@ export default function VolEquipes() {
         <div className="flex gap-2">
           <ImportTeamsButton />
           <SyncMembersButton />
-          <Button onClick={() => setShowCreateDialog(true)} className="gap-1.5 bg-[#00B39D] hover:bg-[#00B39D]/90">
+          {/* varredura 2026-09: B08 — POST /teams-manage pede voluntariado>=3. */}
+          <Button onClick={() => setShowCreateDialog(true)} disabled={!podeEscrever} className="gap-1.5 bg-[#00B39D] hover:bg-[#00B39D]/90">
             <Plus className="h-4 w-4" /> Nova Equipe
           </Button>
         </div>
@@ -142,6 +149,7 @@ export default function VolEquipes() {
                         size="icon"
                         className="h-8 w-8 shrink-0"
                         onClick={e => { e.stopPropagation(); setEditTeam(team); }}
+                        disabled={!podeEscrever}
                         title="Editar equipe"
                       >
                         <Edit2 className="h-3.5 w-3.5" />
@@ -333,11 +341,13 @@ function MapearPcoDialog({ pcoNome, teams, onClose, onGravado }: {
 
 function ImportTeamsButton() {
   const importMut = useImportTeamsFromSchedules();
+  // varredura 2026-09: B08 — POST /teams-manage/import-from-schedules pede voluntariado>=3.
+  const podeEscrever = useVolPodeEscrever();
   return (
     <Button
       variant="outline"
       className="gap-1.5"
-      disabled={importMut.isPending}
+      disabled={importMut.isPending || !podeEscrever}
       onClick={() => {
         importMut.mutate(undefined, {
           onSuccess: (data: any) => toast.success(`${data.imported} equipes importadas`),
@@ -353,11 +363,13 @@ function ImportTeamsButton() {
 
 function SyncMembersButton() {
   const syncMut = useSyncTeamMembersFromSchedules();
+  // varredura 2026-09: B08 — POST /teams-manage/sync-members-from-schedules pede voluntariado>=3.
+  const podeEscrever = useVolPodeEscrever();
   return (
     <Button
       variant="outline"
       className="gap-1.5"
-      disabled={syncMut.isPending}
+      disabled={syncMut.isPending || !podeEscrever}
       onClick={() => {
         syncMut.mutate(undefined, {
           onSuccess: (data: any) =>
@@ -380,10 +392,11 @@ function TeamFormDialog({ team, areas = [], onClose }: { team: VolTeam | null; a
   const [description, setDescription] = useState(team?.description || '');
   const [color, setColor] = useState(team?.color || TEAM_COLORS[0]);
   const [area, setArea] = useState(team?.area || '');
+  const [split, setSplit] = useState(team?.split_por_horario === true);
 
   const handleSave = () => {
     if (!name.trim()) return toast.error('Nome obrigatório');
-    const data = { name: name.trim(), description: description.trim() || null, color, area: area.trim() || null };
+    const data = { name: name.trim(), description: description.trim() || null, color, area: area.trim() || null, split_por_horario: split };
     if (team) {
       updateTeam.mutate({ id: team.id, data }, { onSuccess: () => { toast.success('Equipe atualizada'); onClose(); }, onError: () => toast.error('Erro ao atualizar') });
     } else {
@@ -424,6 +437,29 @@ function TeamFormDialog({ team, areas = [], onClose }: { team: VolTeam | null; a
           <div>
             <Label>Descrição</Label>
             <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Descrição da equipe (opcional)" />
+          </div>
+          {/* Split por horário (03/09/2026) · o Split Team do Planning Center.
+              ⚠️ O rótulo diz o EFEITO, não o nome técnico: o líder decide olhando
+              a equipe dele, não o schema. E o texto de apoio nomeia o caso
+              concreto (a manhã de domingo tem duas celebrações) porque "bloco"
+              não é palavra que alguém use na igreja. */}
+          <div className="rounded-md border border-border p-3">
+            <label className="flex items-start gap-2.5 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={split}
+                onChange={e => setSplit(e.target.checked)}
+                className="mt-0.5 h-4 w-4 accent-[#00B39D]"
+              />
+              <span>
+                <span className="block text-sm font-medium text-foreground">Cada horário tem gente diferente</span>
+                <span className="block text-[11px] text-muted-foreground mt-0.5">
+                  Marque quando a equipe troca de pessoas entre as celebrações do mesmo dia — o domingo de manhã
+                  tem duas (09:30 e 11:30). A escala e as vagas passam a ser por horário. Desmarcado, a equipe
+                  serve o dia todo com a mesma gente.
+                </span>
+              </span>
+            </label>
           </div>
           <div>
             <Label>Cor</Label>
@@ -494,6 +530,8 @@ function TeamDetailDialog({ teamId, team, onClose }: { teamId: string | null; te
 }
 
 function TeamMembersList({ teamId, members, loading, positions }: { teamId: string; members: any[]; loading: boolean; positions: VolPosition[] }) {
+  // varredura 2026-09: B08 — POST/PUT/DELETE /team-members pedem voluntariado>=3.
+  const podeEscrever = useVolPodeEscrever();
   const addMember = useAddTeamMember();
   const removeMember = useRemoveTeamMember();
   const [showAdd, setShowAdd] = useState(false);
@@ -535,7 +573,8 @@ function TeamMembersList({ teamId, members, loading, positions }: { teamId: stri
   return (
     <div className="space-y-3">
       <div className="flex justify-end">
-        <Button size="sm" onClick={() => setShowAdd(!showAdd)} className="gap-1.5">
+        {/* varredura 2026-09: B08 — POST /team-members pede voluntariado>=3. */}
+        <Button size="sm" onClick={() => setShowAdd(!showAdd)} disabled={!podeEscrever} className="gap-1.5">
           <UserPlus className="h-4 w-4" /> Adicionar Membro
         </Button>
       </div>
@@ -585,9 +624,12 @@ function TeamMembersList({ teamId, members, loading, positions }: { teamId: stri
                   {m.position && <p className="text-xs text-muted-foreground">{m.position.name}</p>}
                 </div>
               </div>
-              <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleRemove(m.id, m.volunteer_name)}>
-                <X className="h-3.5 w-3.5" />
-              </Button>
+              <div className="flex items-center gap-1">
+                <CultosDoMembro membro={m} />
+                <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleRemove(m.id, m.volunteer_name)}>
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              </div>
             </div>
           ))}
         </div>
@@ -596,7 +638,126 @@ function TeamMembersList({ teamId, members, loading, positions }: { teamId: stri
   );
 }
 
+/**
+ * Em quais cultos esta pessoa aceita ser escalada, NESTE time (04/09/2026).
+ *
+ * Pedido do Marcos: *"pessoas podem querer apenas servir no time da banda
+ * quarta-feira, mas não quererem ou poderem ser escalados no domingo"*.
+ *
+ * ⚠️⚠️ O botão diz o ESTADO, não abre um formulário anônimo: "Todos os cultos"
+ * ou "Quarta, AMI". O líder precisa ver a restrição SEM clicar — se ela ficar
+ * escondida atrás de um ícone, ninguém descobre por que a pessoa não aparece
+ * na escala do domingo.
+ *
+ * ⚠️ Marcar TODOS grava NULL (não a lista) e desmarcar TODOS também — é a régua
+ * `normalizarEscolha`/`elegibilidadeVol` do servidor, e a tela DIZ isso em vez
+ * de fingir que salvou "nenhum". Congelar a lista inteira deixaria a pessoa
+ * fora do próximo culto que a igreja criar.
+ *
+ * ⚠️ A gravação vale pra PESSOA neste time (o servidor espalha por todas as
+ * linhas dela) — 155 dos 832 pares têm mais de uma função, e repetir 9 vezes
+ * produziria configuração pela metade.
+ */
+function CultosDoMembro({ membro }: { membro: any }) {
+  const { data: tipos = [] } = useVolServiceTypes();
+  const atualizar = useUpdateTeamMember();
+  const [aberto, setAberto] = useState(false);
+  const ativos = useMemo(
+    () => (tipos as any[]).filter(t => t.is_active !== false),
+    [tipos],
+  );
+  const restricao: string[] | null = Array.isArray(membro.service_type_ids) && membro.service_type_ids.length
+    ? membro.service_type_ids.map(String)
+    : null;
+  const [sel, setSel] = useState<string[]>(restricao ?? ativos.map((t: any) => String(t.id)));
+
+  function abrir() {
+    // Sempre reabre refletindo o dado atual — sem isso, fechar e reabrir mostra
+    // a última edição abandonada como se fosse o que está salvo.
+    setSel(restricao ?? ativos.map((t: any) => String(t.id)));
+    setAberto(true);
+  }
+
+  const rotulo = !restricao
+    ? 'Todos os cultos'
+    : ativos.filter((t: any) => restricao.includes(String(t.id))).map((t: any) => t.name).join(', ') || 'Nenhum culto ativo';
+
+  function salvar() {
+    atualizar.mutate(
+      { id: membro.id, data: { service_type_ids: sel } as any },
+      {
+        onSuccess: () => { toast.success('Cultos atualizados'); setAberto(false); },
+        onError: () => toast.error('Erro ao atualizar os cultos'),
+      },
+    );
+  }
+
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        onClick={abrir}
+        className={`h-7 gap-1.5 px-2 text-xs ${restricao ? 'text-[#8f5a0e] dark:text-[#e0a24e]' : 'text-muted-foreground'}`}
+        title="Em quais cultos esta pessoa pode ser escalada"
+      >
+        <CalendarCheck className="h-3.5 w-3.5 shrink-0" />
+        <span className="max-w-[9rem] truncate">{rotulo}</span>
+      </Button>
+
+      {aberto && (
+        <Dialog open onOpenChange={o => { if (!o) setAberto(false); }}>
+          <DialogContent className="max-w-sm">
+            <DialogHeader>
+              <DialogTitle className="text-base">Cultos de {membro.volunteer_name}</DialogTitle>
+            </DialogHeader>
+            <p className="text-xs text-muted-foreground">
+              Desmarque os cultos em que esta pessoa não pode ser escalada nesta equipe. Vale para todas as
+              funções dela aqui.
+            </p>
+            <div className="space-y-1.5 py-1 max-h-64 overflow-y-auto">
+              {ativos.map((t: any) => {
+                const id = String(t.id);
+                const marcado = sel.includes(id);
+                return (
+                  <label key={id} className="flex items-center gap-2.5 rounded-md p-1.5 cursor-pointer hover:bg-accent">
+                    <input
+                      type="checkbox"
+                      checked={marcado}
+                      onChange={e => setSel(e.target.checked ? [...sel, id] : sel.filter(x => x !== id))}
+                      className="h-4 w-4 accent-[#00B39D]"
+                    />
+                    <span className="text-sm">{t.name}</span>
+                    {t.recurrence_time && (
+                      <span className="text-[11px] text-muted-foreground">{String(t.recurrence_time).slice(0, 5)}</span>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+            {(sel.length === 0 || sel.length === ativos.length) && (
+              <p className="text-[11px] text-muted-foreground border-l-2 border-[#00B39D] pl-2">
+                {sel.length === 0
+                  ? 'Sem nenhum marcado, a pessoa volta a poder ser escalada em qualquer culto — a escala nunca esconde ninguém por engano.'
+                  : 'Com todos marcados, a pessoa serve em qualquer culto, inclusive nos que a igreja criar depois.'}
+              </p>
+            )}
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setAberto(false)}>Cancelar</Button>
+              <Button onClick={salvar} disabled={atualizar.isPending} className="bg-[#00B39D] hover:bg-[#00B39D]/90">
+                {atualizar.isPending ? 'Salvando…' : 'Salvar'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+    </>
+  );
+}
+
 function PositionsList({ teamId, positions }: { teamId: string; positions: VolPosition[] }) {
+  // varredura 2026-09: B08 — POST/DELETE /positions pedem voluntariado>=3.
+  const podeEscrever = useVolPodeEscrever();
   const createPosition = useCreatePosition();
   const deletePosition = useDeletePosition();
   const [showAdd, setShowAdd] = useState(false);
@@ -621,7 +782,8 @@ function PositionsList({ teamId, positions }: { teamId: string; positions: VolPo
   return (
     <div className="space-y-3">
       <div className="flex justify-end">
-        <Button size="sm" onClick={() => setShowAdd(!showAdd)} className="gap-1.5">
+        {/* varredura 2026-09: B08 — POST/DELETE /positions pedem voluntariado>=3. */}
+        <Button size="sm" onClick={() => setShowAdd(!showAdd)} disabled={!podeEscrever} className="gap-1.5">
           <Plus className="h-4 w-4" /> Nova Posição
         </Button>
       </div>

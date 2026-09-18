@@ -67,6 +67,19 @@ export function rotuloArea(area, areas) {
   return (areas || []).find((a) => a.area === area)?.rotulo || area;
 }
 
+// `diretoria` é o slug técnico gravado em plan_avaliacoes/plan_ciclo_avaliadores
+// (sem acento, minúsculo) — os 4 assentos fixos do módulo, não vêm de /aux.
+const ROTULOS_DIRETORIA = {
+  ministerial: 'Ministerial',
+  criativo: 'Criativo',
+  operacoes: 'Operações',
+  financeiro: 'Financeiro',
+};
+export function rotuloDiretoria(diretoria) {
+  if (!diretoria) return '—';
+  return ROTULOS_DIRETORIA[diretoria] || diretoria;
+}
+
 export function Badge({ texto, cor }) {
   return (
     <span style={{

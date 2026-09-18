@@ -20,13 +20,19 @@ import { toast } from 'sonner';
 import {
   Loader2, BarChart3, Inbox, Send, CalendarClock, FileText, Phone, Users,
   Bot, AlertTriangle, RefreshCw, Plus, Trash2, Pencil, Power, Save, X, MessageSquare, Repeat,
-  Settings, Coins, BookUser,
+  Settings, Coins, BookUser, Sparkles,
 } from 'lucide-react';
 import { Switch } from '../components/ui/switch';
 import Conversas from './Conversas';
 import { WhatsappBotConfig } from './admin/Whatsapp';
 import ConversasSetores from './admin/ConversasSetores';
 import ContatosTab from '../components/comunicacao/ContatosTab';
+import BotIaAreas from '../components/comunicacao/BotIaAreas';
+import EquipeAtendimento from '../components/comunicacao/EquipeAtendimento';
+import DashboardComunicacao from '../components/comunicacao/DashboardComunicacao';
+import Agendados, { type Agendamento } from '../components/comunicacao/Agendados';
+import NovoEnvioModal from '../components/comunicacao/NovoEnvioModal';
+import { Conexao, TesteTemplate, MenuRespondeSozinho } from '../components/comunicacao/ConfiguracoesPecas';
 
 const C = { primary: '#00B39D' };
 
@@ -50,133 +56,16 @@ function ErroBox({ msg, onRetry }: { msg: string; onRetry: () => void }) {
 // ═══ DASHBOARD ═══════════════════════════════════════════════════════
 type Resumo = { dias: number; total: number; enviados: number; pendentes: number; erros: number; entregues: number; lidos: number; falhos_meta: number; orfaos?: number; respostas?: number };
 
-function StatCard({ label, value, cor }: { label: string; value: number | string; cor?: string }) {
-  return (
-    <Card className="p-4">
-      <div className="text-[11px] uppercase tracking-wide text-muted-foreground">{label}</div>
-      <div className="mt-1 text-2xl font-bold tabular-nums" style={cor ? { color: cor } : undefined}>{value}</div>
-    </Card>
-  );
-}
+// O Dashboard foi extraído para components/comunicacao/DashboardComunicacao.tsx
+// no redesenho de 09/09/2026 (F2): quem espera resposta, mensagens por área e
+// por dia, tempo de resposta, engajamento, fila e custo — numa janela de dias
+// ou de ano. As tarifas viraram o lápis do card de custo (F4 · 09/09/2026).
 
-type Custo = {
-  meses: number; total: number; envios_considerados: number; nao_classificados: number;
-  por_mes: { mes: string; custo: number }[];
-  por_modulo: { modulo: string; custo: number }[];
-  por_categoria: { categoria: string; envios: number; custo: number }[];
-};
-const brl = (v: number) => `R$ ${(Number(v) || 0).toFixed(2)}`;
-const mesLabel = (m: string) => {
-  const [a, mm] = m.split('-'); const M = ['jan','fev','mar','abr','mai','jun','jul','ago','set','out','nov','dez'];
-  return `${M[Number(mm) - 1] || mm}/${String(a).slice(2)}`;
-};
-
-function Dashboard() {
-  const [dias, setDias] = useState(30);
-  const [resumo, setResumo] = useState<Resumo | null>(null);
-  const [custo, setCusto] = useState<Custo | null>(null);
-  const [erro, setErro] = useState(false);
-
-  const carregar = useCallback(() => {
-    setErro(false); setResumo(null); setCusto(null);
-    comunicacao.envios.resumo(dias).then((r: Resumo) => setResumo(r)).catch(() => setErro(true));
-    // Custo real por mês/módulo/categoria (janela fixa de 6 meses · independe do seletor de dias)
-    comunicacao.custo(6).then((r: Custo) => setCusto(r)).catch(() => setCusto(null));
-  }, [dias]);
-  useEffect(() => { carregar(); }, [carregar]);
-
-  return (
-    <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <p className="text-sm text-muted-foreground">Resumo dos envios de WhatsApp de todos os módulos.</p>
-        <div className="flex items-center gap-2">
-          <Select value={String(dias)} onValueChange={(v) => setDias(Number(v))}>
-            <SelectTrigger className="w-[130px] h-9"><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="7">Últimos 7 dias</SelectItem>
-              <SelectItem value="30">Últimos 30 dias</SelectItem>
-              <SelectItem value="90">Últimos 90 dias</SelectItem>
-            </SelectContent>
-          </Select>
-          <Button variant="outline" size="sm" onClick={carregar}><RefreshCw className="h-4 w-4" /></Button>
-        </div>
-      </div>
-      {erro ? <ErroBox msg="Falha ao consultar o resumo de envios." onRetry={carregar} />
-        : !resumo ? <Spinner />
-        : (
-          <>
-            <div className="grid grid-cols-2 gap-3 md:grid-cols-4 lg:grid-cols-8">
-              <StatCard label="Total" value={resumo.total} />
-              <StatCard label="Enviados" value={resumo.enviados} cor={C.primary} />
-              <StatCard label="Entregues" value={resumo.entregues} cor="#0ea5e9" />
-              <StatCard label="Lidos" value={resumo.lidos} cor="#7c3aed" />
-              <StatCard label="Respostas recebidas" value={resumo.respostas ?? 0} cor="#059669" />
-              <StatCard label="Pendentes" value={resumo.pendentes} cor="#d97706" />
-              <StatCard label="Erros" value={resumo.erros} cor="#dc2626" />
-              <StatCard label="Falhas Meta" value={resumo.falhos_meta} cor="#dc2626" />
-            </div>
-            {/* Custo estimado real (últimos 6 meses · Σ envios × tarifa da categoria do template) */}
-            {custo && (
-              <div className="grid gap-3 lg:grid-cols-3">
-                <Card className="p-4">
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Custo estimado · {custo.meses} meses</div>
-                  <div className="mt-1 text-3xl font-bold tabular-nums" style={{ color: C.primary }}>{brl(custo.total)}</div>
-                  <p className="mt-1 text-[11px] text-muted-foreground">
-                    {custo.envios_considerados} envios · texto (janela 24h) não custa.
-                  </p>
-                  {custo.nao_classificados > 0 && (
-                    <p className="mt-2 text-[11px] text-amber-600">
-                      ⚠️ {custo.nao_classificados} envio(s) de template <b>sem categoria</b> (custo não somado). Classifique na aba Templates pra estimativa fechar.
-                    </p>
-                  )}
-                  <div className="mt-3 flex flex-wrap gap-1.5">
-                    {custo.por_categoria.map((c) => (
-                      <Badge key={c.categoria} variant="secondary">{c.categoria}: {brl(c.custo)} ({c.envios})</Badge>
-                    ))}
-                  </div>
-                </Card>
-                <Card className="p-4">
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Por mês</div>
-                  <div className="mt-2 space-y-1.5">
-                    {custo.por_mes.length === 0 ? <p className="text-sm text-muted-foreground">Sem envios no período.</p>
-                      : custo.por_mes.map((m) => {
-                        const max = Math.max(...custo.por_mes.map((x) => x.custo), 0.01);
-                        return (
-                          <div key={m.mes} className="flex items-center gap-2 text-xs">
-                            <span className="w-12 text-muted-foreground">{mesLabel(m.mes)}</span>
-                            <div className="h-2 flex-1 rounded bg-muted">
-                              <div className="h-2 rounded" style={{ width: `${Math.max(3, (m.custo / max) * 100)}%`, background: C.primary }} />
-                            </div>
-                            <span className="w-16 text-right tabular-nums">{brl(m.custo)}</span>
-                          </div>
-                        );
-                      })}
-                  </div>
-                </Card>
-                <Card className="p-4">
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Por módulo</div>
-                  <div className="mt-2 space-y-1.5">
-                    {custo.por_modulo.length === 0 ? <p className="text-sm text-muted-foreground">—</p>
-                      : custo.por_modulo.slice(0, 8).map((m) => (
-                        <div key={m.modulo} className="flex items-center justify-between text-xs">
-                          <span className="text-muted-foreground">{m.modulo}</span>
-                          <span className="tabular-nums font-medium">{brl(m.custo)}</span>
-                        </div>
-                      ))}
-                  </div>
-                </Card>
-              </div>
-            )}
-            <p className="text-[11px] text-muted-foreground">
-              Estimativa (não é a fatura da Meta): custo = envios de template × tarifa da categoria. Conversa de serviço/janela 24h não custa.
-            </p>
-          </>
-        )}
-    </div>
-  );
-}
+function Dashboard({ podeNvl5 }: { podeNvl5: boolean }) { return <DashboardComunicacao podeEditarTarifas={podeNvl5} />; }
 
 // ═══ ENVIOS (absorveu a aba Erros · decisão do Marcos 13/08) ═════════
+// Desde 09/09/2026 (F3) este é o HISTÓRICO (vista "Enviados") da aba fundida
+// `Envios`, definida logo abaixo da seção PROGRAMADAS.
 // Um histórico só: o status diz se foi ou se deu errado, o filtro recorta,
 // e a falha terminal tem o Reenviar na própria linha.
 type Envio = {
@@ -197,7 +86,7 @@ function SeloStatus({ e }: { e: Envio }) {
   selos.unshift(<Badge key="s" variant={e.status === 'erro' ? 'destructive' : 'secondary'} style={cor}>{e.status}</Badge>);
   return <div className="flex flex-wrap gap-1">{selos}</div>;
 }
-function Envios({ podeReenviar }: { podeReenviar: boolean }) {
+function HistoricoEnvios({ podeReenviar }: { podeReenviar: boolean }) {
   const [filtros, setFiltros] = useState({ status: '', contexto: '', telefone: '', de: '', ate: '' });
   const [aplicados, setAplicados] = useState(filtros);
   const [offset, setOffset] = useState(0);
@@ -319,157 +208,44 @@ function Envios({ podeReenviar }: { podeReenviar: boolean }) {
   );
 }
 
-// ═══ PROGRAMADAS (agendamentos) ══════════════════════════════════════
-type Agendamento = {
-  id: string; nome: string; template_nome?: string | null; texto?: string | null;
-  params?: string[]; audiencia?: { tipo: string; telefones?: string[] };
-  quando?: string | null; recorrencia?: string | null; dia_semana?: number | null;
-  dia_mes?: number | null; hora?: string | null; ativo?: boolean; ultimo_disparo?: string | null;
-};
+// ═══ ENVIOS · a aba fundida (Enviados · Agendados · Automáticos) (F3 · 09/09/2026) ═══
+// Decisão do Marcos (08/09): Envios e Disparos viraram UMA aba com três vistas
+// e um botão "Novo envio" (agora · agendar · repetir). As programadas moram em
+// components/comunicacao/Agendados.tsx e o formulário em NovoEnvioModal.tsx —
+// a prévia e o custo vêm do servidor (POST /comunicacao/envios/previa).
+// DIAS_SEMANA fica aqui porque o componente Atendentes (dormente) ainda o usa.
 const DIAS_SEMANA = ['Domingo', 'Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado'];
-const AGEND_VAZIO = { nome: '', template_nome: '', texto: '', params: '', recorrencia: 'unica', dia_semana: '1', dia_mes: '1', hora: '09:00', quando: '', telefones: '' };
-
-function Programadas({ podeEscrever, podeExcluir }: { podeEscrever: boolean; podeExcluir: boolean }) {
-  const [lista, setLista] = useState<Agendamento[] | null>(null);
-  const [erro, setErro] = useState(false);
-  const [form, setForm] = useState({ ...AGEND_VAZIO });
-  const [editId, setEditId] = useState<string | null>(null);
-  const [salvando, setSalvando] = useState(false);
-
-  const carregar = useCallback(() => {
-    setErro(false);
-    comunicacao.agendamentos.list().then((r: Agendamento[]) => setLista(r || [])).catch(() => { setLista([]); setErro(true); });
-  }, []);
-  useEffect(() => { carregar(); }, [carregar]);
-
-  function resetar() { setForm({ ...AGEND_VAZIO }); setEditId(null); }
-  function editar(a: Agendamento) {
-    setEditId(a.id);
-    setForm({
-      nome: a.nome || '', template_nome: a.template_nome || '', texto: a.texto || '',
-      params: (a.params || []).join(', '),
-      recorrencia: a.quando ? 'unica' : (a.recorrencia || 'unica'),
-      dia_semana: String(a.dia_semana ?? 1), dia_mes: String(a.dia_mes ?? 1),
-      hora: a.hora ? String(a.hora).slice(0, 5) : '09:00',
-      quando: a.quando ? String(a.quando).slice(0, 16) : '',
-      telefones: (a.audiencia?.telefones || []).join('\n'),
-    });
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  }
-
-  async function salvar() {
-    const telefones = form.telefones.split('\n').map((t) => t.replace(/\D/g, '')).filter(Boolean);
-    if (!form.nome.trim()) { toast.error('Informe o nome.'); return; }
-    if (!form.template_nome.trim() && !form.texto.trim()) { toast.error('Informe o template ou o texto.'); return; }
-    if (telefones.length === 0) { toast.error('Informe ao menos um telefone na audiência.'); return; }
-    const body: Record<string, unknown> = {
-      nome: form.nome.trim(),
-      template_nome: form.template_nome.trim() || null,
-      texto: form.texto.trim() || null,
-      params: form.params.split(',').map((p) => p.trim()).filter(Boolean),
-      audiencia: { tipo: 'telefones', telefones },
-    };
-    if (form.recorrencia === 'unica') {
-      if (!form.quando) { toast.error('Informe a data/hora do disparo único.'); return; }
-      body.quando = new Date(form.quando).toISOString();
-      body.recorrencia = null;
-    } else {
-      body.recorrencia = form.recorrencia;
-      body.hora = form.hora;
-      body.quando = null;
-      if (form.recorrencia === 'semanal') body.dia_semana = Number(form.dia_semana);
-      if (form.recorrencia === 'mensal') body.dia_mes = Number(form.dia_mes);
-    }
-    setSalvando(true);
-    try {
-      if (editId) { await comunicacao.agendamentos.atualizar(editId, body); toast.success('Programada atualizada'); }
-      else { await comunicacao.agendamentos.criar(body); toast.success('Programada criada'); }
-      resetar(); carregar();
-    } catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao salvar'); }
-    finally { setSalvando(false); }
-  }
-  async function toggleAtivo(a: Agendamento) {
-    try { await comunicacao.agendamentos.atualizar(a.id, { ativo: !a.ativo }); carregar(); }
-    catch (e: unknown) { toast.error((e as Error)?.message || 'Erro'); }
-  }
-  async function remover(id: string) {
-    if (!window.confirm('Excluir esta programada?')) return;
-    try { await comunicacao.agendamentos.remover(id); if (editId === id) resetar(); carregar(); }
-    catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao excluir'); }
-  }
-  function descrRecorrencia(a: Agendamento) {
-    if (a.quando) return `Única · ${fmtData(a.quando)}`;
-    if (a.recorrencia === 'diaria') return `Diária · ${a.hora || '09:00'}`;
-    if (a.recorrencia === 'semanal') return `Semanal · ${DIAS_SEMANA[a.dia_semana ?? 0]} ${a.hora || ''}`;
-    if (a.recorrencia === 'mensal') return `Mensal · dia ${a.dia_mes} ${a.hora || ''}`;
-    return '—';
-  }
-
+type VistaEnvios = 'enviados' | 'agendados' | 'automaticos';
+const DESCRICAO_VISTA: Record<VistaEnvios, string> = {
+  enviados: 'Tudo que saiu (ou tentou sair) pela fila, de todos os módulos — o status diz se foi, e a falha tem o Reenviar na linha.',
+  agendados: 'Envios com data ou recorrência que você cria e edita, mais o histórico do que já saiu por aqui.',
+  automaticos: 'O que o sistema manda sozinho por gatilho — leitura; cada um é operado no módulo dono.',
+};
+function Envios({ podeReenviar, podeEscrever, podeExcluir, vistaInicial }: {
+  podeReenviar: boolean; podeEscrever: boolean; podeExcluir: boolean; vistaInicial?: VistaEnvios;
+}) {
+  const [vista, setVista] = useState<VistaEnvios>(vistaInicial || 'enviados');
+  const [modal, setModal] = useState<{ aberto: boolean; editar: Agendamento | null }>({ aberto: false, editar: null });
+  const [refresh, setRefresh] = useState(0);
+  useEffect(() => { if (vistaInicial) setVista(vistaInicial); }, [vistaInicial]);
   return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_380px]">
-      <div className="space-y-3">
-        {erro ? <ErroBox msg="Falha ao listar programadas." onRetry={carregar} />
-          : lista === null ? <Spinner />
-          : lista.length === 0 ? <Card className="p-8 text-center text-sm text-muted-foreground">Nenhuma programada. {podeEscrever ? 'Crie ao lado. →' : ''}</Card>
-          : lista.map((a) => (
-            <Card key={a.id} className="p-4">
-              <div className="flex items-start justify-between gap-2">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span className="font-semibold">{a.nome}</span>
-                    <Badge variant={a.ativo ? 'default' : 'secondary'}>{a.ativo ? 'ativa' : 'pausada'}</Badge>
-                  </div>
-                  <div className="mt-0.5 text-xs text-muted-foreground">{descrRecorrencia(a)} · {a.audiencia?.telefones?.length || 0} destinatários</div>
-                  <div className="mt-1 text-xs">{a.template_nome ? <Badge variant="outline">template: {a.template_nome}</Badge> : <span className="line-clamp-2 text-muted-foreground">{a.texto}</span>}</div>
-                </div>
-                <div className="flex shrink-0 gap-1">
-                  <button title={a.ativo ? 'Pausar' : 'Ativar'} disabled={!podeEscrever} onClick={() => toggleAtivo(a)} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-40"><Power className="h-4 w-4" /></button>
-                  <button title="Editar" disabled={!podeEscrever} onClick={() => editar(a)} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-primary disabled:opacity-40"><Pencil className="h-4 w-4" /></button>
-                  <button title="Excluir" disabled={!podeExcluir} onClick={() => remover(a.id)} className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-destructive disabled:opacity-40"><Trash2 className="h-4 w-4" /></button>
-                </div>
-              </div>
-            </Card>
-          ))}
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" variant={vista === 'enviados' ? 'default' : 'outline'} className="gap-1.5" onClick={() => setVista('enviados')}><Send className="h-3.5 w-3.5" />Enviados</Button>
+          <Button size="sm" variant={vista === 'agendados' ? 'default' : 'outline'} className="gap-1.5" onClick={() => setVista('agendados')}><CalendarClock className="h-3.5 w-3.5" />Agendados</Button>
+          <Button size="sm" variant={vista === 'automaticos' ? 'default' : 'outline'} className="gap-1.5" onClick={() => setVista('automaticos')}><Repeat className="h-3.5 w-3.5" />Automáticos</Button>
+        </div>
+        <Button size="sm" className="gap-1.5" disabled={!podeEscrever} title={podeEscrever ? 'Enviar agora, agendar ou repetir' : 'Exige nível 3 no módulo'} onClick={() => setModal({ aberto: true, editar: null })}>
+          <Plus className="h-4 w-4" />Novo envio
+        </Button>
       </div>
-      <Card className="space-y-3 self-start p-4">
-        <p className="flex items-center gap-1.5 text-sm font-semibold"><CalendarClock className="h-4 w-4 text-primary" />{editId ? 'Editar programada' : 'Nova programada'}</p>
-        <Input placeholder="Nome" value={form.nome} onChange={(e) => setForm((f) => ({ ...f, nome: e.target.value }))} disabled={!podeEscrever} />
-        <Input placeholder="Template (nome exato · opcional)" value={form.template_nome} onChange={(e) => setForm((f) => ({ ...f, template_nome: e.target.value }))} disabled={!podeEscrever} />
-        <textarea placeholder="Texto (se não usar template)" rows={3} value={form.texto} onChange={(e) => setForm((f) => ({ ...f, texto: e.target.value }))} disabled={!podeEscrever}
-          className="w-full resize-none rounded-lg border border-border bg-background p-2 text-sm outline-none focus:border-primary disabled:opacity-50" />
-        <Input placeholder="Params do template (separados por vírgula)" value={form.params} onChange={(e) => setForm((f) => ({ ...f, params: e.target.value }))} disabled={!podeEscrever} />
-        <div className="grid grid-cols-2 gap-2">
-          <Select value={form.recorrencia} onValueChange={(v) => setForm((f) => ({ ...f, recorrencia: v }))} >
-            <SelectTrigger className="h-9" disabled={!podeEscrever}><SelectValue /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="unica">Única</SelectItem>
-              <SelectItem value="diaria">Diária</SelectItem>
-              <SelectItem value="semanal">Semanal</SelectItem>
-              <SelectItem value="mensal">Mensal</SelectItem>
-            </SelectContent>
-          </Select>
-          {form.recorrencia === 'unica' ? (
-            <Input type="datetime-local" value={form.quando} onChange={(e) => setForm((f) => ({ ...f, quando: e.target.value }))} disabled={!podeEscrever} className="h-9" />
-          ) : (
-            <Input type="time" value={form.hora} onChange={(e) => setForm((f) => ({ ...f, hora: e.target.value }))} disabled={!podeEscrever} className="h-9" />
-          )}
-        </div>
-        {form.recorrencia === 'semanal' && (
-          <Select value={form.dia_semana} onValueChange={(v) => setForm((f) => ({ ...f, dia_semana: v }))}>
-            <SelectTrigger className="h-9" disabled={!podeEscrever}><SelectValue /></SelectTrigger>
-            <SelectContent>{DIAS_SEMANA.map((d, i) => <SelectItem key={i} value={String(i)}>{d}</SelectItem>)}</SelectContent>
-          </Select>
-        )}
-        {form.recorrencia === 'mensal' && (
-          <Input type="number" min={1} max={31} placeholder="Dia do mês" value={form.dia_mes} onChange={(e) => setForm((f) => ({ ...f, dia_mes: e.target.value }))} disabled={!podeEscrever} className="h-9" />
-        )}
-        <textarea placeholder="Audiência — um telefone por linha" rows={5} value={form.telefones} onChange={(e) => setForm((f) => ({ ...f, telefones: e.target.value }))} disabled={!podeEscrever}
-          className="w-full resize-none rounded-lg border border-border bg-background p-2 font-mono text-xs outline-none focus:border-primary disabled:opacity-50" />
-        <div className="flex gap-2">
-          {editId && <Button variant="outline" className="flex-1" onClick={resetar}>Cancelar</Button>}
-          <Button className="flex-1 gap-1.5" disabled={!podeEscrever || salvando} onClick={salvar}>{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}{editId ? 'Salvar' : 'Criar'}</Button>
-        </div>
-      </Card>
+      <p className="text-xs text-muted-foreground">{DESCRICAO_VISTA[vista]}</p>
+      {vista === 'enviados' && <HistoricoEnvios key={refresh} podeReenviar={podeReenviar} />}
+      {vista === 'agendados' && <Agendados podeEscrever={podeEscrever} podeExcluir={podeExcluir} refreshKey={refresh} onEditar={(a) => setModal({ aberto: true, editar: a })} />}
+      {vista === 'automaticos' && <Automaticas podeEscrever={podeEscrever} />}
+      <NovoEnvioModal aberto={modal.aberto} editar={modal.editar} onFechar={() => setModal({ aberto: false, editar: null })}
+        onSalvo={(destino) => { setModal({ aberto: false, editar: null }); setRefresh((r) => r + 1); setVista(destino); }} />
     </div>
   );
 }
@@ -605,75 +381,10 @@ function Templates({ podeSync, podeEditar }: { podeSync: boolean; podeEditar: bo
   );
 }
 
-// ═══ NÚMEROS ═════════════════════════════════════════════════════════
-type Numero = { id: string; phone_number_id: string; rotulo?: string | null; waba_id?: string | null; is_default?: boolean; ativo?: boolean };
-function Numeros({ podeEscrever }: { podeEscrever: boolean }) {
-  const [dados, setDados] = useState<{ numeros: Numero[]; env_phone_number_id: string | null } | null>(null);
-  const [erro, setErro] = useState(false);
-  const [form, setForm] = useState({ phone_number_id: '', rotulo: '', waba_id: '', is_default: true });
-  const [salvando, setSalvando] = useState(false);
-
-  const carregar = useCallback(() => {
-    setErro(false);
-    comunicacao.numeros.list().then((r) => setDados(r)).catch(() => setErro(true));
-  }, []);
-  useEffect(() => { carregar(); }, [carregar]);
-
-  async function salvar() {
-    if (!form.phone_number_id.trim()) { toast.error('Informe o phone_number_id.'); return; }
-    setSalvando(true);
-    try {
-      await comunicacao.numeros.criar({ phone_number_id: form.phone_number_id.trim(), rotulo: form.rotulo.trim() || null, waba_id: form.waba_id.trim() || null, is_default: form.is_default });
-      toast.success('Número cadastrado');
-      setForm({ phone_number_id: '', rotulo: '', waba_id: '', is_default: true }); carregar();
-    } catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao cadastrar'); }
-    finally { setSalvando(false); }
-  }
-
-  return (
-    <div className="grid gap-4 lg:grid-cols-[1fr_360px]">
-      <div className="space-y-3">
-        {erro ? <ErroBox msg="Falha ao listar números." onRetry={carregar} />
-          : !dados ? <Spinner />
-          : (
-            <>
-              {(!dados.numeros || dados.numeros.length === 0) && dados.env_phone_number_id && (
-                <Card className="p-4">
-                  <div className="flex items-center gap-2 text-sm font-medium"><Phone className="h-4 w-4 text-primary" />Número em uso (env)</div>
-                  <div className="mt-1 text-xs text-muted-foreground">Ainda não há número cadastrado. O envio usa o da variável de ambiente:</div>
-                  <div className="mt-1 font-mono text-sm">{dados.env_phone_number_id}</div>
-                </Card>
-              )}
-              {(dados.numeros || []).map((n) => (
-                <Card key={n.id} className="flex items-center justify-between p-4">
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="font-medium">{n.rotulo || 'Sem rótulo'}</span>
-                      {n.is_default && <Badge variant="default">padrão</Badge>}
-                      {n.ativo === false && <Badge variant="secondary">inativo</Badge>}
-                    </div>
-                    <div className="mt-0.5 font-mono text-xs text-muted-foreground">phone_number_id: {n.phone_number_id}</div>
-                    {n.waba_id && <div className="font-mono text-xs text-muted-foreground">waba_id: {n.waba_id}</div>}
-                  </div>
-                </Card>
-              ))}
-              {dados.numeros && dados.numeros.length === 0 && !dados.env_phone_number_id && (
-                <Card className="p-8 text-center text-sm text-muted-foreground">Nenhum número.</Card>
-              )}
-            </>
-          )}
-      </div>
-      <Card className="space-y-3 self-start p-4">
-        <p className="flex items-center gap-1.5 text-sm font-semibold"><Phone className="h-4 w-4 text-primary" />Cadastrar número</p>
-        <Input placeholder="phone_number_id" value={form.phone_number_id} onChange={(e) => setForm((f) => ({ ...f, phone_number_id: e.target.value }))} disabled={!podeEscrever} />
-        <Input placeholder="Rótulo (ex.: Número principal)" value={form.rotulo} onChange={(e) => setForm((f) => ({ ...f, rotulo: e.target.value }))} disabled={!podeEscrever} />
-        <Input placeholder="waba_id (opcional)" value={form.waba_id} onChange={(e) => setForm((f) => ({ ...f, waba_id: e.target.value }))} disabled={!podeEscrever} />
-        <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={form.is_default} onChange={(e) => setForm((f) => ({ ...f, is_default: e.target.checked }))} disabled={!podeEscrever} />Número padrão</label>
-        <Button className="w-full gap-1.5" disabled={!podeEscrever || salvando} onClick={salvar}>{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}Cadastrar</Button>
-      </Card>
-    </div>
-  );
-}
+// ═══ NÚMEROS → virou Configurações → Conexão (F4 · 09/09/2026) ═══
+// O card só-leitura mora em components/comunicacao/ConfiguracoesPecas.tsx
+// (`Conexao`). O envio usa o número da env; `wa_numeros` e as rotas /numeros
+// ficam DORMENTES (nada as lê) — dropar é decisão do Marcos.
 
 // ═══ ATENDENTES ══════════════════════════════════════════════════════
 type Atendente = { id: string; profile_id: string; areas?: string[]; horarios?: { dia: number; inicio: string; fim: string }[]; ativo?: boolean; profile?: { id: string; name?: string; email?: string } };
@@ -803,15 +514,27 @@ function Atendentes({ podeEscrever }: { podeEscrever: boolean }) {
 // líderes de integração não compraram a ideia) e Avisos idem (substituído
 // pelas Programadas com audiência — o broadcast antigo nem persistia o
 // resultado). A tela antiga segue no repo (admin/Whatsapp.jsx · dormante).
-function BotAdmin() {
+// 08/09 (pedido do Marcos): a sub-aba "IA por área" é a primeira — é o bot que
+// dá fôlego enquanto não há gente atendendo, com interruptor por área. O menu
+// de setores e a configuração antiga continuam ao lado.
+// 08/09 (2ª leva): a sub-aba "Equipe" (titular + suplente por área) veio da
+// antiga Configurações → Atendentes — quem atende fica junto do fluxo que
+// atribui ("atendentes longe do fluxo do bot fica ruim de gerenciar").
+function BotAdmin({ podeEscrever }: { podeEscrever: boolean }) {
   return (
-    <Tabs defaultValue="menu" className="space-y-4">
+    <Tabs defaultValue="ia" className="space-y-4">
       <TabsList>
+        <TabsTrigger value="ia"><Sparkles className="mr-1.5 h-3.5 w-3.5" />IA por área</TabsTrigger>
+        <TabsTrigger value="equipe"><Users className="mr-1.5 h-3.5 w-3.5" />Equipe</TabsTrigger>
         <TabsTrigger value="menu"><Bot className="mr-1.5 h-3.5 w-3.5" />Menu do bot</TabsTrigger>
-        <TabsTrigger value="config"><MessageSquare className="mr-1.5 h-3.5 w-3.5" />Configuração</TabsTrigger>
+        <TabsTrigger value="config"><MessageSquare className="mr-1.5 h-3.5 w-3.5" />Institucional</TabsTrigger>
       </TabsList>
-      <TabsContent value="menu"><ConversasSetores /></TabsContent>
-      <TabsContent value="config"><WhatsappBotConfig /></TabsContent>
+      <TabsContent value="ia"><BotIaAreas podeEscrever={podeEscrever} /></TabsContent>
+      <TabsContent value="equipe"><EquipeAtendimento podeEscrever={podeEscrever} /></TabsContent>
+      <TabsContent value="menu"><MenuRespondeSozinho podeEscrever={podeEscrever} /><ConversasSetores /></TabsContent>
+      {/* F4 (09/09/2026): só o conteúdo institucional — os interruptores foram pro Menu (responder sozinho)
+          e pra Configurações → Conexão (webhook); o teste de template pra Configurações → Templates. */}
+      <TabsContent value="config"><WhatsappBotConfig soInstitucional /></TabsContent>
     </Tabs>
   );
 }
@@ -1008,11 +731,12 @@ function Automaticas({ podeEscrever = false }: { podeEscrever?: boolean }) {
 // Disparos = Programadas ∪ Automáticas (um filtro) · Erros entrou em Envios
 // (coluna de status + reenviar na linha) · Templates/Números/Atendentes/
 // Tarifas viraram sub-abas de Configurações.
-const TABS = ['dashboard', 'conversas', 'envios', 'disparos', 'contatos', 'bot', 'config'];
+const TABS = ['dashboard', 'conversas', 'envios', 'contatos', 'bot', 'config'];
 // Deep-links antigos (?tab=programadas etc.) caem na aba nova certa.
 const TAB_LEGADO: Record<string, string> = {
-  programadas: 'disparos', automaticas: 'disparos', erros: 'envios',
-  templates: 'config', numeros: 'config', atendentes: 'config',
+  programadas: 'envios', automaticas: 'envios', disparos: 'envios', erros: 'envios', // Disparos fundida em Envios (09/09/2026)
+  templates: 'config', numeros: 'config',
+  atendentes: 'bot', // Atendentes virou Bot → Equipe (08/09/2026)
 };
 
 export default function Comunicacao() {
@@ -1020,6 +744,11 @@ export default function Comunicacao() {
   const [searchParams, setSearchParams] = useSearchParams();
   const tabParam = searchParams.get('tab') || 'dashboard';
   const tabUrl = TAB_LEGADO[tabParam] || tabParam;
+  // Vista da aba Envios (F3): ?vista= ou os deep-links das abas que ela absorveu.
+  const vistaParam = searchParams.get('vista');
+  const vistaEnvios: VistaEnvios | undefined = tabParam === 'automaticas' ? 'automaticos'
+    : (tabParam === 'programadas' || tabParam === 'disparos') ? 'agendados'
+    : (vistaParam === 'agendados' || vistaParam === 'automaticos' || vistaParam === 'enviados') ? vistaParam : undefined;
 
   const nivel = getAccessLevel(['comunicacao']);
   const podeNvl3 = nivel >= 3;
@@ -1050,19 +779,17 @@ export default function Comunicacao() {
           <TabsTrigger value="dashboard"><BarChart3 className="mr-1.5 h-3.5 w-3.5" />Dashboard</TabsTrigger>
           <TabsTrigger value="conversas"><Inbox className="mr-1.5 h-3.5 w-3.5" />Conversas</TabsTrigger>
           <TabsTrigger value="envios"><Send className="mr-1.5 h-3.5 w-3.5" />Envios</TabsTrigger>
-          <TabsTrigger value="disparos"><CalendarClock className="mr-1.5 h-3.5 w-3.5" />Disparos</TabsTrigger>
           <TabsTrigger value="contatos"><BookUser className="mr-1.5 h-3.5 w-3.5" />Contatos</TabsTrigger>
           {podeBot && <TabsTrigger value="bot"><Bot className="mr-1.5 h-3.5 w-3.5" />Bot</TabsTrigger>}
           <TabsTrigger value="config"><Settings className="mr-1.5 h-3.5 w-3.5" />Configurações</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="dashboard"><Dashboard /></TabsContent>
-        {/* Chat: renderiza o default de Conversas.tsx (já tem sub-abas Conversas/Painel/Mensagens prontas). */}
+        <TabsContent value="dashboard"><Dashboard podeNvl5={podeNvl5} /></TabsContent>
+        {/* Chat: renderiza o default de Conversas.tsx (sub-abas Conversas/Mensagens prontas · o Painel saiu em 08/09/2026). */}
         <TabsContent value="conversas"><Conversas /></TabsContent>
-        <TabsContent value="envios"><Envios podeReenviar={podeNvl3} /></TabsContent>
-        <TabsContent value="disparos"><Disparos podeEscrever={podeNvl3} podeExcluir={podeNvl4} /></TabsContent>
+        <TabsContent value="envios"><Envios podeReenviar={podeNvl3} podeEscrever={podeNvl3} podeExcluir={podeNvl4} vistaInicial={vistaEnvios} /></TabsContent>
         <TabsContent value="contatos"><ContatosTab podeGerirLideres={podeBot} /></TabsContent>
-        {podeBot && <TabsContent value="bot"><BotAdmin /></TabsContent>}
+        {podeBot && <TabsContent value="bot"><BotAdmin podeEscrever={podeNvl3} /></TabsContent>}
         <TabsContent value="config">
           <Configuracoes podeNvl3={podeNvl3} podeNvl5={podeNvl5} />
         </TabsContent>
@@ -1071,118 +798,31 @@ export default function Comunicacao() {
   );
 }
 
-// ═══ DISPAROS (Programadas ∪ Automáticas · decisão do Marcos 13/08) ═══
-// Uma aba só, com um filtro: "Agendadas" (as programadas de sempre, editáveis)
-// × "Automáticas" (o inventário read-only do que o sistema manda por gatilho).
-function Disparos({ podeEscrever, podeExcluir }: { podeEscrever: boolean; podeExcluir: boolean }) {
-  const [tipo, setTipo] = useState<'agendadas' | 'automaticas'>('agendadas');
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button size="sm" variant={tipo === 'agendadas' ? 'default' : 'outline'} className="gap-1.5" onClick={() => setTipo('agendadas')}>
-          <CalendarClock className="h-3.5 w-3.5" />Agendadas
-        </Button>
-        <Button size="sm" variant={tipo === 'automaticas' ? 'default' : 'outline'} className="gap-1.5" onClick={() => setTipo('automaticas')}>
-          <Repeat className="h-3.5 w-3.5" />Automáticas
-        </Button>
-        <span className="text-xs text-muted-foreground">
-          {tipo === 'agendadas'
-            ? 'Disparos com data/recorrência que VOCÊ cria e edita.'
-            : 'O que o sistema manda sozinho por gatilho — leitura; cada um é operado no módulo dono.'}
-        </span>
-      </div>
-      {tipo === 'agendadas'
-        ? <Programadas podeEscrever={podeEscrever} podeExcluir={podeExcluir} />
-        : <Automaticas podeEscrever={podeEscrever} />}
-    </div>
-  );
-}
+// ═══ DISPAROS → fundida em ENVIOS (F3 · 09/09/2026) ═══
+// "Agendadas" virou a vista Agendados e "Automáticas" a vista Automáticos da
+// aba Envios. Os deep-links ?tab=disparos|programadas|automaticas caem lá.
 
-// ═══ CONFIGURAÇÕES (Templates · Números · Atendentes · Tarifas) ═══
+// ═══ CONFIGURAÇÕES (Templates · Números · Tarifas) ═══
+// Atendentes SAIU daqui em 08/09/2026 (Marcos: "atendentes longe do fluxo do
+// bot fica ruim de gerenciar") e virou Bot → Equipe (titular + suplente por
+// área). O componente `Atendentes` acima (tabela wa_atendentes) fica DORMENTE —
+// nada o lê; dropar a tabela é decisão do Marcos.
 function Configuracoes({ podeNvl3, podeNvl5 }: { podeNvl3: boolean; podeNvl5: boolean }) {
   return (
     <Tabs defaultValue="templates" className="space-y-4">
       <TabsList>
         <TabsTrigger value="templates"><FileText className="mr-1.5 h-3.5 w-3.5" />Templates</TabsTrigger>
-        <TabsTrigger value="numeros"><Phone className="mr-1.5 h-3.5 w-3.5" />Números</TabsTrigger>
-        <TabsTrigger value="atendentes"><Users className="mr-1.5 h-3.5 w-3.5" />Atendentes</TabsTrigger>
-        <TabsTrigger value="tarifas"><Coins className="mr-1.5 h-3.5 w-3.5" />Tarifas</TabsTrigger>
+        <TabsTrigger value="conexao"><Phone className="mr-1.5 h-3.5 w-3.5" />Conexão</TabsTrigger>
       </TabsList>
-      <TabsContent value="templates"><Templates podeSync={podeNvl3} podeEditar={podeNvl3} /></TabsContent>
-      <TabsContent value="numeros"><Numeros podeEscrever={podeNvl5} /></TabsContent>
-      <TabsContent value="atendentes"><Atendentes podeEscrever={podeNvl3} /></TabsContent>
-      <TabsContent value="tarifas"><Tarifas podeEditar={podeNvl5} /></TabsContent>
+      <TabsContent value="templates">
+        <Templates podeSync={podeNvl3} podeEditar={podeNvl3} />
+        <TesteTemplate podeTestar={podeNvl3} />
+      </TabsContent>
+      <TabsContent value="conexao"><Conexao podeNvl5={podeNvl5} /></TabsContent>
     </Tabs>
   );
 }
 
-// ═══ TARIFAS (o backend existia desde julho SEM tela — o custo do Dashboard
-// lê daqui; era editável só por SQL) ═══
-type Tarifa = { categoria: string; tarifa: number; atualizado_em?: string };
-function Tarifas({ podeEditar }: { podeEditar: boolean }) {
-  const [lista, setLista] = useState<Tarifa[] | null>(null);
-  const [erro, setErro] = useState(false);
-  const [editCat, setEditCat] = useState<string | null>(null);
-  const [valor, setValor] = useState('');
-
-  const carregar = useCallback(() => {
-    setErro(false);
-    comunicacao.tarifas.list().then((r: Tarifa[]) => setLista(r || [])).catch(() => { setLista([]); setErro(true); });
-  }, []);
-  useEffect(() => { carregar(); }, [carregar]);
-
-  async function salvar(categoria: string) {
-    const t = Number(String(valor).replace(',', '.'));
-    if (!Number.isFinite(t) || t < 0) { toast.error('Valor inválido.'); return; }
-    try {
-      await comunicacao.tarifas.atualizar(categoria, t);
-      toast.success('Tarifa atualizada — o custo do Dashboard usa este valor.');
-      setEditCat(null); carregar();
-    } catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao salvar'); }
-  }
-
-  if (erro) return <ErroBox msg="Falha ao listar as tarifas." onRetry={carregar} />;
-  if (!lista) return <Spinner />;
-  return (
-    <div className="max-w-xl space-y-3">
-      <p className="text-sm text-muted-foreground">
-        Tarifa por conversa iniciada, por categoria de template (é a base do custo <b>estimado</b> do
-        Dashboard — não é a fatura da Meta). Conferir contra a tarifa vigente de vez em quando.
-      </p>
-      <Card className="overflow-hidden p-0">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border text-[11px] uppercase tracking-wide text-muted-foreground">
-              <th className="px-3 py-2.5 text-left font-medium">Categoria</th>
-              <th className="px-3 py-2.5 text-left font-medium">R$ por conversa</th>
-              <th className="px-3 py-2.5 text-right font-medium"></th>
-            </tr>
-          </thead>
-          <tbody>
-            {lista.map((t) => (
-              <tr key={t.categoria} className="border-b border-border/60">
-                <td className="px-3 py-2 font-medium">{t.categoria}</td>
-                <td className="px-3 py-2 tabular-nums">
-                  {editCat === t.categoria
-                    ? <Input className="h-8 w-28" value={valor} onChange={(e) => setValor(e.target.value)} autoFocus />
-                    : brl(t.tarifa)}
-                </td>
-                <td className="px-3 py-2 text-right">
-                  {editCat === t.categoria ? (
-                    <div className="flex justify-end gap-1">
-                      <button onClick={() => salvar(t.categoria)} className="rounded p-1.5 text-muted-foreground hover:text-primary" title="Salvar"><Save className="h-4 w-4" /></button>
-                      <button onClick={() => setEditCat(null)} className="rounded p-1.5 text-muted-foreground hover:text-destructive" title="Cancelar"><X className="h-4 w-4" /></button>
-                    </div>
-                  ) : (
-                    <button disabled={!podeEditar} onClick={() => { setEditCat(t.categoria); setValor(String(t.tarifa)); }}
-                      className="rounded p-1.5 text-muted-foreground hover:text-primary disabled:opacity-40" title="Editar"><Pencil className="h-4 w-4" /></button>
-                  )}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </Card>
-    </div>
-  );
-}
+// ═══ TARIFAS → viraram o lápis do card "Custo estimado" do Dashboard (F4 · 09/09/2026) ═══
+// A tarifa só existe pra aquele número; editá-la longe dele era a sub-aba que
+// ninguém achava. O editor mora em components/comunicacao/DashboardComunicacao.tsx.

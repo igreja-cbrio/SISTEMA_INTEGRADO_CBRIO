@@ -9,17 +9,25 @@ const { registrarPedidoCuidado } = require('../services/cuidadosPedidos');
 const { podeVerFinanceiroDePessoa } = require('../utils/dadosSensiveisPessoa');
 const { resolverJanelaPeriodo } = require('../utils/janelaPeriodo');
 const jt = require('../utils/jornadaTempo');
+const reg = require('../utils/origemRegistro');
 const { carregarSinaisConvertidos } = require('../services/marcosConvertido');
 
 router.use(authenticate);
 
 // Contato FEITO = o contato foi realizado, independente da resposta da pessoa
 // (regra do Marcos · 2026-06-17). Vale pelo status do dropdown OU pelo
-// primeiro_contato_em legado. "sem_retorno"/"numero_errado"/vazio NÃO contam.
+// primeiro_contato_em legado. "sem_retorno"/vazio NÃO contam.
 // "Contato feito" = a mensagem foi enviada (independe da resposta). numero_errado
 // entra aqui: a equipe mandou a mensagem, o número é que estava errado (Marcos 2026-07-01).
-const CONTATO_FEITO_STATUS = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
-const contatoFoiFeito = (c) => !!c.primeiro_contato_em || CONTATO_FEITO_STATUS.has(c.primeiro_contato_status);
+// "contactada" (Marcelo · 2026-09-01) = mensagem enviada, aguardando resposta — é o
+// estado real do dia seguinte ao culto; conta como contato feito.
+// ⚠️ ESPELHOS: painel.js · nextConvite.js · agentePrimeiroContato.js · Cuidados.tsx.
+// ⚠️⚠️ A régua saiu daqui pra `utils/primeiroContatoRegua.js` em 16/09: as 4
+// cópias do backend DIVERGIAM sobre `numero_errado` (3 contavam como contato
+// feito, 1 não), porque um Set só respondia duas perguntas diferentes — ver o
+// cabeçalho de lá.
+const { contatoFoiFeito, ehInalcancavel, pctAlcancavel } = require('../utils/primeiroContatoRegua');
+
 
 // Mensagem automática de WhatsApp · pedido de aconselhamento pastoral
 // (config/edição em /whatsapp-auto/* · gerencia a chave 'cuidados_aconselhamento')
@@ -51,7 +59,8 @@ async function findMembroByCpf(cpf) {
 // ─────────────────────────────────────────────────────────────
 // GET /api/cuidados/dashboard — KPIs do mês + comparativo
 // ─────────────────────────────────────────────────────────────
-router.get('/dashboard', async (req, res) => {
+// varredura 2026-09: A01 — só `authenticate`: KPI do módulo, leitura = 1 como as irmãs /kpis/taticos e /dashboard-series (o agregado intocável do /painel é o de jornada.js, não este).
+router.get('/dashboard', authorizeModule('cuidados', 1), async (req, res) => {
   try {
     const { data: atual, error } = await supabase
       .from('vw_cuidados_mensal')
@@ -268,26 +277,34 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
     }));
 
     // ── Próximos passos · distribuição por status do 1º contato + relatório por responsável (janela toda) ──
-    const PP_STATUS_LABEL = { atendido_respondido: 'Atendido e respondido', nao_respondeu: 'Não respondeu', nao_atendido: 'Não atendido', numero_errado: 'Número errado', pendente: 'Pendente' };
-    const ppCount = { atendido_respondido: 0, nao_respondeu: 0, nao_atendido: 0, numero_errado: 0, pendente: 0 };
+    // ⚠️ Espelho de `src/lib/primeiroContato.ts` — mudou lá, muda aqui.
+    const PP_STATUS_LABEL = { atendido_respondido: 'Atendido e respondido', contactada: 'Contactada (aguardando resposta)', nao_respondeu: 'Não respondeu', nao_atendido: 'Não atendido', numero_errado: 'Número errado', contato_impossivel: 'Contato impossível', pendente: 'Pendente' };
+    const ppCount = { atendido_respondido: 0, contactada: 0, nao_respondeu: 0, nao_atendido: 0, numero_errado: 0, contato_impossivel: 0, pendente: 0 };
     const respMap = new Map();
     for (const c of convertidos) {
       const k = (c.primeiro_contato_status && ppCount[c.primeiro_contato_status] !== undefined) ? c.primeiro_contato_status : 'pendente';
       ppCount[k]++;
       const r = (c.responsavel_atendimento || '').trim() || '— sem responsável';
-      const o = respMap.get(r) || { responsavel: r, total: 0, contato: 0, atendido: 0, numero_errado: 0 };
+      const o = respMap.get(r) || { responsavel: r, total: 0, contato: 0, atendido: 0, numero_errado: 0, inalcancavel: 0 };
       o.total++;
       if (contatoFoiFeito(c)) o.contato++;
       if (c.primeiro_contato_status === 'atendido_respondido') o.atendido++;
       if (c.primeiro_contato_status === 'numero_errado') o.numero_errado++;
+      // ⚠️⚠️ INALCANÇÁVEL sai do denominador do atendimento. `numero_errado`
+      // já saía; `contato_impossivel` (16/09) entra na mesma família — nos dois
+      // a equipe não tinha como alcançar a pessoa, e cobrar disso é cobrar o
+      // que não está na mão dela.
+      if (ehInalcancavel(c)) o.inalcancavel++;
       respMap.set(r, o);
     }
     const statusDist = Object.keys(PP_STATUS_LABEL).map(k => ({ status: k, label: PP_STATUS_LABEL[k], n: ppCount[k] }));
-    // contato_pct = feitos ÷ todos (número errado conta como feito); atendido_pct exclui número errado do denominador
+    // ⚠️⚠️ OS DOIS percentuais saem sobre o total ALCANÇÁVEL (decisão do Marcos,
+    // 16/09): quem não dava pra contatar sai do total, em vez de ser somado ao
+    // numerador como "resolvido". Somar E tirar do denominador daria acima de 100%.
     const porResponsavel = [...respMap.values()].map(o => ({
       ...o,
-      contato_pct: o.total ? Math.round(o.contato / o.total * 100) : 0,
-      atendido_pct: (o.total - o.numero_errado) > 0 ? Math.round(o.atendido / (o.total - o.numero_errado) * 100) : 0,
+      contato_pct: pctAlcancavel(o.contato, o.total, o.inalcancavel) ?? 0,
+      atendido_pct: pctAlcancavel(o.atendido, o.total, o.inalcancavel) ?? 0,
     })).sort((a, b) => b.total - a.total);
 
     // Cards de cobertura (toda a janela) · "com dados" = telefone preenchido (dá pra contatar)
@@ -322,7 +339,10 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
     const visitas = dashBucketsIntervalo(inicio, granTrend, fim).map(b => ({ periodo: b, ...(visMap.get(b) || zeroVis()) }));
 
     // ── Devocional · leitores distintos por bucket ──
-    const devoc = await fetchAll('mem_devocionais', 'membro_id, data_devocional', (q) => ateFiltro(q.gte('data_devocional', inicio), 'data_devocional'));
+    // varredura 2026-09: A04 — o DELETE de mem_devocionais virou soft-delete; sem `deleted_at`
+    // o gráfico de leitores continuava contando check-in apagado, e a mesma pessoa aparecia
+    // como leitora num painel enquanto sumia da lista do módulo de devocionais.
+    const devoc = await fetchAll('mem_devocionais', 'membro_id, data_devocional', (q) => ateFiltro(q.gte('data_devocional', inicio).is('deleted_at', null), 'data_devocional'));
     const devMap = new Map();
     for (const d of devoc) {
       const b = dashBucket(d.data_devocional, granDevoc);
@@ -345,7 +365,8 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
 // ─────────────────────────────────────────────────────────────
 // Acompanhamentos
 // ─────────────────────────────────────────────────────────────
-router.get('/acompanhamentos', async (req, res) => {
+// varredura 2026-09: A01 — expunha 500 fichas de aconselhamento (nome/telefone/motivo pastoral) a qualquer conta logada; leitura = 1 como GET /visitas.
+router.get('/acompanhamentos', authorizeModule('cuidados', 1), async (req, res) => {
   try {
     const { status, search, responsavel, agendamento_from, agendamento_to } = req.query;
     let q = supabase
@@ -373,7 +394,8 @@ router.get('/acompanhamentos', async (req, res) => {
   }
 });
 
-router.post('/acompanhamentos', async (req, res) => {
+// varredura 2026-09: A01 — criar ficha de atendimento de uma PESSOA = 3, igual POST /visitas (a tela já esconde o modal atrás de leitura(cuidados) >= 3).
+router.post('/acompanhamentos', authorizeModule('cuidados', 3), async (req, res) => {
   try {
     const body = { ...req.body, created_by: req.user.userId };
     if (!['aconselhamento', 'capelania'].includes(body.tipo)) body.tipo = 'aconselhamento';
@@ -422,7 +444,8 @@ router.post('/acompanhamentos', async (req, res) => {
   }
 });
 
-router.patch('/acompanhamentos/:id', async (req, res) => {
+// varredura 2026-09: A01 — edição (update com body cru, sem whitelist) = 3, igual PATCH /visitas/:id.
+router.patch('/acompanhamentos/:id', authorizeModule('cuidados', 3), async (req, res) => {
   try {
     const body = { ...req.body, ultima_atualizacao: new Date().toISOString() };
     const { data, error } = await supabase
@@ -439,7 +462,8 @@ router.patch('/acompanhamentos/:id', async (req, res) => {
   }
 });
 
-router.delete('/acompanhamentos/:id', async (req, res) => {
+// varredura 2026-09: A01 — soft-delete (RPC app_soft_delete) = 3, igual DELETE /visitas/:id; por ser soft, 3 basta.
+router.delete('/acompanhamentos/:id', authorizeModule('cuidados', 3), async (req, res) => {
   try {
     const { error } = await supabase.rpc('app_soft_delete', {
       p_table_name: 'cui_acompanhamentos',
@@ -659,7 +683,8 @@ router.post('/oracoes/analisar', authorizeModule('cuidados', 2), async (_req, re
 // ─────────────────────────────────────────────────────────────
 // Jornada 180
 // ─────────────────────────────────────────────────────────────
-router.get('/jornada180', async (req, res) => {
+// varredura 2026-09: A01 — rota LEGADA (a tela viva usa /j180/*, já guardada); leitura de PII nominal = 1, igual GET /j180/relatorio.
+router.get('/jornada180', authorizeModule('cuidados', 1), async (req, res) => {
   try {
     const { etapa, mes } = req.query;
     let q = supabase.from('cui_jornada180').select('*').is('deleted_at', null).order('data_encontro', { ascending: false }).limit(500);
@@ -678,7 +703,8 @@ router.get('/jornada180', async (req, res) => {
   }
 });
 
-router.post('/jornada180', async (req, res) => {
+// varredura 2026-09: A01 — legada e sem tela, mas escrevia em cui_jornada180 (insumo do /painel e do KPI) por qualquer conta logada; criar = 3.
+router.post('/jornada180', authorizeModule('cuidados', 3), async (req, res) => {
   try {
     const body = { ...req.body };
     if (body.cpf) {
@@ -693,7 +719,8 @@ router.post('/jornada180', async (req, res) => {
   }
 });
 
-router.delete('/jornada180/:id', async (req, res) => {
+// varredura 2026-09: A01 — soft-delete de encontro que alimenta KPI; apagar = 3, igual DELETE /j180/membros/:id.
+router.delete('/jornada180/:id', authorizeModule('cuidados', 3), async (req, res) => {
   try {
     const { error } = await supabase.rpc('app_soft_delete', {
       p_table_name: 'cui_jornada180',
@@ -943,7 +970,8 @@ const CONVERTIDO_TAGS = [
   'luto', 'emocional', 'vicios', 'profissional', 'outro',
 ];
 
-router.get('/convertidos/tags', (_req, res) => {
+// varredura 2026-09: A01 — constante sem PII, mas fica em 1 como as irmãs: deixar a exceção aberta é o que confunde a próxima varredura.
+router.get('/convertidos/tags', authorizeModule('cuidados', 1), (_req, res) => {
   res.json(CONVERTIDO_TAGS);
 });
 
@@ -1156,7 +1184,8 @@ const ATENDENTE_CARGO_SLUGS = [
 
 // GET /api/cuidados/convertidos/atendentes — profiles elegíveis pro select
 // "quem vai atender" do agendamento de visita.
-router.get('/convertidos/atendentes', async (_req, res) => {
+// varredura 2026-09: A01 — entregava o organograma pastoral (quem ocupa cargo de atendimento) a qualquer conta logada; leitura = 1, igual GET /responsaveis.
+router.get('/convertidos/atendentes', authorizeModule('cuidados', 1), async (_req, res) => {
   try {
     const { data: cargos, error: e1 } = await supabase
       .from('cargos').select('id, slug').in('slug', ATENDENTE_CARGO_SLUGS);
@@ -1184,7 +1213,8 @@ router.get('/convertidos/atendentes', async (_req, res) => {
   }
 });
 
-router.get('/convertidos', async (req, res) => {
+// varredura 2026-09: A01 — até 2000 fichas de convertido (nome, CPF, telefone, tags de triagem, observação pastoral) abertas a qualquer conta logada; leitura = 1 e a única tela já é ModuleGuard cuidados.
+router.get('/convertidos', authorizeModule('cuidados', 1), async (req, res) => {
   try {
     const { from, to, tag, encontro_marcado, atendido, encontro_from, encontro_to } = req.query;
     let q = supabase.from('cui_convertidos').select('*').is('deleted_at', null).limit(2000);
@@ -1206,7 +1236,30 @@ router.get('/convertidos', async (req, res) => {
     }
     const { data, error } = await q;
     if (error) throw error;
-    res.json(data || []);
+    const linhas = data || [];
+    // ── culto_nome (pedido do Marcelo · 2026-09-01) ──
+    // A tela deriva a bolha Quarta/AMI/Bridge/Sede do NOME do culto. Consulta
+    // ISOLADA e best-effort (lição do parcelas_max: embed que falha derruba a
+    // lista inteira); falhar aqui = linhas sem culto_nome, nunca lista vazia.
+    // ⚠️ Só ~159 dos registros vivos têm culto_id (o trigger passou a gravá-lo
+    // depois) — os demais caem no fallback por `area` na tela. `.in()` em lotes
+    // de ≤200 (lei do projeto: lista longa estoura a URL do PostgREST).
+    try {
+      const ids = [...new Set(linhas.map(c => c.culto_id).filter(Boolean))];
+      const nomePorId = new Map();
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data: cultos, error: ec } = await supabase
+          .from('cultos').select('id, nome').in('id', ids.slice(i, i + 200));
+        if (ec) throw ec;
+        for (const cu of cultos || []) nomePorId.set(cu.id, cu.nome);
+      }
+      for (const c of linhas) {
+        if (c.culto_id && nomePorId.has(c.culto_id)) c.culto_nome = nomePorId.get(c.culto_id);
+      }
+    } catch (e2) {
+      console.warn('[cuidados] culto_nome indisponível:', e2.message);
+    }
+    res.json(linhas);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1218,14 +1271,45 @@ router.get('/convertidos', async (req, res) => {
 // culto/data) é vinculado direto no banco, sem botão no sistema (decisão do Marcos ·
 // não facilitar a informalidade). Cuidados só ACOMPANHA/edita (PATCH abaixo).
 
-router.patch('/convertidos/:id', async (req, res) => {
+// varredura 2026-09: A01 — update(req.body) CRU na ficha do convertido (dava pra falsificar o SLA de 3 dias); edição = 3, igual POST /convertidos/:id/direcionar.
+router.patch('/convertidos/:id', authorizeModule('cuidados', 3), async (req, res) => {
   try {
+    // varredura 2026-09: A01 — `update(req.body)` cru aceitava QUALQUER coluna, inclusive
+    // `deleted_at` (apagar por fora da RPC `app_soft_delete` e da whitelist dela) e `id`.
+    // Whitelist explicita: so os campos que a tela de Cuidados edita de fato.
+    // 2026-09-15: a lista de 09/09 foi escrita de cabeça e deixou `primeiro_contato_status`
+    // de fora — justo o campo que a coluna "Status do 1º contato" dos Próximos passos grava.
+    // Efeito medido: as 13 marcações entre 09/09 e 14/09 carimbaram `primeiro_contato_em` e
+    // perderam o status; e quando a pessoa JÁ tinha carimbo o patch sobrava vazio e voltava
+    // 400 "Nenhum campo editavel" (o erro que o Marcelo viu). `data_culto` e `cadastrado`
+    // caíram no mesmo buraco — o modal de edição mostra os dois.
+    // Conferido contra o schema vivo de cui_convertidos: `email`, `status`, `encontro_em`,
+    // `encontro_responsavel`, `desfecho` e `desfecho_observacao` NÃO são colunas da tabela
+    // (encontro e desfecho têm rota própria) — saíram da lista pra ela não mentir.
+    const CAMPOS_EDITAVEIS = [
+      'nome', 'telefone', 'observacoes', 'tags', 'area', 'data_culto', 'cadastrado',
+      'membro_id', 'responsavel_atendimento', 'atendido_apos_culto',
+      'primeiro_contato_em', 'primeiro_contato_status',
+    ];
+    const patch = {};
+    for (const c of CAMPOS_EDITAVEIS) if (Object.prototype.hasOwnProperty.call(req.body || {}, c)) patch[c] = req.body[c];
+    if (!Object.keys(patch).length) return res.status(400).json({ error: 'Nenhum campo editavel no corpo da requisicao.' });
     const { data, error } = await supabase
       .from('cui_convertidos')
-      .update(req.body)
+      .update(patch)
       .eq('id', req.params.id)
+      .is('deleted_at', null)
       .select()
       .single();
+    // ⚠️⚠️ 23514 é o CHECK do banco recusando um status que ele ainda não
+    // conhece — acontece quando a tela já oferece a opção e a migration não
+    // subiu. 409 DIZENDO o motivo, nunca 500 genérico: quem clicou precisa
+    // saber que o problema não é o dado dele. (A lei do check-in, 15/09.)
+    if (error && error.code === '23514' && 'primeiro_contato_status' in patch) {
+      return res.status(409).json({
+        error: `O status "${patch.primeiro_contato_status}" ainda não está disponível — falta aplicar a migration do Próximos passos.`,
+      });
+    }
     if (error) throw error;
     res.json(data);
   } catch (e) {
@@ -1233,7 +1317,8 @@ router.patch('/convertidos/:id', async (req, res) => {
   }
 });
 
-router.delete('/convertidos/:id', async (req, res) => {
+// varredura 2026-09: A01 — soft-delete que tira o convertido do funil e da contagem do /painel; apagar = 3 (é soft, então não sobe de 3).
+router.delete('/convertidos/:id', authorizeModule('cuidados', 3), async (req, res) => {
   try {
     const { error } = await supabase.rpc('app_soft_delete', {
       p_table_name: 'cui_convertidos',
@@ -1259,7 +1344,8 @@ const DESTINO_META = {
 
 // POST /api/cuidados/convertidos/:id/agendar-encontro
 // Marca o encontro pastoral com data + hora + quem vai atender e notifica o pastor.
-router.post('/convertidos/:id/agendar-encontro', async (req, res) => {
+// varredura 2026-09: A01 — agenda o encontro, fecha primeiro_contato_em e NOTIFICA o pastor com o nome da pessoa; gestão = 3. Sem tela consumidora hoje (wrapper órfão em src/api.js), então 3 não tira botão de ninguém.
+router.post('/convertidos/:id/agendar-encontro', authorizeModule('cuidados', 3), async (req, res) => {
   try {
     const { data_encontro, encontro_hora, encontro_responsavel_id, encontro_responsavel_nome, observacoes } = req.body;
     if (!data_encontro) return res.status(400).json({ error: 'Data do encontro é obrigatória' });
@@ -1302,7 +1388,8 @@ router.post('/convertidos/:id/agendar-encontro', async (req, res) => {
 });
 
 // POST /api/cuidados/convertidos/:id/cancelar-encontro
-router.post('/convertidos/:id/cancelar-encontro', async (req, res) => {
+// varredura 2026-09: A01 — par simétrico do agendar-encontro: tem que ficar no MESMO nível, senão o usuário agenda e não consegue desmarcar.
+router.post('/convertidos/:id/cancelar-encontro', authorizeModule('cuidados', 3), async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('cui_convertidos')
@@ -1318,7 +1405,9 @@ router.post('/convertidos/:id/cancelar-encontro', async (req, res) => {
 // POST /api/cuidados/convertidos/:id/registrar-contato
 // Marca que o líder fez o 1º contato (fecha o SLA de 3 dias) sem precisar
 // agendar o encontro ainda. Usado pelos líderes de área no módulo deles.
-router.post('/convertidos/:id/registrar-contato', async (req, res) => {
+// varredura 2026-09: A01 — routeKey 'membros' e NÃO 'cuidados': o dono deste botão é o líder de AMI/Bridge/Kids/Online (JornadaConvertidos.tsx:265, montado em PainelArea.jsx:363 e Online.tsx:798), que não tem o módulo cuidados — gatear em 'cuidados' daria o 403 do #2874 no dono legítimo. 'membros' já SOMA cuidados+ami+bridge+kids+online e barra as 138 contas membro-only.
+// Nível 1 (e não 2) porque o botão não tem gate nenhum no front: exigir escrita >= 2 tiraria da mão de quem hoje o usa. Subir pra 2 só depois de medir a escrita das áreas na matriz.
+router.post('/convertidos/:id/registrar-contato', authorizeModule('jornada-convertidos', 1), async (req, res) => {
   try {
     const uid = req.user.userId || req.user.id;
     const { data, error } = await supabase
@@ -1338,7 +1427,8 @@ router.post('/convertidos/:id/registrar-contato', async (req, res) => {
 // Registra o desfecho do encontro e encaminha a pessoa pros próximos valores.
 // tags = triagem pastoral preenchida no mesmo modal (decisão do Marcos 2026-06-10:
 // o líder sai do encontro com tags + encaminhamento + observações num lugar só).
-router.post('/convertidos/:id/desfecho', async (req, res) => {
+// varredura 2026-09: A01 — além do desfecho, CRIA encaminhamento em outros módulos (grupos/voluntariado/jornada180) e notifica; escrever fora do módulo = 3, mesmo nível da irmã /direcionar.
+router.post('/convertidos/:id/desfecho', authorizeModule('cuidados', 3), async (req, res) => {
   try {
     const { compareceu, encaminhamentos = [], observacoes, tags } = req.body;
     const userId = req.user.userId || req.user.id;
@@ -1879,7 +1969,8 @@ router.post('/pedidos/atender', authorizeModule('cuidados', 2), async (req, res)
 // toda pessoa visitada precisa ter desfecho registrado, ≥1 tag pastoral e
 // ≥1 encaminhamento (regra do Marcos · 2026-06-10). Faltou/cancelado ficam fora
 // (o caminho deles é reagendar pela ficha).
-router.get('/visitas-pendentes', async (req, res) => {
+// varredura 2026-09: A01 — mesma PII do GET /convertidos (com CPF explícito) e nomeia quem o pastor visitou; sem tela consumidora, leitura = 1 como GET /visitas.
+router.get('/visitas-pendentes', authorizeModule('cuidados', 1), async (req, res) => {
   try {
     const hoje = new Date().toISOString().slice(0, 10);
     const { data: rows, error } = await supabase
@@ -1932,7 +2023,14 @@ router.get('/visitas-pendentes', async (req, res) => {
 // Next ≤90d · status semáforo. Segmentável por área (cada líder vê a sua;
 // Marcelo/Cuidados vê todas). Cruza batismo_inscricoes + Next (formado na turma
 // em next_matriculas · fonte única desde 20260626180000 · paginado).
-router.get('/jornada-convertidos', async (req, res) => {
+// varredura 2026-09: A01 — routeKey ESTREITA 'jornada-convertidos' (cuidados|online|ami|bridge|kids),
+// não 'cuidados' puro (daria 403 no líder de área, que é o dono da tela) nem a ampla 'membros'
+// (12 módulos — proibida em lista de PII por src/test/jornadaPiiGuard.test.ts). Par obrigatório
+// com o registrar-contato acima: mesmo componente.
+// ⚠️ `?area=` NÃO é régua de autorização — é filtro OPCIONAL vindo do cliente: sem ele, a rota
+// devolve TODAS as áreas. Quem passa no guard lê a lista inteira. A única régua real do corpo
+// é podeVerFinanceiroDePessoa (sensiveis_ocultos), e essa sim soma. Nível 1 = leitura, como GET /trilha.
+router.get('/jornada-convertidos', authorizeModule('jornada-convertidos', 1), async (req, res) => {
   try {
     const { area } = req.query;
     const DIA = 86400000;
@@ -1954,7 +2052,7 @@ router.get('/jornada-convertidos', async (req, res) => {
 
     const convertidos = await fetchAll(
       'cui_convertidos',
-      'id, nome, telefone, cpf, membro_id, data_culto, culto_id, area, primeiro_contato_em, primeiro_contato_status, encontro_status, encontro_responsavel_nome',
+      'id, nome, telefone, cpf, membro_id, data_culto, culto_id, area, created_at, primeiro_contato_em, primeiro_contato_status, encontro_status, encontro_responsavel_nome',
       (q) => { q = q.is('deleted_at', null); return area ? q.eq('area', area) : q; },
     );
 
@@ -1979,6 +2077,34 @@ router.get('/jornada-convertidos', async (req, res) => {
       }
     }
 
+    const agoraMs = Date.now();
+    // ── Quando o registro entrou, e por quem (pedido do Matheus · 02/09/2026) ──
+    // ⚠️⚠️ `cui_convertidos.created_at` É o instante do registro: medido em
+    // produção, ele bate com `cultos_decisoes_pessoas.registrado_em` ao SEGUNDO
+    // (o trigger copia). O que falta ali é a FONTE — e é ela que decide se o
+    // carimbo é "a pessoa preencheu" ou "a equipe lançou por ela".
+    //
+    // ⚠️ Não há FK entre as duas tabelas, então o casamento é por (culto, 8
+    // últimos dígitos do telefone). É BEST-EFFORT de propósito: quem não casar
+    // cai no rótulo NEUTRO ("Registrado"), que é verdade em qualquer caso —
+    // nunca em "Preencheu", que seria afirmar autoria sem base.
+    const fontePorChave = new Map();
+    try {
+      const chave = (cultoId, tel) => `${cultoId || ''}|${String(tel || '').replace(/\D/g, '').slice(-8)}`;
+      for (let i = 0; i < cultoIds.length; i += 200) {
+        const { data: decs, error: eDec } = await supabase
+          .from('cultos_decisoes_pessoas')
+          .select('culto_id, telefone, fonte')
+          .in('culto_id', cultoIds.slice(i, i + 200))
+          .is('deleted_at', null);
+        if (eDec) throw eDec;
+        for (const d of decs || []) fontePorChave.set(chave(d.culto_id, d.telefone), d.fonte);
+      }
+    } catch (e) {
+      // Falhar aqui NÃO derruba a lista: sem fonte, todo mundo vira "Registrado".
+      console.warn('[cuidados/jornada] fonte da decisão:', e.message);
+    }
+
     // ⚠️ RÉGUA ÚNICA com o gráfico do /cuidados (services/marcosConvertido):
     // as duas telas respondem "esse convertido seguiu pra outro valor?" e
     // duas implementações divergiriam sobre as MESMAS pessoas.
@@ -1993,8 +2119,14 @@ router.get('/jornada-convertidos', async (req, res) => {
       if (c.primeiro_contato_em) {
         const d = Math.floor((new Date(c.primeiro_contato_em).getTime() - new Date(c.data_culto + 'T12:00:00').getTime()) / DIA);
         contato = { feito: true, status: d <= 3 ? 'feito_no_prazo' : 'feito_atrasado', dias: d };
-      } else if (CONTATO_FEITO_STATUS.has(c.primeiro_contato_status)) {
+      } else if (contatoFoiFeito(c)) {
         contato = { feito: true, status: 'feito', dias: ddesde };
+      } else if (ehInalcancavel(c)) {
+        // ⚠️⚠️ TERCEIRO estado, nem feito nem atrasado. Antes `numero_errado`
+        // entrava no ramo de cima e aparecia como FEITO; tirando-o de lá sem
+        // isto aqui, ele cairia no `else` e a jornada passaria a cobrar contato
+        // de quem não tem como ser contatado — trocar uma mentira por outra.
+        contato = { feito: false, status: 'inalcancavel', dias: ddesde };
       } else {
         contato = { feito: false, status: ddesde > 3 ? 'atrasado' : (ddesde >= 2 ? 'vencendo' : 'no_prazo'), dias: ddesde };
       }
@@ -2016,6 +2148,12 @@ router.get('/jornada-convertidos', async (req, res) => {
       return {
         id: c.id, nome: c.nome, telefone: c.telefone, area: c.area, data_culto: c.data_culto,
         dias_desde_conversao: ddesde, membro_id: c.membro_id,
+        registro: reg.textoRegistro({
+          registradoEm: c.created_at,
+          fonte: fontePorChave.get(`${c.culto_id || ''}|${String(c.telefone || '').replace(/\D/g, '').slice(-8)}`),
+          dataCulto: c.data_culto,
+          agora: agoraMs,
+        }),
         encontro_responsavel_nome: c.encontro_responsavel_nome,
         origem_replay: origemReplay,
         culto_origem: origemReplay
@@ -2075,7 +2213,8 @@ router.get('/jornada-convertidos', async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // Agregado (aconselhamento / capelania mensal)
 // ─────────────────────────────────────────────────────────────
-router.get('/agregado', async (req, res) => {
+// varredura 2026-09: A01 — lançamento manual mensal (NÃO é o agregado que alimenta o /painel — aquele é o de jornada.js); leitura = 1, sem tela consumidora.
+router.get('/agregado', authorizeModule('cuidados', 1), async (req, res) => {
   try {
     const { mes } = req.query; // 'YYYY-MM'
     const mesIso = mes ? `${mes}-01` : new Date().toISOString().slice(0, 7) + '-01';
@@ -2101,7 +2240,8 @@ const TIPO_AGREGADO_DADO_BRUTO = {
 };
 const TIPOS_AGREGADO_VALIDOS = Object.keys(TIPO_AGREGADO_DADO_BRUTO);
 
-router.post('/agregado', async (req, res) => {
+// varredura 2026-09: A01 — faz DELETE+INSERT de número que espelha em dados_brutos (KPI da diretoria); gestão = 3. A régua de posse do corpo (responsavel_id = req.user.userId) permanece e soma com esta.
+router.post('/agregado', authorizeModule('cuidados', 3), async (req, res) => {
   try {
     const { mes, tipo, quantidade, observacoes, area } = req.body;
     const mesIso = mes ? `${mes}-01` : new Date().toISOString().slice(0, 7) + '-01';
@@ -2163,7 +2303,8 @@ router.post('/agregado', async (req, res) => {
 // ─────────────────────────────────────────────────────────────
 // Helpers de Membresia
 // ─────────────────────────────────────────────────────────────
-router.get('/buscar-membro', async (req, res) => {
+// varredura 2026-09: A01 — oráculo CPF → nome/telefone/e-mail, sem rate limit. Fica em 2 (acima do 1 da convenção de leitura) porque o único consumidor já vive atrás de leitura(cuidados) >= 3, então apertar não custa usabilidade.
+router.get('/buscar-membro', authorizeModule('cuidados', 2), async (req, res) => {
   try {
     const cpf = cleanCpf(req.query.cpf);
     if (!cpf || cpf.length !== 11) return res.json({ membro: null });
@@ -2174,7 +2315,8 @@ router.get('/buscar-membro', async (req, res) => {
   }
 });
 
-router.post('/criar-membro', async (req, res) => {
+// varredura 2026-09: A01 — cria PESSOA em mem_membros (cadastro central) e, com CPF já existente, devolve a ficha completa; criar = 3, como POST /responsaveis.
+router.post('/criar-membro', authorizeModule('cuidados', 3), async (req, res) => {
   try {
     const { nome, cpf, telefone, email, status = 'visitante' } = req.body;
     if (!nome) return res.status(400).json({ error: 'Nome é obrigatório' });

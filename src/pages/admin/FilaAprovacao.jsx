@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { agents } from '../../api';
 import { Button } from '../../components/ui/button';
+import { planejarLote, textoConfirmacao, TETO_APLICAR_EM_LOTE } from '@/lib/loteAprovacao';
 
 const C = {
   bg: 'var(--cbrio-bg)', card: 'var(--cbrio-card)', primary: '#00B39D', primaryBg: '#00B39D18',
@@ -377,7 +378,8 @@ export default function FilaAprovacao() {
   const [abertas, setAbertas] = useState(() => new Set()); // propostas expandidas
   const [recolhidos, setRecolhidos] = useState(() => new Set()); // grupos recolhidos
   const [sel, setSel] = useState(() => new Set());
-  const [lote, setLote] = useState(null);        // { tipo, total, feitos }
+  const [lote, setLote] = useState(null);                        // { tipo, total, feitos }
+  const [confirmaLote, setConfirmaLote] = useState(null);        // { tipo, plano }
   const [resumoLote, setResumoLote] = useState(null);
 
   const { data: rows = [], isLoading, isError, error, refetch, isFetching } = useQuery({
@@ -466,8 +468,20 @@ export default function FilaAprovacao() {
   // ⚠️ Sequencial e com progresso REAL no botão: cada item é uma requisição que já
   // persiste sozinha no servidor, então uma falha no meio não desfaz o que já
   // passou — o resumo diz quantas entraram e quais ficaram.
-  async function agirEmLote(tipo) {
+  // ⚠️⚠️ Aprovar em lote passa por CONFIRMAÇÃO e por TETO. Aplicar uma proposta
+  // dispara um aviso interno pros responsáveis, e há 432 represadas desde
+  // 26/05 (o botão ficou desarmado desde sempre) — um clique em "selecionar
+  // todos" mandaria 432 avisos num sino que já tem ~18,9 mil não lidas.
+  // ⚠️ Rejeitar NÃO tem teto: não avisa ninguém, e limitá-lo só faria a
+  // limpeza da fila render menos. O teto é pelo EFEITO, não pelo volume.
+  function pedirLote(tipo) {
     const ids = selecionadasVisiveis;
+    if (ids.length === 0) return;
+    setConfirmaLote({ tipo, plano: planejarLote(ids, tipo) });
+  }
+
+  async function agirEmLote(tipo, idsDoPlano) {
+    const ids = idsDoPlano || selecionadasVisiveis;
     if (ids.length === 0) return;
     setLote({ tipo, total: ids.length, feitos: 0 });
     const erros = [];
@@ -590,15 +604,48 @@ export default function FilaAprovacao() {
             {selecionadasVisiveis.length} selecionada{selecionadasVisiveis.length > 1 ? 's' : ''}
           </span>
           <div style={{ flex: 1 }} />
-          <Button size="sm" onClick={() => agirEmLote('apply')} disabled={emLote}>
+          <Button size="sm" onClick={() => pedirLote('apply')} disabled={emLote}>
             {emLote && lote.tipo === 'apply' ? `Aprovando ${lote.feitos} de ${lote.total}…` : 'Aprovar e aplicar'}
           </Button>
-          <Button size="sm" variant="outline" onClick={() => agirEmLote('reject')} disabled={emLote}>
+          <Button size="sm" variant="outline" onClick={() => pedirLote('reject')} disabled={emLote}>
             {emLote && lote.tipo === 'reject' ? `Rejeitando ${lote.feitos} de ${lote.total}…` : 'Rejeitar'}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => setSel(new Set())} disabled={emLote}>
             Limpar
           </Button>
+        </div>
+      )}
+
+      {/* ⚠️⚠️ Confirmação do lote · DIZ O EFEITO ("vão sair N avisos"), não o
+          número de cliques. Aprovar executa a ação de cada proposta e dispara
+          aviso interno; o teto de {TETO_APLICAR_EM_LOTE} por vez existe porque 432
+          propostas represaram desde 26/05 (o botão ficou desarmado desde
+          sempre) e o sino já tem ~18,9 mil não lidas. */}
+      {confirmaLote && (
+        <div style={{
+          padding: '12px 14px', borderRadius: 10, marginBottom: 12,
+          color: C.text, background: C.amberBg, border: `1px solid ${C.amber}40`,
+        }}>
+          <div style={{ fontSize: 13, marginBottom: 10 }}>
+            {textoConfirmacao(confirmaLote.plano, confirmaLote.tipo)}
+          </div>
+          <div style={{ display: 'flex', gap: 8 }}>
+            <Button
+              size="sm"
+              onClick={() => {
+                const { tipo, plano } = confirmaLote;
+                setConfirmaLote(null);
+                agirEmLote(tipo, plano.vao);
+              }}
+            >
+              {confirmaLote.tipo === 'apply'
+                ? `Aprovar ${confirmaLote.plano.vao.length}`
+                : `Rejeitar ${confirmaLote.plano.vao.length}`}
+            </Button>
+            <Button size="sm" variant="outline" onClick={() => setConfirmaLote(null)}>
+              Cancelar
+            </Button>
+          </div>
         </div>
       )}
 

@@ -613,7 +613,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [etapas, setEtapas] = useState([]);
-  const [form, setForm] = useState({ pontualidade_obs: '', observacoes: '' });
+  const [form, setForm] = useState({ pontualidade_obs: '', observacoes: '', inicio_real: '' });
   const [marks, setMarks] = useState({}); // item_id -> {feito, observação}
   const [novaOcorr, setNovaOcorr] = useState({ tipo: 'tecnica', severidade: 'media', momento: '', descricao: '' });
   // "Fazer solicitação" da ocorrência (ideia do Pedro Fernandes · 2026-07-03):
@@ -629,6 +629,7 @@ function ModalProducao({ culto, onClose, onSaved }) {
       setDet(d);
       const formInicial = {
         pontualidade_obs: d.producao?.pontualidade_obs ?? '',
+        inicio_real: d.producao?.inicio_real ?? '',
         observacoes: d.producao?.observacoes ?? '',
       };
       setForm(formInicial);
@@ -689,6 +690,10 @@ function ModalProducao({ culto, onClose, onSaved }) {
       await prodApi.salvarCulto(culto.id, {
         pontualidade_obs: form.pontualidade_obs?.trim() || null,
         observacoes: form.observacoes?.trim() || null,
+        // ⚠️ Âncora da curva de audiência do Online. Vazio = não informado, e é
+        // enviado como null de propósito: hora "padrão" desalinharia o gráfico
+        // inteiro sem ninguém saber que foi palpite.
+        inicio_real: form.inicio_real?.trim() || null,
       });
       const marksArr = Object.entries(marks).map(([item_id, v]) => ({ item_id, feito: v.feito, observacao: v.observacao }));
       if (marksArr.length) await prodApi.salvarChecklist(culto.id, marksArr);
@@ -724,7 +729,20 @@ function ModalProducao({ culto, onClose, onSaved }) {
           {/* Cronograma · tempo por momento */}
           <SecaoTitulo icone={Clock} cor="#0EA5E9" titulo="Cronograma · tempo por momento" />
           <EtapasEditor etapas={etapas} setEtapas={setEtapas} />
-          <div style={{ marginTop: 10, marginBottom: 16 }}>
+          <div style={{ marginTop: 10, marginBottom: 16, display: 'grid', gridTemplateColumns: '160px 1fr', gap: 10, alignItems: 'start' }}>
+            <Field label="Hora real de início">
+              <input
+                type="time"
+                value={form.inicio_real}
+                onChange={e => setForm(f => ({ ...f, inicio_real: e.target.value }))}
+                style={inp}
+              />
+              <span style={{ fontSize: 10.5, color: '#6b726b', lineHeight: 1.35, display: 'block', marginTop: 3 }}>
+                Que hora o culto <strong>de fato</strong> começou. É o que alinha
+                este cronograma com a curva de audiência do YouTube — a
+                transmissão começa antes, na tela de espera.
+              </span>
+            </Field>
             <Field label="Observação da pontualidade (opcional, mesmo passando do tempo)">
               <input type="text" value={form.pontualidade_obs} onChange={e => setForm(f => ({ ...f, pontualidade_obs: e.target.value }))} style={inp} placeholder="Ex.: ministração estendida, batismos…" />
             </Field>

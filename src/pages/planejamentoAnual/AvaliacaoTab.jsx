@@ -4,7 +4,7 @@ import { ClipboardCheck } from 'lucide-react';
 import { planejamentoAnual as api, users as usersApi } from '../../api';
 import {
   C, cardStyle, btn, input, label, hint, fmtBRL, fmtQuando, thStyle, tdStyle, Badge,
-  NATUREZAS, RECORRENCIAS, DIAS_SEMANA, rotuloArea,
+  NATUREZAS, RECORRENCIAS, DIAS_SEMANA, rotuloArea, rotuloDiretoria,
 } from './comum';
 
 // Evidência do proponente exibida ao lado de cada critério (protótipo · coluna 2)
@@ -184,7 +184,7 @@ export default function AvaliacaoTab({ ciclo, constantes, minhaDiretoria, locais
                         <strong style={{ color: C.primary }}>média {Number(aberta.medias?.[i] ?? 0).toFixed(2)}</strong>
                         {aberta.avaliacoes.filter((a) => a.diretoria !== minhaDiretoria).map((a) => (
                           <span key={a.id} style={{ color: C.t2 }}>
-                            {a.diretoria}: {a['nota_' + c.chave]}{a.coment_criterios?.[c.chave] ? ` — ${a.coment_criterios[c.chave]}` : ''}
+                            {rotuloDiretoria(a.diretoria)}: {a['nota_' + c.chave]}{a.coment_criterios?.[c.chave] ? ` — ${a.coment_criterios[c.chave]}` : ''}
                           </span>
                         ))}
                       </div>
@@ -207,7 +207,7 @@ export default function AvaliacaoTab({ ciclo, constantes, minhaDiretoria, locais
           <div style={{ display: 'grid', gap: 4 }}>
             {aberta.avaliacoes.filter((a) => a.comentario_geral).map((a) => (
               <div key={a.id} style={{ fontSize: 12.5, color: C.t2 }}>
-                <Badge texto={a.diretoria} cor={C.blue} /> {a.comentario_geral}
+                <Badge texto={rotuloDiretoria(a.diretoria)} cor={C.blue} /> {a.comentario_geral}
               </div>
             ))}
           </div>

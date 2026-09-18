@@ -17,7 +17,11 @@
 // ⚠️ Estilo por variáveis do sistema (`--cbrio-*`), não por classes: este campo
 // vive no ERP (glass), na porta pública e no totem, que têm folhas diferentes.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { cadastroPublico } from '../../api';
+// ⚠️ DE `lib/censoApi`, NUNCA de `../../api` (11/09/2026): este seletor é usado
+// pela pergunta de bairro do CENSO, que é página pública aberta por centenas de
+// celulares no culto. `api.js` importa supabase-js + Sentry e abre sessão no
+// load — por este import eles voltavam para dentro do bundle da página.
+import { bairrosPublicos } from '@/lib/censoApi';
 import { avaliarBairro, sugerirBairros, type BairroCatalogo } from '../../lib/bairros';
 
 // Cache de módulo: o catálogo muda quando alguém cadastra bairro novo, e vários
@@ -35,7 +39,7 @@ export function useCatalogoBairros() {
       setCatalogo(_cache.itens);
       return;
     }
-    cadastroPublico.bairros().then((r: { bairros?: BairroCatalogo[] }) => {
+    bairrosPublicos().then((r: { bairros?: BairroCatalogo[] }) => {
       const itens = Array.isArray(r?.bairros) ? r.bairros : [];
       _cache = { em: Date.now(), itens };
       if (vivo) setCatalogo(itens);

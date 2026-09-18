@@ -31,7 +31,7 @@ import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette }
 import GrupoSelector from '../../components/grupos/GrupoSelector';
 import DescricaoGrupo from '../../components/grupos/DescricaoGrupo';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
-import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle, User, CalendarClock, Heart, Info } from 'lucide-react';
+import { CheckCircle2, ArrowLeft, Users, Camera, X, HelpCircle, User, CalendarClock, Heart, Info, MapPin } from 'lucide-react';
 // Contrato de Inscrição (F3.1 · porta 7 · docs/modulo-inscricoes/): validadores
 // da fonte única — só os que não colidem com os helpers locais deste form.
 import { nomeCompletoValido, temAbreviacaoNome, validarNascimento, tirarCodigoPais } from '../../lib/inscricao';
@@ -294,13 +294,17 @@ export default function InscricaoGrupos() {
     setErrosCampos(p => (p[k] ? { ...p, [k]: '' } : p)); // corrigiu o campo? some o vermelho
   };
 
-  // ── Cônjuge (grupo de casais) ──
-  // Gatilho: categoria do grupo escolhido. Trocar pra um grupo que não é de
-  // casais desliga o bloco (e limpa o que foi digitado nele — senão iria num
-  // payload que o backend ignoraria em silêncio).
-  const ehGrupoCasais = (grupoEscolhido?.categoria || '').toLowerCase() === 'casais';
+  // ── Cônjuge (grupo de casais OU misto · Marcos 02/09) ──
+  // Gatilho: categoria do grupo escolhido. Casais e Misto oferecem a inscrição
+  // em par; Mulheres/Homens/Jovens/Estudo NUNCA (grupo de recorte não recebe
+  // casal). Trocar pra um grupo sem a opção desliga o bloco (e limpa o que foi
+  // digitado nele — senão iria num payload que o backend ignoraria em silêncio).
+  // ⚠️ A lista tem que bater com a do backend (publicGrupos.js · querCasal).
+  const categoriaGrupo = (grupoEscolhido?.categoria || '').toLowerCase();
+  const ehGrupoCasais = categoriaGrupo === 'casais';
+  const permiteConjuge = ['casais', 'misto'].includes(categoriaGrupo);
   useEffect(() => {
-    if (ehGrupoCasais) return;
+    if (permiteConjuge) return;
     setComConjuge(false);
     setConjuge(CONJUGE_VAZIO);
     setErrosCampos(p => {
@@ -310,13 +314,13 @@ export default function InscricaoGrupos() {
       chaves.forEach(k => { delete novo[k]; });
       return novo;
     });
-  }, [ehGrupoCasais]);
+  }, [permiteConjuge]);
   const setConj = (k, masked) => (e) => {
     const valor = masked ? masked(e.target.value) : e.target.value;
     setConjuge(c => ({ ...c, [k]: valor }));
     setErrosCampos(p => (p[`conjuge.${k}`] ? { ...p, [`conjuge.${k}`]: '' } : p));
   };
-  const enviarConjuge = ehGrupoCasais && comConjuge;
+  const enviarConjuge = permiteConjuge && comConjuge;
 
   // "Tem certeza?" ao voltar/fechar/recarregar a página COM dados digitados
   // (regra de ouro do repo: sem digitar nada, não pergunta). Depois do envio
@@ -729,6 +733,18 @@ export default function InscricaoGrupos() {
                       <strong style={{ color: C.text, fontWeight: 600 }}>{formatarQuando(grupoEscolhido)}</strong>
                     </span>
                   )}
+                  {/* ONDE é o grupo — rua e número, nunca apartamento/bloco
+                      (Natasha · 16/09). Confere ANTES de preencher os dados:
+                      dois grupos "Barra da Tijuca" podem estar a meia hora um
+                      do outro. O servidor manda `endereco_publico` já limpo. */}
+                  {(grupoEscolhido.endereco_publico || grupoEscolhido.bairro) && (
+                    <span style={{ display: 'flex', alignItems: 'flex-start', gap: 7, fontSize: 12.5, color: C.text3 }}>
+                      <MapPin size={14} style={{ color: '#00B39D', flexShrink: 0, marginTop: 2 }} />
+                      <strong style={{ color: C.text, fontWeight: 600 }}>
+                        {[grupoEscolhido.endereco_publico, grupoEscolhido.bairro].filter(Boolean).join(' · ')}
+                      </strong>
+                    </span>
+                  )}
                   {/* Do que o grupo trata — pedido do Marcos (31/07). Vem depois
                       de líder/quando porque é leitura, não conferência. */}
                   {(grupoEscolhido.descricao || '').trim() && (
@@ -832,8 +848,8 @@ export default function InscricaoGrupos() {
                 </div>
               ) : null}
 
-              {/* ── Cônjuge (só em grupo de casais) ── */}
-              {ehGrupoCasais && !(bloqueio?.mensagem || bloqueioLocal) && (
+              {/* ── Cônjuge (grupo de casais ou misto) ── */}
+              {permiteConjuge && !(bloqueio?.mensagem || bloqueioLocal) && (
                 <div style={{
                   border: `1.5px solid ${comConjuge ? 'rgba(0,179,157,0.55)' : C.cardBorder}`,
                   background: comConjuge ? 'rgba(0,179,157,0.07)' : (C.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)'),
@@ -850,8 +866,9 @@ export default function InscricaoGrupos() {
                       <Heart size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: -2, color: '#00B39D' }} />
                       <strong>Inscrever meu cônjuge junto</strong>
                       <span style={{ display: 'block', fontSize: 12, color: C.text3, marginTop: 3 }}>
-                        Este é um grupo de casais — você pode inscrever os dois de uma vez. O líder recebe um
-                        aviso só, com os dois nomes, e aprova o casal junto.
+                        {ehGrupoCasais
+                          ? 'Este é um grupo de casais — você pode inscrever os dois de uma vez. O líder recebe um aviso só, com os dois nomes, e aprova o casal junto.'
+                          : 'Casado(a)? Você pode inscrever seu cônjuge junto. O líder recebe um aviso só, com os dois nomes, e aprova o casal junto.'}
                       </span>
                     </span>
                   </label>

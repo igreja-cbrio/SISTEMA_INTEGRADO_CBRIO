@@ -15,6 +15,7 @@
 // servidor) e o QR de cartão de membro unificado não resolve offline.
 
 import { voluntariado } from '@/api';
+import { ehFalhaDeRedeOuServidor, ehDuplicado } from '@/lib/falhaDeRede';
 import type { VolSchedule } from '../types';
 
 // ── Tipos ───────────────────────────────────────────────────────────────────
@@ -194,16 +195,19 @@ export function resolveQrOffline(qrCode: string, serviceId: string): QrResolutio
 
 // fetch lança TypeError quando não há rede; o api.js também lança um Error
 // específico quando o backend devolve HTML (proxy/offline).
+/**
+ * ⚠️⚠️ DELEGA para a régua ÚNICA (`src/lib/falhaDeRede`) desde 02/09/2026.
+ * A versão anterior fazia `if (err.status) return false`, e por isso o BANCO
+ * FORA (que responde 5xx COM status) não ligava esta fila — ela cobria só WiFi
+ * caído. Na queda de 1h34 daquele dia a fila existia e ficou desligada.
+ */
 export function isNetworkError(err: any): boolean {
-  if (!err) return false;
-  if (err.status) return false; // resposta HTTP do servidor → não é queda de rede
-  if (err.name === 'TypeError') return true;
-  const msg = String(err.message || '');
-  return /failed to fetch|networkerror|network request failed|backend n[ãa]o dispon/i.test(msg);
+  return ehFalhaDeRedeOuServidor(err);
 }
 
+/** ⚠️ Delega para a régua única (ver `isNetworkError` acima). */
 export function isDuplicateError(err: any): boolean {
-  return !!(err && (err.status === 409 || err.alreadyCheckedIn));
+  return ehDuplicado(err);
 }
 
 // ── Sincronização da fila ─────────────────────────────────────────────────────

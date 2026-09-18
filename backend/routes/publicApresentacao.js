@@ -26,6 +26,18 @@ const {
 // (esta e a do app). Duas listas fariam a criança entrar com dado diferente
 // conforme a porta — o desalinhamento que o Marcos mandou consertar.
 const { normalizarSaude } = require('../utils/saudeCrianca');
+// Horário do culto (08/09/2026): o SISTEMA atribui (9h30 até o limite, depois
+// 11h30 — catálogo `apresentacao_horarios`, editável no Kids). Régua pura em
+// `utils/apresentacaoHorario`; leitura em `services/apresentacaoHorarios` — as
+// MESMAS que o app usa. E a guarda do nome dobrado (pai = mãe).
+const { escolherHorarioPara } = require('../services/apresentacaoHorarios');
+const { exigeConfirmacaoPaisIguais, rotuloHorarioApresentacao } = require('../utils/apresentacaoHorario');
+// FOTO pro telao do culto (16/09/2026) — regua do caminho em utils, testada.
+const multer = require('multer');
+const { caminhoFotoValido, extensaoDeMime, PREFIXO_FOTO } = require('../utils/fotoApresentacao');
+const { randomUUID } = require('crypto');
+// De QUEM é o CPF (16/09/2026) — régua pura, com teste e mutante.
+const { donoDoCpf, nomeDoDonoDoCpf, distribuirCpfs } = require('../utils/cpfResponsavel');
 
 // Limiter GENEROSO do router (padrão grupos/NPS/eventos): Wi-Fi único da
 // igreja — 10/15min por IP dava 429 na 11ª família (sweep 28/07).
@@ -84,8 +96,17 @@ function nomeCompletoOk(nome) {
 }
 
 // GET /api/public/apresentacao-criancas/proxima-data
-router.get('/proxima-data', (_req, res) => {
-  res.json({ data_apresentacao: proximoSegundoDomingoISO() });
+// + `horario_previsto`: o culto que a PRÓXIMA inscrição receberia agora (a
+// tela mostra como previsão; o definitivo vem na resposta do POST). Nulo quando
+// não há como saber — o texto é omitido, nunca inventado.
+router.get('/proxima-data', async (_req, res) => {
+  const data_apresentacao = proximoSegundoDomingoISO();
+  const h = await escolherHorarioPara(data_apresentacao);
+  res.json({
+    data_apresentacao,
+    horario_previsto: h.horario,
+    horario_previsto_rotulo: h.horario ? rotuloHorarioApresentacao(h.horario, h.configurados) : null,
+  });
 });
 
 // GET /api/public/apresentacao-criancas/textos — textos canônicos (o snapshot
@@ -98,14 +119,68 @@ router.get('/textos', (_req, res) => {
   });
 });
 
+// ════════════════════════════════════════════════════════════════════════════
+//  POST /foto — a família manda a foto que vai no TELÃO do culto (16/09/2026)
+//
+//  Pedido do Marcos: "adicionar foto da criança nesse formulário (...) a ideia
+//  é passar a foto durante o culto".
+//
+//  ⚠️⚠️ MULTIPART, não dataURL. O `express.json` global é de **1mb**
+//  (server.js linha 129) e só `/api/staff` tem 10mb: foto de celular em base64
+//  (5MB de arquivo ≈ 6,7MB de JSON) seria recusada pelo PARSER antes de chegar
+//  na rota — 413 sem mensagem nossa, no meio do formulário. Multipart não passa
+//  pelo parser de JSON. (É por isso que o `/criancas/:id/foto` do totemKids, que
+//  usa dataURL e diz aceitar 5MB, na prática para por volta de 750KB.)
+//
+//  ⚠️ A foto sobe ANTES de a inscrição existir (a família escolhe enquanto
+//  preenche), então a rota devolve o CAMINHO e o envio manda esse caminho de
+//  volta. Por isso `caminhoFotoValido` guarda o INSERT: o caminho passa pela
+//  mão de quem preenche.
+//
+//  ⚠️ Bucket PRIVADO `kids-documentos`, em pasta própria. Foto de criança não
+//  vai pra bucket público — a foto some atrás de URL assinada de 30 min.
+// ════════════════════════════════════════════════════════════════════════════
+const uploadFoto = multer({
+  storage: multer.memoryStorage(),
+  // 8MB: foto de celular SEM reduzir. Encolher seria economizar no lugar errado
+  // — o destino dela é um telão, não um avatar de 40px.
+  limits: { fileSize: 8 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => cb(null, Boolean(extensaoDeMime(file.mimetype))),
+});
+
+router.post('/foto', uploadFoto.single('foto'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Envie uma imagem JPG, PNG ou WEBP de até 8MB.' });
+    const ext = extensaoDeMime(req.file.mimetype);
+    if (!ext) return res.status(400).json({ error: 'Formato não aceito. Use JPG, PNG ou WEBP.' });
+    const caminho = `${PREFIXO_FOTO}${randomUUID()}.${ext}`;
+    const { error } = await supabase.storage
+      .from('kids-documentos')
+      .upload(caminho, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
+    if (error) throw error;
+    res.json({ foto_path: caminho });
+  } catch (e) {
+    console.error('[publicApresentacao] upload de foto:', e.message);
+    res.status(500).json({ error: 'Não conseguimos guardar a foto. Você pode enviar a inscrição sem ela.' });
+  }
+});
+
+// ⚠️ Erro do multer vira mensagem NOSSA. O padrão dele é um 500 com stack, e
+// quem está no formulário precisa saber que o problema é o tamanho do arquivo.
+router.use('/foto', (err, _req, res, _next) => {
+  if (err && err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'A foto passa de 8MB. Envie uma versão menor.' });
+  console.error('[publicApresentacao] multer:', err && err.message);
+  res.status(400).json({ error: 'Não conseguimos ler esse arquivo. Use JPG, PNG ou WEBP.' });
+});
+
 // POST /api/public/apresentacao-criancas
 router.post('/', async (req, res) => { // limiter geral já está no router.use (contar 2x reduziria o teto pela metade)
   try {
     const body = req.body || {};
     const {
       nome_pai, nome_mae, criancas, crianca_nome, crianca_idade, telefone,
-      cpf_responsavel, email, endereco, observacoes,
-      aceita_termos_menor, consent_imagem, whatsapp_optin,
+      cpf_responsavel, cpf_de, cpf_outro, email, endereco, observacoes,
+      aceita_termos_menor, consent_imagem, whatsapp_optin, pais_iguais_confirmado,
     } = body;
 
     if (honeypotPreenchido(body)) return res.json({ ok: true }); // honeypot · ignora silenciosamente
@@ -124,6 +199,12 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
         // que MOVEM a operação de domingo. Não perguntada ⇒ chave ausente ⇒ o
         // campo fica NULO, que é diferente de "respondeu que não".
         saude: normalizarSaude(c),
+        // ⚠️⚠️ O caminho da foto vem do CLIENTE (a rota /foto devolveu). A guarda
+        // em `utils/fotoApresentacao` é o que impede mandar aqui o caminho da foto
+        // de identificação de OUTRA criança — mesmo bucket privado — e fazer a
+        // ficha servi-la assinada. Inválido ⇒ segue SEM foto: a inscrição nunca
+        // se perde por causa de uma imagem.
+        fotoPath: caminhoFotoValido(c && c.foto_path) ? c.foto_path : null,
       }))
       .filter(c => c.nome.length >= 2);
 
@@ -143,12 +224,47 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
     for (const n of [nomePaiT, nomeMaeT]) {
       if (n && !nomeCompletoOk(n)) return res.status(400).json({ error: 'Escreva o nome completo do pai/mãe, sem abreviações.' });
     }
+    // ⚠️⚠️ 15/09/2026 · o BLOQUEIO virou CONFIRMAÇÃO (pedido do Marcos). O caso
+    // Isabella (08/09) era real — a mãe escreveu o próprio nome nos DOIS campos —,
+    // mas a saída oferecida ("deixe um dos campos em branco") NUNCA foi usada:
+    // medido em 15/09, as 22 inscrições vivas têm os dois campos preenchidos e 4
+    // delas com o mesmo nome. O bloqueio era atrito; o dado dobrado já é tratado
+    // na LEITURA (nomesDosPaisUnicos · certificado e lista do Kids saem com o
+    // nome uma vez só desde 08/09).
+    //
+    // ⚠️ A guarda NÃO some: sem a confirmação explícita do cliente a porta segue
+    // recusando — o que ela impede é a duplicação ACIDENTAL, não a deliberada.
+    // === true, nunca truthy: o corpo vem de JSON e a string "false" é truthy.
+    if (exigeConfirmacaoPaisIguais(nomePaiT, nomeMaeT, pais_iguais_confirmado)) {
+      return res.status(400).json({
+        codigo: 'pais_iguais',
+        error: 'O nome do pai e o da mãe estão iguais. Confirme que é a mesma pessoa para seguir.',
+      });
+    }
 
     const tel = String(telefone || '').replace(/\D+/g, '');
     if (tel.length < 10 || tel.length > 11) return res.status(400).json({ error: 'Informe um telefone válido com DDD.' });
 
     const cpfDig = normalizarCpf(cpf_responsavel);
     if (!cpfDig) return res.status(400).json({ error: 'Informe um CPF válido do responsável.' });
+
+    // ── De QUEM é este CPF (16/09/2026) ──────────────────────────────────────
+    // ⚠️⚠️ Achado do Marcos ao testar: o formulário pede os nomes dos DOIS
+    // responsáveis e um CPF só, e ninguém dizia de qual deles era. O código
+    // assumia a mãe. Medido: das 9 inscrições em que dá pra saber o dono, 3
+    // eram do PAI. O vínculo não saiu errado (o matcher prioriza CPF sobre
+    // nome), mas o par que chegava nele era falso — CPF de um, nome do outro —
+    // e é o nome que decide quando o CPF não está no cadastro.
+    // ⚠️ Com um responsável só, não se pergunta: a régua infere.
+    const donoCpf = donoDoCpf({
+      informado: cpf_de,
+      temPai: Boolean(nomePaiT),
+      temMae: Boolean(nomeMaeT),
+    });
+    // ⚠️ CPF do outro responsável é OPCIONAL: inválido é ignorado, nunca 400 —
+    // a inscrição não se perde por um campo que a família nem precisava pôr.
+    const cpfOutroDig = cpf_outro ? normalizarCpf(cpf_outro) : null;
+    const cpfsDosPais = distribuirCpfs({ dono: donoCpf, cpf: cpfDig, cpfOutro: cpfOutroDig });
 
     const emailNorm = normalizarEmail(email);
     if (!emailNorm || !emailValido(emailNorm)) {
@@ -170,10 +286,17 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
     const criados = [];
     const criancaIds = [];
     const jaInscritas = [];
+
+    // Horário do culto: escolhido UMA vez por envio — irmãos nunca se separam.
+    // Se um irmão já está inscrito nesta data com horário, a família fica nele.
+    const escolha = await escolherHorarioPara(dataApresentacao);
+    let horarioFamilia = escolha.horario;
+    let catalogoHorarios = escolha.configurados;
+
     for (const c of lista) {
       const { data: dup, error: eDup } = await supabase
         .from('apresentacao_criancas')
-        .select('id')
+        .select('id, horario_culto')
         .eq('cpf_responsavel', cpfDig)
         .eq('data_apresentacao', dataApresentacao)
         .ilike('crianca_nome', c.nome)
@@ -181,7 +304,11 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
         .is('deleted_at', null)
         .limit(1);
       if (eDup) throw eDup;
-      if (dup && dup.length) { jaInscritas.push(c.nome); continue; }
+      if (dup && dup.length) {
+        jaInscritas.push(c.nome);
+        if (dup[0].horario_culto) horarioFamilia = dup[0].horario_culto;
+        continue;
+      }
 
       // kids_criancas: reusa se já existe (nome + nascimento), senão cria com
       // dados de verdade — antes criava criança "órfã" duplicada a cada envio.
@@ -233,9 +360,7 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
         console.error('[publicApresentacao] cadastro kids_criancas falhou:', e.message);
       }
 
-      const { data, error } = await supabase
-        .from('apresentacao_criancas')
-        .insert({
+      const linhaInsc = {
           nome_pai: nomePaiT,
           nome_mae: nomeMaeT,
           crianca_nome: c.nome,
@@ -244,15 +369,47 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
           crianca_sexo: c.sexo,
           telefone: tel,
           cpf_responsavel: cpfDig,
+          // ⚠️ Mesma lei do horario_culto/foto: coluna que depende de migration
+          // só é MENCIONADA quando tem valor.
+          ...(cpfsDosPais.cpf_pai ? { cpf_pai: cpfsDosPais.cpf_pai } : {}),
+          ...(cpfsDosPais.cpf_mae ? { cpf_mae: cpfsDosPais.cpf_mae } : {}),
           email: emailNorm,
           endereco: enderecoT,
           data_apresentacao: dataApresentacao,
+          // ⚠️ Só menciona a coluna quando há valor: sem a migration `20260908150000`
+          // aplicada, `horario_culto: null` faria o PostgREST recusar o INSERT
+          // INTEIRO (42703) e a família perderia a inscrição por um informativo.
+          // Sem catálogo o serviço devolve null, então a chave fica de fora.
+          ...(horarioFamilia ? { horario_culto: horarioFamilia } : {}),
+          // ⚠️ Mesma lei do `horario_culto` acima: coluna que depende de migration
+          // só é MENCIONADA quando tem valor. `foto_storage_path: null` sem a
+          // migration `20260916140000` faria o PostgREST recusar o INSERT INTEIRO
+          // (42703) — a família perderia a inscrição por causa de uma foto.
+          ...(c.fotoPath ? { foto_storage_path: c.fotoPath, foto_enviada_em: new Date().toISOString() } : {}),
           status: 'pendente',
           origem: 'publico',
           crianca_id: criancaId,
           observacoes: obsExtra,
-        })
-        .select('id').single();
+      };
+      // ⚠️⚠️ COLUNAS QUE DEPENDEM DE MIGRATION. Se o código subir antes do SQL,
+      // o INSERT morre em 42703 e o `continue` logo abaixo descarta a inscrição
+      // INTEIRA — a família perde a vaga por causa de um campo novo, em
+      // silêncio. O laço derruba UMA coluna por vez até passar: some o campo
+      // novo, nunca a criança. (Mesma lei que o cadastro público aprendeu em
+      // 15/09 com o `semColunasDoCenso` → `COLUNAS_OPCIONAIS`.)
+      const OPCIONAIS_INSC = ['foto_storage_path', 'foto_enviada_em', 'cpf_pai', 'cpf_mae'];
+      const inserir = (linha) => supabase.from('apresentacao_criancas').insert(linha).select('id').single();
+      const linhaAtual = { ...linhaInsc };
+      let { data, error } = await inserir(linhaAtual);
+      while (error && error.code === '42703') {
+        const faltando = OPCIONAIS_INSC.find((c) => (error.message || '').includes(c));
+        // ⚠️ Sem nada que possamos derrubar, PARAR: insistir aqui seria laço
+        // infinito batendo no banco a cada inscrição.
+        if (!faltando || !(faltando in linhaAtual)) break;
+        console.warn(`[publicApresentacao] coluna ${faltando} ausente (migration não aplicada) — inscrevendo sem ela`);
+        delete linhaAtual[faltando];
+        ({ data, error } = await inserir(linhaAtual));
+      }
       if (error) {
         console.error('[publicApresentacao] insert error:', error.message);
         continue;
@@ -284,7 +441,12 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
       // Funil de identidade do RESPONSÁVEL (matcher read-only + observação) +
       // vínculo criança↔responsável no Kids. Best-effort: a inscrição nunca é
       // perdida por falha aqui.
-      const nomeResp = nomeMaeT || nomePaiT;
+      // ⚠️⚠️ O nome que vai junto do CPF é o do DONO do CPF. Antes era sempre
+      // `nomeMaeT || nomePaiT`: com o CPF do pai, o funil de identidade recebia
+      // o CPF de um com o nome do outro. Não estragou vínculo até hoje porque o
+      // matcher prioriza CPF — mas é o NOME que decide quando o CPF não está no
+      // cadastro, e aí ele decidiria pela pessoa errada.
+      const nomeResp = nomeDoDonoDoCpf(donoCpf, nomePaiT, nomeMaeT);
       processarIdentidade({
         nomeCompleto: nomeResp, cpf: cpfDig, email: emailNorm, telefone: tel,
         politica: 'ligar', origem: 'apresentacao_formulario', origemId: criados[0],
@@ -322,6 +484,7 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
       }).catch((err) => console.error('[publicApresentacao] identidade:', err.message));
 
       const nomes = lista.map(c => c.nome).join(', ');
+      const rotuloH = rotuloHorarioApresentacao(horarioFamilia, catalogoHorarios);
       // ⚠️ Quem recebe vem de `notificacao_regras` (modulo kids, tipo
       // nova_apresentacao_crianca), NÃO de e-mail cravado aqui.
       //
@@ -339,7 +502,9 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
         modulo: 'kids',
         tipo: 'nova_apresentacao_crianca',
         titulo: criados.length > 1 ? 'Nova apresentação de crianças' : 'Nova apresentação de criança',
-        mensagem: `${nomes} — inscriç${criados.length > 1 ? 'ões' : 'ão'} para a apresentação de ${dataApresentacao}. Entrar em contato com a família para agendar o horário.`,
+        mensagem: `${nomes} — inscriç${criados.length > 1 ? 'ões' : 'ão'} para a apresentação de ${dataApresentacao}`
+          + (rotuloH ? ` · ${rotuloH}.` : '. Sem horário atribuído (catálogo cheio ou indisponível) — definir na tela do Kids.')
+          + (escolha.lotado ? ' ⚠️ Todos os horários estão lotados.' : ''),
         // ⚠️ O `?id=` é o que faz o toque na notificação abrir A INSCRIÇÃO em
         // vez da lista inteira (app do staff · `destinoDoPush`). Só vai quando
         // é UMA criança: com várias, apontar para a primeira seria arbitrário
@@ -352,7 +517,12 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
       }).catch(err => console.error('[publicApresentacao] notificacao falhou:', err.message));
     }
 
-    res.status(201).json({ ok: true, ids: criados, ja_inscritas: jaInscritas, data_apresentacao: dataApresentacao });
+    res.status(201).json({
+      ok: true, ids: criados, ja_inscritas: jaInscritas, data_apresentacao: dataApresentacao,
+      // O culto em que a família será apresentada (nulo = a equipe define e avisa).
+      horario_culto: horarioFamilia,
+      horario_rotulo: rotuloHorarioApresentacao(horarioFamilia, catalogoHorarios),
+    });
   } catch (e) {
     console.error('[publicApresentacao] erro:', e.message);
     res.status(500).json({ error: 'Erro ao enviar inscrição.' });

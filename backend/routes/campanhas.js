@@ -15,6 +15,7 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const arrecadacao = require('../services/campanhaArrecadacao');
 const disparo = require('../services/campanhaDisparo');
 const agradece = require('../services/campanhaAgradece');
+const campIdent = require('../utils/campanhaIdentidade');
 const { normalizarDigito, checarDigitoLivre, sugerirDigito } = require('../utils/digitoCampanha');
 const { SEGMENTOS, CANAIS } = require('../utils/campanhaPublico');
 const svcMarcos = require('../services/campanhaMarcos');
@@ -196,6 +197,35 @@ router.put('/:id', authorizeModule('campanhas', 3), async (req, res) => {
   try {
     const patch = {};
     for (const c of CAMPOS_CAMPANHA) if (req.body?.[c] !== undefined) patch[c] = req.body[c];
+
+    // ⚠️⚠️ NOME e DESCRIÇÃO CURTA validados pela régua (01/09/2026 · pedido do
+    // Matheus de poder renomear). Antes iam CRUS do body, e `''` PASSA no NOT
+    // NULL da coluna — dava pra deixar a campanha com nome em branco no seletor
+    // do /doar, no chip da barrinha e no retorno de `camp_digitos_ativos()`.
+    if (patch.nome !== undefined) {
+      const v = campIdent.validarNome(patch.nome);
+      if (!v.ok) {
+        return res.status(400).json({ error: campIdent.mensagemDoMotivo(v.motivo), campo: 'nome' });
+      }
+      patch.nome = v.nome;
+    }
+    if (patch.descricao_curta !== undefined) {
+      const v = campIdent.validarDescricaoCurta(patch.descricao_curta);
+      if (!v.ok) {
+        return res.status(400).json({ error: campIdent.mensagemDoMotivo(v.motivo), campo: 'descricao_curta' });
+      }
+      patch.descricao_curta = v.descricao_curta;
+    }
+
+    // ⚠️⚠️ O SLUG NÃO É REGERADO ao renomear, e isso é decisão: ele é o endereço
+    // público (`/campanha/<slug>`) que já pode estar em cartaz impresso, em QR e
+    // em link compartilhado. Renomear a campanha não pode matar endereço que está
+    // na mão das pessoas. `slug` está FORA de `CAMPOS_CAMPANHA` (há teste).
+    //
+    // ⚠️⚠️ E `pag_cobrancas.metadata.campanha` também NÃO é reescrito: é SNAPSHOT
+    // do que a pessoa viu ao doar, e o registro daquela doação tem de continuar
+    // dizendo para que ela doou. Quem casa doação × campanha é `campanha_id`,
+    // então a barrinha segue certa depois do rename.
 
     if (req.body?.digito !== undefined) {
       const digito = req.body.digito === null || req.body.digito === ''

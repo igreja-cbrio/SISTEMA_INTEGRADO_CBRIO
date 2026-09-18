@@ -10,9 +10,76 @@
 const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { classificar, periodosFechados } = require('../services/kpiPontualidade');
 
 router.use(authenticate);
 router.use(authorize('admin', 'diretor'));
+
+// Janela de cobrança: 3 períodos fechados do PRÓPRIO KPI (3 meses pro mensal,
+// 3 semanas pro semanal, 3 trimestres pro trimestral). Substitui a janela fixa
+// de 60 dias, que era alarme garantido pros 28 trimestrais/semestrais/anual e
+// silêncio de 8 semanas pros 21 semanais.
+const JANELA = 3;
+
+// `kpi_registros` já passou de 2.700 linhas e o limite default do supabase-js é
+// 1.000: sem paginar, a cobertura sairia subestimada e a tela acusaria líder
+// que preencheu. Cobrança errada só se gasta uma vez.
+async function paginado(tabela, colunas, aplicaFiltro) {
+  const PAGINA = 1000;
+  let saida = [];
+  let inicio = 0;
+  for (;;) {
+    let q = supabase.from(tabela).select(colunas).range(inicio, inicio + PAGINA - 1);
+    if (aplicaFiltro) q = aplicaFiltro(q);
+    const { data, error } = await q;
+    if (error) return { data: saida, error };
+    saida = saida.concat(data || []);
+    if (!data || data.length < PAGINA) break;
+    inicio += PAGINA;
+  }
+  return { data: saida, error: null };
+}
+
+const pct = (parte, total) => (total > 0 ? Math.round((parte / total) * 1000) / 10 : 0);
+
+// Soma a classificação de um KPI num acumulador (líder, área ou total geral).
+// Existe pra as três contagens saírem da MESMA régua — três laços parecidos é
+// como o líder, a área e o total passariam a discordar entre si.
+function acumular(alvo, classe) {
+  if (!classe) return alvo;
+  alvo.total_kpis++;
+  alvo.slots += classe.slots;
+  alvo.slots_preenchidos += classe.preenchidos;
+  if (classe.pontualidade === 'em_dia') alvo.pont_em_dia++;
+  else if (classe.pontualidade === 'atrasado') alvo.pont_atrasado++;
+  else alvo.pont_nunca++;
+  if (classe.desempenho === 'no_alvo') alvo.des_no_alvo++;
+  else if (classe.desempenho === 'abaixo') alvo.des_abaixo++;
+  else if (classe.desempenho === 'nao_julgavel') alvo.des_nao_julgavel++;
+  else if (classe.desempenho === 'sem_meta') alvo.des_sem_meta++;
+  if (classe.fonte !== 'viva') alvo.fonte_morta++;
+  return alvo;
+}
+
+// Índice { kpi_id: { '2026-08': valor } } com os DOIS caminhos de valor —
+// preenchimento manual (`kpi_registros`) e fórmula (`kpi_valores_calculados`).
+// Ler só um faz a tela mentir: foi o bug que acusava ~127 "sem registro" quando
+// o número real era ~23.
+function indexarValores({ registros, calculados }) {
+  const valores = {};
+  const ultimoCalculo = {};
+  (registros || []).forEach(r => {
+    if (r.valor_realizado == null) return;
+    (valores[r.indicador_id] = valores[r.indicador_id] || {})[r.periodo_referencia] = Number(r.valor_realizado);
+  });
+  (calculados || []).forEach(c => {
+    const atual = ultimoCalculo[c.kpi_id];
+    if (!atual || String(c.periodo_referencia) > String(atual.periodo_referencia)) ultimoCalculo[c.kpi_id] = c;
+    if (c.valor_calculado == null) return;
+    (valores[c.kpi_id] = valores[c.kpi_id] || {})[c.periodo_referencia] = Number(c.valor_calculado);
+  });
+  return { valores, ultimoCalculo };
+}
 
 // ----------------------------------------------------------------------------
 // GET /pulso - dashboard de operação do PMO
@@ -21,16 +88,53 @@ router.get('/pulso', async (req, res) => {
   try {
     const { data: kpis } = await supabase
       .from('kpi_indicadores_taticos')
-      .select('id, indicador, area, valores, periodicidade, is_okr, lider_funcionario_id, ativo')
+      .select('id, indicador, area, valores, periodicidade, is_okr, lider_funcionario_id, sentido_meta, ativo')
       .eq('ativo', true);
 
     const { data: trajs } = await supabase
       .from('vw_kpi_trajetoria_atual')
-      .select('kpi_id, status_trajetoria, ultimo_periodo, ultimo_valor, percentual_meta');
+      .select('kpi_id, status_trajetoria, ultimo_periodo, ultimo_valor, percentual_meta, meta_periodo');
     const trajByKpi = {};
     (trajs || []).forEach(t => { trajByKpi[t.kpi_id] = t; });
 
-    // 1. Quem esta atrasado (líderes com KPIs sem registro recente)
+    // ── A régua de PONTUALIDADE (04/09/2026) ───────────────────────────────
+    // Antes esta rota classificava líder por `status_trajetoria`, que responde
+    // "bateu a meta?" — e chamava o resultado de "% em dia". Eram duas
+    // perguntas na mesma luz: quem parou de preencher ficava invisível
+    // enquanto o último número dele fosse bom (medidos 6 KPIs "no alvo" com
+    // dado de 2+ períodos atrás, um deles de maio).
+    const [regsRes, calcRes] = await Promise.all([
+      paginado('kpi_registros', 'indicador_id, periodo_referencia, valor_realizado'),
+      paginado('kpi_valores_calculados', 'kpi_id, periodo_referencia, valor_calculado'),
+    ]);
+    // ⚠️ Falha de leitura NÃO pode virar "esse líder não preencheu". Quando uma
+    // das fontes falha, a rota DECLARA a cobertura como incompleta e a tela não
+    // mostra ranking — igual ao bloco de saúde.
+    const coberturaIncompleta = !!regsRes.error || !!calcRes.error;
+    const { valores, ultimoCalculo } = indexarValores({
+      registros: regsRes.data,
+      calculados: calcRes.data,
+    });
+
+    const agora = new Date();
+    const classePorKpi = {};
+    (kpis || []).forEach(k => {
+      classePorKpi[k.id] = classificar({
+        kpi: k,
+        valoresPorPeriodo: valores[k.id] || {},
+        temLinhaCalculada: !!ultimoCalculo[k.id],
+        ultimoCalculoNulo: !!ultimoCalculo[k.id] && ultimoCalculo[k.id].valor_calculado == null,
+        metaPeriodo: trajByKpi[k.id]?.meta_periodo ?? null,
+        janela: JANELA,
+        hoje: agora,
+      });
+    });
+
+    // ── 1 · LÍDERES · duas contas SEPARADAS ────────────────────────────────
+    // `percentual_em_dia` (o nome antigo) media DESEMPENHO e se chamava "em
+    // dia". Agora são dois números com nomes honestos: cobertura = preencheu?
+    // no_alvo = bateu a meta? Misturá-los é o que fazia o PMO cobrar dado de
+    // quem preencheu e não cobrar quem parou.
     const liderIds = [...new Set((kpis || []).map(k => k.lider_funcionario_id).filter(Boolean))];
     const { data: lideres } = liderIds.length > 0 ? await supabase
       .from('rh_funcionarios')
@@ -39,73 +143,143 @@ router.get('/pulso', async (req, res) => {
     const lideresMap = {};
     (lideres || []).forEach(l => { lideresMap[l.id] = l; });
 
+    const zerado = () => ({
+      total_kpis: 0,
+      // preenchimento
+      pont_em_dia: 0, pont_atrasado: 0, pont_nunca: 0,
+      slots: 0, slots_preenchidos: 0,
+      // desempenho (só do que é julgável)
+      des_no_alvo: 0, des_abaixo: 0, des_nao_julgavel: 0, des_sem_meta: 0,
+      // engenharia
+      fonte_morta: 0,
+    });
+
     const lideresStat = {};
     (kpis || []).forEach(k => {
       if (!k.lider_funcionario_id) return;
       if (!lideresStat[k.lider_funcionario_id]) {
         const l = lideresMap[k.lider_funcionario_id] || { nome: 'Sem nome', cargo: '', area: '' };
-        lideresStat[k.lider_funcionario_id] = {
-          ...l,
-          total_kpis: 0,
-          em_dia: 0,
-          atrasados: 0,
-          criticos: 0,
-          sem_dado: 0,
-        };
+        lideresStat[k.lider_funcionario_id] = { ...l, ...zerado() };
       }
-      lideresStat[k.lider_funcionario_id].total_kpis++;
-      const s = trajByKpi[k.id]?.status_trajetoria;
-      if (s === 'no_alvo') lideresStat[k.lider_funcionario_id].em_dia++;
-      else if (s === 'atras') lideresStat[k.lider_funcionario_id].atrasados++;
-      else if (s === 'critico') lideresStat[k.lider_funcionario_id].criticos++;
-      else lideresStat[k.lider_funcionario_id].sem_dado++;
+      acumular(lideresStat[k.lider_funcionario_id], classePorKpi[k.id]);
     });
 
     const lideresList = Object.values(lideresStat)
       .map(l => ({
         ...l,
-        percentual_em_dia: l.total_kpis > 0 ? Math.round((l.em_dia / l.total_kpis) * 100) : 0,
-        score: l.criticos * 3 + l.atrasados * 2 + l.sem_dado, // pior score = mais alerta
+        percentual_cobertura: pct(l.slots_preenchidos, l.slots),
+        percentual_no_alvo: pct(l.des_no_alvo, l.des_no_alvo + l.des_abaixo),
+        // Ordena por PENDÊNCIA DE PREENCHIMENTO primeiro: é o que o PMO
+        // consegue cobrar. Desempenho ruim com dado em dia é conversa de
+        // gestão, não de cobrança.
+        score: l.pont_nunca * 3 + l.pont_atrasado * 2 + l.des_abaixo,
       }))
       .sort((a, b) => b.score - a.score);
 
-    // 2. KPIs cronicamente vermelhos (≥ 2 ciclos)
-    // Por enquanto: KPIs com status critico (refinamos depois com histórico)
-    const cronicamente = (kpis || [])
-      .map(k => ({ ...k, traj: trajByKpi[k.id] }))
-      .filter(k => k.traj?.status_trajetoria === 'critico')
-      .map(k => ({
-        kpi_id: k.id,
-        indicador: k.indicador,
-        area: k.area,
-        is_okr: k.is_okr,
-        ultimo_valor: k.traj?.ultimo_valor,
-        ultimo_periodo: k.traj?.ultimo_periodo,
-        percentual_meta: k.traj?.percentual_meta,
-      }));
+    // ── 2 · VENCIDOS · a fila de cobrança ─────────────────────────────────
+    // KPI cujo último período FECHADO não tem valor E cuja fonte está viva.
+    // Fonte morta sai daqui de propósito: cobrar o líder por fórmula que não
+    // acha dado é a cobrança errada que queima a credibilidade da cobrança.
+    const nomeLider = (id) => (id ? (lideresMap[id]?.nome || null) : null);
+    const linhaKpi = (k) => ({
+      kpi_id: k.id,
+      indicador: k.indicador,
+      area: k.area,
+      is_okr: k.is_okr,
+      periodicidade: k.periodicidade,
+      dono: nomeLider(k.lider_funcionario_id),
+      dono_id: k.lider_funcionario_id || null,
+      ...classePorKpi[k.id],
+      percentual_meta: trajByKpi[k.id]?.percentual_meta ?? null,
+      ultimo_periodo: trajByKpi[k.id]?.ultimo_periodo ?? null,
+    });
 
-    // 3. Por área: % de KPIs em dia
+    const vencidos = (kpis || [])
+      .filter(k => classePorKpi[k.id].fonte === 'viva' && classePorKpi[k.id].pontualidade !== 'em_dia')
+      .map(linhaKpi)
+      .sort((a, b) => (b.periodos_atraso ?? 0) - (a.periodos_atraso ?? 0));
+
+    // Fila de ENGENHARIA, não de cobrança: a fórmula roda e não devolve valor,
+    // ou o coletor nunca produziu linha nenhuma.
+    const fonte_morta = (kpis || [])
+      .filter(k => classePorKpi[k.id].fonte !== 'viva')
+      .map(linhaKpi);
+
+    // ── 3 · CRÔNICOS · agora é HISTÓRICO, não a foto de hoje ───────────────
+    // O card dizia "cronicamente vermelhos" mostrando quem está vermelho
+    // AGORA — o próprio comentário do código admitia ("refinamos depois com
+    // histórico"). Crônico = os DOIS últimos períodos fechados abaixo da meta.
+    const cronicos = (kpis || [])
+      .filter(k => classePorKpi[k.id].cronico)
+      .map(linhaKpi)
+      .sort((a, b) => (a.percentual_meta ?? 999) - (b.percentual_meta ?? 999));
+
+    // Abaixo da meta com dado RECENTE e confiável (é aqui que mora a conversa
+    // de desempenho). Separado dos zeros de fonte vazia.
+    const abaixo_da_meta = (kpis || [])
+      .filter(k => classePorKpi[k.id].desempenho === 'abaixo')
+      .map(linhaKpi)
+      .sort((a, b) => (a.percentual_meta ?? 999) - (b.percentual_meta ?? 999));
+
+    // ⚠️ Compatibilidade: o nome antigo continua na resposta apontando para os
+    // crônicos, porque bundle em cache ainda lê `cronicamente_vermelhos`.
+    const cronicamente = cronicos;
+
+    // ── 4 · POR ÁREA · cobertura E desempenho ─────────────────────────────
     const areasStat = {};
     (kpis || []).forEach(k => {
       const a = String(k.area || 'sem_area').toLowerCase();
-      if (!areasStat[a]) areasStat[a] = { area: a, total: 0, em_dia: 0, atrasados: 0, criticos: 0, sem_dado: 0 };
-      areasStat[a].total++;
-      const s = trajByKpi[k.id]?.status_trajetoria;
-      if (s === 'no_alvo') areasStat[a].em_dia++;
-      else if (s === 'atras') areasStat[a].atrasados++;
-      else if (s === 'critico') areasStat[a].criticos++;
-      else areasStat[a].sem_dado++;
+      if (!areasStat[a]) areasStat[a] = { area: a, ...zerado() };
+      acumular(areasStat[a], classePorKpi[k.id]);
     });
     const areasList = Object.values(areasStat).map(a => ({
       ...a,
-      percentual_em_dia: a.total > 0 ? Math.round((a.em_dia / a.total) * 100) : 0,
-    })).sort((a, b) => a.percentual_em_dia - b.percentual_em_dia);
+      total: a.total_kpis,
+      percentual_cobertura: pct(a.slots_preenchidos, a.slots),
+      percentual_no_alvo: pct(a.des_no_alvo, a.des_no_alvo + a.des_abaixo),
+    })).sort((a, b) => a.percentual_cobertura - b.percentual_cobertura);
+
+    // ── 5 · O TOTAL ───────────────────────────────────────────────────────
+    const totalGeral = zerado();
+    (kpis || []).forEach(k => acumular(totalGeral, classePorKpi[k.id]));
 
     res.json({
       total_kpis_ativos: kpis?.length || 0,
       lideres: lideresList,
+      // nome antigo preservado + o honesto ao lado
       cronicamente_vermelhos: cronicamente,
+      cronicos,
+      abaixo_da_meta,
+      vencidos,
+      fonte_morta,
       areas: areasList,
+      cobertura: {
+        janela_periodos: JANELA,
+        slots: totalGeral.slots,
+        preenchidos: totalGeral.slots_preenchidos,
+        pct: pct(totalGeral.slots_preenchidos, totalGeral.slots),
+        // ⚠️ Bloco incompleto é DECLARADO: cobertura subestimada vira fila de
+        // cobrança indevida, e cobrança errada só se gasta uma vez.
+        incompleto: coberturaIncompleta,
+        aviso: coberturaIncompleta
+          ? 'Cobertura incompleta: falha ao ler os lançamentos. O ranking de preenchimento não é confiável nesta leitura.'
+          : null,
+      },
+      pontualidade: {
+        em_dia: totalGeral.pont_em_dia,
+        atrasado: totalGeral.pont_atrasado,
+        nunca: totalGeral.pont_nunca,
+      },
+      desempenho: {
+        no_alvo: totalGeral.des_no_alvo,
+        abaixo: totalGeral.des_abaixo,
+        nao_julgavel: totalGeral.des_nao_julgavel,
+        sem_meta: totalGeral.des_sem_meta,
+      },
+      fonte: {
+        viva: totalGeral.total_kpis - totalGeral.fonte_morta,
+        morta: totalGeral.fonte_morta,
+      },
     });
   } catch (e) {
     console.error('gestao/pulso:', e.message);
@@ -120,7 +294,7 @@ router.get('/saude', async (req, res) => {
   try {
     const { data: kpis } = await supabase
       .from('kpi_indicadores_taticos')
-      .select('id, indicador, descricao, area, valores, meta_descricao, meta_valor, lider_funcionario_id, objetivo_geral_id, is_okr, ativo')
+      .select('id, indicador, descricao, area, valores, meta_descricao, meta_valor, meta_valor_absoluto, periodicidade, lider_funcionario_id, objetivo_geral_id, is_okr, ativo')
       .eq('ativo', true);
 
     // Apenas KPIs das 6 áreas oficiais (kids/ami/bridge/sede/online/cba) entram
@@ -136,6 +310,15 @@ router.get('/saude', async (req, res) => {
     const sem_meta = (kpis || []).filter(k =>
       (k.meta_valor === null || k.meta_valor === undefined) &&
       (!k.meta_descricao || k.meta_descricao.trim() === '')
+    );
+
+    // ⚠️ `sem_meta` conta DESCRIÇÃO de meta como meta — e o farol não julga
+    // descrição. Então "0 sem meta" convivia com 10 KPIs que a view marca
+    // `sem_meta` por não terem número. São perguntas diferentes: uma é
+    // "alguém escreveu a meta?", a outra é "dá pra dizer se bateu?".
+    const meta_so_texto = (kpis || []).filter(k =>
+      k.meta_valor == null && k.meta_valor_absoluto == null &&
+      !!(k.meta_descricao && k.meta_descricao.trim())
     );
 
     const sem_dono = (kpis || []).filter(k => !k.lider_funcionario_id);
@@ -253,12 +436,22 @@ router.get('/saude', async (req, res) => {
         items: summarize(sem_registro_60d, ['id', 'indicador', 'descricao', 'area']),
         janela_dias: 60,
         fontes_lidas: ['kpi_registros', 'kpi_valores_calculados'],
+        // ⚠️ Esta janela é FIXA e não sabe a periodicidade do KPI: pros 28
+        // trimestrais/semestrais/anual 60 dias é alarme garantido, e pros 21
+        // semanais deixa passar 8 semanas de silêncio. A fila de cobrança que
+        // respeita a periodicidade é `vencidos`, em GET /gestao/pulso.
+        janela_fixa: true,
+        onde_esta_a_fila: 'GET /api/gestao/pulso -> vencidos',
         // Bloco incompleto é DECLARADO: número sem a ressalva ao lado vira
         // cobrança errada, e cobrança errada só se gasta uma vez.
         incompleto: !fonteRegistrosOk || !fonteCalculadosOk,
         aviso: (!fonteRegistrosOk || !fonteCalculadosOk)
           ? `Contagem incompleta: falha ao ler ${[!fonteRegistrosOk && 'kpi_registros', !fonteCalculadosOk && 'kpi_valores_calculados'].filter(Boolean).join(' e ')}.`
           : null,
+      },
+      meta_so_texto: {
+        total: meta_so_texto.length,
+        items: summarize(meta_so_texto, ['id', 'indicador', 'descricao', 'area']),
       },
       calculam_nulo: {
         total: calculam_nulo.length,
@@ -309,11 +502,14 @@ router.post('/pulso/cobrar/:lider_id', async (req, res) => {
     const { error } = await supabase.from('notificacoes').insert({
       usuario_id: userId,
       titulo: 'Atualize seus KPIs',
-      mensagem: mensagem || 'O PMO solicitou que você atualize os indicadores da sua área. Acesse Meus KPIs.',
+      mensagem: mensagem || 'O PMO solicitou que você atualize os indicadores da sua área.',
       tipo: 'cobranca_kpi',
       modulo: 'kpis',
       severidade: 'aviso',
-      link: '/meus-kpis',
+      // ⚠️ Apontava pra `/meus-kpis`, que virou redirect pro /painel quando a
+      // Minha Área saiu (04/09). Enquanto não existir a tela do líder, o
+      // destino honesto é o painel — nunca uma rota que não mostra o que falta.
+      link: '/painel',
       lida: false,
     });
     if (error) throw error;

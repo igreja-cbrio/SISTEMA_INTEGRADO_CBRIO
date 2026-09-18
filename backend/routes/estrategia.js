@@ -8,11 +8,20 @@
 // ============================================================================
 
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, apenasColaborador } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const painelCache = require('../services/painelCache');
 
 router.use(authenticate);
+// varredura 2026-09: A05 — `apenasColaborador` foi criado e exportado sem um
+// único consumidor, e /api/estrategia servia OKR/KR/meta institucional para as
+// 138 contas `is_membro_only` (medição 04/09) que autenticam com o MESMO
+// Supabase Auth do app. Piso no router inteiro porque nenhuma rota daqui entra
+// sem `req.user` (não há cron nem rota pública neste arquivo) e o app de
+// membros não chama /api/estrategia (só /api/app/* e /api/public/*).
+// ⚠️ É PISO, não régua de módulo: o `authorize('admin','diretor')` por rota que
+// já existe nas mutações continua sendo quem separa leitura de escrita.
+router.use(apenasColaborador);
 
 // Toda mutacao de OKR/KR/KPI invalida o cache do painel · usuário ve mudança
 // no próximo refresh sem esperar TTL. Aplicado a TODAS as rotas POST/PUT/PATCH/DELETE

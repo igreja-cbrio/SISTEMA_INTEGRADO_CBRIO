@@ -1,4 +1,6 @@
 import { supabase } from './supabaseClient';
+// Mesma régua de retry das portas públicas de pesquisa (censo e NPS).
+import { fetchPublicoComRetry as npsFetchRetry } from './lib/censoApi';
 import { resolveApiBaseUrl } from './lib/api-base';
 import { captureApiError } from './lib/sentry';
 
@@ -350,8 +352,10 @@ export const censo = {
   // Respostas nominais (nível 2). O bloco sensível vem filtrado pelo servidor
   // para quem não está em cen_acesso_sensivel — o front só mostra que existe
   // algo oculto, nunca o conteúdo.
-  respostas: (pesquisaId, limite) =>
-    get(`/censo/respostas?pesquisa_id=${pesquisaId}${limite ? `&limite=${limite}` : ''}`),
+  // ⚠️ Devolve `{ total, offset, limite, itens }` desde 14/09/2026 — o total
+  // vem do COUNT do banco, a lista é paginada. Ver o porquê em routes/censo.js.
+  respostas: (pesquisaId, limite, offset) =>
+    get(`/censo/respostas?pesquisa_id=${pesquisaId}${limite ? `&limite=${limite}` : ''}${offset ? `&offset=${offset}` : ''}`),
   resposta: (id) => get(`/censo/respostas/${id}`),
   // Apaga a resposta de uma pessoa e a LIBERA para responder de novo (nível 4).
   // Soft-delete no servidor: a régua do "já respondeu?" filtra deleted_at.
@@ -379,6 +383,14 @@ export const censo = {
   // Perfil: todo gráfico do censo, na ordem do questionário, com a base já sem
   // as opções neutras. Pergunta nova no construtor vira gráfico sozinha.
   perfil: (pesquisaId) => get(`/censo/perfil?pesquisa_id=${pesquisaId}`),
+  perfilMapa: (pesquisaId) => get(`/censo/perfil/mapa?pesquisa_id=${pesquisaId}`),
+  relatorio: (pesquisaId) => get(`/censo/relatorio?pesquisa_id=${pesquisaId}`),
+  // ⚠️ 600s pelo MESMO motivo da leitura logo abaixo — e aqui a régua já existia
+  // sete linhas adiante quando eu escrevi esta sem timeout. O relatório roda
+  // Opus 5 sobre o perfil inteiro e passa de 30s; a tela dizia "Tempo esgotado"
+  // enquanto o servidor terminava e GRAVAVA. Recarregar mostrava o relatório
+  // pronto: o trabalho não se perdia, só a mensagem mentia.
+  gerarRelatorio: (pesquisaId) => post('/censo/relatorio', { pesquisa_id: pesquisaId }, { timeout: 600000 }),
   ia: {
     obter: (pesquisaId) => get(`/censo/ia?pesquisa_id=${pesquisaId}`),
     // ⚠️ 600s (o padrão é 30s): a leitura roda Opus 5 sobre centenas de textos
@@ -525,6 +537,16 @@ export const inscricoesApi = {
   // Documentos do evento (orientações gerais, autorização de menor) — bucket
   // público evento-arquivos. Devolve { url, nome }.
   uploadArquivoEvento: (file) => { const fd = new FormData(); fd.append('arquivo', file); return requestFile('/inscricoes/upload-arquivo', fd); },
+  // Importa a exportação de inscrições do E-Inscrição pro evento. Sem
+  // `confirmar` a rota só devolve a PRÉVIA (nada é gravado); com ele, replaneja
+  // contra o banco de agora e grava. O arquivo vai de novo na confirmação de
+  // propósito — plano guardado em sessão seria um retrato velho.
+  importarEInscricao: (eventoId, file, confirmar) => {
+    const fd = new FormData();
+    fd.append('arquivo', file);
+    if (confirmar) fd.append('confirmar', '1');
+    return requestFile(`/inscricoes/eventos/${eventoId}/importar-einscricao`, fd);
+  },
   // Check-in do evento (SPEC-06) — tela fullscreen: QR do comprovante + busca
   // Inventário das portas públicas do sistema (grupos/next/batismo/…) — read-only
   portas: () => get('/inscricoes/portas'),
@@ -658,6 +680,11 @@ export const eventoPublico = {
 // aprovado pela Apple, e permite arrecadar fora dele ("via Safari"). Não
 // consumir estes endpoints de dentro de WebView do app.
 export const generosidadePublica = {
+  // Prefill do cadastro quando a pessoa vem do app (`?t=`).
+  // ⚠️ Devolve o CPF MASCARADO — o valor real fica no servidor.
+  prefill: (t) => fetch(`${API}/public/generosidade/prefill?t=${encodeURIComponent(t)}`)
+    .then((r) => (r.ok ? r.json() : { prefill: null }))
+    .catch(() => ({ prefill: null })),
   config: () => fetch(`${API}/public/generosidade/config`)
     .then(async r => { const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
   doar: (dados) => fetch(`${API}/public/generosidade/doacao`, {
@@ -1558,6 +1585,9 @@ export const financeiroV2 = {
     revisao: (inicio, fim) => get(`/financeiro-v2/conciliar-balanco-ofx/revisao?inicio=${inicio}&fim=${fim}`),
     confirmar: (transacao_id, bruto_id) => post('/financeiro-v2/conciliar-balanco-ofx/confirmar', { transacao_id, bruto_id }),
     ignorar: (transacao_id) => post('/financeiro-v2/conciliar-balanco-ofx/ignorar', { transacao_id }),
+  // Quem já foi identificado no período — a lista atrás dos contadores.
+  identificados: (inicio, fim) => get(`/financeiro-v2/conciliar-balanco-ofx/identificados?inicio=${inicio}&fim=${fim}`),
+  desfazer: (transacao_id) => post('/financeiro-v2/conciliar-balanco-ofx/desfazer', { transacao_id }),
   },
   // Cartões de crédito + faturas (Fase 4)
   cartoes: {
@@ -1721,6 +1751,8 @@ export const financeiroV2 = {
     return get(`/financeiro-v2/doador/transacoes?${p.toString()}`);
   },
   dizimoOferta: (ano, semExtra) => get(`/financeiro-v2/dizimo-oferta?ano=${ano || ''}${semExtra ? '&sem_extra=1' : ''}`),
+  // 5as semanas dos meses com 5 semanas (qua-ter) · comparadas entre si.
+  quintasSemanas: (anos = 4, semExtra = false) => get(`/financeiro-v2/quintas-semanas?anos=${anos}&sem_extra=${semExtra ? 1 : 0}`),
   syncSaldoBancos: () => post('/financeiro-v2/sync-saldo-bancos', {}),
   backfill: (data) => post('/financeiro-v2/backfill/transacoes', data || {}),
   recorrencias: {
@@ -1929,6 +1961,11 @@ export const patrimonio = {
 };
 
 export const rh = {
+  // ⚠️ Foto de colaborador sobe pelo BACKEND (o upload direto do browser exigia
+  // policies abertas no bucket para qualquer conta `authenticated`, incluindo as
+  // do app dos membros — revogadas). Sem `:id` porque o modal de admissão envia
+  // a foto antes de o cadastro existir.
+  uploadFotoNova: (file) => { const fd = new FormData(); fd.append('foto', file); return requestFile('/rh/foto', fd); },
   dashboard: () => get('/rh/dashboard'),
   dashboardSeries: (meses = 12) => get(`/rh/dashboard/series?meses=${meses}`),
   acessos: () => get('/rh/acessos'),
@@ -2176,8 +2213,23 @@ export const totemKids = {
   voluntariadoInscricaoUpdate: (id, dados) => patch(`/totem-kids/voluntariado-inscricoes/${id}`, dados),
   batismos: () => get('/totem-kids/batismos'),
   apresentacoes: () => get('/totem-kids/apresentacoes'),
+  // A ficha completa de UMA inscrição (o que a pessoa preencheu · 08/09/2026)
+  apresentacaoDetalhe: (id) => get(`/totem-kids/apresentacoes/${id}`),
   apresentacaoUpdate: (id, body) => patch(`/totem-kids/apresentacoes/${id}`, body),
   apresentacaoRemove: (id) => del(`/totem-kids/apresentacoes/${id}`),
+  // Check-in do dia (15/09/2026) · `presente: false` desfaz.
+  apresentacaoCheckin: (id, presente) => post(`/totem-kids/apresentacoes/${id}/checkin`, { presente }),
+  // Foto do telão (16/09/2026). MULTIPART — o `express.json` do servidor é de
+  // 1mb e uma foto de celular em base64 não passaria por ele.
+  apresentacaoFoto: (id, file) => { const fd = new FormData(); fd.append('foto', file); return requestFile(`/totem-kids/apresentacoes/${id}/foto`, fd, { timeoutMs: 120_000 }); },
+  apresentacaoFotoRemover: (id) => del(`/totem-kids/apresentacoes/${id}/foto`),
+  // Catálogo dos cultos da apresentação (9h30 até o limite → 11h30) · editável pelo Kids
+  apresentacaoHorarios: {
+    list: (data) => get('/totem-kids/apresentacoes/horarios' + (data ? `?data=${encodeURIComponent(data)}` : '')),
+    create: (body) => post('/totem-kids/apresentacoes/horarios', body),
+    update: (id, body) => patch(`/totem-kids/apresentacoes/horarios/${id}`, body),
+    remove: (id) => del(`/totem-kids/apresentacoes/horarios/${id}`),
+  },
   resumoExemplo: () => post('/totem-kids/resumo/exemplo', {}),
   comparativoMes: (mes) => get(`/totem-kids/comparativo-mes?mes=${encodeURIComponent(mes)}`),
   frequenciaSistema: (data) => get(`/totem-kids/frequencia-sistema?data=${encodeURIComponent(data)}`),
@@ -2259,6 +2311,11 @@ export const totemKids = {
   },
   checkin: {
     criar: (data) => post('/totem-kids/checkin', data),
+    // ⚠️ Bloco de códigos para o totem usar OFFLINE. Chamado enquanto HÁ REDE —
+    // é o servidor que sorteia e arbitra a unicidade; o totem só consome.
+    // Ver PR #2849: gerar código no cliente daria 70% de colisão com 50
+    // check-ins, e colisão aqui é duas crianças com a mesma credencial.
+    reservarCodigos: (data) => post('/totem-kids/codigos-reservados', data),
     // Check-in de vários irmãos numa requisição só (resolve responsável 1×)
     lote: (data) => post('/totem-kids/checkin/lote', data),
     // Check-in aberto da criança na sessão (pra reimprimir etiqueta perdida)
@@ -2323,6 +2380,18 @@ export const totemKids = {
     historicoCrianca: (criancaId) => get(`/totem-kids/decisoes/historico/${criancaId}`),
     // Ranking de crianças com mais decisões
     resumoPorCrianca: () => get('/totem-kids/decisoes/resumo-por-crianca'),
+    // Gerencial (2026-09-02): o que está registrado + a fila de conferência.
+    // ⚠️ NÃO confundir com a tela do totem (`/ministerial/totem-kids/decisoes`),
+    // que exige sessão aberta HOJE e não registra culto passado.
+    registro: (p = {}) => {
+      const q = new URLSearchParams();
+      if (p.dias) q.set('dias', String(p.dias));
+      if (p.ano) q.set('ano', String(p.ano));
+      const s = q.toString();
+      return get(`/totem-kids/decisoes/registro${s ? `?${s}` : ''}`);
+    },
+    candidatos: (id) => get(`/totem-kids/decisoes/fila/${id}/candidatos`),
+    resolver: (id, body) => patch(`/totem-kids/decisoes/fila/${id}`, body),
   },
   salas: {
     list: () => get('/totem-kids/salas'),
@@ -2721,7 +2790,7 @@ export const membresia = {
   },
   membros: {
     list: (params) => get('/membresia/membros' + (params ? '?' + new URLSearchParams(params) : '')),
-    get: (id) => get(`/membresia/membros/${id}`),
+    get: (id, opts) => get(`/membresia/membros/${id}` + (opts?.escopo ? `?escopo=${encodeURIComponent(opts.escopo)}` : '')),
     timeline: (id) => get(`/membresia/membros/${id}/timeline`),
     // Respostas do censo desta pessoa. O bloco sensível vem filtrado pelo
     // servidor conforme cen_acesso_sensivel — ter membresia não é autorização
@@ -2784,6 +2853,12 @@ export const membresia = {
     apresentacaoBebe: {
       status: (params = {}) => get('/membresia/totem/apresentacao-bebe/status?' + new URLSearchParams(params).toString()),
       create: (data) => post('/membresia/totem/apresentacao-bebe', data),
+    },
+    // Fluxo "Novo convertido" do totem (Marcelo · 2026-09-01): decisão pela
+    // mesma porta do cadastro manual + portas de inscrição + responsável.
+    novoConvertido: {
+      contexto: () => get('/membresia/totem/novo-convertido/contexto'),
+      registrar: (data) => post('/membresia/totem/novo-convertido', data),
     },
   },
   contribuicoes: {
@@ -3051,6 +3126,16 @@ export const apresentacaoCriancasPublico = {
     if (!res.ok) throw new Error('Erro ao buscar textos');
     return res.json();
   },
+  // Foto que vai no TELÃO do culto (16/09/2026). Sobe ANTES do envio e devolve
+  // o CAMINHO, que a inscrição carrega junto. Sem token: é porta pública.
+  enviarFoto: async (file) => {
+    const fd = new FormData();
+    fd.append('foto', file);
+    const res = await fetch(`${API}/public/apresentacao-criancas/foto`, { method: 'POST', body: fd });
+    const j = await res.json().catch(() => ({}));
+    if (!res.ok) throw new Error(j.error || 'Não conseguimos enviar a foto.');
+    return j;
+  },
   inscrever: async (data) => {
     const res = await fetch(`${API}/public/apresentacao-criancas`, {
       method: 'POST',
@@ -3168,8 +3253,16 @@ export const cadastroPublico = {
     if (!res.ok) return { ok: false };
     return res.json();
   },
-  lookupCpf: async (cpf) => {
-    const res = await fetch(`${API}/public/membresia/lookup-cpf?cpf=${encodeURIComponent(cpf)}`);
+  // varredura 2026-09: PUB-02 — a rota passou a exigir CPF **+ data de
+  // nascimento** (só o CPF fazia esta porta responder "esta pessoa está na base
+  // da CBRio?" pra quem tivesse uma lista de CPFs na mão). Quem chamar sem o
+  // nascimento recebe SEMPRE `{found:false}` — era o que estava matando o
+  // cartão de reconhecimento do formulário público pra 100% dos usuários.
+  // ⚠️ O nascimento é `YYYY-MM-DD` e é COMPARADO no servidor: mandar vazio não
+  // é "buscar sem filtro", é receber a recusa neutra.
+  lookupCpf: async (cpf, dataNascimento) => {
+    const qs = `cpf=${encodeURIComponent(cpf)}&data_nascimento=${encodeURIComponent(dataNascimento || '')}`;
+    const res = await fetch(`${API}/public/membresia/lookup-cpf?${qs}`);
     if (!res.ok) return { found: false };
     return res.json();
   },
@@ -3957,6 +4050,14 @@ export const comunicacao = {
     },
     sync: () => post('/comunicacao/templates/sync', {}, { timeout: 120_000 }),
     atualizar: (id, body) => put(`/comunicacao/templates/${id}`, body),
+    // Teste "pra mim" (F4 · 09/09/2026): veio de Bot → Configuração
+    testar: (chave) => post('/comunicacao/templates/testar', { chave }),
+  },
+  // Conexão (F4 · 09/09/2026): card só-leitura que substituiu a sub-aba Números;
+  // o PUT é o freio de emergência (webhook), nível 5.
+  conexao: {
+    get: () => get('/comunicacao/conexao'),
+    salvar: (body) => put('/comunicacao/conexao', body),
   },
   agendamentos: {
     list: () => get('/comunicacao/agendamentos'),
@@ -3987,8 +4088,40 @@ export const comunicacao = {
       return get(`/comunicacao/envios${qs ? `?${qs}` : ''}`);
     },
     resumo: (dias = 30) => get(`/comunicacao/envios/resumo?dias=${dias}`),
+    // Novo envio (F3 · 09/09/2026): prévia (destinatários válidos, corpo
+    // preenchido, custo estimado, avisos) e "enviar agora" (entra na FILA; quem
+    // entrega é o cron horário). Agendado/recorrente seguem em `agendamentos`.
+    previa: (body) => post('/comunicacao/envios/previa', body),
+    agora: (body) => post('/comunicacao/envios/agora', body),
   },
   custo: (meses = 6) => get(`/comunicacao/custo?meses=${meses}`),
+  // Dashboard do módulo (F2 · 09/09/2026): quem espera resposta, mensagens por
+  // área e por dia, tempo de resposta e engajamento dos disparos — numa janela
+  // de dias (7/30/90/365) OU de ano. Quem conta é o servidor.
+  dashboard: (params = {}) => {
+    const p = new URLSearchParams();
+    if (params.ano) p.set('ano', String(params.ano));
+    else if (params.dias) p.set('dias', String(params.dias));
+    const qs = p.toString();
+    return get(`/comunicacao/dashboard${qs ? `?${qs}` : ''}`, { timeout: 60_000 });
+  },
+  // Bot de IA por área (08/09/2026): quem responde quem escreve, conhecimento
+  // e interruptor por área, simulador (não envia) e resumo do que o bot fez.
+  botIa: {
+    config: () => get('/comunicacao/bot-ia/config'),
+    salvarConfig: (body) => put('/comunicacao/bot-ia/config', body),
+    areas: () => get('/comunicacao/bot-ia/areas'),
+    salvarArea: (area, body) => put(`/comunicacao/bot-ia/areas/${encodeURIComponent(area)}`, body),
+    // o modelo leva alguns segundos — o timeout padrão de 30s serve, mas com folga
+    simular: (body) => post('/comunicacao/bot-ia/simular', body, { timeout: 60_000 }),
+    resumo: (dias = 7) => get(`/comunicacao/bot-ia/resumo?dias=${dias}`),
+  },
+  // Equipe de atendimento (08/09/2026): titular + suplente por área ('Entrada' =
+  // conversa ainda sem área). Substitui a aba Configurações → Atendentes.
+  equipe: {
+    list: () => get('/comunicacao/equipe'),
+    salvar: (area, body) => put(`/comunicacao/equipe/${encodeURIComponent(area)}`, body),
+  },
   erros: {
     list: () => get('/comunicacao/erros'),
     reenviar: (id, telefone) => post(`/comunicacao/erros/${id}/reenviar`, telefone ? { telefone } : {}),
@@ -4135,6 +4268,8 @@ export const tarefas = {
   create: (data) => post('/tarefas', data),
   update: (id, data) => put(`/tarefas/${id}`, data),
   remove: (id, serie = false) => del(`/tarefas/${id}${serie ? '?serie=1' : ''}`),
+  // Manda o GRUPO INTEIRO na ordem nova — ver o comentario do POST /reordenar.
+  reordenar: (ids) => post('/tarefas/reordenar', { ids }),
 };
 
 export const processos = {
@@ -4224,10 +4359,10 @@ export const devocionalMembro = {
   historico: () => get('/devocional-membro/historico'),
 };
 
-// Devocional · público (envio do magic link)
-export const publicDevocional = {
-  login: (email) => post('/public/devocional/login', { email }),
-};
+// Devocional · público: o cliente do magic link saiu em 16/09/2026 (REM-02 da
+// auditoria). A rota `POST /public/devocional/login` foi removida do backend —
+// as telas web do devocional não existem mais (o devocional vive no app), e o
+// envio nunca funcionou: o backend gerava o link e descartava o valor.
 
 // Pessoas - lookup unificado (Membresia como fonte única)
 export const pessoas = {
@@ -4453,92 +4588,13 @@ export const nps = {
   },
 };
 
-// Retry com backoff pras chamadas públicas do NPS (evento com pico).
-// Retenta em falha de rede e nos status de proteção de borda (403 challenge do
-// Vercel / 429 / 503) — que barram ANTES do servidor, então é seguro repetir.
-// Não retenta 400/404 (erro real de dado/pesquisa) nem estoura duplicata.
-async function npsFetchRetry(doFetch, { tentativas = 3, msg = 'Erro' } = {}) {
-  const RETRIABLE = new Set([403, 429, 502, 503, 504]);
-  let ultimo;
-  for (let i = 0; i < tentativas; i++) {
-    try {
-      const r = await doFetch();
-      if (r.ok) return await r.json().catch(() => ({}));
-      if (!RETRIABLE.has(r.status) || i === tentativas - 1) {
-        const data = await r.json().catch(() => ({}));
-        throw new Error(data.error || msg);
-      }
-      ultimo = new Error(`http_${r.status}`);
-    } catch (e) {
-      ultimo = e;
-      if (i === tentativas - 1) throw e;
-    }
-    // backoff: ~0.5s, 1.2s, 2.5s + jitter · espalha as re-tentativas do pico
-    await new Promise((res) => setTimeout(res, (500 * Math.pow(2, i)) + Math.random() * 400));
-  }
-  throw ultimo || new Error(msg);
-}
-
-// Censo · porta PÚBLICA (QR no culto, link pessoal, app do membro).
-// Reusa o `npsFetchRetry`: mesmo cenário e mesmo motivo — sob pico de culto a
-// borda do Vercel dá challenge/429 momentâneo, e perder a resposta de quem
-// preencheu 90 campos não é opção. 400/404 não são retentados (dado inválido ou
-// pesquisa fechada não melhoram com insistência).
-export const censoPublico = {
-  obter: (slug) =>
-    npsFetchRetry(
-      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}`, { headers: { 'Content-Type': 'application/json' } }),
-      { tentativas: 4, msg: 'Erro ao carregar o censo' },
-    ),
-  // Atalho opcional: quem já está na base não redigita nome/telefone/e-mail.
-  // Resposta NEUTRA por definição — não dá para saber se um CPF existe.
-  prefill: (slug, dados) =>
-    npsFetchRetry(
-      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/prefill`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados),
-      }),
-      { tentativas: 2, msg: 'Não foi possível verificar' },
-    ),
-  // Listas longas com busca. As opções NÃO vêm no questionário: 1.911 igrejas em
-  // cada abertura seria absurdo.
-  catalogo: (nome, q) =>
-    npsFetchRetry(
-      () => fetch(`${API}/public/censo/catalogo/${encodeURIComponent(nome)}?q=${encodeURIComponent(q)}`,
-        { headers: { 'Content-Type': 'application/json' } }),
-      { tentativas: 2, msg: 'Erro na busca' },
-    ),
-  parcial: (slug, dados) =>
-    npsFetchRetry(
-      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/parcial`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados),
-      }),
-      { tentativas: 2, msg: 'Não foi possível salvar' },
-    ),
-  retomar: (slug, dados) =>
-    npsFetchRetry(
-      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/retomar`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(dados),
-      }),
-      { tentativas: 2, msg: 'Não foi possível retomar' },
-    ),
-  responder: (slug, payload) =>
-    npsFetchRetry(
-      () => fetch(`${API}/public/censo/${encodeURIComponent(slug)}/responder`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-      }),
-      { tentativas: 3, msg: 'Erro ao enviar resposta' },
-    ),
-  // Última tentativa enquanto a aba fecha. O `envio_id` no payload garante que
-  // um beacon a mais não crie resposta duplicada.
-  responderBeacon: (slug, payload) => {
-    try {
-      if (typeof navigator === 'undefined' || !navigator.sendBeacon) return false;
-      const url = `${API}/public/censo/${encodeURIComponent(slug)}/responder`;
-      const blob = new Blob([JSON.stringify(payload)], { type: 'application/json' });
-      return navigator.sendBeacon(url, blob);
-    } catch { return false; }
-  },
-};
+// ⚠️ O retry das portas públicas e o cliente do censo MUDARAM DE ARQUIVO
+// (11/09/2026): vivem em `lib/censoApi.js`, que não importa supabase nem
+// Sentry. É o que permite a página pública do censo ter entrada própria
+// (`censo.html`) sem arrastar o ERP inteiro — 326 KB comprimidos que toda
+// pessoa que escaneia o QR no culto estava baixando. Aqui ficam só os
+// re-exports, para nada que já importava de `api.js` precisar mudar.
+export { censoPublico } from './lib/censoApi';
 
 export const online = {
   // Aceitações online (decisões nominais) + QRs do apelo por culto.
@@ -4553,6 +4609,8 @@ export const online = {
   // propósito: o caminho sai do catálogo de formulários públicos e a base é
   // única — montar a URL na tela é como link público vira link morto.
   linkMembresia: () => get('/online/link-membresia'),
+  // Grava SO o total da comunidade do Online no WhatsApp naquele mes.
+  comunidadeMensal: (mes, valor) => post('/online/comunidade-mensal', { mes, valor }),
   dashboard: () => get('/online/dashboard'),
   engajamento: () => get('/online/engajamento'),
   cultosMetricas: (limit) => get('/online/cultos-metricas' + (limit ? '?limit=' + limit : '')),
@@ -4682,4 +4740,47 @@ export const apresentacoes = {
 export const onboardingPublico = {
   get: (token) => get(`/public/rh-onboarding/${encodeURIComponent(token)}`),
   salvar: (token, dados) => post(`/public/rh-onboarding/${encodeURIComponent(token)}`, dados),
+};
+
+
+// ── Visitantes (09/09/2026) · porta pública /visitante + módulo /visitantes ──
+// Público (sem auth): registro da visita + pesquisa de satisfação por token.
+export const visitantePublico = {
+  contexto: (local) => fetch(`${API}/public/visitante/contexto${local ? `?local=${encodeURIComponent(local)}` : ''}`)
+    .then(r => r.json()),
+  registrar: (data) => fetch(`${API}/public/visitante`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+  }).then(async r => {
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { const e = new Error(j.error || 'Erro'); e.campo = j.campo; e.status = r.status; throw e; }
+    return j;
+  }),
+  avaliacao: (token) => fetch(`${API}/public/visitante/avaliar/${encodeURIComponent(token)}`)
+    .then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'Link inválido'); return j; }),
+  avaliar: (token, data) => fetch(`${API}/public/visitante/avaliar/${encodeURIComponent(token)}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data),
+  }).then(async r => { const j = await r.json().catch(() => ({})); if (!r.ok) throw new Error(j.error || 'Erro'); return j; }),
+};
+
+// Módulo interno (auth · módulo `visitantes`; as rotas /cuidados/* usam o guard de cuidados).
+export const visitantes = {
+  listar: (params) => get('/visitantes' + (params ? '?' + new URLSearchParams(params) : '')),
+  resumo: (params) => get('/visitantes/resumo' + (params ? '?' + new URLSearchParams(params) : '')),
+  locais: () => get('/visitantes/locais'),
+  obter: (id) => get(`/visitantes/${id}`),
+  atualizar: (id, data) => patch(`/visitantes/${id}`, data),
+  remover: (id) => del(`/visitantes/${id}`),
+  voucher: {
+    consultar: (codigo) => get(`/visitantes/voucher/${encodeURIComponent(codigo)}`),
+    resgatar: (codigo) => post(`/visitantes/voucher/${encodeURIComponent(codigo)}/resgatar`, {}),
+  },
+  // ponte com Próximos passos (tela de Cuidados)
+  cuidados: (params) => get('/visitantes/cuidados' + (params ? '?' + new URLSearchParams(params) : '')),
+  atualizarCuidados: (id, data) => patch(`/visitantes/cuidados/${id}`, data),
+  // FLUXO DA PORTA (11/09/2026) · o que a igreja deve fazer com quem entrou.
+  // ⚠️ O estado vem CALCULADO do servidor (utils/portaFluxos); a tela não
+  // recalcula prazo nem atraso — duas réguas divergiriam no primeiro feriado.
+  fluxo: (params) => get('/visitantes/cuidados/fluxo' + (params ? '?' + new URLSearchParams(params) : '')),
+  encerrarFluxo: (id, data) => post(`/visitantes/cuidados/${id}/desfecho`, data),
+  reabrirFluxo: (id) => del(`/visitantes/cuidados/${id}/desfecho`),
 };

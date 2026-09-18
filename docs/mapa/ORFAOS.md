@@ -20,7 +20,7 @@ nenhum módulo reivindica são exatamente os candidatos a esse buraco.
 guard (públicas, totens, `/perfil`). Significa que ninguém decidiu — vale
 conferir.
 
-## Telas sem ModuleGuard (78)
+## Telas sem ModuleGuard (79)
 
 | rota | arquivo | pública? |
 |---|---|---|
@@ -49,6 +49,8 @@ conferir.
 | `/next/direcionar/:token` | `src/pages/public/NextDirecionar` | sim |
 | `/inscricao-voluntariado` | `src/pages/public/InscricaoVoluntariado` | sim |
 | `/decisao` | `src/pages/public/DecisaoOnline` | sim |
+| `/visitante` | `src/pages/public/VisitantePublico` | sim |
+| `/visitante/avaliar/:token` | `src/pages/public/VisitanteAvaliar` | sim |
 | `/decisao/:token` | `src/pages/public/DecisaoOnline` | sim |
 | `/c/:token` | `src/pages/public/DecisaoCulto` | sim |
 | `/ec/:token` | `src/pages/public/EventoCheckin` | sim |
@@ -80,7 +82,6 @@ conferir.
 | `/ministerial/reconhecimento-facial` | `src/pages/ministerial/reconhecimentoFacial/ReconhecimentoFacial` | sim |
 | `/wifi` | `src/pages/ministerial/Wifi` | sim |
 | `/ministerial/integracao` | `src/pages/ministerial/Integracao` | sim |
-| `/online` | `src/pages/ministerial/Online` | sim |
 | `/assistente-ia` | `src/pages/admin/AssistenteIA` | sim |
 | `/solicitacoes` | `src/pages/Solicitacoes` | sim |
 | `/painel` | `src/pages/Painel` | sim |
@@ -103,7 +104,7 @@ conferir.
 | `/admin/grupos/temporadas` | `src/pages/admin/TemporadasGrupos` | sim |
 | `/suporte` | `src/pages/public/Suporte` | sim |
 
-## Arquivos de rota que nenhum módulo reivindica (79)
+## Arquivos de rota que nenhum módulo reivindica (74)
 
 - `backend/routes/agentTasks.js`
 - `backend/routes/agenteBatismoNext.js`
@@ -122,7 +123,6 @@ conferir.
 - `backend/routes/dadosBrutos.js`
 - `backend/routes/dashboard.js`
 - `backend/routes/dashboardSemanal.js`
-- `backend/routes/devocionais.js`
 - `backend/routes/devocionalMembro.js`
 - `backend/routes/devocionalPlanos.js`
 - `backend/routes/encaminhamentos.js`
@@ -130,7 +130,6 @@ conferir.
 - `backend/routes/expansion.js`
 - `backend/routes/feedback.js`
 - `backend/routes/gestao.js`
-- `backend/routes/kpis.js`
 - `backend/routes/kpisV2.js`
 - `backend/routes/meetings.js`
 - `backend/routes/ml.js`
@@ -139,15 +138,11 @@ conferir.
 - `backend/routes/notificacoes.js`
 - `backend/routes/nsm.js`
 - `backend/routes/occurrences.js`
-- `backend/routes/online.js`
 - `backend/routes/pagamentosWebhook.js`
-- `backend/routes/painel.js`
 - `backend/routes/pcs.js`
-- `backend/routes/permissoes.js`
 - `backend/routes/planejamento.js`
 - `backend/routes/planejamentoAnual.js`
 - `backend/routes/processos.js`
-- `backend/routes/projects.js`
 - `backend/routes/publicApresentacao.js`
 - `backend/routes/publicBatismo.js`
 - `backend/routes/publicCampanha.js`
@@ -164,6 +159,7 @@ conferir.
 - `backend/routes/publicNext.js`
 - `backend/routes/publicNps.js`
 - `backend/routes/publicRhOnboarding.js`
+- `backend/routes/publicVisitante.js`
 - `backend/routes/publicVolEmail.js`
 - `backend/routes/publicVoluntariado.js`
 - `backend/routes/publicWhatsapp.js`

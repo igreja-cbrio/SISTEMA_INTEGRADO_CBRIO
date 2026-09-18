@@ -18,6 +18,50 @@ const { supabase } = require('../utils/supabase');
 const { donosDoGrupoApp } = require('./gruposDestinatarios');
 const { notificarApp } = require('./appPush');
 const { avisoPedidoNovo, avisoSaida } = require('../utils/avisoGrupoApp');
+// varredura 2026-09: G02 rede de segurança do pedido órfão — o sino do ERP (tabela `notificacoes`) é o ÚNICO destino que sobra quando o grupo não tem líder nem supervisor.
+const { notificar } = require('./notificar');
+
+/**
+ * varredura 2026-09: G02 — pedido em grupo SEM LÍDER E SEM SUPERVISOR não tinha
+ * para onde ir e sumia em silêncio: sem dono não há aviso no app, não há linha em
+ * `notificacoes` e o WhatsApp com o link de aprovação nem chega a ser montado.
+ * Medido: 4 pessoas esperando até 28 dias no JIU-JITSU e ZERO avisos a ninguém.
+ *
+ * ⚠️ NÃO é o caso comum de `sem_dono_com_app` (74 dos 89 líderes não têm o app e
+ * seguem recebendo o WhatsApp — escalar esses seria voltar ao fan-out de 10.914
+ * notificações que a coordenação desligou). Aqui é o caso em que NÃO EXISTE dono.
+ *
+ * ⚠️ `chaveDedup` por GRUPO, não por pedido: 10 pedidos órfãos no mesmo grupo são
+ * o mesmo problema (falta um líder), então o 2º ao 10º são PULADOS.
+ * ⚠️⚠️ MAS ISSO NÃO É "UMA LINHA SÓ". A dedup de `notificar()` é por USUÁRIO +
+ * chave + não-lida (notificar.js · `processarUm`): `grupos` não tem lista em
+ * `notificacao_regras`, então o fallback é admin/diretor ativo e não-robô (~16
+ * pessoas) e o PRIMEIRO pedido órfão escreve UMA LINHA PARA CADA UM. O que a
+ * chave evita é a REPETIÇÃO — e só enquanto a pessoa não lê a dela: lida a linha,
+ * o próximo pedido órfão daquele grupo escreve de novo pra ela.
+ * ⚠️ Medido: hoje isso alcança UM grupo (JIU-JITSU 98a2571b é o único dos 109 que
+ * aceitam inscrição sem líder), então o alcance real é ~16 linhas, uma vez.
+ *
+ * ⚠️ Sem PII: quem abre o sino resolve o grupo, não a pessoa.
+ * ⚠️ NUNCA LANÇA — o pedido já está gravado.
+ */
+async function escalarPedidoOrfao({ grupoId, grupoNome }) {
+  try {
+    const enviados = await notificar({
+      modulo: 'grupos',
+      tipo: 'grupo_sem_lider',
+      titulo: `Grupo sem líder recebendo inscrição: ${grupoNome || 'grupo'}`,
+      mensagem: 'Chegou pedido novo e este grupo não tem líder nem supervisor — ninguém foi avisado e não há link de aprovação. Defina o líder ou pause as inscrições na tela de Grupos.',
+      link: '/grupos',
+      severidade: 'aviso',
+      chaveDedup: `grupo_sem_lider_${grupoId}`,
+    });
+    return enviados > 0;
+  } catch (e) {
+    console.warn(`[gruposAvisoApp] escalada do grupo ${grupoId} falhou:`, e.message);
+    return false;
+  }
+}
 
 /**
  * Avisa no app do MEMBRO que existe pedido novo no grupo dele.
@@ -37,18 +81,28 @@ async function avisarPedidoNovoNoApp({ grupoId, pedidoId, grupoNome, pessoaNome 
   try {
     if (!grupoId || !pedidoId) return { ok: false, motivo: 'sem_referencia' };
 
-    // Nome do grupo: usa o que veio (quem chama quase sempre já tem) e só busca
-    // quando falta — uma consulta a menos por pedido no domingo.
-    let nome = grupoNome;
-    if (!nome) {
-      const { data: g } = await supabase
-        .from('mem_grupos').select('nome').eq('id', grupoId).maybeSingle();
-      nome = g?.nome || null;
-    }
+    // varredura 2026-09: G02 a consulta ao grupo deixou de ser condicional — além do nome
+    // (que quem chama quase sempre já traz) é preciso saber SE existe dono, e é o mesmo
+    // round-trip que já acontecia quando o nome faltava.
+    const { data: g } = await supabase
+      .from('mem_grupos').select('nome, lider_id, supervisor_id').eq('id', grupoId).maybeSingle();
+    const nome = grupoNome || g?.nome || null;
 
     const aviso = avisoPedidoNovo({ pedidoId, grupoId, grupoNome: nome, pessoaNome });
     if (!aviso) return { ok: false, motivo: 'sem_referencia' };
 
+    // varredura 2026-09: G02 grupo sem líder E sem supervisor — não existe dono a avisar em
+    // canal nenhum (nem app, nem sino, nem WhatsApp), então o pedido sobe pra coordenação.
+    if (!g || (!g.lider_id && !g.supervisor_id)) {
+      const escalado = await escalarPedidoOrfao({ grupoId, grupoNome: nome });
+      return { ok: true, motivo: 'grupo_sem_dono', alvos: 0, escalado };
+    }
+
+    // ⚠️ NÃO escalar pro supervisor quando o líder existe e só não tem o app: isso é o caso
+    // NORMAL (74 dos 89 líderes) e o supervisor NÃO está sem aviso — o mesmo caller dispara
+    // em seguida o sino/WhatsApp por `donosDoGrupo`, que JÁ inclui `supervisor_id`
+    // (gruposDestinatarios.js:60). Escalar aqui não tiraria ninguém do escuro, só entregaria
+    // ao supervisor um push a cada pedido novo, em dobro com o que ele já recebe.
     const alvos = await donosDoGrupoApp(grupoId);
     if (!alvos.length) return { ok: true, motivo: 'sem_dono_com_app', alvos: 0 };
 

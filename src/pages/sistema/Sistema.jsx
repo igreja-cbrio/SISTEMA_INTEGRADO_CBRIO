@@ -10,6 +10,7 @@ import {
   GitBranch,
   Layers3,
   Loader2,
+  MessageSquareWarning,
   Network,
   RefreshCw,
   ReceiptText,
@@ -31,12 +32,18 @@ import { WebOperationsPanel } from './SistemaWebPanel';
 import { MobileOperationsPanel } from './SistemaMobilePanel';
 import { GovernanceOperationsPanel } from './SistemaGovernancePanel';
 import { FinanceOperationsPanel } from './SistemaFinancePanel';
+import { FeedbackPilotoPanel } from './SistemaFeedbackPanel';
 
 const VIEWS = [
   { id: 'overview', label: 'Visão geral', icon: Activity },
   { id: 'web-api', label: 'Web & API', icon: Braces },
   { id: 'mobile', label: 'Mobile', icon: Smartphone },
-  { id: 'incidents', label: 'Incidentes & feedback', icon: ShieldCheck },
+  // ⚠️ O rótulo era "Incidentes & feedback" e a aba mostrava SÓ incidentes —
+  // promessa que a tela não cumpria. O feedback ganhou aba própria (01/09/2026,
+  // pedido do Matheus: "dentro de adm/sistema eu tenha um local para acessar
+  // essa tela"). O `id` NÃO muda: `?view=incidents` é deep link vivo.
+  { id: 'incidents', label: 'Incidentes', icon: ShieldCheck },
+  { id: 'feedback', label: 'Feedback do piloto', icon: MessageSquareWarning },
   { id: 'governance', label: 'Governança', icon: Layers3 },
   { id: 'finance', label: 'Custos & relatórios', icon: ReceiptText },
   { id: 'services', label: 'Serviços', icon: Boxes },
@@ -391,6 +398,7 @@ export default function Sistema() {
         {view === 'web-api' && <><WebOperationsPanel /><WebApiPanel /></>}
         {view === 'mobile' && <MobileOperationsPanel />}
         {view === 'incidents' && <IncidentsPanel />}
+        {view === 'feedback' && <FeedbackPilotoPanel />}
         {view === 'governance' && <GovernanceOperationsPanel />}
         {view === 'finance' && <FinanceOperationsPanel />}
         {view === 'services' && <Services items={catalog.services || []} />}

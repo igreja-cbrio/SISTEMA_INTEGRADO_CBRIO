@@ -347,20 +347,44 @@ router.post('/importar/ofx', upload.single('arquivo'), async (req, res) => {
     let identidadeStats = null;
     let mapaDoc = new Map();
     try {
-      const r = await vincularIdentidadeOfx(parsed.transactions, { criarAvulso: true });
+      // ⚠️ `false`: o upload LIGA no cadastro que já existe e NÃO cadastra
+      // ninguém. O CPF observado fica em `mem_identidade_observacoes`, então
+      // nada se perde — no dia em que a pessoa entrar por qualquer porta, o
+      // matcher a encontra. Ver o topo de `conciliacaoBalancoOfx.conciliar`.
+      const r = await vincularIdentidadeOfx(parsed.transactions, { criarAvulso: false });
       mapaDoc = r.mapaDoc;
       identidadeStats = r.stats;
     } catch (e) {
       console.error('[FIN-V2] identidade OFX:', e.message);
     }
 
-    // Insere lancamentos brutos (ignora duplicados via UNIQUE)
+    // ── Insere os lançamentos brutos ─────────────────────────────────────────
+    //
+    // ⚠️⚠️ EM LOTE, e não mais um-a-um. O laço antigo fazia UM insert por
+    // transação: com o extrato de 90 dias (7.297 linhas) isso levou a função
+    // além do `maxDuration` de 300s e ela MORREU no meio — 1.985 linhas
+    // gravadas, o resto perdido, e o upload preso em "processando" para sempre
+    // (02/09/2026, medido). Em lotes de 500 são ~15 idas ao banco em vez de
+    // 7.297.
+    //
+    // ⚠️⚠️ NÃO dá pra usar `upsert({onConflict})`: o UNIQUE é PARCIAL
+    // (`fin_lanc_brutos_fitid_conta_uq ... WHERE fitid IS NOT NULL`) e o
+    // PostgREST não expressa o predicado — o ON CONFLICT não inferiria o índice
+    // e o statement inteiro falharia (a lei de 04/08/2026, caso
+    // `mem_censo_convites`). Então: pré-filtra o que já existe e, se ainda
+    // assim um lote colidir, refaz AQUELE lote linha a linha.
     let inseridos = 0;
     let duplicados = 0;
+    let interrompido = false;
 
-    for (const t of parsed.transactions) {
+    const LOTE = 500;
+    const ORCAMENTO_MS = 210_000; // ~3,5 min dos 300s; o resto fica pras etapas seguintes
+    const comecou = Date.now();
+    const estourou = () => Date.now() - comecou > ORCAMENTO_MS;
+
+    const linhaPayload = (t) => {
       const docLimpo = t.documento_contraparte ? String(t.documento_contraparte).replace(/\D/g, '') : null;
-      const payload = {
+      return {
         fonte: 'ofx',
         conta_id,
         data_lancamento: t.data_lancamento,
@@ -377,12 +401,83 @@ router.post('/importar/ofx', upload.single('arquivo'), async (req, res) => {
         upload_id: uploadRow.id,
         created_by: req.user.userId,
       };
-      const { error: insErr } = await supabase.from('fin_lancamentos_brutos').insert(payload);
-      if (insErr) {
-        if (insErr.code === '23505') duplicados++;
-      } else {
-        inseridos++;
+    };
+
+    // Quais fitids desta conta JÁ existem — mata a duplicata antes do insert.
+    // ⚠️ `.in()` em lotes de 200: lista longa estoura a URL do PostgREST.
+    const fitidsExistentes = new Set();
+    try {
+      const todos = parsed.transactions.map((t) => t.fitid).filter(Boolean);
+      for (let i = 0; i < todos.length; i += 200) {
+        const { data, error } = await supabase
+          .from('fin_lancamentos_brutos')
+          .select('fitid')
+          .eq('conta_id', conta_id)
+          .in('fitid', todos.slice(i, i + 200));
+        if (error) throw error;
+        for (const r of data || []) fitidsExistentes.add(r.fitid);
       }
+    } catch (e) {
+      // ⚠️ Falhar aqui NÃO pode virar "nada é duplicado" em silêncio: sem a
+      // pré-filtragem, o caminho de fallback linha-a-linha ainda protege, mas o
+      // import fica lento. Loga e segue.
+      console.warn('[FIN-V2] pré-filtragem de fitid falhou:', e.message);
+    }
+
+    const novas = [];
+    for (const t of parsed.transactions) {
+      if (t.fitid && fitidsExistentes.has(t.fitid)) duplicados++;
+      else novas.push(t);
+    }
+
+    for (let i = 0; i < novas.length; i += LOTE) {
+      if (estourou()) { interrompido = true; break; }
+      const lote = novas.slice(i, i + LOTE).map(linhaPayload);
+      const { error: insErr } = await supabase.from('fin_lancamentos_brutos').insert(lote);
+      if (!insErr) {
+        inseridos += lote.length;
+      } else if (insErr.code === '23505') {
+        // Colisão que a pré-filtragem não pegou (outro upload correndo junto).
+        // Refaz SÓ este lote linha a linha pra não perder as boas.
+        for (const payload of lote) {
+          const { error: e1 } = await supabase.from('fin_lancamentos_brutos').insert(payload);
+          if (e1) { if (e1.code === '23505') duplicados++; }
+          else inseridos++;
+        }
+      } else {
+        throw insErr;
+      }
+
+      // ⚠️ LEI da casa: em operação longa, gravar o efeito DURANTE, não no fim.
+      // Era exatamente isto que faltava — a função morria e o upload ficava
+      // "processando" sem nunca dizer quanto tinha entrado.
+      await supabase.from('fin_uploads')
+        .update({ total_novos: inseridos, total_duplicados: duplicados })
+        .eq('id', uploadRow.id);
+    }
+
+    // Morreu de tempo: fecha com o que entrou e DIZ como retomar. O arquivo é
+    // idempotente por (conta_id, fitid), então subir de novo continua daqui.
+    if (interrompido) {
+      await supabase.from('fin_uploads')
+        .update({
+          total_novos: inseridos,
+          total_duplicados: duplicados,
+          status: 'erro',
+          erro_msg: `Interrompido por tempo: ${inseridos} de ${novas.length} lançamentos novos entraram. `
+            + 'Suba o MESMO arquivo de novo — o que já entrou é reconhecido como duplicado e o import continua de onde parou.',
+          concluido_em: new Date().toISOString(),
+        })
+        .eq('id', uploadRow.id);
+      return res.json({
+        upload_id: uploadRow.id,
+        total, inseridos, duplicados,
+        parcial: true,
+        faltam: novas.length - inseridos,
+        aviso: 'O arquivo é grande e o import parou no meio do caminho. Suba o mesmo arquivo de novo para continuar — nada duplica.',
+        identidade: identidadeStats,
+        periodo: { inicio: parsed.header.dtStart, fim: parsed.header.dtEnd },
+      });
     }
 
     // Roda matching com PIX detalhe (se houver)
@@ -2770,7 +2865,9 @@ const ASSISTENTE_ABAS = {
   resumo:        { label: 'Resumo',          foco: 'foto da semana: receita, presença, ticket médio e variação vs. a semana anterior' },
   por_culto:     { label: 'Por Culto',       foco: 'como a arrecadação se distribuiu entre Quarta com Deus, Final de Semana e Durante a Semana, e dízimos vs. ofertas' },
   performance:   { label: 'Performance',     foco: 'a relação entre frequência presencial e arrecadação (ticket médio) na semana' },
-  tendencias:    { label: 'Tendências',      foco: 'a tendência da arrecadação no ano (acumulado) vs. o ano anterior' },
+  // ⚠️ Chave 'tendencias' preservada (o front ainda a envia); só o rótulo mudou
+  // para "Mensal" em 02/09/2026, acompanhando o nome da aba na tela.
+  tendencias:    { label: 'Mensal',           foco: 'a média de arrecadação mensal e a tendência da arrecadação no ano (acumulado) vs. o ano anterior' },
   saude:         { label: 'Saúde',           foco: 'saúde financeira: resultado do mês, comprometimento com a folha e concentração dos doadores (risco)' },
   comparativos:  { label: 'Comparativos',    foco: 'receita, despesa e resultado acumulados no ano (YTD) vs. o ano anterior' },
   dizimo_oferta: { label: 'Dízimo × Oferta', foco: 'a proporção entre dízimos e ofertas na semana' },
@@ -3656,6 +3753,90 @@ router.get('/doador/transacoes', async (req, res) => {
 // ====================================================================
 // DÍZIMO VS OFERTA mensal · 2026-05-29
 // ====================================================================
+// ════════════════════════════════════════════════════════════════════════════
+//  GET /financeiro-v2/quintas-semanas?anos=4&sem_extra=1
+//
+//  Compara as QUINTAS semanas entre si. Pedido do Matheus (02/09/2026), que
+//  escolheu esta leitura entre três: "comparar as quintas semanas de cada mês
+//  que tem cinco semanas".
+//
+//  ⚠️ A semana financeira é QUARTA→TERÇA (lei do projeto · `fin_semana_qua_ter`),
+//  então "mês com 5 semanas" = mês em que caem 5 inícios de semana. Em 2026
+//  são quatro: abril, julho, setembro e dezembro.
+//
+//  ⚠️⚠️ A RECEITA EXTRAORDINÁRIA VAI SEPARADA, e isso não é enfeite: medido em
+//  02/09/2026, a 5ª semana de julho/26 teve R$ 2.439.594 dos quais
+//  R$ 2.096.222 são extraordinária. Somada, ela esmaga as outras (~R$ 300-570
+//  mil) e o gráfico vira uma barra gigante com sete formiguinhas. O toggle
+//  global "Sem extraordinárias" continua mandando (`sem_extra`).
+//
+//  ⚠️ Semana que AINDA NÃO ACONTECEU volta com `fechada: false` e receita
+//  `null` — nunca 0. "Não aconteceu" e "arrecadou zero" são coisas diferentes,
+//  e as 5ªs de 30/09 e 30/12 de 2026 estão nesse estado hoje.
+// ════════════════════════════════════════════════════════════════════════════
+router.get('/quintas-semanas', async (req, res) => {
+  try {
+    const anos = Math.min(Math.max(parseInt(req.query.anos, 10) || 4, 1), 10);
+    const semExtra = req.query.sem_extra === '1' || req.query.sem_extra === 'true';
+    const desde = `${new Date().getFullYear() - anos + 1}-01-01`;
+
+    const { data, error } = await supabase
+      .from('vw_fin_semana_resumo')
+      .select('semana_inicio, semana_fim, semana_label, receita_total, receita_extraordinaria, total_presencial, qtd_cultos')
+      .gte('semana_inicio', desde)
+      .order('semana_inicio', { ascending: true });
+    if (error) throw error;
+
+    // Agrupa por mês do INÍCIO da semana e marca a 5ª.
+    const porMes = new Map();
+    for (const r of data || []) {
+      const mes = String(r.semana_inicio).slice(0, 7);
+      if (!porMes.has(mes)) porMes.set(mes, []);
+      porMes.get(mes).push(r);
+    }
+
+    const hoje = new Date().toISOString().slice(0, 10);
+    const MES = ['jan', 'fev', 'mar', 'abr', 'mai', 'jun', 'jul', 'ago', 'set', 'out', 'nov', 'dez'];
+    const quintas = [];
+    for (const [mes, semanas] of porMes) {
+      if (semanas.length < 5) continue;
+      const q = semanas[4];
+      const extra = Number(q.receita_extraordinaria || 0);
+      const bruto = Number(q.receita_total || 0);
+      // ⚠️ `fechada` olha o FIM da semana: a 5ª de setembro começa em 30/09 e
+      // só termina em 06/10 — enquanto não terminar, o número está incompleto.
+      const fechada = String(q.semana_fim) < hoje;
+      quintas.push({
+        mes,
+        rotulo: `${MES[Number(mes.slice(5, 7)) - 1]}/${mes.slice(2, 4)}`,
+        semana_inicio: q.semana_inicio,
+        semana_fim: q.semana_fim,
+        fechada,
+        // ⚠️ null quando não fechou — nunca 0.
+        receita: fechada ? (semExtra ? bruto - extra : bruto) : null,
+        extraordinaria: fechada ? extra : null,
+        presencial: fechada ? Number(q.total_presencial || 0) : null,
+        cultos: Number(q.qtd_cultos || 0),
+      });
+    }
+
+    const fechadas = quintas.filter((q) => q.fechada);
+    const soma = fechadas.reduce((s, q) => s + q.receita, 0);
+    res.json({
+      quintas,
+      sem_extra: semExtra,
+      // ⚠️ A média só conta semana FECHADA — incluir as que não aconteceram
+      // puxaria a média para baixo e ninguém entenderia por quê.
+      media: fechadas.length ? soma / fechadas.length : null,
+      fechadas: fechadas.length,
+      abertas: quintas.length - fechadas.length,
+    });
+  } catch (e) {
+    console.error('[FIN-V2] quintas-semanas:', e);
+    res.status(500).json({ error: 'Erro ao carregar as quintas semanas' });
+  }
+});
+
 router.get('/dizimo-oferta', async (req, res) => {
   try {
     const ano = Number(req.query.ano) || new Date().getFullYear();
@@ -4092,9 +4273,16 @@ router.delete('/contas-pagar/:id/tornar-recorrente', async (req, res) => {
 // ════════════════════════════════════════════════════════════════════
 router.post('/conciliar-balanco-ofx', authorizeModule('financeiro', 4), async (req, res) => {
   try {
-    const { inicio, fim, dry_run } = req.body || {};
+    const { inicio, fim, dry_run, criar_avulso } = req.body || {};
     if (!inicio || !fim) return res.status(400).json({ error: 'inicio e fim são obrigatórios (YYYY-MM-DD)' });
-    const r = await conciliacaoOfx.conciliar({ inicio, fim, dryRun: !!dry_run, userId: req.user.userId });
+    // ⚠️ Cadastrar quem ainda não existe é ATO EXPLÍCITO, e só por aqui (nível 4).
+    // O upload de OFX nunca cadastra — ele liga no que já existe. `=== true`
+    // (fail-closed): `'false'`, `1` ou objeto de um cliente distraído não podem
+    // valer como decisão de criar centenas de pessoas.
+    const r = await conciliacaoOfx.conciliar({
+      inicio, fim, dryRun: !!dry_run, userId: req.user.userId,
+      criarAvulso: criar_avulso === true,
+    });
     res.json(r);
   } catch (e) {
     console.error('[FIN-V2] conciliar balanco×ofx:', e.message);
@@ -4135,6 +4323,33 @@ router.post('/conciliar-balanco-ofx/ignorar', authorizeModule('financeiro', 4), 
   } catch (e) {
     console.error('[FIN-V2] ignorar vinculo:', e.message);
     res.status(500).json({ error: e.message || 'Erro ao ignorar' });
+  }
+});
+
+// Quem JÁ foi identificado no período — a lista que responde "quem foi?".
+// ⚠️ Nível 4 como as irmãs: a resposta traz nome de pessoa + CPF parcial.
+router.get('/conciliar-balanco-ofx/identificados', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { inicio, fim } = req.query || {};
+    if (!inicio || !fim) return res.status(400).json({ error: 'inicio e fim são obrigatórios (YYYY-MM-DD)' });
+    res.json(await conciliacaoOfx.listarIdentificados({ inicio, fim }));
+  } catch (e) {
+    console.error('[FIN-V2] identificados:', e.message);
+    // ⚠️ Erro NUNCA vira lista vazia: "ninguém identificado" e "a consulta
+    // falhou" levam a conclusões opostas.
+    res.status(500).json({ error: e.message || 'Erro ao listar os identificados' });
+  }
+});
+
+// Desfaz um vínculo já feito (volta a linha ao estado anterior).
+router.post('/conciliar-balanco-ofx/desfazer', authorizeModule('financeiro', 4), async (req, res) => {
+  try {
+    const { transacao_id } = req.body || {};
+    if (!transacao_id) return res.status(400).json({ error: 'transacao_id é obrigatório' });
+    res.json(await conciliacaoOfx.desfazerVinculo({ transacaoId: transacao_id }));
+  } catch (e) {
+    console.error('[FIN-V2] desfazer vinculo:', e.message);
+    res.status(500).json({ error: e.message || 'Erro ao desfazer' });
   }
 });
 

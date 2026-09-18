@@ -15,6 +15,8 @@ const iconv = require('iconv-lite');
 /**
  * Decodifica buffer respeitando encoding declarado no header
  */
+const { extrairDocumentoDoMemo } = require('../utils/documentoBr');
+
 function decodeBuffer(buffer) {
   const headerEnd = buffer.indexOf('\n\n') > 0 ? buffer.indexOf('\n\n') : buffer.indexOf('\r\n\r\n');
   const headerRaw = buffer.slice(0, Math.max(headerEnd, 0)).toString('ascii');
@@ -80,29 +82,17 @@ function parseAmount(raw) {
 }
 
 /**
- * Extrai CPF/CNPJ do MEMO de uma transacao
- * Aceita 11 digitos (CPF) ou 14 (CNPJ), com ou sem formatacao
+ * Extrai CPF/CNPJ do MEMO de uma transacao.
+ *
+ * ⚠️ A RÉGUA VIVE EM `backend/utils/documentoBr.js` — aqui é casca fina. Ela
+ * estava copiada em 5 lugares com o MESMO bug (colapsar o memo em dígitos colava
+ * a data no CPF e fabricava CNPJ), e o bug só apareceu com um extrato bom: dos
+ * 5.921 créditos com CPF do arquivo de 90 dias, a versão antiga acertou ZERO.
  */
 function extractDocumento(memo) {
-  if (!memo) return null;
-  const onlyDigits = memo.replace(/\D/g, '');
-  // Procura sequencias de 14 (CNPJ) primeiro, depois 11 (CPF)
-  const cnpj = onlyDigits.match(/\d{14}/);
-  if (cnpj) return cnpj[0];
-  // CPF: procura sequencia exata de 11 digitos
-  const sequencias = memo.match(/\d{11}/g);
-  if (sequencias && sequencias.length > 0) {
-    // Retorna a primeira que não faz parte de um número maior
-    for (const seq of sequencias) {
-      const idx = memo.indexOf(seq);
-      const before = idx > 0 ? memo[idx - 1] : '';
-      const after = memo[idx + 11] || '';
-      if (!/\d/.test(before) && !/\d/.test(after)) {
-        return seq;
-      }
-    }
-  }
-  return null;
+  const r = extrairDocumentoDoMemo(memo);
+  // Contrato preservado: os chamadores esperam string de dígitos ou null.
+  return r?.documento || null;
 }
 
 /**
@@ -147,6 +137,49 @@ function extractNomeContraparte(memo) {
 /**
  * Parseia conteúdo completo do OFX
  */
+/**
+ * ⚠️⚠️ HORA IDÊNTICA EM TODO O ARQUIVO É CARIMBO DO BANCO, NÃO HORA DA TRANSAÇÃO.
+ *
+ * Medido no extrato de 90 dias do Santander (02/09/2026): as **7.297**
+ * transações do arquivo têm `<DTPOSTED>` terminando em `100000` — 10:00:00,
+ * exatamente igual, do primeiro ao último lançamento. Não existe extrato real
+ * em que 7 mil transações caiam no mesmo segundo: é campo preenchido com
+ * constante.
+ *
+ * O estrago de gravar assim mesmo não é estético:
+ *
+ * 1. **Bloqueia o casamento com o PIX.** `financeiroClassificador.matchOfxPix`
+ *    só age onde `hora_lancamento IS NULL` — e é ele que traz a hora REAL, o
+ *    `end_to_end_id` e o `pagador_nome` do extrato PIX. Com a hora falsa
+ *    gravada, aquele caminho nunca mais alcança a linha.
+ * 2. **`hora_origem: 'ofx'` afirma que foi MEDIDO.** Precisão inventada que se
+ *    lê como fato é a classe de erro que este projeto trata como pior que a
+ *    ausência do dado (mesma lei do centróide que nunca vira `lat/lng` de
+ *    pessoa).
+ * 3. `fin_identifica_culto` decide de qual CULTO é a oferta pela hora. Hoje o
+ *    estrago não se materializa (o banco não processa em domingo, e 10:00 só
+ *    cai em slot no domingo), mas é bomba armada.
+ *
+ * ⚠️ O piso de 3 transações existe porque num arquivo de 1 ou 2 lançamentos a
+ * igualdade é trivial e pode ser hora real. Descartar hora é seguro (o PIX
+ * preenche depois); gravar hora falsa não é — por isso, na dúvida, descarta.
+ *
+ * ⚠️ RESÍDUO DECLARADO: banco que carimbe uma hora DIFERENTE por dia escapa
+ * desta régua. Ela é deliberadamente simples e determinística — sem limiar de
+ * percentual — porque régua de carimbo com heurística é régua que ninguém
+ * consegue conferir depois.
+ */
+const MIN_TRN_PARA_DETECTAR_CARIMBO = 3;
+
+function horaEhCarimbo(horas) {
+  const comHora = horas.filter(Boolean);
+  if (comHora.length < MIN_TRN_PARA_DETECTAR_CARIMBO) return null;
+  if (comHora.length !== horas.length) return null; // parte sem hora ⇒ não é carimbo uniforme
+  const distintas = new Set(comHora);
+  if (distintas.size !== 1) return null;
+  return { hora: comHora[0], transacoes: comHora.length };
+}
+
 function parseOfx(buffer) {
   const content = typeof buffer === 'string' ? buffer : decodeBuffer(buffer);
 
@@ -202,12 +235,23 @@ function parseOfx(buffer) {
     });
   }
 
+  // ⚠️ Hora igual no arquivo inteiro é carimbo do banco — ver `horaEhCarimbo`.
+  const carimbo = horaEhCarimbo(transactions.map((t) => t.hora_lancamento));
+  if (carimbo) {
+    for (const t of transactions) {
+      t.hora_lancamento = null;
+      t.hora_origem = null;
+    }
+    header.horaDescartada = { motivo: 'carimbo_fixo', ...carimbo };
+  }
+
   return { header, transactions };
 }
 
 module.exports = {
   parseOfx,
   parseDtPosted,
+  horaEhCarimbo,
   parseAmount,
   extractDocumento,
   extractNomeContraparte,

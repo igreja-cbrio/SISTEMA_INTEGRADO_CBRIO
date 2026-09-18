@@ -13,8 +13,8 @@
 - `backend/routes/events.js`
 - `backend/routes/painelRh.js`
 - `backend/routes/rh.js`
-Guard: `authorizeModule('rh', 1 | 2 | 3 | 5 | padrão)`
-<details><summary>Endpoints (95)</summary>
+Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
+<details><summary>Endpoints (96)</summary>
 - `DELETE /api/events/:id`
 - `DELETE /api/events/attachments/:attachId`
 - `DELETE /api/events/risks/:riskId`
@@ -89,6 +89,7 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 5 | padrão)`
 - `POST /api/rh/coberturas/:id/cancelar`
 - `POST /api/rh/extras`
 - `POST /api/rh/folha/auto-vincular`
+- `POST /api/rh/foto`
 - `POST /api/rh/funcionarios`
 - `POST /api/rh/funcionarios/:id/concluir-admissao`
 - `POST /api/rh/funcionarios/:id/desligar`
@@ -115,11 +116,13 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 5 | padrão)`
 **Réguas puras (backend/utils)**
 
 - `backend/utils/cronAuth.js`
+- `backend/utils/sanitize.js`
 - `backend/utils/semFalhar.js`
 - `backend/utils/supabase.js`
 
 **Serviços**
 
+- `backend/services/anexosRhDocumentos.js`
 - `backend/services/cerebroSync.js`
 - `backend/services/cobertura.js`
 - `backend/services/notificar.js`

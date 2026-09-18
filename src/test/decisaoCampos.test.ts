@@ -8,7 +8,7 @@ import { describe, it, expect } from 'vitest';
 import * as mod from '../../backend/utils/decisaoCampos.js';
 
 const { validarDecisao } = mod as {
-  validarDecisao: (b: unknown, o?: { hoje?: string }) => {
+  validarDecisao: (b: unknown, o?: { hoje?: string; nascimentoObrigatorio?: boolean }) => {
     ok: boolean; campo?: string; erro?: string;
     valores?: { nome: string; dataNascimento: string; telefone: string; cep: string | null; email: string | null };
   };
@@ -110,5 +110,29 @@ describe('validarDecisao · o que a porta aceita', () => {
   it('e-mail continua opcional (a porta nunca o exigiu)', () => {
     expect(validarDecisao(bom).valores?.email).toBeNull();
     expect(validarDecisao({ ...bom, email: ' a@b.com ' }).valores?.email).toBe('a@b.com');
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Nascimento OPCIONAL · flag do TOTEM de novo convertido (Marcos · 01/09)
+  // ══════════════════════════════════════════════════════════════════════════
+  it('nascimentoObrigatorio: false — vazio e inválido viram null, nunca recusa', () => {
+    const opt = { nascimentoObrigatorio: false } as const;
+    const semData = validarDecisao({ ...bom, data_nascimento: '' }, opt);
+    expect(semData.ok).toBe(true);
+    expect(semData.valores?.dataNascimento).toBeNull();
+    // Inválido também passa como null (política do CEP: ninguém perde a
+    // decisão por um campo que o fluxo declarou opcional).
+    const invalida = validarDecisao({ ...bom, data_nascimento: '1990-02-31' }, opt);
+    expect(invalida.ok).toBe(true);
+    expect(invalida.valores?.dataNascimento).toBeNull();
+    // E data VÁLIDA continua entrando normalmente.
+    expect(validarDecisao(bom, opt).valores?.dataNascimento).toBe(bom.data_nascimento);
+  });
+
+  it('⚠️ o DEFAULT continua exigindo nascimento — a porta online não afrouxou', () => {
+    // Mutante que este caso mata: trocar o default da flag pra false liberaria
+    // a porta ONLINE sem ninguém decidir.
+    expect(validarDecisao({ ...bom, data_nascimento: '' }).campo).toBe('data_nascimento');
+    expect(validarDecisao({ ...bom, data_nascimento: '' }, {}).campo).toBe('data_nascimento');
   });
 });

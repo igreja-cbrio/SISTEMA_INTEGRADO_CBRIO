@@ -146,6 +146,13 @@ export interface VolTeam {
   leader_profile_id: string | null;
   is_active: boolean;
   sort_order: number;
+  /**
+   * Este time usa PESSOAS DIFERENTES em cada horário do bloco (03/09/2026).
+   * true ⇒ o template materializa um alvo por celebração e a escala é por
+   * culto; false (default) ⇒ o time serve o bloco todo com a mesma gente.
+   * É o Split Team do Planning Center.
+   */
+  split_por_horario?: boolean;
   created_at: string;
   updated_at: string;
   leader?: { id: string; full_name: string; avatar_url: string | null } | null;
@@ -174,6 +181,13 @@ export interface VolTeamMember {
   planning_center_person_id: string | null;
   volunteer_name: string;
   is_active: boolean;
+  /**
+   * Tipos de culto em que este vínculo aceita ser escalado (04/09/2026).
+   * NULL/ausente = todos — é o estado de quem nunca configurou, e é o que a
+   * régua `utils/elegibilidadeVol` trata como "sem restrição". Array vazio
+   * também vale como todos, pra desmarcar tudo não apagar a pessoa da escala.
+   */
+  service_type_ids?: string[] | null;
   joined_at: string;
   created_at: string;
   team?: { id: string; name: string; color: string | null } | null;

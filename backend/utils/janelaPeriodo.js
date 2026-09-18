@@ -34,7 +34,27 @@ const ANO_INICIAL = 2022;
  * ano FECHADO vazaria pro ano seguinte. Mesma armadilha do dia da curva do
  * censo, do "culto de agora" e do totem Kids.
  */
+/**
+ * ⚠️⚠️ ÚLTIMA LINHA DE DEFESA CONTRA `"NaN-NaN-NaN"` (02/09/2026).
+ *
+ * `new Date(NaN)` formatado à mão devolve a string `"NaN-NaN-NaN"`, que **parece
+ * uma data** e atravessa a aplicação inteira até o Postgres recusar com 22007 —
+ * longe da causa, como um 500 sem explicação. Foi assim que a tela de registro
+ * de decisões do Kids caiu (ver a seção do incidente neste CLAUDE.md).
+ *
+ * ⚠️ O conserto daquele incidente é o fail-safe de `resolverJanelaPeriodo`, que
+ * já está no ar (#2826) e faz esta função nunca receber data inválida por aquele
+ * caminho. Esta guarda é DEFESA EM PROFUNDIDADE: `diaLocal` é exportado, e o
+ * próximo chamador não passa pelo fail-safe. Data inválida aqui é bug de
+ * PROGRAMAÇÃO, não dado de usuário — então lança, com o nome da função e o valor
+ * recebido. Erro na hora, com endereço, é melhor que string inválida viajando
+ * para o banco.
+ */
 function diaLocal(d) {
+  const t = d instanceof Date ? d.getTime() : NaN;
+  if (!Number.isFinite(t)) {
+    throw new Error(`janelaPeriodo.diaLocal: data inválida (${String(d)}) — nunca produzir "NaN-NaN-NaN"`);
+  }
   const p = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
@@ -138,7 +158,23 @@ function resolverJanelaPeriodo({ dias, ano, inicio, fim, diasValidos, diasPadrao
 
   const lista = Array.isArray(diasValidos) && diasValidos.length ? diasValidos : [diasPadrao];
   let d = Number(dias);
+  // ⚠️⚠️ A ORDEM destas duas linhas não é estilo: `Array.prototype.includes` usa
+  // **SameValueZero**, em que NaN é igual a si mesmo. Com `diasPadrao` NaN e sem
+  // `?dias=`, `lista` vira `[NaN]`, este teste de pertinência **PASSA** e o NaN
+  // segue intacto até a data. Por isso o fail-safe fica ABAIXO — sanear antes
+  // dele não alcançaria o `diasPadrao` do chamador, que entra sem validação
+  // nenhuma. ✅ Protegido por TESTE, não por convenção: mover a guarda para cima
+  // deixa 7 casos vermelhos em `janelaPeriodoBackend.test.ts`.
   if (!lista.includes(d)) d = diasPadrao;
+  // ⚠️⚠️ FAIL-SAFE, não fail-open: sem `diasPadrao` (ou com valor não numérico)
+  // isto devolvia `inicio: "NaN-NaN-NaN"`, que o PostgREST recusa — ou seja um
+  // erro de digitação no nome do parâmetro virava 500 na tela em vez de cair
+  // num padrão. Aconteceu em 02/09 na tela de decisões do Kids. Data inventada
+  // nunca sai daqui: cai na 1ª opção válida, ou em 365.
+  if (!Number.isFinite(d) || d <= 0) {
+    d = lista.find((x) => Number.isFinite(Number(x)) && Number(x) > 0) ?? 365;
+    d = Number(d);
+  }
   return {
     inicio: diaLocal(new Date(agora - d * 86400000)),
     fim: null,

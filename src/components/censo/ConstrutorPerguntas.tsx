@@ -43,6 +43,12 @@ const TIPO_LABEL: Record<string, string> = {
   sim_nao: 'Sim / Não',
   opcao_unica: 'Escolha única',
   multipla: 'Escolha múltipla',
+  // ⚠️ `busca` existe no backend (tipo com catálogo + escape digitado) e não
+  // estava aqui: a pergunta "Qual era a igreja?" renderizava com o Select de
+  // tipo VAZIO, e quem mexesse nele perdia `catalogo`/`permite_outro`. Entra
+  // no rótulo para ser legível e editável; criar do zero pela tela ainda exige
+  // escolher o catálogo, que é trabalho de outra leva.
+  busca: 'Lista com busca (catálogo)',
 };
 const COM_OPCOES = ['opcao_unica', 'multipla'];
 const ESCALAS = ['escala_5', 'estrelas_5'];
@@ -51,6 +57,15 @@ const CUIDADO_LABEL: Record<string, string> = {
   aconselhamento: 'Aconselhamento',
   oracao: 'Contato para oração',
   conversa: 'Conversar com alguém',
+};
+// ⚠️ Os VALORES espelham `TIPOS_CONSENTIMENTO` (backend), que por sua vez
+// espelha o CHECK de `inscricao_consentimentos.tipo`. Tipo aqui que não exista
+// lá é 400 ao salvar; tipo que exista lá e não no CHECK é 23514 no INSERT, e o
+// consentimento some sem ninguém ver.
+const CONSENTIMENTO_LABEL: Record<string, string> = {
+  whatsapp: 'Receber mensagens no WhatsApp',
+  imagem: 'Uso de imagem',
+  termos_lgpd: 'Termos e privacidade',
 };
 const FORMATO_LABEL: Record<string, string> = {
   texto: 'Texto comum', telefone: 'Telefone (com máscara)',
@@ -318,6 +333,7 @@ export default function ConstrutorPerguntas({ perguntas, respostas, podeEditar, 
                     </span>
                     {p.sensivel && <Badge variant="secondary" className="bg-rose-500/15 text-rose-600 shrink-0">sensível</Badge>}
                     {p.acao === 'cuidado' && <Badge variant="secondary" className="bg-sky-500/15 text-sky-600 shrink-0">cuidado</Badge>}
+                    {p.acao === 'consentimento' && <Badge variant="secondary" className="bg-emerald-500/15 text-emerald-600 shrink-0">consentimento</Badge>}
                     {dep && <Badge variant="secondary" className="shrink-0 hidden md:inline-flex">se “{dep.texto}”</Badge>}
                   </button>
                   {podeEditar && (
@@ -489,6 +505,28 @@ export default function ConstrutorPerguntas({ perguntas, respostas, podeEditar, 
                               acao: v ? 'cuidado' : undefined,
                               cuidado_tipo: v ? (p.cuidado_tipo || 'oracao') : undefined,
                             })} />
+                        )}
+                        {(p.tipo === 'sim_nao' || p.tipo === 'opcao_unica') && p.acao !== 'cuidado' && (
+                          <Marcar label="É um consentimento (vira prova)"
+                            ajuda="A resposta é registrada em inscricao_consentimentos, com o texto que a pessoa leu. O 'não' também é gravado — é ele que protege a pessoa de uma leva futura de religar todo mundo."
+                            valor={p.acao === 'consentimento'} disabled={!podeEditar}
+                            onMudar={(v) => mudar(i, {
+                              acao: v ? 'consentimento' : undefined,
+                              consentimento_tipo: v ? (p.consentimento_tipo || 'whatsapp') : undefined,
+                            })} />
+                        )}
+                        {p.acao === 'consentimento' && (
+                          <Campo label="O que está sendo consentido">
+                            <Select value={p.consentimento_tipo || 'whatsapp'} disabled={!podeEditar}
+                              onValueChange={(v) => mudar(i, { consentimento_tipo: v })}>
+                              <SelectTrigger><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                {Object.entries(CONSENTIMENTO_LABEL).map(([v, l]) => (
+                                  <SelectItem key={v} value={v}>{l}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </Campo>
                         )}
                         {p.acao === 'cuidado' && (
                           <Campo label="Tipo do pedido">

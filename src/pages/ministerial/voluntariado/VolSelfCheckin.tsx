@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import { playCheckinSound } from '@/lib/sounds';
 import MemberWalletDialog from '@/components/membresia/MemberWalletDialog';
+import CompletarCadastroDialog, { CampoBase } from './components/checkin/CompletarCadastroDialog';
 
 type State =
   | 'loading'      // avaliando sessão / carregando perfil
@@ -56,6 +57,15 @@ export default function VolSelfCheckin() {
   const [regPhone, setRegPhone] = useState('');
   const [busy, setBusy] = useState(false);
   const [walletDialogOpen, setWalletDialogOpen] = useState(false);
+
+  // Completar cadastro · o servidor diz o que falta (`missing_fields`) e o modal
+  // abre por cima da tela de sucesso. Pular não grava nada: volta no próximo
+  // check-in. Aqui é a PRÓPRIA pessoa preenchendo (está logada).
+  const [completarCadastro, setCompletarCadastro] = useState<{ id: string; name: string; falta: CampoBase[] } | null>(null);
+  const maybeCompletar = (resp: any, id: string, name: string) => {
+    const falta: CampoBase[] = resp?.missing_fields || [];
+    if (falta.length) setCompletarCadastro({ id, name: resp?.volunteer_name || name, falta });
+  };
 
   // Cultos da manhã (domingo · 08:30/10:00/11:30): após o self check-in num
   // culto de domingo de manhã, pergunta em quais cultos da manhã vai servir.
@@ -101,6 +111,7 @@ export default function VolSelfCheckin() {
         method: 'self_service',
       });
       setManhaCriados(typeof r?.criados === 'number' ? r.criados : ids.length);
+      maybeCompletar(r, manhaDialog.volunteerId, resultName);
     } catch { /* idempotente · segue */ }
     finally { setSalvandoManha(false); setManhaDialog(null); }
   };
@@ -149,6 +160,7 @@ export default function VolSelfCheckin() {
               setWasUnscheduled(!!r?.isUnscheduled);
               playCheckinSound();
               void maybeOfferManha(serviceId, profile.id);
+              maybeCompletar(r, profile.id, profile.full_name);
               setState('success');
               return;
             } catch (ciErr: any) {
@@ -168,7 +180,7 @@ export default function VolSelfCheckin() {
       }
 
       try {
-        await voluntariado.checkIns.create({
+        const r = await voluntariado.checkIns.create({
           volunteer_id: profile.id,
           service_id: serviceId,
           method: 'self_service',
@@ -177,6 +189,7 @@ export default function VolSelfCheckin() {
         setWasUnscheduled(true);
         playCheckinSound();
         void maybeOfferManha(serviceId, profile.id);
+        maybeCompletar(r, profile.id, profile.full_name);
         setState('success');
       } catch (ciErr: any) {
         if (ciErr.alreadyCheckedIn || ciErr.status === 409) {
@@ -505,6 +518,17 @@ export default function VolSelfCheckin() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Completar cadastro · só depois que o diálogo dos cultos da manhã sai de
+          cena — dois modais empilhados no celular escondem um ao outro. */}
+      {completarCadastro && !manhaDialog && (
+        <CompletarCadastroDialog
+          volunteerId={completarCadastro.id}
+          volunteerName={completarCadastro.name}
+          missingFields={completarCadastro.falta}
+          onDone={() => setCompletarCadastro(null)}
+        />
+      )}
     </div>
   );
 }

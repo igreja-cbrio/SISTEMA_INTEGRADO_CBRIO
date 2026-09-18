@@ -374,6 +374,39 @@ async function listarRespostasCompletas(pesquisaId, select) {
   return todas;
 }
 
+/**
+ * Anexa `turma_nome` em cada resposta que tem `turma_id` (NPS do Next por turma).
+ *
+ * ⚠️⚠️ POR QUE ISTO EXISTE (03/09/2026). A tela do NPS resolvia o nome da turma
+ * com um 2º request pra `next.turmas.list()` (`GET /api/next/turmas`). Quando o
+ * `/api/next` ganhou guard de módulo (#2859 · rodava só com `authenticate`),
+ * esse request passou a exigir `next` ou `integracao` — e quem cuida do NPS sem
+ * ser do Next caía no fallback "Turma (sem nome)" no seletor.
+ *
+ * Resolver aqui é mais certo que alargar o guard: o NPS já é dono desta linha
+ * (é ele que grava `turma_id`), a leitura é do service role, e mata um request
+ * de rede que carregava TODAS as turmas só pra usar 1 ou 2 nomes.
+ *
+ * ⚠️ Nunca quebra a lista de respostas: turma apagada ou leitura com erro só
+ * deixa `turma_nome` ausente, e a tela volta ao fallback de antes.
+ */
+async function anexarNomeDaTurma(respostas) {
+  const ids = [...new Set((respostas || []).map(r => r.turma_id).filter(Boolean))];
+  if (!ids.length) return respostas;
+  try {
+    const { data, error } = await supabase
+      .from('next_turmas').select('id, nome').in('id', ids).is('deleted_at', null);
+    if (error) throw error;
+    const nomePorId = new Map((data || []).map(t => [t.id, t.nome]));
+    return respostas.map(r => (
+      r.turma_id && nomePorId.has(r.turma_id) ? { ...r, turma_nome: nomePorId.get(r.turma_id) } : r
+    ));
+  } catch (e) {
+    console.error('[nps] nome da turma:', e.message);
+    return respostas;
+  }
+}
+
 // GET /api/nps/:id/respostas  → admin/diretor ou criador
 router.get('/:id/respostas', async (req, res) => {
   try {
@@ -390,7 +423,7 @@ router.get('/:id/respostas', async (req, res) => {
       req.params.id,
       'id, score, respostas, comentario, origem, nome_publico, email_publico, profile_id, turma_id, created_at'
     );
-    res.json(data);
+    res.json(await anexarNomeDaTurma(data));
   } catch (e) {
     console.error('[nps] respostas:', e.message);
     res.status(500).json({ error: 'Erro ao listar respostas' });

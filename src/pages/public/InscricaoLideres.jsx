@@ -25,7 +25,7 @@ import { gruposPublic } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle, PublicPaletteCtx, usePublicPalette } from './publicTheme';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
-import { CheckCircle2, Camera, X, Users, Home } from 'lucide-react';
+import { CheckCircle2, Camera, X, Users, Home, Heart } from 'lucide-react';
 import SeletorBairro from '../../components/ui/seletor-bairro';
 import {
   soDigitos, mascaraCpf, mascaraTelefone, cpfValido, telefoneValido,
@@ -34,9 +34,21 @@ import {
 
 const TEXTO_CONSENTIMENTO = `Ao enviar este formulário, você autoriza a CBRio a utilizar seus dados pessoais para fins de comunicação com a igreja e participação na equipe de grupos de conexão, conforme a LGPD.`;
 
+// LGPD: o titular não consente sozinho pelo cônjuge — ele DECLARA que o
+// cônjuge está ciente e concorda (mesmo desenho do /inscricao-grupos). O texto
+// vai como snapshot no consentimento do cônjuge (porta grupos_lider).
+const TEXTO_CONSENTIMENTO_CONJUGE = `Declaro que meu cônjuge está ciente desta inscrição, concorda com ela e autoriza a CBRio a utilizar os dados pessoais informados aqui para comunicação com a igreja e participação na equipe de grupos de conexão, conforme a LGPD.`;
+
 const FORM_VAZIO = {
   nome: '', cpf: '', email: '', telefone: '', data_nascimento: '', genero: '',
   bairro: '', endereco: '', motivacao: '', website: '', foto_url: '',
+};
+
+// Cônjuge (inscrição em par · Marcos 02/09) — mesmos campos obrigatórios do
+// titular; papel/motivação/endereço valem pros dois.
+const CONJUGE_VAZIO = {
+  nome: '', cpf: '', email: '', telefone: '', data_nascimento: '', genero: '',
+  aceita_termos: false, whatsapp_optin: false,
 };
 
 export default function InscricaoLideres() {
@@ -47,6 +59,8 @@ export default function InscricaoLideres() {
   const [querAnfitriao, setQuerAnfitriao] = useState(false);
   const [aceitaTermos, setAceitaTermos] = useState(false);
   const [optin, setOptin] = useState(false); // D4 · explícito, default false
+  const [comConjuge, setComConjuge] = useState(false);
+  const [conjuge, setConjuge] = useState(CONJUGE_VAZIO);
   const submittingRef = useRef(false); // trava síncrona de duplo-toque
   const [errosCampos, setErrosCampos] = useState({});
   const [error, setError] = useState('');
@@ -59,6 +73,12 @@ export default function InscricaoLideres() {
     const v = mask ? mask(e.target.value) : e.target.value;
     setForm(f => ({ ...f, [campo]: v }));
     setErrosCampos(p => (p[campo] ? { ...p, [campo]: '' } : p));
+  };
+
+  const setConj = (campo, mask) => (e) => {
+    const v = mask ? mask(e.target.value) : e.target.value;
+    setConjuge(c => ({ ...c, [campo]: v }));
+    setErrosCampos(p => (p[`conjuge.${campo}`] ? { ...p, [`conjuge.${campo}`]: '' } : p));
   };
 
   const togglePapel = (papel) => {
@@ -110,6 +130,23 @@ export default function InscricaoLideres() {
       if (!form.bairro || form.bairro.trim().length < 2) erros.bairro = 'Como anfitrião, informe o bairro.';
     }
     if (!aceitaTermos) erros.aceita_termos = 'É necessário aceitar os termos para enviar.';
+    // Cônjuge (inscrição em par): mesma régua do titular, chaves 'conjuge.*'.
+    if (comConjuge) {
+      if (!nomeCompletoValido(conjuge.nome)) {
+        erros['conjuge.nome'] = temAbreviacaoNome(conjuge.nome) ? 'Escreva o nome completo, sem abreviações.' : 'Digite o nome completo.';
+      }
+      if (!telefoneValido(conjuge.telefone)) erros['conjuge.telefone'] = 'Digite um celular válido com DDD.';
+      if (!conjuge.data_nascimento || !/^\d{4}-\d{2}-\d{2}$/.test(conjuge.data_nascimento)) {
+        erros['conjuge.data_nascimento'] = 'Selecione uma data válida.';
+      }
+      if (conjuge.genero !== 'masculino' && conjuge.genero !== 'feminino') erros['conjuge.genero'] = 'Marque masculino ou feminino.';
+      const cpfConj = soDigitos(conjuge.cpf);
+      if (cpfConj.length !== 11) erros['conjuge.cpf'] = 'Informe o CPF completo.';
+      else if (!cpfValido(conjuge.cpf)) erros['conjuge.cpf'] = 'Este CPF não é válido — confira os números.';
+      else if (cpfConj === soDigitos(form.cpf)) erros['conjuge.cpf'] = 'O CPF do cônjuge é o mesmo do titular — confira os números.';
+      if (!conjuge.email.trim() || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(conjuge.email.trim())) erros['conjuge.email'] = 'Informe um e-mail válido.';
+      if (!conjuge.aceita_termos) erros['conjuge.aceita_termos'] = 'Confirme que seu cônjuge está ciente e concorda com a inscrição.';
+    }
     return erros;
   };
 
@@ -119,7 +156,11 @@ export default function InscricaoLideres() {
     if (Object.keys(erros).length > 0) {
       setErrosCampos(erros);
       setError('');
-      const primeiro = ['nome', 'telefone', 'data_nascimento', 'genero', 'cpf', 'email', 'papel', 'endereco', 'bairro', 'aceita_termos'].find(k => erros[k]);
+      const primeiro = [
+        'nome', 'telefone', 'data_nascimento', 'genero', 'cpf', 'email', 'papel', 'endereco', 'bairro',
+        'conjuge.nome', 'conjuge.telefone', 'conjuge.data_nascimento', 'conjuge.genero', 'conjuge.cpf',
+        'conjuge.email', 'conjuge.aceita_termos', 'aceita_termos',
+      ].find(k => erros[k]);
       if (primeiro) scrollAteCampo(primeiro === 'papel' ? 'papel' : primeiro);
       return;
     }
@@ -144,9 +185,24 @@ export default function InscricaoLideres() {
         // D4 (28/07): opt-in explícito — checkbox default false, nada implícito.
         whatsapp_optin: optin,
         consentimento_texto: TEXTO_CONSENTIMENTO,
+        // Cônjuge (inscrição em par): cada um vira UMA inscrição própria no
+        // backend, cruzadas — papel/motivação/endereço valem pros dois.
+        ...(comConjuge ? {
+          conjuge: {
+            nome: conjuge.nome.trim(),
+            cpf: soDigitos(conjuge.cpf),
+            email: conjuge.email.trim(),
+            telefone: conjuge.telefone,
+            data_nascimento: conjuge.data_nascimento || null,
+            genero: conjuge.genero || null,
+            aceita_termos: conjuge.aceita_termos === true,
+            whatsapp_optin: conjuge.whatsapp_optin === true,
+          },
+          consentimento_conjuge_texto: TEXTO_CONSENTIMENTO_CONJUGE,
+        } : {}),
         website: form.website,
       });
-      setEnviado({ mensagem: r?.ja_inscrito ? r.mensagem : null });
+      setEnviado({ mensagem: r?.ja_inscrito ? r.mensagem : null, conjuge: r?.conjuge || null });
     } catch (e) {
       if (e.campo) {
         setErrosCampos(p => ({ ...p, [e.campo]: e.message }));
@@ -159,7 +215,8 @@ export default function InscricaoLideres() {
 
   const resetForm = () => {
     setForm(FORM_VAZIO); setQuerLider(false); setQuerAnfitriao(false);
-    setAceitaTermos(false); setOptin(false); setErrosCampos({}); setError(''); setEnviado(null);
+    setAceitaTermos(false); setOptin(false); setComConjuge(false); setConjuge(CONJUGE_VAZIO);
+    setErrosCampos({}); setError(''); setEnviado(null);
   };
 
   const PAPEIS = [
@@ -209,6 +266,21 @@ export default function InscricaoLideres() {
                   <>Que alegria ter você disposto a servir! A equipe de Grupos vai entrar em contato pra conversar sobre os próximos passos.</>
                 )}
               </p>
+              {enviado.conjuge && (
+                <div style={{
+                  marginTop: 14, padding: '10px 12px', borderRadius: 10, textAlign: 'left',
+                  background: enviado.conjuge.ok ? 'rgba(0,179,157,0.10)' : 'rgba(239,68,68,0.12)',
+                  border: `1px solid ${enviado.conjuge.ok ? 'rgba(0,179,157,0.45)' : '#ef4444'}`,
+                  fontSize: 13, color: C.text, lineHeight: 1.5,
+                }}>
+                  <strong>{enviado.conjuge.nome || 'Seu cônjuge'}:</strong>{' '}
+                  {enviado.conjuge.ok
+                    ? (enviado.conjuge.ja_inscrito
+                      ? 'já tinha uma inscrição em aberto — a equipe vai falar com vocês dois.'
+                      : 'inscrição registrada junto com a sua. A equipe fala com o casal de uma vez.')
+                    : `${enviado.conjuge.error || 'não conseguimos registrar a inscrição.'} A sua está valendo — fale com a equipe de Grupos.`}
+                </div>
+              )}
               <button onClick={resetForm} style={{
                 marginTop: 20, padding: '10px 24px', borderRadius: 10, background: '#00B39D', color: '#fff',
                 border: 'none', fontWeight: 700, cursor: 'pointer',
@@ -354,6 +426,104 @@ export default function InscricaoLideres() {
                 onPick={onFoto}
                 onRemove={() => setForm(f => ({ ...f, foto_url: '' }))}
               />
+
+              {/* ── Cônjuge · candidatura em par (Marcos 02/09) ── */}
+              <div style={{
+                border: `1.5px solid ${comConjuge ? 'rgba(0,179,157,0.55)' : C.cardBorder}`,
+                background: comConjuge ? 'rgba(0,179,157,0.07)' : (C.isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.02)'),
+                borderRadius: 12, padding: 14, marginBottom: 12,
+              }}>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={comConjuge}
+                    onChange={(e) => setComConjuge(e.target.checked)}
+                    style={{ marginTop: 2, width: 18, height: 18, accentColor: '#00B39D', flexShrink: 0 }}
+                  />
+                  <span style={{ fontSize: 13, color: C.text, lineHeight: 1.5 }}>
+                    <Heart size={14} style={{ display: 'inline', marginRight: 6, verticalAlign: -2, color: '#00B39D' }} />
+                    <strong>Inscrever meu cônjuge junto</strong>
+                    <span style={{ display: 'block', fontSize: 12, color: C.text3, marginTop: 3 }}>
+                      Vão liderar (ou receber o grupo) juntos? Inscreva os dois de uma vez — a equipe
+                      recebe a candidatura do casal e fala com vocês.
+                    </span>
+                  </span>
+                </label>
+
+                {comConjuge && (
+                  <div style={{ marginTop: 14 }}>
+                    <p style={{ fontSize: 12, fontWeight: 700, color: C.text, margin: '0 0 8px' }}>
+                      Dados do seu cônjuge
+                    </p>
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(220px, 100%), 1fr))', gap: 12 }}>
+                      <Field campo="conjuge.nome" error={errosCampos['conjuge.nome']} label="Nome completo *" value={conjuge.nome} onChange={setConj('nome')} />
+                      <Field campo="conjuge.telefone" error={errosCampos['conjuge.telefone']} label="Celular / WhatsApp *" value={conjuge.telefone} onChange={setConj('telefone', mascaraTelefone)} maxLength={16} inputMode="tel" />
+                      <div data-campo="conjuge.data_nascimento">
+                        <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>Data de nascimento *</label>
+                        <BirthDatePicker
+                          value={conjuge.data_nascimento}
+                          onChange={(v) => {
+                            setConjuge(c => ({ ...c, data_nascimento: v }));
+                            setErrosCampos(p => (p['conjuge.data_nascimento'] ? { ...p, 'conjuge.data_nascimento': '' } : p));
+                          }}
+                          placeholder="dia/mês/ano"
+                          aria-invalid={!!errosCampos['conjuge.data_nascimento']}
+                        />
+                        {errosCampos['conjuge.data_nascimento'] && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '4px 0 0' }}>{errosCampos['conjuge.data_nascimento']}</p>}
+                      </div>
+                      <div data-campo="conjuge.genero">
+                        <label style={{ fontSize: 12, color: C.text3, display: 'block', marginBottom: 4 }}>Sexo *</label>
+                        <div style={{ display: 'flex', gap: 8 }}>
+                          {[['masculino', 'Masculino'], ['feminino', 'Feminino']].map(([valor, rotulo]) => (
+                            <button
+                              key={valor}
+                              type="button"
+                              onClick={() => {
+                                setConjuge(c => ({ ...c, genero: valor }));
+                                setErrosCampos(p => (p['conjuge.genero'] ? { ...p, 'conjuge.genero': '' } : p));
+                              }}
+                              style={{
+                                flex: 1, minHeight: 44, padding: '9px 10px', borderRadius: 8, fontSize: 13, cursor: 'pointer',
+                                fontWeight: conjuge.genero === valor ? 700 : 500,
+                                border: `1px solid ${conjuge.genero === valor ? '#00B39D' : (errosCampos['conjuge.genero'] ? '#ef4444' : C.inputBorder)}`,
+                                background: conjuge.genero === valor ? 'rgba(0,179,157,0.12)' : (C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'),
+                                color: conjuge.genero === valor ? '#00B39D' : C.text,
+                              }}
+                            >
+                              {rotulo}
+                            </button>
+                          ))}
+                        </div>
+                        {errosCampos['conjuge.genero'] && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '4px 0 0' }}>{errosCampos['conjuge.genero']}</p>}
+                      </div>
+                      <Field campo="conjuge.cpf" error={errosCampos['conjuge.cpf']} label="CPF *" value={conjuge.cpf} onChange={setConj('cpf', mascaraCpf)} maxLength={14} inputMode="numeric" />
+                      <Field campo="conjuge.email" error={errosCampos['conjuge.email']} label="E-mail *" type="email" value={conjuge.email} onChange={setConj('email')} />
+                    </div>
+
+                    <div data-campo="conjuge.aceita_termos" style={{
+                      marginTop: 12, padding: 12, borderRadius: 10,
+                      background: C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)',
+                      border: `1px solid ${errosCampos['conjuge.aceita_termos'] ? '#ef4444' : C.cardBorder}`,
+                    }}>
+                      <p style={{ fontSize: 11, color: C.text3, lineHeight: 1.5, margin: 0, marginBottom: 8 }}>{TEXTO_CONSENTIMENTO_CONJUGE}</p>
+                      <label style={{ fontSize: 12, color: C.text, display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer' }}>
+                        <input type="checkbox" checked={conjuge.aceita_termos} onChange={e => {
+                          setConjuge(c => ({ ...c, aceita_termos: e.target.checked }));
+                          setErrosCampos(p => (p['conjuge.aceita_termos'] ? { ...p, 'conjuge.aceita_termos': '' } : p));
+                        }} style={{ accentColor: '#00B39D' }} />
+                        Meu cônjuge está ciente e concorda *
+                      </label>
+                      {errosCampos['conjuge.aceita_termos'] && <p style={{ fontSize: 11.5, color: '#ef4444', margin: '6px 0 0' }}>{errosCampos['conjuge.aceita_termos']}</p>}
+                    </div>
+
+                    <label style={{ marginTop: 10, fontSize: 12, color: C.text, display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer', lineHeight: 1.5 }}>
+                      <input type="checkbox" checked={conjuge.whatsapp_optin} onChange={e => setConjuge(c => ({ ...c, whatsapp_optin: e.target.checked }))}
+                        style={{ accentColor: '#00B39D', marginTop: 2, flexShrink: 0 }} />
+                      <span>📲 Meu cônjuge também quer receber as mensagens de líder no WhatsApp.</span>
+                    </label>
+                  </div>
+                )}
+              </div>
 
               {/* honeypot */}
               <input type="text" value={form.website} onChange={set('website')} style={{ position: 'absolute', left: -9999, opacity: 0 }} tabIndex={-1} autoComplete="off" />

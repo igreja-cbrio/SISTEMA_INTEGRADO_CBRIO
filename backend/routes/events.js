@@ -15,6 +15,18 @@ const VALID_RECURRENCE = ['unico', 'semanal', 'mensal', 'anual'];
 const VALID_TASK_STATUS = ['pendente', 'em-andamento', 'concluida', 'bloqueada'];
 const VALID_TASK_PRIORITY = ['baixa', 'media', 'alta', 'urgente'];
 
+// varredura 2026-09: A06 · 24 das 34 rotas deste arquivo eram AUTHN_ONLY — qualquer
+// uma das 201 contas logadas (138 só-app) criava/editava/apagava tarefa, risco e
+// retrospectiva de evento com um curl. Régua = módulo `eventos` (routeKey 'events'
+// já existe no ROUTE_MODULE_MAP), nível 2 — EXATAMENTE o que a tela já exige pra
+// abrir (`canAgenda` = canAccessModule(['eventos','Eventos','Agenda'], leitura>=2)
+// em AuthContext.jsx:384 + ModuleGuard em App.tsx:779). Nível 2 e não 3 de
+// propósito: a tela não gateia botão nenhum por nível, então subir a régua da
+// escrita acima da régua que abre a tela criaria 403 em botão visível pra quem
+// tem o módulo em nível 2. Trava POR ROTA (nunca router.use) pra não derrubar os
+// GETs de agregado. Deleção destrutiva tem régua mais alta, comentada onde está.
+const escritaEventos = authorizeModule('events', 2);
+
 // GET /api/events/categories
 router.get('/categories', async (req, res) => {
   try {
@@ -288,7 +300,7 @@ router.put('/:id', authorize('diretor', 'admin'), async (req, res) => {
 // ciclo inexistente) caía no catch genérico → 500 mas o status já tinha
 // mudado. UX confusa: usuário via "Erro 500" depois de finalizar com
 // sucesso.
-router.patch('/:id/status', async (req, res) => {
+router.patch('/:id/status', escritaEventos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorização — mudar status do evento exige o módulo eventos
   const eventId = req.params.id;
   try {
     if (!isUUID(eventId)) return res.status(400).json({ error: 'ID inválido' });
@@ -521,7 +533,7 @@ async function recalcEventStatus(eventId) {
 // pode falhar no SELECT mas o UPDATE já passou). recalcEventStatus + SELECT
 // pós-update viram best-effort — só logam. Log inclui code/details/hint pra
 // próximo erro ser óbvio em vez de "Erro ao atualizar ocorrência" genérico.
-router.patch('/:id/occurrences/:occId', async (req, res) => {
+router.patch('/:id/occurrences/:occId', escritaEventos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorização — editar ocorrência exige o módulo eventos
   const { id: eventId, occId } = req.params;
   try {
     if (!isUUID(occId)) return res.status(400).json({ error: 'ID inválido' });
@@ -561,7 +573,7 @@ router.patch('/:id/occurrences/:occId', async (req, res) => {
 });
 
 // ── TASKS ──
-router.post('/:id/tasks', async (req, res) => {
+router.post('/:id/tasks', escritaEventos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorização — criar tarefa exige o módulo eventos
   try {
     if (!isUUID(req.params.id)) return res.status(400).json({ error: 'ID inválido' });
     const d = req.body;
@@ -580,7 +592,7 @@ router.post('/:id/tasks', async (req, res) => {
   } catch (e) { console.error('[Events POST task]', e.message); res.status(500).json({ error: 'Erro ao criar tarefa' }); }
 });
 
-router.put('/tasks/:taskId', async (req, res) => {
+router.put('/tasks/:taskId', escritaEventos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorização — editar tarefa exige o módulo eventos
   try {
     if (!isUUID(req.params.taskId)) return res.status(400).json({ error: 'ID inválido' });
     const d = req.body;
@@ -598,7 +610,7 @@ router.put('/tasks/:taskId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar tarefa' }); }
 });
 
-router.patch('/tasks/:taskId/status', async (req, res) => {
+router.patch('/tasks/:taskId/status', escritaEventos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorização — mudar status de tarefa exige o módulo eventos
   try {
     if (!isUUID(req.params.taskId)) return res.status(400).json({ error: 'ID inválido' });
     const { data: old } = await supabase.from('event_tasks').select('status, name, event_id').eq('id', req.params.taskId).single();
@@ -621,7 +633,7 @@ router.delete('/tasks/:taskId', authorize('diretor', 'admin'), async (req, res) 
 });
 
 // ── SUBTASKS ──
-router.post('/tasks/:taskId/subtasks', async (req, res) => {
+router.post('/tasks/:taskId/subtasks', escritaEventos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorização — criar subtarefa exige o módulo eventos
   try {
     if (!req.body.name?.trim()) return res.status(400).json({ error: 'Nome obrigatório' });
     const { data, error } = await supabase.from('event_task_subtasks').insert({ task_id: req.params.taskId, name: req.body.name.trim() }).select().single();
@@ -630,7 +642,7 @@ router.post('/tasks/:taskId/subtasks', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao criar subtarefa' }); }
 });
 
-router.patch('/subtasks/:subId', async (req, res) => {
+router.patch('/subtasks/:subId', escritaEventos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorização — marcar subtarefa exige o módulo eventos
   try {
     const { data, error } = await supabase.from('event_task_subtasks').update({ done: req.body.done }).eq('id', req.params.subId).select().single();
     if (error) throw error;
@@ -638,7 +650,7 @@ router.patch('/subtasks/:subId', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar subtarefa' }); }
 });
 
-router.delete('/subtasks/:subId', async (req, res) => {
+router.delete('/subtasks/:subId', escritaEventos, async (req, res) => { // varredura 2026-09: A06 delete sem autorização — mesma régua do POST e do PATCH da mesma subtarefa: o ✕ é renderizado sem condição no front, e 3 daria 403 em botão visível
   try {
     await supabase.from('event_task_subtasks').delete().eq('id', req.params.subId);
     res.json({ success: true });
@@ -646,7 +658,7 @@ router.delete('/subtasks/:subId', async (req, res) => {
 });
 
 // ── COMMENTS ──
-router.post('/tasks/:taskId/comments', async (req, res) => {
+router.post('/tasks/:taskId/comments', escritaEventos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorização — comentar exige o módulo eventos
   try {
     if (!req.body.text?.trim()) return res.status(400).json({ error: 'Texto obrigatório' });
     const { data, error } = await supabase.from('event_task_comments').insert({
@@ -667,7 +679,7 @@ router.get('/:id/risks', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar riscos' }); }
 });
 
-router.post('/:id/risks', async (req, res) => {
+router.post('/:id/risks', escritaEventos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorização — criar risco exige o módulo eventos
   try {
     const d = req.body;
     if (!d.title?.trim()) return res.status(400).json({ error: 'Título do risco é obrigatório' });
@@ -686,7 +698,7 @@ router.post('/:id/risks', async (req, res) => {
 });
 
 // PATCH risks — whitelist de campos (previne injection)
-router.patch('/risks/:riskId', async (req, res) => {
+router.patch('/risks/:riskId', escritaEventos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorização — editar risco exige o módulo eventos
   try {
     if (!isUUID(req.params.riskId)) return res.status(400).json({ error: 'ID inválido' });
     const d = req.body;
@@ -728,7 +740,7 @@ router.get('/:id/retrospective', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao buscar retrospectiva' }); }
 });
 
-router.post('/:id/retrospective', async (req, res) => {
+router.post('/:id/retrospective', escritaEventos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorização — salvar retrospectiva exige o módulo eventos
   try {
     const d = req.body;
     const { data, error } = await supabase.from('event_retrospectives').upsert({
@@ -757,7 +769,7 @@ const multer = require('multer');
 const storage = require('../services/storageService');
 const uploadMw = multer({ storage: multer.memoryStorage(), limits: { fileSize: storage.MAX_FILE_SIZE } });
 
-router.post('/:eventId/tasks/:taskId/attachments', uploadMw.single('file'), async (req, res) => {
+router.post('/:eventId/tasks/:taskId/attachments', escritaEventos, uploadMw.single('file'), async (req, res) => { // varredura 2026-09: A06 upload sem autorização — guard ANTES do multer, pra não gravar o arquivo antes de negar
   try {
     if (!req.file) return res.status(400).json({ error: 'Arquivo não fornecido' });
     if (!isUUID(req.params.eventId) || !isUUID(req.params.taskId)) return res.status(400).json({ error: 'IDs inválidos' });
@@ -809,10 +821,28 @@ router.get('/:eventId/tasks/:taskId/attachments', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro ao listar anexos' }); }
 });
 
+// varredura 2026-09: A06 · SEM `escritaEventos` na assinatura de proposito: ele
+// vinha ANTES da regua de posse e a tornava inalcancavel — quem sobe anexo por
+// outro fluxo (completions, que e so authenticate) criava o arquivo e nao conseguia
+// mais apagar. A decisao inteira fica no corpo: dono OU diretor/admin OU cargo >= 4.
 router.delete('/attachments/:attachId', async (req, res) => {
   try {
     if (!isUUID(req.params.attachId)) return res.status(400).json({ error: 'ID inválido' });
-    const { data: attach } = await supabase.from('event_task_attachments').select('supabase_path, sharepoint_item_id').eq('id', req.params.attachId).single();
+    const { data: attach } = await supabase.from('event_task_attachments').select('supabase_path, sharepoint_item_id, uploaded_by').eq('id', req.params.attachId).single(); // varredura 2026-09: A06 traz uploaded_by pra decidir a régua fina
+    // varredura 2026-09: A06 · apagar anexo remove o ARQUIVO no storage (irreversível).
+    // A prescrição pedia `authorize('diretor','admin')`, igual ao DELETE /tasks/:taskId;
+    // somo a POSSE (LEI da soma) pra quem subiu o arquivo não tomar 403 num botão que
+    // a tela mostra pra ele — o dono do anexo apaga o próprio, o resto precisa de nível 4.
+    // varredura 2026-09: A06 os DOIS lados têm que existir — `String(null) === String(undefined)`
+    // é `'null' === 'undefined'`, mas `(a || '') === (b || '')` com os dois vazios LIBERA:
+    // anexo sem uploaded_by viraria "de todo mundo". Ausência de um dos lados = NÃO é dono.
+    const donoDoAnexo = attach?.uploaded_by ? String(attach.uploaded_by) : null;
+    const quemPede = req.user?.userId ? String(req.user.userId) : null;
+    const ehDonoDoAnexo = !!donoDoAnexo && !!quemPede && donoDoAnexo === quemPede;
+    const nivelCargo = Math.max(req.user?.granular?.cargoNivelLeitura || 1, req.user?.granular?.cargoNivelEscrita || 1);
+    if (!ehDonoDoAnexo && !['diretor', 'admin'].includes(req.user?.role) && nivelCargo < 4) {
+      return res.status(403).json({ error: 'Só quem enviou o anexo (ou diretor/admin) pode excluí-lo' });
+    }
     if (attach) await storage.deleteFile(attach.supabase_path, attach.sharepoint_item_id);
     const { error } = await supabase.from('event_task_attachments').delete().eq('id', req.params.attachId);
     if (error) throw error;

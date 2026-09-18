@@ -42,6 +42,8 @@ const PAGES: SearchItem[] = [
   { label: 'Planejamento Estratégico', description: 'Plano plurianual · Expansão 2026–2029', path: '/expansao', icon: Map, category: 'Projetos e Eventos', module: 'expansao' },
   { label: 'Membresia', description: 'Cadastro e trilha dos valores', path: '/ministerial/membresia', icon: BookOpen, category: 'Ministerial', perm: 'canMembresia' },
   { label: 'Cuidados', description: 'Capelania, aconselhamento e Jornada 180', path: '/ministerial/cuidados', icon: Heart, category: 'Ministerial', module: 'cuidados' },
+  // ⚠️ "Visitantes" saiu da busca junto com o item de menu (11/09/2026) — ver
+  // o comentário no AppShell. A porta do visitante é a aba dentro de Cuidados.
   { label: 'Entradas', description: 'Porta de entrada · liga inscrição ao membro e funde duplicados', path: '/entradas', icon: Users, category: 'Ministerial', module: 'next-batismo' },
   { label: 'Jornada da Igreja', description: 'Profundidade · 5 valores · Membro Modelo (≥2 valores)', path: '/jornada', icon: Sparkles, category: 'Inteligência' },
   { label: 'Censo', description: 'Perfil demográfico e engajamento da comunidade · pesquisas próprias', path: '/censo', icon: ClipboardList, category: 'Inteligência', module: 'censo' },

@@ -57,3 +57,5 @@ graphify-out/
 # fechar.
 *.tsbuildinfo
 .env*
+# Backups de de-para gerados por script: têm nome de pessoa, não entram no repo.
+backend/scripts/_backup_*.json

@@ -1,9 +1,16 @@
 // Importador da planilha "CONTROLE DE COMPRAS FIXOS E VARIÁVEIS" → log_compras
 //
 // Lê as 3 abas (COMPRAS FIXOS, COMPRAS VARIAVÉL, CARTÃO) no mesmo layout que o
-// Pery mantinha à mão e materializa cada linha como uma compra aprovada.
+// Pery mantinha à mão e materializa cada linha como uma compra PENDENTE.
 // Idempotente: cada linha vira uma import_chave determinística (hash do
 // conteúdo) → re-importar a mesma planilha não duplica.
+//
+// varredura 2026-09 · RHP-02: a planilha entrava com `status_aprovacao:'aprovada'`,
+// e isso era aprovação em MASSA sem passar pelo `/compras/:id/aprovar` — ou seja,
+// o contorno da segregação de funções (quem registra não aprova). Agora nasce
+// `pendente` e a fila do módulo decide, linha a linha, com o `created_by` valendo.
+// ⚠️ O upsert é `ignoreDuplicates: true`, então reimportar NÃO reabre compra que
+// já foi aprovada — só as linhas novas entram, e entram pendentes.
 
 const XLSX = require('xlsx');
 const crypto = require('crypto');
@@ -105,7 +112,9 @@ function parseBuffer(buffer) {
         forma_pgto: normFormaPgto(r[10]),
         parcelas: null,
         origem_registro: 'planilha',
-        status_aprovacao: 'aprovada',
+        // varredura 2026-09 · RHP-02: importacao NUNCA nasce aprovada — a aprovacao
+        // passa sempre pelo POST /compras/:id/aprovar (ver cabecalho deste arquivo).
+        status_aprovacao: 'pendente',
         import_chave: chaveDe(tipo, i, data, fornecedor, valor, n_pedido, materiais),
       });
     }
@@ -139,7 +148,9 @@ function parseBuffer(buffer) {
         forma_pgto: 'Cartão',
         parcelas: toNum(r[6]),
         origem_registro: 'planilha',
-        status_aprovacao: 'aprovada',
+        // varredura 2026-09 · RHP-02: importacao NUNCA nasce aprovada — a aprovacao
+        // passa sempre pelo POST /compras/:id/aprovar (ver cabecalho deste arquivo).
+        status_aprovacao: 'pendente',
         import_chave: chaveDe('cartao', i, data, fornecedor, valor, null, materiais),
       });
     }

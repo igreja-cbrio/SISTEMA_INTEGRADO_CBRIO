@@ -1,98 +1,22 @@
-// Página do módulo Conversas: inbox (por área) + painel de pendências por área.
-import { useState, useEffect, useCallback } from 'react';
+// Página do módulo Conversas: inbox (por área) + mensagens prontas.
+//
+// 08/09/2026 (Marcos): a sub-aba "Painel" (pendências por área) SAIU — "essa
+// aba de painel não é útil". Os chips Abertas · Sem resposta · Finalizadas do
+// próprio inbox respondem a pergunta que ela tentava responder, com a idade da
+// espera na linha. O endpoint `GET /wa-inbox/resumo-areas` segue vivo e sem
+// consumidor aqui (dormente) — não apagar por parecer sobra.
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
 import { waInbox } from '../api';
 import ConversasInbox from '../components/waInbox/ConversasInbox';
+import { VARIAVEIS } from '../lib/mensagemVariaveis';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { toast } from 'sonner';
-import { Loader2, Inbox, LayoutGrid, RefreshCw, Users, Zap, Plus, Trash2, Pencil } from 'lucide-react';
-
-type ResumoArea = { area: string | null; entrada?: boolean; novas: number; ativos: number; pendentes: number };
-
-function PainelAreas() {
-  const [rows, setRows] = useState<ResumoArea[] | null>(null);
-  const [erro, setErro] = useState(false);
-  const carregar = useCallback(() => {
-    setErro(false);
-    waInbox.resumoAreas().then((r: any) => setRows(r?.areas || [])).catch(() => { setRows([]); setErro(true); });
-  }, []);
-  useEffect(() => { carregar(); const t = setInterval(carregar, 20_000); return () => clearInterval(t); }, [carregar]);
-
-  const totais = (rows || []).reduce((a, r) => ({ novas: a.novas + r.novas, ativos: a.ativos + r.ativos, pendentes: a.pendentes + r.pendentes }), { novas: 0, ativos: 0, pendentes: 0 });
-
-  return (
-    <Card className="overflow-hidden">
-      <div className="flex items-center justify-between border-b border-border px-4 py-3">
-        <div>
-          <p className="text-sm font-semibold">Pendências por área</p>
-          <p className="text-[11px] text-muted-foreground">Você vê as áreas sob sua responsabilidade. Novas = não lidas · Ativos = abertas · Pendentes = sem responsável.</p>
-        </div>
-        <button onClick={carregar} className="text-muted-foreground hover:text-foreground p-1.5 rounded-md hover:bg-muted" title="Atualizar"><RefreshCw className="h-4 w-4" /></button>
-      </div>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b border-border text-[11px] uppercase tracking-wide text-muted-foreground">
-              <th className="px-4 py-2.5 text-left font-medium">Área</th>
-              <th className="px-4 py-2.5 text-center font-medium">Novas mensagens</th>
-              <th className="px-4 py-2.5 text-center font-medium">Ativos</th>
-              <th className="px-4 py-2.5 text-center font-medium">Pendentes</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows === null ? (
-              <tr><td colSpan={4} className="py-10 text-center"><Loader2 className="h-5 w-5 animate-spin text-primary mx-auto" /></td></tr>
-            ) : erro ? (
-              <tr><td colSpan={4} className="py-6 px-4">
-                <div style={{ padding: '16px', background: '#FCEBEB', border: '1px dashed #F09595', borderRadius: 8, textAlign: 'center' }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, color: '#501313', marginBottom: 4 }}>Não foi possível carregar as áreas</div>
-                  <div style={{ fontSize: 11, color: '#791F1F', marginBottom: 10 }}>Falha ao consultar o resumo. A fila do WhatsApp pode não estar realmente vazia.</div>
-                  <button onClick={carregar} style={{ background: '#E24B4A', color: '#fff', border: 'none', borderRadius: 6, padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' }}>Tentar de novo</button>
-                </div>
-              </td></tr>
-            ) : rows.length === 0 ? (
-              <tr><td colSpan={4} className="py-10 text-center text-sm text-muted-foreground">Nenhuma conversa ainda.</td></tr>
-            ) : rows.map((r, i) => (
-              <tr key={i} className="border-b border-border/60 hover:bg-muted/40">
-                <td className="px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <Users className="h-4 w-4 text-muted-foreground" />
-                    <span className="font-medium">{r.entrada || !r.area ? 'Entrada (não triada)' : r.area}</span>
-                  </div>
-                </td>
-                <td className="px-4 py-3 text-center"><Contador n={r.novas} cor="verde" /></td>
-                <td className="px-4 py-3 text-center"><Contador n={r.ativos} cor="azul" /></td>
-                <td className="px-4 py-3 text-center"><Contador n={r.pendentes} cor="ambar" /></td>
-              </tr>
-            ))}
-          </tbody>
-          {rows && rows.length > 0 && (
-            <tfoot>
-              <tr className="text-[13px] font-semibold">
-                <td className="px-4 py-3 text-right text-muted-foreground">Total</td>
-                <td className="px-4 py-3 text-center">{totais.novas}</td>
-                <td className="px-4 py-3 text-center">{totais.ativos}</td>
-                <td className="px-4 py-3 text-center">{totais.pendentes}</td>
-              </tr>
-            </tfoot>
-          )}
-        </table>
-      </div>
-    </Card>
-  );
-}
-
-function Contador({ n, cor }: { n: number; cor: 'verde' | 'azul' | 'ambar' }) {
-  if (!n) return <span className="text-muted-foreground/50">0</span>;
-  const c = cor === 'verde' ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
-    : cor === 'azul' ? 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
-    : 'bg-amber-500/15 text-amber-600 dark:text-amber-400';
-  return <span className={`inline-flex min-w-[28px] items-center justify-center rounded-md px-2 py-0.5 text-xs font-bold tabular-nums ${c}`}>{n}</span>;
-}
+import { Loader2, Inbox, Zap, Plus, Trash2, Pencil } from 'lucide-react';
 
 type Pronta = { id: string; titulo: string; texto: string };
 function MensagensProntas() {
@@ -102,12 +26,29 @@ function MensagensProntas() {
   const [texto, setTexto] = useState('');
   const [salvando, setSalvando] = useState(false);
   const [editId, setEditId] = useState<string | null>(null);
+  const textoRef = useRef<HTMLTextAreaElement | null>(null);
 
   const carregar = useCallback(() => {
     setErro(false);
     waInbox.mensagensProntas().then((r: any) => setLista(r?.mensagens || [])).catch(() => { setLista([]); setErro(true); });
   }, []);
   useEffect(() => { carregar(); }, [carregar]);
+
+  // Insere `{{chave}}` onde o cursor está (ou no fim), e devolve o foco ao campo.
+  function inserirVariavel(chave: string) {
+    const tag = `{{${chave}}}`;
+    const el = textoRef.current;
+    const ini = el?.selectionStart ?? texto.length;
+    const fim = el?.selectionEnd ?? texto.length;
+    const novo = texto.slice(0, ini) + tag + texto.slice(fim);
+    setTexto(novo);
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      const pos = ini + tag.length;
+      el.setSelectionRange(pos, pos);
+    });
+  }
 
   async function salvar() {
     if (!titulo.trim() || !texto.trim()) { toast.error('Preencha título e texto.'); return; }
@@ -132,7 +73,9 @@ function MensagensProntas() {
       <Card className="overflow-hidden p-0">
         <div className="border-b border-border px-4 py-3">
           <p className="text-sm font-semibold">Mensagens prontas</p>
-          <p className="text-[11px] text-muted-foreground">Respostas rápidas que aparecem no ⚡ do campo de mensagem, na conversa.</p>
+          <p className="text-[11px] text-muted-foreground">
+            Aparecem no ⚡ do campo de mensagem e ao digitar <b>/</b> na conversa. Com variáveis, o texto se adapta à pessoa ao ser inserido.
+          </p>
         </div>
         <div className="max-h-[520px] divide-y divide-border/60 overflow-y-auto">
           {lista === null ? (
@@ -159,9 +102,22 @@ function MensagensProntas() {
       </Card>
       <Card className="space-y-3 self-start p-4">
         <p className="flex items-center gap-1.5 text-sm font-semibold"><Zap className="h-4 w-4 text-primary" />{editId ? 'Editar mensagem' : 'Nova mensagem pronta'}</p>
-        <Input value={titulo} onChange={e => setTitulo(e.target.value)} placeholder="Título (ex.: Boas-vindas)" />
-        <textarea value={texto} onChange={e => setTexto(e.target.value)} rows={6} placeholder="Texto da mensagem…"
+        <Input value={titulo} onChange={e => setTitulo(e.target.value)} placeholder="Título (ex.: Convite do Next)" />
+        <textarea ref={textoRef} value={texto} onChange={e => setTexto(e.target.value)} rows={6}
+          placeholder={'Texto da mensagem… Ex.: Oi {{primeiro_nome}}! Aqui é {{atendente}}, da CBRio.'}
           className="w-full resize-none rounded-lg border border-border bg-background p-2 text-sm outline-none focus:border-primary" />
+        <div>
+          <p className="mb-1 text-[11px] text-muted-foreground">Variáveis (clique para inserir · são preenchidas na hora de usar):</p>
+          <div className="flex flex-wrap gap-1">
+            {VARIAVEIS.map(v => (
+              <button key={v.chave} type="button" onClick={() => inserirVariavel(v.chave)} title={`${v.rotulo} · ex.: ${v.exemplo}`}
+                className="rounded-md border border-border bg-muted/40 px-1.5 py-0.5 font-mono text-[11px] text-foreground hover:border-primary hover:text-primary">
+                {`{{${v.chave}}}`}
+              </button>
+            ))}
+          </div>
+          <p className="mt-1 text-[10px] text-muted-foreground">Variável sem valor na conversa fica escrita no campo e o envio pede pra completar — nada sai pela metade.</p>
+        </div>
         <div className="flex gap-2">
           {editId && <Button variant="outline" className="flex-1" onClick={cancelar}>Cancelar</Button>}
           <Button className="flex-1 gap-1.5" disabled={salvando} onClick={salvar}>{salvando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}{editId ? 'Salvar' : 'Adicionar'}</Button>
@@ -203,7 +159,6 @@ export default function Conversas() {
       <Tabs defaultValue="inbox" className="space-y-4">
         <TabsList>
           <TabsTrigger value="inbox"><Inbox className="h-3.5 w-3.5 mr-1.5" />Conversas</TabsTrigger>
-          <TabsTrigger value="painel"><LayoutGrid className="h-3.5 w-3.5 mr-1.5" />Painel</TabsTrigger>
           <TabsTrigger value="prontas"><Zap className="h-3.5 w-3.5 mr-1.5" />Mensagens prontas</TabsTrigger>
         </TabsList>
         <TabsContent value="inbox">
@@ -214,9 +169,6 @@ export default function Conversas() {
             abrirTelefone={abrir.telefone}
             textoInicial={abrir.texto}
           />
-        </TabsContent>
-        <TabsContent value="painel">
-          <PainelAreas />
         </TabsContent>
         <TabsContent value="prontas">
           <MensagensProntas />

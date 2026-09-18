@@ -20,13 +20,17 @@
 //             profiles.email), mesmo critério do middleware authenticate
 //             (auto-sync de área) e do escopo próprio do módulo RH
 //             (applyAccessFilter ownerEmail). Não existe profile_id no RH.
-// · Docs RH:  tabela rh_documentos + bucket `rh-fotos` (público — o sistema
-//             grava a PUBLIC URL em storage_path e a abre direto; por isso a
-//             URL retornada é a mesma, sem signed URL).
+// · Docs RH:  tabela rh_documentos + bucket PRIVADO `documentos-rh`. O
+//             storage_path guarda o CAMINHO relativo e a assinatura é na
+//             LEITURA (`services/anexosRhDocumentos`), a MESMA régua do módulo
+//             RH do sistema. ⚠️ Até 09/2026 isto ia pro bucket PÚBLICO
+//             `rh-fotos` com a URL pública gravada na coluna — qualquer pessoa
+//             com o link baixava RG e comprovante sem login.
 const router = require('express').Router();
 const { supabase } = require('../utils/supabase');
 const { authenticate } = require('../middleware/auth');
 const { sanitizePath } = require('../services/storageService');
+const { BUCKET_DOCS_RH, assinarDocumentosRh } = require('../services/anexosRhDocumentos'); // régua ÚNICA, a mesma do módulo RH do sistema
 // Réguas únicas de contato (camposContato.js) — a MESMA que o /perfil do
 // sistema e o app de membros usam. Não duplicar mascaraTelefone aqui: duas
 // cópias é exatamente o que faz o formato canônico divergir.
@@ -364,8 +368,9 @@ function docToJson(d) {
     tipo: d.tipo,
     nome: d.nome,
     validade: d.data_expiracao || null,
-    // storage_path já é a PUBLIC URL do bucket `rh-fotos` (público) — mesmo
-    // valor que o módulo RH do sistema abre direto. Fallback: SharePoint.
+    // ⚠️ `storage_path` chega aqui JÁ ASSINADO por `assinarDocumentosRh` (o
+    // bucket é privado). Histórico misto — URL pública antiga do `rh-fotos`,
+    // link do SharePoint — passa intacto pelo helper e continua abrindo.
     url: d.storage_path || d.sharepoint_url || null,
   };
 }
@@ -384,7 +389,10 @@ router.get('/me/documentos', async (req, res) => {
       .order('created_at', { ascending: false });
     if (error) return res.status(400).json({ error: error.message });
 
-    res.json((data || []).map(docToJson));
+    // ⚠️ Assina ANTES de mapear: o bucket é privado e `storage_path` cru seria
+    // link morto no app. Assina em LOTE (1 chamada por lista).
+    const assinados = await assinarDocumentosRh(data || []);
+    res.json(assinados.map(docToJson));
   } catch (e) {
     console.error('[STAFF] /me/documentos:', e.message);
     res.status(500).json({ error: 'Erro ao carregar documentos' });
@@ -412,14 +420,16 @@ router.post('/me/documentos', async (req, res) => {
       return res.status(400).json({ error: 'Arquivo muito grande (máx. 5MB)' });
     }
 
-    // Mesmo bucket/caminho do módulo RH do sistema (rh-fotos/documentos/<id>/...)
+    // ⚠️⚠️ Documento pessoal vai para o bucket PRIVADO `documentos-rh`, igual ao
+    // módulo RH do sistema — e grava o CAMINHO relativo, nunca a URL pública.
+    // Este era o último caminho de escrita no `rh-fotos` (público): o sistema já
+    // tinha sido corrigido pela varredura RHP-01 e o app continuava publicando
+    // RG e comprovante em URL sem autenticação.
     const path = `documentos/${funcionario.id}/${Date.now()}_${sanitizePath(nome)}.${doc.ext}`;
     const { error: upErr } = await supabase.storage
-      .from('rh-fotos')
+      .from(BUCKET_DOCS_RH)
       .upload(path, doc.buffer, { contentType: doc.mime, upsert: true });
     if (upErr) return res.status(500).json({ error: 'Falha ao salvar arquivo: ' + upErr.message });
-
-    const { data: urlData } = supabase.storage.from('rh-fotos').getPublicUrl(path);
 
     const { data, error } = await supabase
       .from('rh_documentos')
@@ -427,14 +437,17 @@ router.post('/me/documentos', async (req, res) => {
         funcionario_id: funcionario.id,
         tipo,
         nome,
-        storage_path: urlData.publicUrl,
+        storage_path: path, // caminho relativo no bucket privado · a assinatura é na LEITURA
         ...(data_expiracao ? { data_expiracao } : {}),
       })
       .select('id, tipo, nome, storage_path, sharepoint_url, data_expiracao')
       .single();
     if (error) return res.status(400).json({ error: error.message });
 
-    res.status(201).json(docToJson(data));
+    // ⚠️ A resposta do upload também precisa vir assinada — o app mostra o
+    // documento recém-enviado na hora, e URL crua daria link morto.
+    const [assinado] = await assinarDocumentosRh([data]);
+    res.status(201).json(docToJson(assinado || data));
   } catch (e) {
     console.error('[STAFF] POST /me/documentos:', e.message);
     res.status(500).json({ error: 'Erro ao enviar documento' });

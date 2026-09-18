@@ -119,7 +119,7 @@ export default function InsightsTab({ ciclo, areas }) {
         </h3>
         {!ia.disponivel && (
           <p style={{ fontSize: 12.5, color: C.amber }}>
-            A leitura por IA não está disponível agora{ia.motivo ? ` (${ia.motivo})` : ''}. Os conflitos de data acima continuam confiáveis: eles não vêm da IA.
+            A leitura por IA não está disponível agora{ia.motivo ? ` (${ia.motivo})` : ''}. Os conflitos de data acima continuam confiáveis — não dependem de IA.
           </p>
         )}
         {ia.disponivel && !(ia.grupos_similares || []).length && (
@@ -142,7 +142,7 @@ export default function InsightsTab({ ciclo, areas }) {
       )}
 
       <p style={{ ...hint, marginTop: 4 }}>
-        Estes insights são gerados automaticamente para orientar a diretoria. Eles não substituem a avaliação nem a decisão do Pastor presidente.
+        Insights gerados automaticamente para orientar a diretoria — não substituem a avaliação nem a decisão do Pastor presidente.
       </p>
     </div>
   );

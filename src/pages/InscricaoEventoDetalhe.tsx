@@ -2,7 +2,7 @@
 // da tela do Eventos Externos (inscritos, sorteio com roleta, edição de
 // inscrição) + o que a espinha tem a mais: status/Publicar, cancelar/reativar
 // inscrição e exportar CSV (gated por pode_exportar da matriz).
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import confetti from 'canvas-confetti';
 import { inscricoesApi as api } from '../api';
@@ -16,7 +16,7 @@ import {
   ArrowLeft, CalendarDays, Clock, MapPin, Users, Gift, Link2, MessageCircle,
   QrCode, Pencil, Trash2, Loader2, Search, ExternalLink, Ticket, Megaphone,
   ChevronDown, ChevronUp, ChevronsDownUp, ChevronsUpDown, Download, Repeat,
-  Printer, CreditCard, ScanLine, Paperclip, Lock } from 'lucide-react';
+  Printer, CreditCard, ScanLine, Paperclip, Lock, List, Table, Upload } from 'lucide-react';
 import QrLinkDialog from '../components/QrLinkDialog';
 import { EventoModal } from './Inscricoes';
 import { idadeEmAnos, faixaLabel, sexoLabel } from '../lib/faixaEtaria';
@@ -58,6 +58,183 @@ const STATUS_BADGE: Record<string, string> = {
   arquivado: 'bg-foreground/10 text-muted-foreground',
 };
 
+/** Inscrição importada da plataforma externa (cartão no E-Inscrição · 09/09/2026). */
+const ORIGEM_E_INSCRICAO = 'e_inscricao';
+const ehEInscricao = (i: any) => i?.origem === ORIGEM_E_INSCRICAO;
+const brl = (c: number | null | undefined) => (c == null ? '—' : (c / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
+
+/** Etiqueta "E-Inscrição" — a pessoa pagou LÁ (cartão); aqui só existe o registro importado. */
+function EInscricaoBadge({ inscricao, tamanho = 'xs' }: { inscricao: any; tamanho?: 'xs' | 'sm' }) {
+  const e = inscricao?.dados?.e_inscricao || {};
+  const detalhe = [e.forma_pagamento ? (METODO_LABEL[e.forma_pagamento] || e.forma_pagamento) : null, e.parcelas > 1 ? `${e.parcelas}x` : null].filter(Boolean).join(' ');
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full bg-sky-500/15 text-sky-700 dark:text-sky-300 font-medium px-2 py-0.5 shrink-0 ${tamanho === 'sm' ? 'text-xs' : 'text-[11px]'}`}
+      title={`Inscrita pelo ${e.plataforma || 'E-Inscrição'}${e.codigo ? ` · código ${e.codigo}` : ''}${detalhe ? ` · ${detalhe}` : ''}`}>
+      <ExternalLink className="h-3 w-3" /> E-Inscrição{detalhe ? ` · ${detalhe}` : ''}
+    </span>
+  );
+}
+
+/** Etiqueta do LOTE que a pessoa comprou (vem do backend: categoria da plataforma · valor cobrado · posição). */
+const LOTE_FONTE_DICA: Record<string, string> = {
+  plataforma: 'Lote informado pela plataforma externa (planilha do E-Inscrição)',
+  valor: 'Lote pelo valor cobrado nesta inscrição',
+  posicao: 'Lote pela posição na ordem de chegada (isenta, bolsa ou ainda sem pagar)',
+};
+function LoteBadge({ lote, tamanho = 'xs' }: { lote: any; tamanho?: 'xs' | 'sm' }) {
+  if (!lote?.nome) return null;
+  return (
+    <span className={`inline-flex items-center rounded-full bg-violet-500/15 text-violet-700 dark:text-violet-300 font-medium px-2 py-0.5 shrink-0 ${tamanho === 'sm' ? 'text-xs' : 'text-[11px]'}`}
+      title={LOTE_FONTE_DICA[lote.fonte] || 'Lote'}>
+      {lote.nome}
+    </span>
+  );
+}
+const SEM_LOTE = '__sem_lote__';
+
+/** Filtro "onde se inscreveu": aqui (Pix) × plataforma externa (cartão). */
+type OrigemFiltro = 'todos' | 'sistema' | 'e_inscricao';
+const casaOrigem = (i: any, f: OrigemFiltro) =>
+  f === 'todos' ? true : f === 'e_inscricao' ? ehEInscricao(i) : !ehEInscricao(i);
+
+/** Modo de visualização da lista: cards detalhados (padrão) ou tabela compacta. */
+type ModoLista = 'cards' | 'tabela';
+const MODO_LISTA_KEY = 'cbrio.inscricoes.modoLista';
+function lerModoLista(): ModoLista {
+  try { return localStorage.getItem(MODO_LISTA_KEY) === 'tabela' ? 'tabela' : 'cards'; } catch { return 'cards'; }
+}
+
+/** Pagamento numa célula só: isenta · bolsa · E-Inscrição (pago lá) · estado da cobrança nossa. */
+function PagamentoCelula({ i }: { i: any }) {
+  if (i.bolsa_tipo === 'integral') return <span className="rounded-full bg-primary/15 text-primary text-[11px] font-medium px-2 py-0.5">isenta</span>;
+  const e = i.dados?.e_inscricao;
+  if (ehEInscricao(i)) {
+    return (
+      <span className="inline-flex items-center gap-1.5 flex-wrap">
+        <span className="rounded-full bg-emerald-500/15 text-emerald-600 text-[11px] font-medium px-2 py-0.5">pago</span>
+        <span className="text-xs text-muted-foreground">
+          {e?.forma_pagamento ? (METODO_LABEL[e.forma_pagamento] || e.forma_pagamento) : 'cartão'}{e?.parcelas > 1 ? ` ${e.parcelas}x` : ''}
+        </span>
+        <span className="text-xs tabular-nums" title={e?.valor_bruto_centavos != null ? `Bruto ${brl(e.valor_bruto_centavos)} · líquido após a taxa da plataforma` : undefined}>
+          {brl(i.valor_cobrado_centavos)}
+        </span>
+      </span>
+    );
+  }
+  const pg = i.pagamento;
+  if (!pg?.status_pagamento) return <span className="text-xs text-muted-foreground">—</span>;
+  return (
+    <span className="inline-flex items-center gap-1.5 flex-wrap">
+      <span className={`rounded-full text-[11px] font-medium px-2 py-0.5 ${PAG_BADGE[pg.status_pagamento] || 'bg-foreground/10 text-muted-foreground'}`}>
+        {PAG_LABEL[pg.status_pagamento] || pg.status_pagamento}
+      </span>
+      {pg.metodo && <span className="text-xs text-muted-foreground">{METODO_LABEL[pg.metodo] || pg.metodo}{pg.parcelas_total > 1 ? ` ${pg.parcelas_total}x` : ''}</span>}
+      {i.bolsa_tipo === 'parcial' && <span className="rounded-full bg-primary/15 text-primary text-[11px] font-medium px-2 py-0.5">bolsa</span>}
+      <span className="text-xs tabular-nums">{brl(i.valor_cobrado_centavos ?? pg.valor_pago_centavos ?? pg.valor_centavos)}</span>
+    </span>
+  );
+}
+
+/**
+ * Lista em TABELA — o mesmo recorte dos cards, uma linha por pessoa, só o
+ * essencial: nome, idade/sexo, contato, onde se inscreveu, pagamento e quando.
+ * Respostas do formulário e bloco do responsável ficam pra ficha (clique na
+ * linha) e pros cards. Pedido do Marcos (09/09/2026).
+ */
+function TabelaInscritos({ inscritos, ev, podeEditar, selecionadas, alternarSelecao, onAbrir, onExcluir, premiosGanhos }: {
+  inscritos: any[]; ev: any; podeEditar: boolean; selecionadas: Set<string>;
+  alternarSelecao: (id: string) => void; onAbrir: (i: any) => void; onExcluir: (i: any) => void;
+  premiosGanhos: (id: string) => any[];
+}) {
+  const temExterno = inscritos.some(ehEInscricao) || !!ev?.checkout_externo_url;
+  const temLote = inscritos.some((i: any) => i.lote?.nome);
+  return (
+    <div className="overflow-x-auto rounded-lg border border-border">
+      <table className="w-full text-sm">
+        <thead>
+          <tr className="text-[11px] uppercase tracking-wide text-muted-foreground bg-foreground/[0.03]">
+            {podeEditar && <th className="w-8 px-2 py-2" />}
+            <th className="text-left px-3 py-2 font-medium">Nome</th>
+            <th className="text-left px-3 py-2 font-medium whitespace-nowrap">Idade · sexo</th>
+            <th className="text-left px-3 py-2 font-medium">Telefone</th>
+            {temExterno && <th className="text-left px-3 py-2 font-medium whitespace-nowrap">Onde se inscreveu</th>}
+            {temLote && <th className="text-left px-3 py-2 font-medium">Lote</th>}
+            {ev?.pagamento_ativo && <th className="text-left px-3 py-2 font-medium">Pagamento</th>}
+            <th className="text-left px-3 py-2 font-medium whitespace-nowrap">Inscrita em</th>
+            <th className="w-8 px-2 py-2" />
+          </tr>
+        </thead>
+        <tbody>
+          {inscritos.map((i: any) => {
+            const cancelada = i.status === 'cancelada';
+            const ganhos = premiosGanhos(i.id);
+            const idade = idadeEmAnos(i.data_nascimento);
+            return (
+              <tr key={i.id} onClick={() => onAbrir(i)}
+                className={`border-t border-border/60 cursor-pointer transition-colors ${cancelada ? 'opacity-60' : ''} ${
+                  selecionadas.has(i.id) ? 'bg-primary/10' : 'hover:bg-primary/5'}`}>
+                {podeEditar && (
+                  <td className="px-2 py-1.5">
+                    <input type="checkbox" checked={selecionadas.has(i.id)}
+                      onClick={e => e.stopPropagation()} onChange={() => alternarSelecao(i.id)}
+                      title="Selecionar para excluir" className="h-4 w-4 accent-[#00B39D] cursor-pointer" />
+                  </td>
+                )}
+                <td className="px-3 py-1.5 min-w-[12rem]">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {i.numero_sorte != null && (
+                      <span className="rounded-full bg-primary/15 text-primary text-[11px] font-bold px-1.5 py-0.5 tabular-nums">Nº {i.numero_sorte}</span>
+                    )}
+                    <span className="font-medium">{i.nome_completo}</span>
+                    {i.codigo && <span className="text-[11px] font-mono text-muted-foreground" title="Código da inscrição">{i.codigo}</span>}
+                    {cancelada && <span className="rounded-full bg-red-500/10 text-red-600 text-[11px] font-medium px-2 py-0.5">cancelada</span>}
+                    {i.responsavel && <span className="text-[11px] text-amber-600 font-medium" title={`Responsável: ${i.responsavel.nome}`}>menor</span>}
+                    {ganhos.length > 0 && (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 text-amber-600 text-[11px] font-semibold px-2 py-0.5">
+                        <Gift className="h-3 w-3" /> {ganhos.length > 1 ? `${ganhos.length} prêmios` : (ganhos[0].premio || 'Prêmio')}
+                      </span>
+                    )}
+                  </div>
+                </td>
+                <td className="px-3 py-1.5 whitespace-nowrap text-xs text-muted-foreground tabular-nums">
+                  {idade != null ? `${idade} anos` : '—'}{i.sexo ? ` · ${sexoLabel(i.sexo)}` : ''}
+                </td>
+                <td className="px-3 py-1.5 whitespace-nowrap">
+                  {i.telefone ? (
+                    <a href={`https://wa.me/55${String(i.telefone).replace(/\D/g, '')}`} target="_blank" rel="noreferrer"
+                      onClick={e => e.stopPropagation()} title="Enviar WhatsApp"
+                      className="inline-flex items-center gap-1 text-xs text-emerald-600 hover:text-emerald-700">
+                      <MessageCircle className="h-3.5 w-3.5" /> {i.telefone}
+                    </a>
+                  ) : <span className="text-xs text-muted-foreground">—</span>}
+                </td>
+                {temExterno && (
+                  <td className="px-3 py-1.5 whitespace-nowrap">
+                    {ehEInscricao(i)
+                      ? <EInscricaoBadge inscricao={i} />
+                      : <span className="inline-flex items-center rounded-full bg-primary/10 text-primary text-[11px] font-medium px-2 py-0.5">Sistema{i.pagamento?.metodo ? ` · ${METODO_LABEL[i.pagamento.metodo] || i.pagamento.metodo}` : ''}</span>}
+                  </td>
+                )}
+                {temLote && <td className="px-3 py-1.5 whitespace-nowrap"><LoteBadge lote={i.lote} /></td>}
+                {ev?.pagamento_ativo && <td className="px-3 py-1.5"><PagamentoCelula i={i} /></td>}
+                <td className="px-3 py-1.5 whitespace-nowrap text-xs text-muted-foreground tabular-nums">
+                  {i.created_at ? new Date(i.created_at).toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: '2-digit', hour: '2-digit', minute: '2-digit' }) : '—'}
+                </td>
+                <td className="px-2 py-1.5">
+                  <button onClick={e => { e.stopPropagation(); onExcluir(i); }} title="Excluir inscrição"
+                    className="p-1 rounded-md text-muted-foreground hover:text-red-600 hover:bg-red-500/10 transition-colors">
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 /** Um número do placar. `dica` vira tooltip — o rótulo curto não cabe a régua. */
 function PlacarTile({ label, valor, cor, dica }: { label: string; valor: any; cor?: string; dica?: string }) {
   return (
@@ -90,6 +267,13 @@ export default function InscricaoEventoDetalhe() {
   const [busca, setBusca] = useState('');
   // { [key do campo]: valor cru escolhido } · vazio = não filtra por ele
   const [filtrosCampo, setFiltrosCampo] = useState<Record<string, string>>({});
+  // Onde se inscreveu (todos · sistema/Pix · E-Inscrição/cartão) e o modo da
+  // lista (cards detalhados × tabela). O modo fica lembrado no navegador.
+  const [origemFiltro, setOrigemFiltro] = useState<OrigemFiltro>('todos');
+  // Lote comprado ('todos' · nome do lote · SEM_LOTE). Opções = o que está na lista.
+  const [loteFiltro, setLoteFiltro] = useState<string>('todos');
+  const [modoLista, setModoListaState] = useState<ModoLista>(lerModoLista);
+  const setModoLista = (m: ModoLista) => { setModoListaState(m); try { localStorage.setItem(MODO_LISTA_KEY, m); } catch { /* sem storage, segue */ } };
   const [inscSel, setInscSel] = useState<any>(null);
   // Cards recolhidos (só a linha principal) — melhora a visualização com
   // muitas inscrições. Set com os ids recolhidos + botão recolher/expandir todos.
@@ -106,6 +290,9 @@ export default function InscricaoEventoDetalhe() {
   const [anim, setAnim] = useState<{ fase: 'rolando' | 'fim'; premio: string; ganhador?: any } | null>(null);
   const [rolNum, setRolNum] = useState(0);
   const [imprimirOpen, setImprimirOpen] = useState(false);
+  // Importar a planilha do E-Inscrição direto pela tela (14/09) — antes
+  // disso a equipe do retiro dependia de alguém rodar o script no terminal.
+  const [importarOpen, setImportarOpen] = useState(false);
   // Placar do evento — vem de COUNTs no banco (não de contar a lista em JS), e
   // é ele que responde "quanto já entrou de dinheiro".
   const [resumo, setResumo] = useState<any>(null);
@@ -155,7 +342,9 @@ export default function InscricaoEventoDetalhe() {
   const filtrosAtivos = contarFiltrosAtivos(filtrosCampo);
 
   const inscritos = useMemo(() => {
-    const porCampo = aplicarFiltroCampos(ev?.inscritos || [], filtrosCampo);
+    const porCampo = aplicarFiltroCampos(ev?.inscritos || [], filtrosCampo)
+      .filter((i: any) => casaOrigem(i, origemFiltro))
+      .filter((i: any) => loteFiltro === 'todos' ? true : loteFiltro === SEM_LOTE ? !i.lote?.nome : i.lote?.nome === loteFiltro);
     const q = busca.trim().toLowerCase();
     if (!q) return porCampo;
     return porCampo.filter((i: any) =>
@@ -163,7 +352,32 @@ export default function InscricaoEventoDetalhe() {
       || String(i.telefone || '').includes(q.replace(/\D/g, '') || ' ')
       || String(i.numero_sorte || '') === q,
     );
-  }, [ev, busca, filtrosCampo]);
+  }, [ev, busca, filtrosCampo, origemFiltro, loteFiltro]);
+  // Lotes presentes na lista, na ordem da tabela do evento (e os fora dela por nome).
+  const lotesNaLista = useMemo(() => {
+    const cont = new Map<string, number>();
+    let semLote = 0;
+    for (const i of (ev?.inscritos || [])) {
+      if (i.lote?.nome) cont.set(i.lote.nome, (cont.get(i.lote.nome) || 0) + 1); else semLote++;
+    }
+    const ordem = (ev?.lotes || []).map((l: any) => l.nome);
+    const nomes = [...cont.keys()].sort((a, b) => {
+      const ia = ordem.indexOf(a); const ib = ordem.indexOf(b);
+      return (ia < 0 ? 99 : ia) - (ib < 0 ? 99 : ib) || a.localeCompare(b);
+    });
+    return { opcoes: nomes.map(n => ({ nome: n, total: cont.get(n) || 0 })), semLote };
+  }, [ev]);
+  const mostraFiltroLote = lotesNaLista.opcoes.length > 0;
+  const filtroLoteAtivo = loteFiltro !== 'todos';
+  // Contagens do filtro de origem sobre o evento INTEIRO (mesma régua dos
+  // filtros por campo: número que muda com a busca não ajuda a escolher).
+  const contagemOrigem = useMemo(() => {
+    const todos = ev?.inscritos || [];
+    const externo = todos.filter(ehEInscricao).length;
+    return { todos: todos.length, externo, sistema: todos.length - externo };
+  }, [ev]);
+  const mostraFiltroOrigem = contagemOrigem.externo > 0 || !!ev?.checkout_externo_url;
+  const filtroOrigemAtivo = origemFiltro !== 'todos';
 
   const premiosGanhos = (inscricaoId: string) =>
     (ev?.sorteios || []).filter((s: any) => s.inscricao_id === inscricaoId);
@@ -350,7 +564,7 @@ export default function InscricaoEventoDetalhe() {
     const header = [
       // Primeira coluna: é por ele que a pessoa se identifica no atendimento.
       'Código', 'Nome completo', 'WhatsApp', 'E-mail', 'Nascimento', 'Idade', 'Faixa', 'Sexo',
-      'Pagamento', 'Forma', 'Nº da sorte', 'Status', 'Inscrição em',
+      'Pagamento', 'Forma', 'Lote', 'Nº da sorte', 'Status', 'Inscrição em',
       ...campos.map((c: any) => c.label),
     ];
     // ⚠️ Exporta o RECORTE VISÍVEL (filtro + busca), não a base inteira: o botão
@@ -365,6 +579,7 @@ export default function InscricaoEventoDetalhe() {
       i.sexo ? sexoLabel(i.sexo) : '',
       i.pagamento?.status_pagamento ? (PAG_LABEL[i.pagamento.status_pagamento] || i.pagamento.status_pagamento) : '',
       i.pagamento?.metodo ? (METODO_LABEL[i.pagamento.metodo] || i.pagamento.metodo) : '',
+      i.lote?.nome || '',
       i.numero_sorte ?? '', i.status,
       i.created_at ? new Date(i.created_at).toLocaleString('pt-BR') : '',
       ...campos.map((c: any) => {
@@ -375,7 +590,7 @@ export default function InscricaoEventoDetalhe() {
     const csv = '﻿' + [header, ...linhas].map(l => l.map(esc).join(';')).join('\r\n');
     const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
     const a = document.createElement('a');
-    const recorte = (filtrosAtivos > 0 || busca.trim()) ? '-recorte' : '';
+    const recorte = (filtrosAtivos > 0 || filtroOrigemAtivo || filtroLoteAtivo || busca.trim()) ? '-recorte' : '';
     a.href = url; a.download = `inscritos-${ev.slug}${recorte}.csv`; a.click();
     URL.revokeObjectURL(url);
   }
@@ -429,6 +644,15 @@ export default function InscricaoEventoDetalhe() {
         nomeArquivo={`qr-${ev.slug}`}
         descricao="Imprima ou projete no telão — quem escanear cai direto no formulário de inscrição."
         onClose={() => setQrOpen(false)}
+      />
+    )}
+    {importarOpen && (
+      <ImportarEInscricaoDialog
+        eventoId={ev.id}
+        evento={ev}
+        // Recarrega lista E placar: a importação mexe nos dois.
+        onImportado={() => carregar()}
+        onClose={() => setImportarOpen(false)}
       />
     )}
     {imprimirOpen && (
@@ -524,6 +748,15 @@ export default function InscricaoEventoDetalhe() {
                 <ScanLine className="h-3.5 w-3.5 mr-1" /> Check-in
               </Button>
             )}
+            {/* Importar planilha — só em evento que VENDE na plataforma externa
+                (é o `checkout_externo_url` que define isso). Nível 3, a mesma
+                régua de criar/excluir inscrição, porque é o que ela faz. */}
+            {podeEditar && !!ev.checkout_externo_url && (
+              <Button size="sm" variant="outline" onClick={() => setImportarOpen(true)}
+                title={`Sobe a exportação de inscrições do ${ev.checkout_externo_nome || 'E-Inscrição'} e traz quem pagou no cartão pra cá`}>
+                <Upload className="h-3.5 w-3.5 mr-1" /> Importar inscrições
+              </Button>
+            )}
             <a href={link} target="_blank" rel="noreferrer"><Button size="sm" variant="ghost"><ExternalLink className="h-3.5 w-3.5 mr-1" /> Abrir formulário</Button></a>
           </div>
         </div>
@@ -542,11 +775,17 @@ export default function InscricaoEventoDetalhe() {
           {ev.pagamento_ativo && (
             <PlacarTile
               label="Arrecadado"
-              valor={resumo.arrecadado_centavos == null
-                ? '—'
-                : (resumo.arrecadado_centavos / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+              // TOTAL das duas plataformas (pedido do Marcos, 09/09): Pix pago
+              // aqui + líquido do E-Inscrição. Sem inscrição externa é o Pix só.
+              valor={(() => {
+                const pp = resumo.por_plataforma;
+                const total = pp && pp.externo?.inscritos > 0 ? pp.total_centavos : resumo.arrecadado_centavos;
+                return total == null ? '—' : (total / 100).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+              })()}
               cor="text-primary"
-              dica="Soma das inscrições PAGAS. É acompanhamento do evento — o caixa recebe o repasse do provedor, lançado no Financeiro."
+              dica={resumo.por_plataforma?.externo?.inscritos > 0
+                ? 'Total: Pix pago aqui + valor LÍQUIDO do E-Inscrição (taxa da plataforma já descontada). O detalhe por plataforma está logo abaixo.'
+                : 'Soma das inscrições PAGAS. É acompanhamento do evento — o caixa recebe o repasse do provedor, lançado no Financeiro.'}
             />
           )}
           {ev.checkin_ativo && (
@@ -575,6 +814,36 @@ export default function InscricaoEventoDetalhe() {
             ))}
           {resumo.isentas > 0 && <span>Isentas <b className="text-primary">{resumo.isentas}</b></span>}
         </div>
+      )}
+
+      {/* Por PLATAFORMA — o retiro vende em dois lugares: Pix aqui e cartão no
+          E-Inscrição (importado com o valor LÍQUIDO, taxa da plataforma já
+          descontada). O "Arrecadado" acima é a soma dos dois; aqui é o detalhe. */}
+      {resumo?.por_plataforma && resumo.por_plataforma.externo?.inscritos > 0 && (
+        <Card className="glass-solid p-3">
+          <div className="text-[11px] uppercase tracking-wide text-muted-foreground mb-2">Por plataforma</div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-2 text-sm">
+            <div className="rounded-lg border border-border p-2.5">
+              <div className="text-[11px] text-muted-foreground">Sistema (Pix)</div>
+              <div className="font-semibold tabular-nums">{resumo.por_plataforma.sistema.inscritos} inscritos</div>
+              <div className="text-xs text-muted-foreground tabular-nums">{brl(resumo.por_plataforma.sistema.arrecadado_centavos)} pagos</div>
+            </div>
+            <div className="rounded-lg border border-sky-500/40 bg-sky-500/5 p-2.5">
+              <div className="text-[11px] text-sky-700 dark:text-sky-300 inline-flex items-center gap-1"><ExternalLink className="h-3 w-3" /> {resumo.por_plataforma.externo.plataforma || 'E-Inscrição'} (cartão)</div>
+              <div className="font-semibold tabular-nums">{resumo.por_plataforma.externo.inscritos} inscritos</div>
+              <div className="text-xs text-muted-foreground tabular-nums" title="Valor que chega na conta: bruto menos a taxa retida pela plataforma">
+                {brl(resumo.por_plataforma.externo.valor_liquido_centavos)} líquidos
+              </div>
+            </div>
+            <div className="rounded-lg border border-primary/40 bg-primary/5 p-2.5">
+              <div className="text-[11px] text-primary">Total</div>
+              <div className="font-semibold tabular-nums">
+                {resumo.por_plataforma.total_inscritos} inscritos{ev.vagas ? <span className="text-muted-foreground font-normal"> de {ev.vagas} vagas</span> : null}
+              </div>
+              <div className="text-xs text-muted-foreground tabular-nums">{brl(resumo.por_plataforma.total_centavos)}</div>
+            </div>
+          </div>
+        </Card>
       )}
 
       {/* Sorteio */}
@@ -641,7 +910,19 @@ export default function InscricaoEventoDetalhe() {
                   <Download className="h-3.5 w-3.5 mr-1" /> Exportar CSV
                 </Button>
               )}
-              {(() => {
+              {/* Duas visualizações: cards detalhados (respostas, responsável)
+                  × tabela compacta (uma linha por pessoa). */}
+              <div className="inline-flex rounded-md border border-border overflow-hidden h-8" role="group" aria-label="Modo de visualização">
+                <button type="button" onClick={() => setModoLista('cards')} title="Detalhado: um card por pessoa, com as respostas"
+                  className={`px-2.5 inline-flex items-center gap-1 text-xs ${modoLista === 'cards' ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground hover:bg-foreground/5'}`}>
+                  <List className="h-3.5 w-3.5" /> Detalhado
+                </button>
+                <button type="button" onClick={() => setModoLista('tabela')} title="Tabela: uma linha por pessoa, só o essencial"
+                  className={`px-2.5 inline-flex items-center gap-1 text-xs border-l border-border ${modoLista === 'tabela' ? 'bg-primary text-primary-foreground' : 'bg-transparent text-muted-foreground hover:bg-foreground/5'}`}>
+                  <Table className="h-3.5 w-3.5" /> Tabela
+                </button>
+              </div>
+              {modoLista === 'cards' && (() => {
                 const todosRecolhidos = (ev.inscritos || []).length > 0 && (ev.inscritos || []).every((i: any) => recolhidos.has(i.id));
                 return (
                   <Button size="sm" variant="outline" className="h-8"
@@ -652,6 +933,35 @@ export default function InscricaoEventoDetalhe() {
                   </Button>
                 );
               })()}
+              {/* Onde se inscreveu — só faz sentido em evento com plataforma
+                  externa (cartão no E-Inscrição × Pix aqui). */}
+              {mostraFiltroOrigem && (
+                <select
+                  value={origemFiltro}
+                  onChange={e => setOrigemFiltro(e.target.value as OrigemFiltro)}
+                  title="Onde se inscreveu"
+                  aria-label="Onde se inscreveu"
+                  className={`h-8 rounded-md border bg-[var(--cbrio-input-bg)] text-sm px-2 max-w-[15rem] ${filtroOrigemAtivo ? 'border-primary text-primary' : 'border-border'}`}
+                >
+                  <option value="todos">Onde se inscreveu · todos ({contagemOrigem.todos})</option>
+                  <option value="sistema">Sistema · Pix ({contagemOrigem.sistema})</option>
+                  <option value="e_inscricao">E-Inscrição · cartão ({contagemOrigem.externo})</option>
+                </select>
+              )}
+              {/* Lote comprado — só quando o evento tem lotes em alguma inscrição. */}
+              {mostraFiltroLote && (
+                <select
+                  value={loteFiltro}
+                  onChange={e => setLoteFiltro(e.target.value)}
+                  title="Lote comprado"
+                  aria-label="Lote comprado"
+                  className={`h-8 rounded-md border bg-[var(--cbrio-input-bg)] text-sm px-2 max-w-[15rem] ${filtroLoteAtivo ? 'border-primary text-primary' : 'border-border'}`}
+                >
+                  <option value="todos">Lote · todos</option>
+                  {lotesNaLista.opcoes.map(o => <option key={o.nome} value={o.nome}>{o.nome} ({o.total})</option>)}
+                  {lotesNaLista.semLote > 0 && <option value={SEM_LOTE}>Sem lote ({lotesNaLista.semLote})</option>}
+                </select>
+              )}
               {/* Um filtro por campo de escolha do formulário deste evento. */}
               {camposFiltro.map(c => (
                 <select
@@ -688,7 +998,7 @@ export default function InscricaoEventoDetalhe() {
           )}
           {/* Quantos o recorte atual mostra — sem isso o filtro muda a lista e
               não diz o tamanho do resultado, que é o número que a pessoa quer. */}
-          {(filtrosAtivos > 0 || busca.trim()) && (ev.inscritos || []).length > 0 && (
+          {(filtrosAtivos > 0 || filtroOrigemAtivo || filtroLoteAtivo || busca.trim()) && (ev.inscritos || []).length > 0 && (
             <p className="text-xs text-muted-foreground">
               Mostrando <strong className="text-foreground">{inscritos.length}</strong> de {(ev.inscritos || []).length} inscritos.
             </p>
@@ -723,12 +1033,16 @@ export default function InscricaoEventoDetalhe() {
           <p className="text-sm text-muted-foreground py-4 text-center">Ninguém se inscreveu ainda.</p>
         ) : inscritos.length === 0 ? (
           <p className="text-sm text-muted-foreground py-4 text-center">
-            {filtrosAtivos > 0 && busca.trim()
+            {(filtrosAtivos > 0 || filtroOrigemAtivo || filtroLoteAtivo) && busca.trim()
               ? 'Nenhum inscrito bate com o filtro e a busca.'
-              : filtrosAtivos > 0
+              : (filtrosAtivos > 0 || filtroOrigemAtivo || filtroLoteAtivo)
                 ? 'Nenhum inscrito neste filtro.'
                 : 'Nenhum inscrito bate com a busca.'}
           </p>
+        ) : modoLista === 'tabela' ? (
+          <TabelaInscritos inscritos={inscritos} ev={ev} podeEditar={podeEditar}
+            selecionadas={selecionadas} alternarSelecao={alternarSelecao}
+            onAbrir={setInscSel} onExcluir={excluirInscrito} premiosGanhos={premiosGanhos} />
         ) : (
           <div className="space-y-2">
             {inscritos.map((i: any) => {
@@ -773,6 +1087,8 @@ export default function InscricaoEventoDetalhe() {
                         </span>
                       )}
                       {cancelada && <span className="rounded-full bg-red-500/10 text-red-600 text-[11px] font-medium px-2 py-0.5 shrink-0">cancelada</span>}
+                      {ehEInscricao(i) && <EInscricaoBadge inscricao={i} />}
+                      <LoteBadge lote={i.lote} />
                       {i.telefone && (
                         <a href={`https://wa.me/55${tel}`} target="_blank" rel="noreferrer"
                           title="Enviar WhatsApp" onClick={e => e.stopPropagation()}
@@ -953,6 +1269,217 @@ const AGRUPAMENTOS: { key: Agrupamento; label: string; dica: string }[] = [
   { key: 'status', label: 'Status', dica: 'Confirmadas · Aguardando pagamento' },
   { key: 'pagamento', label: 'Pagamento', dica: 'Pago · Aguardando · Sem cobrança' },
 ];
+
+// ============================================================================
+// Importar a planilha do E-Inscrição (pedido do Marcos · 14/09/2026)
+//
+// Dois passos, SEMPRE nesta ordem: sobe o arquivo → a tela mostra o que vai
+// acontecer → só então grava. A prévia não é enfeite: é ela que mostra o menor
+// que veio sem responsável e a data de nascimento absurda ANTES de a linha
+// existir no sistema — foi assim que a "Laura nascida em 2025" apareceu na
+// importação de setembro.
+//
+// ⚠️ O arquivo sobe de novo na confirmação de propósito: o servidor replaneja
+// contra o banco daquele instante. Se alguém importou a mesma planilha no
+// intervalo, o segundo simplesmente não acha nada novo — em vez de gravar duas
+// vezes um plano montado minutos antes.
+// ============================================================================
+function ImportarEInscricaoDialog({ eventoId, evento, onClose, onImportado }: {
+  eventoId: string; evento: any; onClose: () => void; onImportado: () => void;
+}) {
+  const [arquivo, setArquivo] = useState<File | null>(null);
+  const [previa, setPrevia] = useState<any>(null);
+  const [ocupado, setOcupado] = useState<'previa' | 'gravando' | null>(null);
+  const [resultado, setResultado] = useState<any>(null);
+  const [erro, setErro] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  async function analisar(f: File) {
+    setArquivo(f); setPrevia(null); setResultado(null); setErro(null);
+    setOcupado('previa');
+    try {
+      const r: any = await api.importarEInscricao(eventoId, f, false);
+      setPrevia(r?.previa || null);
+    } catch (e: any) {
+      setErro(e?.message || 'Não consegui ler a planilha');
+    } finally { setOcupado(null); }
+  }
+
+  async function gravar() {
+    if (!arquivo) return;
+    setOcupado('gravando'); setErro(null);
+    try {
+      const r: any = await api.importarEInscricao(eventoId, arquivo, true);
+      setResultado(r?.resultado || null);
+      setPrevia(r?.previa || previa);
+      const n = r?.resultado?.inseridas?.length || 0;
+      const c = r?.resultado?.canceladas?.length || 0;
+      if (r?.resultado?.erros?.length) toast.warning(`${n} importada(s), mas ${r.resultado.erros.length} linha(s) falharam`);
+      else if (n || c) toast.success(`${n} inscrição(ões) importada(s)${c ? ` · ${c} cancelada(s)` : ''}`);
+      else toast.info('Nada novo na planilha — o sistema já estava em dia');
+      onImportado();
+    } catch (e: any) {
+      setErro(e?.message || 'Erro ao importar');
+    } finally { setOcupado(null); }
+  }
+
+  const nInserir = previa?.inserir?.length || 0;
+  const nCancelar = previa?.cancelar?.length || 0;
+  const nPular = previa?.pular?.length || 0;
+  const nInvalidas = previa?.invalidas?.length || 0;
+  const plataforma = evento?.checkout_externo_nome || 'E-Inscrição';
+
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o && !ocupado) onClose(); }}>
+      <DialogContent className="max-w-2xl flex flex-col max-h-[88vh]">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Upload className="h-4 w-4 text-primary" /> Importar inscrições do {plataforma}
+          </DialogTitle>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-3 text-sm">
+          {/* Molde: o arquivo é a exportação da própria plataforma, sem editar. */}
+          <div className="rounded-lg border border-border bg-foreground/[0.03] p-3 space-y-1.5">
+            <div className="font-medium">Como pegar o arquivo</div>
+            <ol className="list-decimal ml-4 space-y-0.5 text-muted-foreground text-[13px]">
+              <li>No painel do {plataforma}, abra as inscrições deste evento.</li>
+              <li>Clique em <strong>Exportar</strong> e escolha <strong>CSV</strong>.</li>
+              <li>Suba o arquivo aqui <strong>como veio</strong> — sem abrir, sem apagar coluna, sem renomear.</li>
+            </ol>
+            <div className="text-[12px] text-muted-foreground pt-0.5">
+              Pode subir a planilha inteira toda semana: quem já está no sistema é
+              <strong> reconhecido e pulado</strong>, e nada do que já existe aqui é sobrescrito.
+              O valor gravado é o <strong>líquido</strong> (o bruto menos a taxa da plataforma).
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 flex-wrap">
+            <input
+              ref={inputRef} type="file" accept=".csv,text/csv" className="hidden"
+              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ''; if (f) analisar(f); }}
+            />
+            <Button size="sm" variant="outline" type="button"
+              onClick={() => inputRef.current?.click()} disabled={!!ocupado}>
+              {ocupado === 'previa' ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Paperclip className="h-3.5 w-3.5 mr-1" />}
+              {arquivo ? 'Trocar arquivo' : 'Escolher a planilha (.csv)'}
+            </Button>
+            {arquivo && <span className="text-xs text-muted-foreground break-all">{arquivo.name}</span>}
+          </div>
+
+          {erro && (
+            <div className="rounded-lg border border-red-500/40 bg-red-500/5 p-3 text-red-700 dark:text-red-300 text-[13px]">{erro}</div>
+          )}
+
+          {previa && (
+            <>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                <PlacarTile label={resultado ? 'Importadas' : 'Vão entrar'} valor={resultado ? (resultado.inseridas?.length || 0) : nInserir} cor="text-emerald-600" dica="Inscrições novas, com o valor líquido da plataforma" />
+                <PlacarTile label="Já no sistema" valor={nPular} dica="Reconhecidas pelo código da plataforma ou pelo CPF — ficam como estão" />
+                <PlacarTile label="Canceladas lá" valor={resultado ? (resultado.canceladas?.length || 0) : nCancelar} cor={nCancelar ? 'text-amber-600' : undefined} dica="Cancelamento feito na plataforma, refletido aqui" />
+                <PlacarTile label="Fora do contrato" valor={nInvalidas} cor={nInvalidas ? 'text-red-600' : undefined} dica="Faltam dados obrigatórios — não entram; precisa corrigir na plataforma" />
+              </div>
+
+              {nInserir > 0 && !resultado && (
+                <div className="text-[13px] text-muted-foreground">
+                  Entram <strong className="text-foreground">{brl(previa.dinheiro?.liquido_centavos)}</strong> líquidos
+                  <span className="tabular-nums"> ({brl(previa.dinheiro?.bruto_centavos)} bruto − {previa.dinheiro?.taxa_pct}% de taxa)</span>.
+                </div>
+              )}
+
+              {/* A lista de quem entra, com os alertas de cada linha. */}
+              {nInserir > 0 && (
+                <div className="rounded-lg border border-border overflow-hidden">
+                  <div className="px-3 py-1.5 text-[11px] uppercase tracking-wide text-muted-foreground bg-foreground/[0.03]">
+                    {resultado ? 'Importadas' : 'Vão entrar'}
+                  </div>
+                  <ul className="divide-y divide-border max-h-56 overflow-y-auto">
+                    {previa.inserir.map((p: any, i: number) => {
+                      const gravada = resultado?.inseridas?.find((x: any) => x.codigo_plataforma === p.codigo_plataforma);
+                      return (
+                        <li key={p.codigo_plataforma || i} className="px-3 py-1.5 text-[13px]">
+                          <div className="flex items-baseline justify-between gap-2 flex-wrap">
+                            <span className="font-medium break-words">{p.nome}</span>
+                            <span className="text-xs text-muted-foreground tabular-nums">
+                              {p.idade != null ? `${p.idade} anos · ` : ''}{brl(p.valor_centavos)}
+                              {gravada ? <span className="text-emerald-600"> · {gravada.codigo} · {gravada.vinculo}</span> : null}
+                            </span>
+                          </div>
+                          {p.responsavel_nome && <div className="text-[11px] text-muted-foreground">responsável: {p.responsavel_nome}</div>}
+                          {p.alertas?.length > 0 && (
+                            <div className="text-[11px] text-amber-600 dark:text-amber-400">⚠️ {p.alertas.join(' · ')}</div>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+
+              {nCancelar > 0 && (
+                <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-2.5 text-[13px]">
+                  <div className="font-medium text-amber-700 dark:text-amber-300">Canceladas na plataforma — vão ser canceladas aqui</div>
+                  <ul className="ml-4 list-disc text-muted-foreground">
+                    {previa.cancelar.map((p: any, i: number) => <li key={i}>{p.nome} ({p.codigo})</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {nInvalidas > 0 && (
+                <div className="rounded-lg border border-red-500/40 bg-red-500/5 p-2.5 text-[13px]">
+                  <div className="font-medium text-red-700 dark:text-red-300">Não entram — falta dado obrigatório na planilha</div>
+                  <ul className="ml-4 list-disc text-muted-foreground">
+                    {previa.invalidas.map((p: any, i: number) => <li key={i}>{p.nome} — sem {p.faltam.join(', ')}</li>)}
+                  </ul>
+                  <div className="text-[11px] text-muted-foreground pt-1">
+                    Corrija na plataforma e exporte de novo, ou cadastre essas pessoas à mão aqui.
+                  </div>
+                </div>
+              )}
+
+              {previa.keys_desconhecidas?.length > 0 && (
+                <div className="text-[11px] text-muted-foreground">
+                  ⚠️ Respostas que este evento não pergunta ({previa.keys_desconhecidas.join(', ')}) ficam gravadas na
+                  inscrição, mas não aparecem na ficha.
+                </div>
+              )}
+
+              {resultado?.erros?.length > 0 && (
+                <div className="rounded-lg border border-red-500/40 bg-red-500/5 p-2.5 text-[13px]">
+                  <div className="font-medium text-red-700 dark:text-red-300">Linhas que falharam ao gravar</div>
+                  <ul className="ml-4 list-disc text-muted-foreground">
+                    {resultado.erros.map((e: any, i: number) => <li key={i}>{e.nome}: {e.erro}</li>)}
+                  </ul>
+                </div>
+              )}
+
+              {resultado && (resultado.sem_vinculo > 0) && (
+                <div className="text-[11px] text-muted-foreground">
+                  {resultado.sem_vinculo} inscrição(ões) entraram sem vínculo com a membresia — aparecem na lista, mas
+                  não estão ligadas a um cadastro de pessoa.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+
+        <div className="flex justify-end gap-2 pt-3 border-t border-border">
+          <Button size="sm" variant="ghost" onClick={onClose} disabled={ocupado === 'gravando'}>
+            {resultado ? 'Fechar' : 'Cancelar'}
+          </Button>
+          {previa && !resultado && (
+            <Button size="sm" onClick={gravar} disabled={!!ocupado || (nInserir === 0 && nCancelar === 0)}>
+              {ocupado === 'gravando' ? <Loader2 className="h-3.5 w-3.5 mr-1 animate-spin" /> : <Upload className="h-3.5 w-3.5 mr-1" />}
+              {nInserir === 0 && nCancelar === 0
+                ? 'Nada novo pra importar'
+                : `Importar ${nInserir ? `${nInserir} inscrição(ões)` : ''}${nInserir && nCancelar ? ' e ' : ''}${nCancelar ? `cancelar ${nCancelar}` : ''}`}
+            </Button>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 function ImprimirListaDialog({ evento, inscritos, recorte, totalEvento, onClose }: {
   evento: any; inscritos: any[]; recorte?: boolean; totalEvento?: number; onClose: () => void;
@@ -1601,6 +2128,8 @@ function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, evento, 
               </span>
             )}
             {cancelada && <span className="rounded-full bg-red-500/10 text-red-600 text-xs font-medium px-2 py-0.5 shrink-0">cancelada</span>}
+            {ehEInscricao(inscricao) && <EInscricaoBadge inscricao={inscricao} tamanho="sm" />}
+            <LoteBadge lote={inscricao.lote} tamanho="sm" />
             {!editando && (
               <Button size="sm" variant="outline" className="ml-auto shrink-0" onClick={entrarEdicao}>
                 <Pencil className="h-3.5 w-3.5 mr-1" /> Editar
@@ -1708,6 +2237,34 @@ function InscricaoDetalheDialog({ inscricao, campos, premios, eventoId, evento, 
                   </div>
                 )}
               </div>
+
+              {/* Pagou no E-Inscrição: não há cobrança nossa — o que sabemos veio
+                  da planilha exportada de lá (bruto, forma, parcelas, código). */}
+              {ehEInscricao(inscricao) && !inscricao.pagamento && (
+                <div className="rounded-lg border border-sky-500/40 bg-sky-500/5 p-2.5">
+                  <div className="text-[11px] text-sky-700 dark:text-sky-300 uppercase tracking-wide mb-1 flex items-center gap-1">
+                    <ExternalLink className="h-3 w-3" /> Pago no {inscricao.dados?.e_inscricao?.plataforma || 'E-Inscrição'}
+                  </div>
+                  <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                    <span className="rounded-full text-xs font-medium px-2 py-0.5 bg-emerald-500/15 text-emerald-600">pago</span>
+                    {inscricao.dados?.e_inscricao?.forma_pagamento && (
+                      <span>{METODO_LABEL[inscricao.dados.e_inscricao.forma_pagamento] || inscricao.dados.e_inscricao.forma_pagamento}
+                        {inscricao.dados.e_inscricao.parcelas > 1 ? ` · ${inscricao.dados.e_inscricao.parcelas}x` : ''}
+                      </span>
+                    )}
+                    {inscricao.dados?.e_inscricao?.valor_bruto_centavos != null && (
+                      <span className="font-medium" title={`Taxa da plataforma: ${inscricao.dados.e_inscricao.taxa_pct ?? '—'}%`}>
+                        {brl(inscricao.dados.e_inscricao.valor_bruto_centavos)} bruto
+                        {inscricao.dados.e_inscricao.valor_liquido_centavos != null && ` · ${brl(inscricao.dados.e_inscricao.valor_liquido_centavos)} líquido`}
+                      </span>
+                    )}
+                    {inscricao.dados?.e_inscricao?.codigo && (
+                      <span className="text-[11px] font-mono text-muted-foreground" title="Código da inscrição na plataforma">{inscricao.dados.e_inscricao.codigo}</span>
+                    )}
+                    {inscricao.dados?.e_inscricao?.categoria && <span className="text-muted-foreground">{inscricao.dados.e_inscricao.categoria}</span>}
+                  </div>
+                </div>
+              )}
 
               {inscricao.pagamento && (
                 <div className="rounded-lg border border-border p-2.5">

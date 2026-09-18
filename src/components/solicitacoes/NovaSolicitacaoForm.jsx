@@ -32,6 +32,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '.
 import { Plus, Upload, FileText, X, Trash2, Image as ImageIcon } from 'lucide-react';
 import { supabase } from '../../supabaseClient';
 import { toast } from 'sonner';
+import {
+  MAX_ANEXOS, LIMITE_ARQUIVO_MB, ACCEPT_ANEXOS,
+  validarAnexos, caminhoDeUpload, ehImagem,
+} from '@/lib/anexoSolicitacao';
 
 export const CATEGORIAS = [
   { value: 'compras',        label: 'Compras',             color: 'bg-orange-500/15 text-orange-700 dark:text-orange-400', areaResp: 'logistica_compras' },
@@ -88,7 +92,9 @@ export const FORM_INITIAL = {
   // Marketing · intake por DOR · Pedro define entregavel/publico/prazo na triagem
 };
 
-const MAX_FOTOS = 3;
+// ⚠️ Era 3 no cliente e 5 no backend (`.slice(0, 5)`): o 4º e o 5º arquivo
+// sumiam sem erro. Agora a régua é uma só, no módulo puro que está no gate.
+const MAX_FOTOS = MAX_ANEXOS;
 
 // Dropzone reutilizavel · comprovante de reembolso, boleto/NF de pagamento,
 // proposta de serviço. Estado de drag interno (self-contained).
@@ -164,33 +170,53 @@ function ItemFotoMini({ file, url, onFile, onClear }) {
   );
 }
 
-// Fotos gerais da solicitação · até MAX_FOTOS thumbnails + botão adicionar.
-// Usado em Serviços (manutenção) e Serviço externo — quem atende/cota avalia
-// pela imagem (goteira, equipamento, referência do serviço).
+// Anexos da solicitação · até MAX_ANEXOS arquivos (foto OU documento).
+//
+// ⚠️⚠️ Aceita PDF desde 03/09/2026 (pedido do Matheus: "às vezes tem propostas e
+// orçamentos por pdf"). Antes só aceitava imagem, e só aparecia em 2 das 14
+// categorias — `compras`, que é 56% do módulo e é onde vive o ORÇAMENTO, não
+// tinha onde anexar nada (medido: 0 anexos em 52 solicitações).
+//
+// ⚠️ Arquivo que não é imagem NÃO pode virar <img>: o navegador desenha um
+// quadrado vazio e o anexo some da tela em silêncio. Quem decide é `ehImagem`,
+// no módulo puro que está no gate.
 function FotosAnexos({ fotos, onAdd, onRemove }) {
   const inputRef = useRef(null);
   return (
     <div className="flex flex-wrap items-center gap-2">
-      {fotos.map((file, idx) => (
-        <div key={idx} className="relative h-16 w-16">
-          <img src={URL.createObjectURL(file)} alt="" className="h-16 w-16 rounded-md object-cover border border-border" />
-          <button type="button"
-            className="absolute -right-1.5 -top-1.5 rounded-full bg-background border border-border p-0.5 text-muted-foreground hover:text-red-500"
-            onClick={() => onRemove(idx)}
-            title="Remover foto">
-            <X className="h-3 w-3" />
-          </button>
-        </div>
-      ))}
-      {fotos.length < MAX_FOTOS && (
+      {fotos.map((file, idx) => {
+        const imagem = ehImagem(file?.name);
+        return (
+          <div key={idx} className="relative">
+            {imagem ? (
+              <img src={URL.createObjectURL(file)} alt="" className="h-16 w-16 rounded-md object-cover border border-border" />
+            ) : (
+              <div className="h-16 w-28 rounded-md border border-border bg-muted/40 px-2 flex flex-col items-center justify-center gap-1"
+                title={file?.name}>
+                <FileText className="h-5 w-5 text-muted-foreground shrink-0" />
+                <span className="text-[9px] leading-tight text-center text-muted-foreground line-clamp-2 break-all">
+                  {file?.name}
+                </span>
+              </div>
+            )}
+            <button type="button"
+              className="absolute -right-1.5 -top-1.5 rounded-full bg-background border border-border p-0.5 text-muted-foreground hover:text-red-500"
+              onClick={() => onRemove(idx)}
+              title="Remover anexo">
+              <X className="h-3 w-3" />
+            </button>
+          </div>
+        );
+      })}
+      {fotos.length < MAX_ANEXOS && (
         <button type="button" onClick={() => inputRef.current?.click()}
           className="h-16 w-16 rounded-md border-2 border-dashed border-border hover:border-primary/40 flex flex-col items-center justify-center text-muted-foreground"
-          title="Adicionar foto">
-          <ImageIcon className="h-5 w-5" />
-          <span className="text-[9px] leading-none mt-1">foto</span>
+          title="Adicionar anexo">
+          <Upload className="h-5 w-5" />
+          <span className="text-[9px] leading-none mt-1">anexo</span>
         </button>
       )}
-      <input ref={inputRef} type="file" className="hidden" accept=".jpg,.jpeg,.png,.webp"
+      <input ref={inputRef} type="file" className="hidden" accept={ACCEPT_ANEXOS}
         onChange={e => {
           const f = e.target.files[0];
           if (f) onAdd(f);
@@ -262,6 +288,26 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
   }, []);
 
   async function handleCreate() {
+    // ⚠️⚠️ VALIDA A LISTA INTEIRA ANTES DE SUBIR O PRIMEIRO BYTE.
+    // Validar durante o laço é o que faz o 3º arquivo estourar DEPOIS de os dois
+    // primeiros já estarem no bucket: a solicitação não é criada (o upload roda
+    // antes do POST), e os que subiram viram órfãos permanentes. Aqui é
+    // tudo-ou-nada, e a mensagem NOMEIA o arquivo — antes de qualquer rede.
+    // O TETO de quantidade é só da caixa de anexos; comprovante e foto por item
+    // têm slots próprios e entram apenas na régua de formato/tamanho.
+    const outros = [
+      ...(form.documento_file ? [form.documento_file] : []),
+      ...(Array.isArray(form.itens_lista)
+        ? form.itens_lista.map(it => it?.imagem_file).filter(Boolean)
+        : []),
+    ];
+    const veredito = validarAnexos(form.imagens);
+    const vereditoOutros = veredito.ok ? validarAnexos(outros, { max: Infinity }) : veredito;
+    if (!vereditoOutros.ok) {
+      toast.error(vereditoOutros.erro);
+      return;
+    }
+
     try {
       setSubmitting(true);
       const payload = { ...form };
@@ -310,17 +356,21 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
         payload.documento_url = publicUrl;
       }
 
-      // Fotos gerais (Serviços/Serviço externo) · sobe cada uma pro bucket e
-      // manda só as URLs públicas (backend grava em solicitacoes.imagens_url)
+      // Anexos gerais (qualquer categoria) · foto OU documento. Sobe cada um pro
+      // bucket e manda só as URLs (backend grava em solicitacoes.imagens_url).
+      //
+      // ⚠️⚠️ O NOME ORIGINAL vai embutido no CAMINHO (`caminhoDeUpload`), porque
+      // `imagens_url` é array de strings e não carrega nome. Sem isso, três
+      // propostas anexadas viram três links idênticos e o aprovador tem que
+      // abrir os três pra saber qual é de qual fornecedor.
       if (Array.isArray(form.imagens) && form.imagens.length && supabase) {
         const urls = [];
         for (const file of form.imagens) {
-          const ext = (file.name.split('.').pop() || 'jpg').toLowerCase();
-          const path = `fotos/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
+          const path = caminhoDeUpload('anexos', file.name);
           const { error: upErr } = await supabase.storage
             .from('solicitacoes')
             .upload(path, file, { upsert: false });
-          if (upErr) throw new Error('Erro ao enviar foto: ' + upErr.message);
+          if (upErr) throw new Error('Erro ao enviar anexo: ' + upErr.message);
           urls.push(supabase.storage.from('solicitacoes').getPublicUrl(path).data.publicUrl);
         }
         payload.imagens_url = urls;
@@ -471,20 +521,25 @@ export default function NovaSolicitacaoForm({ prefill = null, categoriasPermitid
 
       {/* Serviços (manutenção) / Serviço externo · fotos pra quem atende/cota
           avaliar (goteira, equipamento, referência do serviço) */}
-      {['infraestrutura', 'servico'].includes(form.categoria) && (
-        <div className="space-y-2 rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-3">
-          <p className="text-sm font-semibold text-indigo-700 dark:text-indigo-400">Fotos (opcional)</p>
-          <p className="text-xs text-muted-foreground">
-            Anexe até {MAX_FOTOS} fotos do problema ou do que precisa ser feito — ajuda quem vai
-            {form.categoria === 'servico' ? ' cotar o serviço' : ' atender'} a avaliar sem precisar ir até o local.
-          </p>
-          <FotosAnexos
-            fotos={form.imagens}
-            onAdd={f => setForm(prev => ({ ...prev, imagens: [...prev.imagens, f].slice(0, MAX_FOTOS) }))}
-            onRemove={idx => setForm(prev => ({ ...prev, imagens: prev.imagens.filter((_, i) => i !== idx) }))}
-          />
-        </div>
-      )}
+      {/* ⚠️ SEM gate de categoria (03/09/2026): o campo era oferecido só em
+          `infraestrutura` e `servico`, e a evidência de que a régua estava
+          errada estava no banco — as 2 únicas solicitações com documento da
+          base inteira são de `infraestrutura`, anexadas pela porta dos fundos
+          da edição. O backend NUNCA gateou (`imagens_url` é gravado fora de
+          qualquer `if` de categoria); o gate era só da tela. */}
+      <div className="space-y-2 rounded-lg border border-indigo-500/30 bg-indigo-500/5 p-3">
+        <p className="text-sm font-semibold text-indigo-700 dark:text-indigo-400">Anexos (opcional)</p>
+        <p className="text-xs text-muted-foreground">
+          Até {MAX_ANEXOS} arquivos de {LIMITE_ARQUIVO_MB} MB — foto, orçamento ou proposta em PDF.
+          {' '}Ajuda quem vai {form.categoria === 'servico' || form.categoria === 'compras' ? 'cotar' : 'atender'} a
+          decidir sem precisar pedir o arquivo por fora.
+        </p>
+        <FotosAnexos
+          fotos={form.imagens}
+          onAdd={f => setForm(prev => ({ ...prev, imagens: [...prev.imagens, f].slice(0, MAX_FOTOS) }))}
+          onRemove={idx => setForm(prev => ({ ...prev, imagens: prev.imagens.filter((_, i) => i !== idx) }))}
+        />
+      </div>
 
       {/* Reserva de Espaco · campos especificos */}
       {form.categoria === 'reserva_espaco' && (

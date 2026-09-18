@@ -35,6 +35,66 @@ const {
   tirarCodigoPaisTelefone, temAbreviacaoNome, honeypotPreenchido,
 } = require('../services/inscricaoContrato');
 const { acharMembroGuardado } = require('../services/membroMatch');
+const campDoacao = require('../utils/campanhaDoacao');
+const doacaoToken = require('../utils/doacaoToken');
+const doacaoPrefill = require('../utils/doacaoPrefill');
+
+/**
+ * Resolve o membro a partir do token de prefill (`?t=`).
+ *
+ * ⚠️⚠️ Este é o ÚNICO ponto desta rota pública que devolve dado de pessoa — e
+ * pode, porque a prova é o token ter sido emitido para a SESSÃO AUTENTICADA do
+ * app. Mesma lógica do `?t=` do censo, com prazo curto.
+ * ⚠️ NUNCA aceitar `membro_id` cru na query: seria enumerável e viraria extrator
+ * da base (lição registrada no censo).
+ * ⚠️ Recusa é NEUTRA: não distingue token torto de vencido de pessoa inexistente
+ * na resposta — senão o endpoint vira sonda de existência de cadastro.
+ */
+async function membroDoToken(tokenBruto) {
+  const lido = doacaoToken.ler(tokenBruto);
+  if (!lido.ok) return null;
+  try {
+    const { data, error } = await db
+      .from('mem_membros')
+      .select('id, nome, email, telefone, cpf')
+      .eq('id', lido.membro_id)
+      .is('deleted_at', null)
+      .maybeSingle();
+    if (error) throw error;
+    return data || null;
+  } catch (e) {
+    console.warn('[publicGenerosidade] prefill indisponível:', e.message);
+    return null;
+  }
+}
+const { hojeBrt: hojeBrtCamp } = require('../services/campanhaArrecadacao');
+const { supabase: db } = require('../utils/supabase');
+
+// As campanhas que podem receber doação AGORA.
+//
+// ⚠️⚠️ Lê `camp_campanhas` DIRETO (não a `vw_camp_arrecadacao`): esta rota é
+// PÚBLICA, e a view carrega arrecadado, meta e nº de doadores. Uma tela de doar
+// não precisa disso, e publicar quanto a igreja já arrecadou numa rota aberta é
+// alcance que ninguém decidiu.
+//
+// ⚠️ Best-effort: falha devolve LISTA VAZIA, e o efeito é a categoria "campanha"
+// não aparecer — nunca derrubar a doação de dízimo/oferta, que é a maioria.
+// ⚠️ Erro é LOGADO: lista vazia silenciosa se leria como "não há campanha".
+async function campanhasQuePodemReceber() {
+  try {
+    const { data, error } = await db
+      .from('camp_campanhas')
+      .select('id, nome, status, data_inicio, data_fim, descricao_curta, aceita_online')
+      .eq('status', 'ativa')
+      .is('deleted_at', null)
+      .order('data_lancamento', { ascending: false });
+    if (error) throw error;
+    return campDoacao.campanhasOfertaveis(data || [], hojeBrtCamp());
+  } catch (e) {
+    console.warn('[publicGenerosidade] campanhas indisponíveis:', e.message);
+    return [];
+  }
+}
 // Fachada do núcleo de pagamentos. ⚠️ NUNCA importar `providers/*` aqui.
 const pagamentos = require('../services/pagamentos');
 const {
@@ -159,9 +219,13 @@ const TOKEN_RE = /^[0-9a-f]{32}$/i;
 // nasce protegida sem ninguém precisar lembrar. Ver `middleware/semCache.js`.
 router.use(semCache);
 
-router.get('/config', (_req, res) => {
+router.get('/config', async (_req, res) => {
   const aviso = bloqueio();
+  // ⚠️ Só id/nome/descrição curta (`paraOApp`) — nada de meta ou arrecadado numa
+  // rota pública.
+  const campanhas = aviso ? [] : (await campanhasQuePodemReceber()).map(campDoacao.paraOApp);
   res.json({
+    campanhas,
     ativo: !aviso,
     aviso,
     metodos: aviso ? [] : metodosOfertados(),
@@ -171,6 +235,21 @@ router.get('/config', (_req, res) => {
     max_centavos: MAX_CENTAVOS,
     parcelas_max: tetoParcelasProvider(),
   });
+});
+
+// ── GET /prefill?t= ────────────────────────────────────────────────────────
+//
+// A tela chama isto quando abre com `?t=` na URL (a pessoa veio do app).
+//
+// ⚠️⚠️ Devolve o CPF **MASCARADO**. O valor real fica no servidor e é resolvido
+// de novo no POST, pelo mesmo token. A página é pública e a URL vive no
+// histórico, no print e no grupo — CPF ali é dado que não se despublica.
+router.get('/prefill', async (req, res) => {
+  const membro = await membroDoToken(req.query.t);
+  // ⚠️ Sem membro NÃO é erro: é o caso de token vencido/ausente, e a tela cai no
+  // formulário normal. 404 faria a tela mostrar erro para quem só precisa digitar.
+  if (!membro) return res.json({ prefill: null });
+  res.json({ prefill: doacaoPrefill.prefillDoCadastro(membro) });
 });
 
 // ── POST /doacao ───────────────────────────────────────────────────────────
@@ -199,9 +278,38 @@ router.post('/doacao', async (req, res) => {
     }
 
     const categoria = CATEGORIAS.includes(String(b.categoria)) ? String(b.categoria) : 'oferta';
-    const campanha = categoria === 'campanha' ? String(b.campanha || '').trim().slice(0, 120) : null;
-    if (categoria === 'campanha' && !campanha) {
-      return res.status(400).json({ error: 'Diga qual é a campanha.', campo: 'campanha' });
+    // ⚠️⚠️ CAMPANHA agora é ESCOLHA de um registro, não texto digitado.
+    // `vw_camp_arrecadacao` casa a doação por `metadata->>'campanha_id'`, então
+    // texto livre (o que existia aqui) NUNCA alimentava a barrinha — medido em
+    // 01/09/2026: a única doação paga tinha `metadata.campanha = null`.
+    //
+    // ⚠️ Retrocompatível: quem manda `campanha` (nome) sem `campanha_id` segue
+    // sendo aceito — é o bundle antigo do site em cache, e recusá-lo faria a
+    // doação falhar pra quem não recarregou a página. O que ele NÃO ganha é
+    // atribuição na barra, que é exatamente o comportamento de hoje.
+    let campanhaId = null;
+    let campanha = categoria === 'campanha' ? String(b.campanha || '').trim().slice(0, 120) : null;
+    if (categoria === 'campanha') {
+      const idPedido = String(b.campanha_id || '').trim();
+      if (idPedido) {
+        const ofertaveis = await campanhasQuePodemReceber();
+        const escolha = campDoacao.validarEscolha({
+          categoria, campanha_id: idPedido, ofertaveis,
+        });
+        if (!escolha.ok) {
+          return res.status(400).json({
+            error: escolha.motivo === 'campanha_indisponivel'
+              ? 'Esta campanha não está mais recebendo doação.'
+              : 'Diga qual é a campanha.',
+            campo: 'campanha',
+          });
+        }
+        campanhaId = escolha.campanha_id;
+        campanha = escolha.campanha_nome || campanha;
+      }
+      if (!campanhaId && !campanha) {
+        return res.status(400).json({ error: 'Diga qual é a campanha.', campo: 'campanha' });
+      }
     }
 
     const nome = String(b.nome || '').trim().replace(/\s+/g, ' ');
@@ -223,24 +331,42 @@ router.post('/doacao', async (req, res) => {
     // fora do comprovante anual de contribuições e ninguém consegue ligá-la à
     // pessoa depois — o dado nasce perdido. O custo é atrito real (quem não tem
     // o número em mãos desiste), e é escolha declarada.
+    // ── Quem está doando ──────────────────────────────────────────────────
+    //
+    // ⚠️⚠️ COM TOKEN (`?t=`, a pessoa veio do app) o CADASTRO VENCE o payload no
+    // CPF, e o vínculo sai do TOKEN — não de um match sobre dado digitado. É
+    // isso que faz "ficar vinculado ao cadastro" ser garantia e não palpite: com
+    // matcher, dois parentes que compartilham e-mail/telefone podem cair no
+    // cadastro errado, e a doação vai pro comprovante anual da pessoa errada.
+    const membroToken = await membroDoToken(b.t);
+    const pagador = doacaoPrefill.pagadorParaCobranca({
+      membro: membroToken, corpo: { nome, email, telefone, cpf: b.cpf },
+    });
+
     // ⚠️ DV validado no servidor: CPF errado não casa com nada e só suja o dado.
-    const cpf = normalizarCpf(b.cpf);
+    // ⚠️ Quando o CPF veio do CADASTRO ele não é re-validado por DV: a base tem
+    // CPF legado que não passa no dígito, e recusar aqui trancaria a doação de
+    // quem o sistema já aceitou como cadastro (é o grandfathering que o Contrato
+    // de porta manda aplicar).
+    const cpf = pagador.cpf_veio_do_cadastro ? pagador.cpf : normalizarCpf(b.cpf);
     if (!cpf) {
       return res.status(400).json({ error: 'Informe seu CPF — é o que liga a doação ao seu cadastro e ao comprovante anual.', campo: 'cpf' });
     }
-    if (!cpfValido(cpf)) {
+    if (!pagador.cpf_veio_do_cadastro && !cpfValido(cpf)) {
       return res.status(400).json({ error: 'Esse CPF não parece válido. Confira os números.', campo: 'cpf' });
     }
 
     // ── Match READ-ONLY. Nunca cria, nunca escreve. ──
     // Falha aqui não impede a doação: sem membro a doação segue como anônima no
     // razão nominal, e é o handler que avisa a equipe.
-    let membroId = null;
-    try {
-      const m = await acharMembroGuardado({ cpf, email, telefone, nome });
-      membroId = m?.membro_id || null;
-    } catch (e) {
-      console.error('[publicGenerosidade] match do doador:', e.message);
+    let membroId = membroToken?.id || null;
+    if (!membroId) {
+      try {
+        const m = await acharMembroGuardado({ cpf, email, telefone, nome });
+        membroId = m?.membro_id || null;
+      } catch (e) {
+        console.error('[publicGenerosidade] match do doador:', e.message);
+      }
     }
 
     const canal = ['app', 'web'].includes(String(b.canal)) ? String(b.canal) : 'web';
@@ -253,7 +379,7 @@ router.post('/doacao', async (req, res) => {
       origem_id: null,
       referencia: referenciaDaTentativa(b.tentativa),
       valor_centavos: valor,
-      descricao: categoria === 'campanha' ? `Campanha: ${campanha}` : (categoria === 'dizimo' ? 'Dízimo' : 'Oferta'),
+      descricao: campDoacao.descricaoDaDoacao({ categoria, campanha_nome: campanha }),
       metodos_ofertados: metodosOfertados(),
       expira_em: new Date(Date.now() + EXPIRA_HORAS * 3600000).toISOString(),
       pagador_nome: nome,
@@ -261,7 +387,12 @@ router.post('/doacao', async (req, res) => {
       pagador_email: email,
       pagador_telefone: telefone || null,
       membro_id: membroId,
-      metadata: { categoria, campanha, canal, nome_abreviado: nomeAbreviado || undefined },
+      // ⚠️ Régua ÚNICA do metadata (app e site): é ela que garante a chave
+      // `campanha_id`, a única que a barrinha casa.
+      metadata: campDoacao.metadataDaDoacao({
+        categoria, campanha_id: campanhaId, campanha_nome: campanha, canal,
+        extra: { nome_abreviado: nomeAbreviado || undefined },
+      }),
     });
 
     res.json({ ok: true, token: cobranca.public_token, pagamento: estadoBasePagamento(cobranca) });
@@ -321,6 +452,7 @@ router.get('/:token', async (req, res) => {
       // Do domínio da doação (não é PII: quem tem o token já sabe o que doou).
       categoria: cobranca.metadata?.categoria || null,
       campanha: cobranca.metadata?.campanha || null,
+      campanha_id: cobranca.metadata?.campanha_id || null,
     });
   } catch (e) {
     console.error('[publicGenerosidade] status:', e.message);

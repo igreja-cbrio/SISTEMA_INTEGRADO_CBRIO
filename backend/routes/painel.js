@@ -8,7 +8,7 @@
 // ============================================================================
 
 const router = require('express').Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorizeModule } = require('../middleware/auth'); // varredura 2026-09: B04 — precisa do guard de matriz pra fechar o drilldown nominal do NSM
 const { supabase } = require('../utils/supabase');
 
 router.use(authenticate);
@@ -46,6 +46,8 @@ async function fetchAllPaginado(table, buildQuery) {
 // ============================================================================
 // Cache compartilhado via service · permite outros routes invalidarem
 const painelCache = require('../services/painelCache');
+// Régua única do 1º contato (16/09) — ver utils/primeiroContatoRegua.
+const { contatoFoiFeito } = require('../utils/primeiroContatoRegua');
 const cacheGet = painelCache.get;
 const cacheSet = painelCache.set;
 const cacheBust = painelCache.bust;
@@ -1219,7 +1221,10 @@ async function nsmSinaisCohorte(pessoas) {
   for (const part of nsmChunk(ids, 150)) {
     const [g, dev, j, ac, vol, con] = await Promise.all([
       supabase.from('mem_grupo_membros').select('membro_id').is('deleted_at', null).in('membro_id', part).is('saiu_em', null),
-      supabase.from('mem_devocionais').select('membro_id, data_devocional').in('membro_id', part).eq('concluida', true).not('data_devocional', 'is', null),
+      // varredura 2026-09: A04 — o DELETE de mem_devocionais virou soft-delete; sem `deleted_at`
+      // o sinal "investir" da NSM continuaria aceso pra quem apagou o devocional, enquanto os
+      // vizinhos desta mesma Promise.all (grupos, jornada180, voluntários) já filtram.
+      supabase.from('mem_devocionais').select('membro_id, data_devocional').is('deleted_at', null).in('membro_id', part).eq('concluida', true).not('data_devocional', 'is', null),
       supabase.from('cui_jornada180').select('membro_id, data_encontro, presente').is('deleted_at', null).in('membro_id', part).not('data_encontro', 'is', null),
       supabase.from('cui_acompanhamentos').select('membro_id, data_inicio').in('membro_id', part).not('data_inicio', 'is', null),
       supabase.from('mem_voluntarios').select('membro_id, desde').is('deleted_at', null).in('membro_id', part).is('ate', null).not('desde', 'is', null),
@@ -1271,7 +1276,7 @@ async function nsmSinaisCohorte(pessoas) {
 // Resposta: totais do recorte (total_*) + totais da lista filtrada (match_*),
 // pros cards da UI acompanharem o filtro ativo.
 // ----------------------------------------------------------------------------
-router.get('/nsm/pessoas', async (req, res) => {
+router.get('/nsm/pessoas', authorizeModule('painel', 2), async (req, res) => { // varredura 2026-09: B04 — lista nominal (nome/telefone/CPF) de convertidos exigia só authenticate; 'painel' -> ['painel-cbrio'] existe no ROUTE_MODULE_MAP
   try {
     const segmento = String(req.query.segmento || 'central').toLowerCase();
     const janelaRaw = String(req.query.janela || '60').toLowerCase();
@@ -1769,6 +1774,10 @@ async function calcularSerie(valor, dado, { inicio, fim, culto, granularidade })
     const data = await fetchAllPaginado('mem_devocionais', (q) => q
       .select('data_devocional')
       .eq('concluida', true)
+      // varredura 2026-09: A04 — o DELETE de mem_devocionais virou soft-delete; sem `deleted_at`
+      // a série investir/devocionais nunca desceria: o ponto do dia continuaria contando o
+      // check-in apagado, e o /stats de devocionais.js (que filtra) mostraria outro número.
+      .is('deleted_at', null)
       .gte('data_devocional', inicio).lte('data_devocional', fim)
       .order('id'));
     (data || []).forEach(r => add(r.data_devocional, 1));
@@ -2215,11 +2224,14 @@ router.get('/monitoramento-okr', async (req, res) => {
       const kNome = (v) => String(v || '').trim().toLowerCase() || null;
       const kTel = (v) => { const d = dig(v); return d.length >= 10 ? d.slice(-8) : null; };
       const kPri = (v) => kNome(v)?.split(' ')[0] || null;
-      const CONTATO_FEITO = new Set(['respondeu', 'atendido_respondido', 'nao_respondeu', 'nao_compareceu', 'nao_atendido', 'numero_errado']);
-
+      // ⚠️⚠️ Régua ÚNICA desde 16/09 (`utils/primeiroContatoRegua`). Esta cópia
+      // incluía `numero_errado` em "contato feito" e a do front não — 100% × 98%
+      // sobre o mesmo dado. `next_pos_contato` é "dos que RECEBERAM o 1º contato,
+      // quantos foram a um encontro": quem nunca foi alcançado não pertence a
+      // esse conjunto, nem no numerador nem no denominador.
       const convs = await fetchPaged('cui_convertidos', 'membro_id, cpf, nome, telefone, primeiro_contato_em, primeiro_contato_status',
         (q) => q.is('deleted_at', null));
-      const comContato = convs.filter((c) => !!c.primeiro_contato_em || CONTATO_FEITO.has(c.primeiro_contato_status));
+      const comContato = convs.filter(contatoFoiFeito);
 
       if (comContato.length) {
         const pM = new Set(), pC = new Set(), pN = new Set(), pT = new Set();

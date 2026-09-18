@@ -93,10 +93,22 @@ const ESCOLARIDADE = {
   'segundo grau': 'medio',
   tecnico: 'tecnico',
   'ensino tecnico': 'tecnico',
-  superior: 'superior',
-  'ensino superior': 'superior',
-  graduacao: 'superior',
-  faculdade: 'superior',
+  // ⚠️⚠️ TUDO O QUE SIGNIFICA GRADUAÇÃO CAI NO MESMO SLUG (14/09/2026).
+  // A opção da pergunta era "Superior" e virou "Superior completo" — o mapa
+  // continuou mandando a antiga para `superior` enquanto a nova caía no
+  // fallback `superior_completo`. Resultado medido em produção: **310
+  // `superior_completo` e 7 `superior`**, dois slugs para a mesma escolaridade,
+  // e o gráfico mostrando duas barras que são a mesma coisa. Foi o Marcos que
+  // viu ("escolaridade superior e ensino superior são a mesma coisa").
+  // ⚠️ `superior_incompleto` FICA separado: incompleto não é completo.
+  // LEI: renomear o RÓTULO de uma opção sem acertar o mapa cria vocabulário
+  // novo em silêncio — o dado antigo não migra sozinho.
+  superior: 'superior_completo',
+  'superior completo': 'superior_completo',
+  'ensino superior': 'superior_completo',
+  'ensino superior completo': 'superior_completo',
+  graduacao: 'superior_completo',
+  faculdade: 'superior_completo',
   'superior incompleto': 'superior_incompleto',
   'pos graduacao': 'pos_graduacao',
   pos: 'pos_graduacao',

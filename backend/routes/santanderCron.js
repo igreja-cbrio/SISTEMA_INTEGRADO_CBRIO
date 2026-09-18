@@ -11,6 +11,7 @@
 //   7. Retorna resumo
 
 const router = require('express').Router();
+const { extrairDocumentoDoMemo } = require('../utils/documentoBr');
 const { supabase } = require('../utils/supabase');
 const {
   AMBIENTE, AGENCIA, CONTA, CNPJ_TITULAR,
@@ -63,8 +64,8 @@ router.use(checkCronSecret);
 //   { transactionId, transactionDate, type, transactionName,
 //     creditDebitType: 'CREDITO'|'DEBITO', amount, partieNumber, ... }
 // Debito vira valor NEGATIVO (o consumidor filtra credito por valor > 0).
-async function extratoNormalizado({ inicio, fim, usarCache = false } = {}) {
-  const extratoApi = await contasService.consultarExtrato({ inicio, fim, usarCache });
+async function extratoNormalizado({ inicio, fim, usarCache = false, tolerarDiaIncompleto = false } = {}) {
+  const extratoApi = await contasService.consultarExtrato({ inicio, fim, usarCache, tolerarDiaIncompleto });
   const itens = Array.isArray(extratoApi?._content) ? extratoApi._content : [];
   const transacoes = itens.map((t) => {
     const isDebito = t.creditDebitType === 'DEBITO';
@@ -87,7 +88,7 @@ async function extratoNormalizado({ inicio, fim, usarCache = false } = {}) {
       raw: t,
     };
   });
-  return { transacoes };
+  return { transacoes, diasIncompletos: Array.isArray(extratoApi?._diasIncompletos) ? extratoApi._diasIncompletos : [] };
 }
 
 // ─────────────────────────────────────────────────────────────────────
@@ -145,10 +146,25 @@ async function handlerSync(req, res, next) {
     }
 
     // 3. Pega extrato via API Santander · normalizado (formato Santander _content)
-    const { transacoes } = await extratoNormalizado({ inicio, fim, usarCache: false });
+    // ⚠️⚠️ `tolerarDiaIncompleto` liga a QUARENTENA POR DIA: um dia envenenado
+    // deixa de descartar os dias sãos. Medido em 01–02/09: o dia 31/08 derrubou
+    // 4 execuções seguidas e levou junto 01 e 02/09, que não têm defeito.
+    // ⚠️ Ligar a tolerância OBRIGA a declarar — ver o desfecho no fim do handler.
+    const { transacoes, diasIncompletos } = await extratoNormalizado({
+      inicio, fim, usarCache: false, tolerarDiaIncompleto: true,
+    });
+    const resumoDiasIncompletos = () => diasIncompletos.map((d) => d.dia).join(', ');
 
     if (transacoes.length === 0) {
-      setSystemJobOutcome(res, {
+      // ⚠️⚠️ "não veio nada" e "não CONSEGUI buscar" levam a decisões OPOSTAS, e
+      // este ramo dizia `success` para os dois. Com dia em quarentena, zero
+      // transação não é período vazio — é extrato que não foi lido.
+      setSystemJobOutcome(res, diasIncompletos.length ? {
+        status: 'failed', effectStatus: 'failed', inputCount: 0, outputCount: 0,
+        errorCode: 'BANK_SYNC_DIA_INCOMPLETO',
+        errorMessage: `Extrato NAO lido em ${diasIncompletos.length} dia(s): ${resumoDiasIncompletos()}. ${diasIncompletos[0]?.motivo || ''}`.trim(),
+        result: 'extrato_nao_lido',
+      } : {
         status: 'success', effectStatus: 'confirmed', inputCount: 0, outputCount: 0,
         result: 'sem_transacoes_no_periodo',
       });
@@ -219,10 +235,10 @@ async function handlerSync(req, res, next) {
       // Preferência: doc da Santander (partieDoc), fallback regex no memo
       let documento = t.partieDoc || null;
       if (!documento) {
-        const cnpjM = memo.match(/\d{14}/);
-        const cpfM = memo.match(/\d{11}/);
-        if (cnpjM) documento = cnpjM[0];
-        else if (cpfM) documento = cpfM[0];
+        // ⚠️ Régua ÚNICA em utils/documentoBr (a mesma do ofxParser): a versão
+        // antiga colapsava o memo em dígitos, colava a data no CPF e fabricava
+        // CNPJ inexistente — 5.921 casos num único extrato.
+        documento = extrairDocumentoDoMemo(memo)?.documento || null;
       }
 
       const payload = {
@@ -268,7 +284,18 @@ async function handlerSync(req, res, next) {
       }).eq('id', uploadRow.id);
     }
 
-    setSystemJobOutcome(res, erros > 0 ? {
+    // ⚠️⚠️ DIA EM QUARENTENA MANDA NO DESFECHO. Os dias sãos foram importados
+    // (trabalho real, e `outputCount` o reflete), mas a execução é FALHA: falta
+    // extrato bancário de um dia, e isso tem de acender alarme e bloquear a
+    // leitura de "está tudo em dia". Lacuna que ninguém lê é importação parcial
+    // silenciosa com uma etapa a mais.
+    setSystemJobOutcome(res, diasIncompletos.length ? {
+      status: 'failed', effectStatus: 'failed', inputCount: extrato.transacoes.length,
+      outputCount: inseridos, discardedCount: erros,
+      errorCode: 'BANK_SYNC_DIA_INCOMPLETO',
+      errorMessage: `Extrato NAO lido em ${diasIncompletos.length} dia(s): ${resumoDiasIncompletos()}. Os demais dias foram importados. ${diasIncompletos[0]?.motivo || ''}`.trim(),
+      result: 'sincronizacao_com_dia_incompleto',
+    } : erros > 0 ? {
       status: 'warning', effectStatus: 'failed', inputCount: extrato.transacoes.length,
       outputCount: inseridos, discardedCount: erros, errorCode: 'BANK_SYNC_PARTIAL',
       errorMessage: `${erros} lancamentos nao foram inseridos. ${summarizeInsertErrors(insertErrors)}`.trim(),
@@ -286,6 +313,7 @@ async function handlerSync(req, res, next) {
       inseridos, duplicados, erros,
       match_pix: matchResult,
       classificacao: classifResult,
+      dias_incompletos: diasIncompletos,
       duracao_ms: Date.now() - startTime,
     });
   } catch (e) {
@@ -383,11 +411,8 @@ router.post('/pix-sync', async (req, res, next) => {
 
     for (const t of creditos) {
       const memo = t.descricao || t.memo || '';
-      let documento = null;
-      const cnpjM = memo.match(/\d{14}/);
-      const cpfM = memo.match(/\d{11}/);
-      if (cnpjM) documento = cnpjM[0];
-      else if (cpfM) documento = cpfM[0];
+      // ⚠️ Régua ÚNICA em utils/documentoBr — ver o comentário acima.
+      const documento = extrairDocumentoDoMemo(memo)?.documento || null;
 
       const payload = {
         fonte: 'santander_api',

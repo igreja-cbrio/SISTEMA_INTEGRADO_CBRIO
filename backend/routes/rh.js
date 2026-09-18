@@ -1,5 +1,6 @@
 const router = require('express').Router();
 const multer = require('multer');
+const crypto = require('crypto'); // rota POST /foto (admissão sobe a foto antes de existir o id)
 const { authenticate, authorizeModule, applyAccessFilter, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED, sanitizePath } = require('../services/storageService');
@@ -8,6 +9,8 @@ const { enqueueSync } = require('../services/cerebroSync');
 const { chamarModelo: organogramaIA } = require('../services/organogramaIA');
 const { aplicarCobertura, encerrarCobertura } = require('../services/cobertura');
 const rhOnboardingEnvios = require('../services/rhOnboardingEnvios');
+const { escapePostgrestValue } = require('../utils/sanitize'); // varredura 2026-09: RHP-11 — `_` e `%` sao curinga no ilike do PostgREST
+const { BUCKET_DOCS_RH, assinarDocumentosRh } = require('../services/anexosRhDocumentos'); // varredura 2026-09: RHP-01 · régua ÚNICA, compartilhada com o app do Staff
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -139,6 +142,7 @@ router.get('/dashboard', async (req, res) => {
       .lte('data_expiracao', em60)
       .gte('data_expiracao', hoje)
       .order('data_expiracao');
+    const docsVencendoAssinados = await assinarDocumentosRh(docsVencendo || []); // varredura 2026-09: RHP-01 este card também mostra o link do documento — precisa da URL assinada
 
     res.json({
       total, ativos, ferias, licenca, inativos, emAdmissao,
@@ -147,7 +151,7 @@ router.get('/dashboard', async (req, res) => {
       totalSalarios, custoMensal,
       porContrato, porArea,
       feriasProximas: feriasProximas || [],
-      docsVencendo: docsVencendo || [],
+      docsVencendo: docsVencendoAssinados,
     });
   } catch (e) {
     console.error('[RH] Dashboard:', e.message);
@@ -296,7 +300,7 @@ router.get('/funcionarios', async (req, res) => {
     const { data, error } = await query;
     if (error) return res.status(400).json({ error: error.message });
     await preencherFotoDoPerfil(data);
-    res.json(data);
+    res.json(ocultarConfidenciaisRh(req, data)); // varredura 2026-09: RHP-03 — lista com `select('*')` vazava cpf/salário pra nível <4
   } catch (e) {
     console.error('[RH] Listar funcionários:', e.message);
     res.status(500).json({ error: 'Erro ao listar funcionários' });
@@ -324,8 +328,8 @@ router.get('/funcionarios/:id', async (req, res) => {
 
     await preencherFotoDoPerfil(func);
     res.json({
-      ...func,
-      documentos: docs.data || [],
+      ...ocultarConfidenciaisRh(req, func), // varredura 2026-09: RHP-03 — ficha devolvia cpf/salário/benefícios pra nível <4 (o front só pintava "•••")
+      documentos: await assinarDocumentosRh(docs.data || []), // varredura 2026-09: RHP-01 caminho no bucket privado precisa virar URL assinada de 1h na leitura
       treinamentos: treinamentos.data || [],
       ferias_licencas: ferias.data || [],
     });
@@ -697,9 +701,17 @@ router.post('/funcionarios', async (req, res) => {
     const statusInicial = status === 'em_admissao' ? 'em_admissao' : 'ativo';
 
     // Remuneracao no cadastro inicial · so quem tem nivel alto em RH define.
-    const podeRemun = ['admin', 'diretor'].includes(req.user.role) || getEffectiveLevel(req, 'rh') >= 4;
+    // varredura 2026-09: RHP-03 — era uma CÓPIA inline da régua, que ficou
+    // divergente ao consertar `podeEditarRemuneracao` (que deixou de usar
+    // `getEffectiveLevel`, ver o comentário de `nivelModuloRh`). Régua única.
+    const podeRemun = podeEditarRemuneracao(req);
     const insertPayload = {
-      nome, cpf: cpf || null, email: email || null, telefone: telefone || null,
+      // varredura 2026-09: RHP-03 — `cpf` gravava em QUALQUER nível, enquanto o PUT já
+      // o descartava (entrou em CAMPOS_RH_SENSIVEIS) e a leitura passou a ocultá-lo.
+      // Assimetria criar × editar: quem não pode editar o CPF de um colaborador também
+      // não pode defini-lo no cadastro inicial — senão o caminho de criação é a porta
+      // dos fundos da trava de edição.
+      nome, cpf: podeRemun ? (cpf || null) : null, email: email || null, telefone: telefone || null,
       cargo, area: area || null,
       tipo_contrato: String(tipo_contrato || 'CLT').toUpperCase(),  // CHECK exige CLT/PJ/PJ+/PREBENDA (uppercase)
       setor_id: setor_id ? parseInt(setor_id, 10) : null,
@@ -734,7 +746,11 @@ router.post('/funcionarios', async (req, res) => {
 
     enqueueSync('funcionario', data.id, 'upsert').catch(() => {});
 
-    res.status(201).json(data);
+    // varredura 2026-09: RHP-03 — o `.select()` do insert devolvia a linha INTEIRA
+    // (cpf/salário/benefícios) pra quem não pode ver, igual ao PUT e ao GET.
+    // ⚠️ A redação é só na RESPOSTA: `notificar` e `enqueueSync` acima leem `data`
+    // completo de propósito (nome/cargo/área/data de admissão, nada confidencial).
+    res.status(201).json(ocultarConfidenciaisRh(req, data));
   } catch (e) {
     console.error('[RH] Criar funcionário:', e.message);
     res.status(500).json({ error: 'Erro ao criar funcionário' });
@@ -744,10 +760,38 @@ router.post('/funcionarios', async (req, res) => {
 // Campos sensiveis (remuneracao + status de vinculo) · so editaveis por quem tem
 // nivel alto em RH (>=4) ou admin/diretor. Antes, um nivel-2 (data entry) editava
 // salario de qualquer funcionario — inclusive o proprio — ou demitia alguem.
+// varredura 2026-09: RHP-03 — nível do MÓDULO rh, espelhando o cálculo do
+// `authorizeModule` (mesmo módulo, mesmo campo). NÃO usar `getEffectiveLevel`
+// aqui: ele parte de `granular.cargoNivelLeitura` (`cargos.nivel_padrao_leitura`)
+// e só depois puxa pra cima com o módulo — ou seja, quem tem padrão alto no CARGO
+// passa mesmo SEM linha nenhuma em `rh`. Medido em 04/09: 10 cargos têm
+// `nivel_padrao_leitura >= 4` e 8 deles NÃO têm linha em `rh` (Acesso diretor,
+// Acesso admin, Pastor Sr, Pastor Pres, Dir Geral, Dir Estrat, Dir Mini, Dir Criat)
+// — com `getEffectiveLevel` esses 8 leriam CPF e folha de pagamento inteira, e
+// editariam salário, sem nunca terem recebido o módulo na matriz.
+// Quem OPERA rh não perde nada: Dir RH 5, Coord Estratégico 5, Coord Financ 4.
+// `cargo_modulo_permissao.nivel` é coluna ÚNICA (leitura = escrita pro cargo); a
+// assimetria só aparece no override por pessoa (`permissoes_modulo`), e é por isso
+// que leitura e escrita consultam campos diferentes aqui.
+function nivelModuloRh(req, tipo) {
+  if (req.user?.is_super_admin === true) return 5;
+  if (req.user?.role === 'admin') return 5;
+  if (req.user?.role === 'diretor') return 4;
+  return Number(req.user?.granular?.modulePerms?.rh?.[tipo]) || 0;
+}
 function podeEditarRemuneracao(req) {
-  return ['admin', 'diretor'].includes(req.user.role) || getEffectiveLevel(req, 'rh') >= 4;
+  // varredura 2026-09: RHP-03 — era `getEffectiveLevel(req, 'rh') >= 4`, que
+  // liberava a EDIÇÃO de salário pros 8 cargos sem linha em `rh` descritos acima.
+  return nivelModuloRh(req, 'escrita') >= 4;
+}
+function podeVerConfidenciaisRh(req) {
+  return nivelModuloRh(req, 'leitura') >= 4;
 }
 const CAMPOS_RH_SENSIVEIS = [
+  // varredura 2026-09: RHP-03 — `cpf` entra na trava de ESCRITA porque agora ele
+  // também é ocultado na LEITURA (ver CAMPOS_RH_CONFIDENCIAIS); sem isto, um
+  // nível <4 abriria a ficha sem CPF e o PUT do formulário gravaria null por cima.
+  'cpf',
   'salario', 'remuneracao_bruta', 'grau_id', 'data_enquadramento', 'status', 'data_demissao',
   // benefícios/descontos/totais/provisões também são remuneração → só nível alto edita
   'complemento_salario', 'alimentacao', 'transporte', 'saude', 'seguro_vida', 'educacao',
@@ -756,6 +800,56 @@ const CAMPOS_RH_SENSIVEIS = [
   'fgts', 'ir', 'inss', 'remuneracao_liquida', 'custo_total_mensal',
   'bonus_anual_50', 'bonus_anual_integral', 'ferias_integral',
 ];
+
+// varredura 2026-09: RHP-03 — as rotas de funcionário usam `select('*')` e mandavam
+// cpf/salário/benefícios no JSON pra qualquer nível; quem escondia era só o FRONT
+// ("•••" quando `podeRemun` = nível ≥ 4, RH.jsx). Nível 3 (escopo de área) lia a
+// folha inteira da própria área no payload. Aqui a leitura passa a usar a MESMA
+// régua da escrita (nível ≥ 4 NO MÓDULO rh), então nada muda na tela.
+// ⚠️ `observacoes` NÃO entra: a caixa de Notas do colaborador é editada por nível 2
+// e faz autosave — ocultar o valor apagaria a nota no primeiro caractere digitado.
+// ⚠️ `status`/`data_demissao` também não: são só write-protected, a tela lista por eles.
+// varredura 2026-09: RHP-03 — chaves sensiveis DENTRO do jsonb `admissao_dados`.
+// `contrato_editado` e o pior: e o HTML do contrato, com CPF e salario por
+// extenso escritos no corpo do texto.
+const CAMPOS_ADMISSAO_CONFIDENCIAIS = [
+  'contrato_editado', 'cpf', 'salario', 'rg', 'data_nascimento', 'endereco',
+  'pj_cnpj', 'pj_banco', 'pj_agencia', 'pj_conta', 'pj_pix', 'pj_razao_social',
+  'pj_inscricao_municipal', 'pj_endereco_empresa',
+];
+
+const CAMPOS_RH_CONFIDENCIAIS = [
+  'cpf',
+  'salario', 'remuneracao_bruta', 'grau_id', 'data_enquadramento',
+  'complemento_salario', 'alimentacao', 'transporte', 'saude', 'seguro_vida', 'educacao',
+  'saldo_livre', 'plano_saude', 'gratificacao', 'adicional_nivel', 'participacao_comite', 'veiculo',
+  'adicional_pastores', 'adicional_lideranca', 'adicional_pulpito',
+  'fgts', 'ir', 'inss', 'remuneracao_liquida', 'custo_total_mensal',
+  'bonus_anual_50', 'bonus_anual_integral', 'ferias_integral',
+];
+function ocultarConfidenciaisRh(req, payload) {
+  // varredura 2026-09: RHP-03 — régua de LEITURA do módulo (`modulePerms.rh`),
+  // nunca `getEffectiveLevel`: ver o comentário de `nivelModuloRh`.
+  if (!payload || podeVerConfidenciaisRh(req)) return payload;
+  const limpar = (row) => {
+    if (!row || typeof row !== 'object') return row;
+    const copia = { ...row };
+    for (const f of CAMPOS_RH_CONFIDENCIAIS) delete copia[f];
+    // varredura 2026-09: RHP-03 — apagar so as chaves de TOPO deixava passar o
+    // jsonb `admissao_dados`, que carrega o HTML do contrato com CPF e salario
+    // POR EXTENSO interpolados (admissao.jsx:57,67), alem de RG, endereco e
+    // dados bancarios PJ. Redige as chaves sensiveis DENTRO do jsonb tambem.
+    // ⚠️ Nao apaga o jsonb inteiro: `formParaFuncionario` o RECONSTROI a partir
+    // do form, e sumir com ele faria a tela regravar vazio por cima.
+    if (copia.admissao_dados && typeof copia.admissao_dados === 'object' && !Array.isArray(copia.admissao_dados)) {
+      const adm = { ...copia.admissao_dados };
+      for (const f of CAMPOS_ADMISSAO_CONFIDENCIAIS) delete adm[f];
+      copia.admissao_dados = adm;
+    }
+    return copia;
+  };
+  return Array.isArray(payload) ? payload.map(limpar) : limpar(payload);
+}
 
 // Tipos das colunas editaveis · coercao segura no UPDATE. O front manda ''
 // (string vazia) num campo nao preenchido; sem converter pra null o Postgres
@@ -821,6 +915,20 @@ router.put('/funcionarios/:id', async (req, res) => {
     // Bloqueia edicao de remuneracao/status por quem nao tem nivel suficiente.
     if (!podeEditarRemuneracao(req)) {
       for (const f of CAMPOS_RH_SENSIVEIS) delete updatePayload[f];
+      // varredura 2026-09: RHP-03 — a leitura redige `admissao_dados`, e o form
+      // REGRAVA o jsonb inteiro: sem preservar, salvar a ficha apagaria o
+      // contrato e os dados bancarios de quem nao pode ve-los. Le o valor atual
+      // e devolve as chaves redigidas por cima do que veio do navegador.
+      if (updatePayload.admissao_dados && typeof updatePayload.admissao_dados === 'object') {
+        const { data: atual } = await supabase
+          .from('rh_funcionarios').select('admissao_dados').eq('id', req.params.id).maybeSingle();
+        const antes = (atual && atual.admissao_dados) || {};
+        const merge = { ...updatePayload.admissao_dados };
+        for (const f of CAMPOS_ADMISSAO_CONFIDENCIAIS) {
+          if (antes[f] !== undefined) merge[f] = antes[f]; else delete merge[f];
+        }
+        updatePayload.admissao_dados = merge;
+      }
     }
     const { data, error } = await supabase
       .from('rh_funcionarios')
@@ -831,7 +939,7 @@ router.put('/funcionarios/:id', async (req, res) => {
 
     if (error) return res.status(400).json({ error: error.message });
     enqueueSync('funcionario', req.params.id, 'upsert').catch(() => {});
-    res.json(data);
+    res.json(ocultarConfidenciaisRh(req, data)); // varredura 2026-09: RHP-03 — o `.select()` do update devolvia a linha inteira (cpf/salário) pra quem não pode ver
   } catch (e) {
     console.error('[RH] Atualizar funcionário:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar funcionário' });
@@ -1159,6 +1267,33 @@ router.post('/onboarding/disparar', authorizeModule('rh', 5), async (req, res) =
   }
 });
 
+const BUCKET_FOTOS_PESSOAS = 'avatars';
+
+// POST /api/rh/foto — upload de foto ANTES de o colaborador existir.
+// ⚠️ Existe porque o modal de admissão sobe a foto e só depois salva o cadastro:
+// sem esta rota, o front não tem `:id` para chamar e volta a subir direto do
+// browser com a anon key — que é exatamente o que as policies abertas do
+// `rh-fotos` permitiam e este PR está fechando.
+router.post('/foto', authorizeModule('rh', 3), uploadMw.single('foto'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Arquivo "foto" obrigatorio' });
+    if (!req.file.mimetype?.startsWith('image/')) {
+      return res.status(400).json({ error: 'Arquivo precisa ser uma imagem' });
+    }
+    const ext = (req.file.originalname?.split('.').pop() || 'jpg').toLowerCase().slice(0, 5);
+    const path = `colaboradores/${crypto.randomUUID()}.${ext}`;
+    const { error: upErr } = await supabase.storage
+      .from(BUCKET_FOTOS_PESSOAS)
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (upErr) return res.status(500).json({ error: 'Falha ao salvar imagem: ' + upErr.message });
+    const { data: urlData } = supabase.storage.from(BUCKET_FOTOS_PESSOAS).getPublicUrl(path);
+    res.json({ foto_url: urlData.publicUrl });
+  } catch (e) {
+    console.error('[RH] Upload foto (sem id):', e.message);
+    res.status(500).json({ error: 'Erro ao enviar foto' });
+  }
+});
+
 // POST /api/rh/funcionarios/:id/foto — upload foto de perfil (multipart 'foto')
 router.post('/funcionarios/:id/foto', uploadMw.single('foto'), async (req, res) => {
   try {
@@ -1170,12 +1305,18 @@ router.post('/funcionarios/:id/foto', uploadMw.single('foto'), async (req, res) 
     const ext = (req.file.originalname?.split('.').pop() || 'jpg').toLowerCase().slice(0, 5);
     const path = `funcionarios/${req.params.id}/avatar-${Date.now()}.${ext}`;
 
+    // ⚠️⚠️ A FOTO vai para `avatars` (público), não para `documentos-rh`.
+    // Decisão declarada: foto de perfil de PESSOA já é pública por convenção da
+    // casa (`fotos-membros` tem 652, `avatars` 38, e `rh_funcionarios.foto_url`
+    // já cai no `mem_membros.foto_url` quando está vazia). O que precisa de
+    // cofre é DOCUMENTO (RG, contrato, comprovante bancário), não retrato.
+    // Isso é o que permite FECHAR o `rh-fotos` sem quebrar avatar nenhum.
     const { error: upErr } = await supabase.storage
-      .from('rh-fotos')
+      .from(BUCKET_FOTOS_PESSOAS)
       .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
     if (upErr) return res.status(500).json({ error: 'Falha ao salvar imagem: ' + upErr.message });
 
-    const { data: urlData } = supabase.storage.from('rh-fotos').getPublicUrl(path);
+    const { data: urlData } = supabase.storage.from(BUCKET_FOTOS_PESSOAS).getPublicUrl(path);
     const foto_url = urlData.publicUrl;
 
     const { error: updErr } = await supabase
@@ -1192,6 +1333,17 @@ router.post('/funcionarios/:id/foto', uploadMw.single('foto'), async (req, res) 
 });
 
 // ── DOCUMENTOS ─────────────────────────────────────────────
+// varredura 2026-09: RHP-01 — documento pessoal (RG/CPF/CTPS/contrato) ia pro
+// bucket PÚBLICO `rh-fotos` e a URL pública ficava gravada em
+// `rh_documentos.storage_path`: qualquer pessoa com o link baixava sem login
+// (medido: HTTP 200, application/pdf, 288.582 bytes, sem chave nem JWT). Passa
+// a gravar o CAMINHO relativo no bucket PRIVADO `documentos-rh` e a assinar na
+// LEITURA — mesmo padrão de `services/anexosLogArquivos`. `caminhoNoBucket` é
+// idempotente e fail-closed, então o histórico misto (URL antiga do `rh-fotos`,
+// link do SharePoint) passa INTACTO e nada quebra.
+// ⚠️ A régua de assinatura foi EXTRAÍDA para services/anexosRhDocumentos: o app
+// do Staff escreve e lê os MESMOS documentos por caminho próprio, e duas cópias
+// divergiriam (o documento abriria aqui e daria link morto lá).
 // POST /api/rh/funcionarios/:id/documentos — aceita JSON ou multipart com arquivo
 router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (req, res) => {
   try {
@@ -1206,13 +1358,15 @@ router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (r
       extArquivo = (req.file.originalname || nome).split('.').pop();
       const supaPath = `documentos/${req.params.id}/${Date.now()}_${sanitizePath(nome)}.${extArquivo}`;
       const { error: upErr } = await supabase.storage
-        .from('rh-fotos')
+        .from(BUCKET_DOCS_RH) // varredura 2026-09: RHP-01 documento pessoal ia pro bucket PÚBLICO `rh-fotos` — vai pro bucket privado `documentos-rh`
         .upload(supaPath, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
-      if (upErr) console.error('[RH] Supabase upload error:', upErr.message);
-      else {
-        const { data: urlData } = supabase.storage.from('rh-fotos').getPublicUrl(supaPath);
-        finalStoragePath = urlData.publicUrl;
+      // varredura 2026-09: RHP-01 · o upload falhava em SILÊNCIO (só console.error) e o registro
+      // nascia apontando pro caminho antigo. Documento pessoal não pode falhar mudo.
+      if (upErr) {
+        console.error('[RH] Supabase upload error:', upErr.message);
+        return res.status(502).json({ error: 'Não foi possível guardar o documento. Tente novamente; se persistir, avise a TI.' });
       }
+      finalStoragePath = supaPath; // varredura 2026-09: RHP-01 gravava a URL PÚBLICA (baixável sem login) — grava o caminho relativo e assina na leitura
     }
 
     // Insere PRIMEIRO pra ter o id do documento. A sincronização do SharePoint
@@ -1253,7 +1407,8 @@ router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (r
       })();
     }
 
-    res.json(data);
+    const [docAssinado] = await assinarDocumentosRh([data]); // varredura 2026-09: RHP-01 a resposta do upload devolvia URL pública — devolve URL assinada
+    res.json(docAssinado || data);
   } catch (e) {
     console.error('[RH] Criar documento:', e.message);
     res.status(500).json({ error: 'Erro ao criar documento' });
@@ -1261,7 +1416,11 @@ router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (r
 });
 
 // DELETE /api/rh/documentos/:id
-router.delete('/documentos/:id', async (req, res) => {
+// varredura 2026-09: RHP-03 — apagava documento (contrato, RG, CPF digitalizado) de
+// QUALQUER colaborador em nível 2, sem nenhuma checagem própria. Nível 3 é a mesma
+// régua já escrita neste arquivo pros outros deletes de registro auxiliar
+// (DELETE /treinamentos/:id e DELETE /ferias/:id). Trava POR ROTA (nunca router.use).
+router.delete('/documentos/:id', authorizeModule('rh', 3), async (req, res) => {
   try {
     const { error } = await supabase.rpc('app_soft_delete', {
       p_table_name: 'rh_documentos',
@@ -1549,10 +1708,54 @@ router.post('/solicitacoes/:solicitacaoId/ferias', async (req, res) => {
   }
 });
 
+// varredura 2026-09: RHP-11 — espelho em JS de `user_is_lider_de(funcionario_id)`
+// (migration 20260521200000): casa o e-mail do logado com `rh_funcionarios` (ativo e
+// não apagado, igual `current_user_funcionario_id()`) e compara com o `gestor_id` do
+// dono da linha de férias.
+async function ehGestorDaFerias(req, feriasId) {
+  const email = (req.user?.email || '').trim();
+  if (!email || !feriasId) return false;
+  const { data: linha } = await supabase.from('rh_ferias_licencas')
+    .select('funcionario_id').eq('id', feriasId).maybeSingle();
+  if (!linha?.funcionario_id) return false;
+  const { data: alvo } = await supabase.from('rh_funcionarios')
+    .select('gestor_id').eq('id', linha.funcionario_id).maybeSingle();
+  if (!alvo?.gestor_id) return false;
+  const { data: eu } = await supabase.from('rh_funcionarios')
+    // varredura 2026-09: RHP-11 — e-mail CRU no `ilike` deixa de espelhar a RLS: a
+    // funcao SQL que esta linha copia (`user_is_lider_de`, migration
+    // 20260521200000_onda2_rls_financeiro_rh.sql:38-40) compara
+    // `LOWER(f.email) = LOWER(au.email)` — igualdade EXATA. Sem escapar, `_` e `%`
+    // viram curinga e um e-mail com underscore casa com quem nao devia.
+    .select('id').ilike('email', escapePostgrestValue(email)).eq('status', 'ativo').is('deleted_at', null).limit(1).maybeSingle();
+  return !!eu?.id && String(eu.id) === String(alvo.gestor_id);
+}
+
+// varredura 2026-09: RHP-11 — decidir férias/licença rodava em nível 2 (herdado do
+// `router.use`) e as 53 aprovações estão sem `aprovado_por`. A régua do banco pra
+// UPDATE (`rh_ferias_licencas_update`) é `user_is_lider_de(funcionario_id) OR nível
+// rh >= 3`, mas ela nunca vale nesta rota: o backend fala com o Supabase por
+// service_role e passa por cima da RLS. Aqui as duas réguas SOMAM (a LEI do
+// `podeVerFilaCadastros`): o gestor direto do funcionário OU a matriz em nível 3 —
+// gatear só pela matriz daria 403 no gestor legítimo, que é justamente quem o banco
+// autoriza a aprovar. Trava POR ROTA, nunca `router.use`.
+function podeDecidirFerias() {
+  const guardMatriz = authorizeModule('rh', 3);
+  return async function (req, res, next) {
+    if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
+    try {
+      if (await ehGestorDaFerias(req, req.params.id)) return next();
+    } catch (e) {
+      console.error('[RH] checagem de gestor falhou, caindo na matriz:', e.message);
+    }
+    return guardMatriz(req, res, next);
+  };
+}
+
 // PATCH /api/rh/ferias/:id — aprovar/rejeitar e/ou editar o período
 // (data_inicio/data_fim/tipo/observacoes/substituto_id · edição sem status
 // não mexe no fluxo de aprovação nem dispara cobertura/notificação)
-router.patch('/ferias/:id', async (req, res) => {
+router.patch('/ferias/:id', podeDecidirFerias(), async (req, res) => {
   try {
     const { status, data_inicio, data_fim, tipo, observacoes, substituto_id } = req.body || {};
     const temStatus = status !== undefined;
@@ -1561,7 +1764,13 @@ router.patch('/ferias/:id', async (req, res) => {
     }
 
     const patch = {};
-    if (temStatus) { patch.status = status; patch.aprovado_por = req.user.userId; }
+    // varredura 2026-09: RHP-11 — 'aprovado' nunca pode sair daqui sem responsável (as 53 linhas históricas estão com aprovado_por NULL e não provam quem autorizou); o decisor vem do TOKEN, nunca do body.
+    if (temStatus) {
+      const decisor = req.user?.userId || req.user?.id || null;
+      if (!decisor) return res.status(401).json({ error: 'Não autenticado' });
+      patch.status = status;
+      patch.aprovado_por = decisor;
+    }
     if (data_inicio !== undefined) patch.data_inicio = data_inicio;
     if (data_fim !== undefined) patch.data_fim = data_fim;
     if (tipo !== undefined) patch.tipo = tipo;
@@ -1836,7 +2045,9 @@ router.patch('/extras/:id', async (req, res) => {
 });
 
 // DELETE /api/rh/extras/:id
-router.delete('/extras/:id', async (req, res) => {
+// varredura 2026-09: RHP-03 — delete HARD de escala extra paga (plantão) rodava em
+// nível 2 sem checagem; mesmo degrau 3 dos outros deletes do módulo.
+router.delete('/extras/:id', authorizeModule('rh', 3), async (req, res) => {
   try {
     const { error } = await supabase.from('rh_escalas_extras').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
@@ -1863,7 +2074,10 @@ router.get('/config', async (req, res) => {
 });
 
 // PUT /api/rh/config/:chave  body { valor }
-router.put('/config/:chave', async (req, res) => {
+// varredura 2026-09: RHP-03 — config do MÓDULO inteiro (ex.: valor_extra_padrao, que
+// vira o valor default de todo plantão pago) gravava em nível 2. Nível 3 espelha a
+// régua do banco (`rh_config_update`). Trava POR ROTA.
+router.put('/config/:chave', authorizeModule('rh', 3), async (req, res) => {
   try {
     const { valor } = req.body || {};
     const { data, error } = await supabase
@@ -1884,7 +2098,11 @@ router.put('/config/:chave', async (req, res) => {
 
 // ── KPIs ──────────────────────────────────────────────────────
 // GET /api/rh/kpis
-router.get('/kpis', async (req, res) => {
+// varredura 2026-09: RHP-03 — ÚNICA rota de funcionários sem `applyAccessFilter`:
+// devolvia headcount global + a lista nominal das admissões do mês pra qualquer
+// nível 2. Nível 3 é o degrau da RLS viva de `rh_funcionarios`
+// (`current_user_module_level('rh') >= 3` = pode ver quadro alheio).
+router.get('/kpis', authorizeModule('rh', 3), async (req, res) => {
   try {
     const [{ count: total }, { count: ativos }, { count: ferias }, admissoes] = await Promise.all([
       supabase.from('rh_funcionarios').select('*', { count: 'exact', head: true }),
@@ -1976,7 +2194,10 @@ router.patch('/avaliacoes/:id', async (req, res) => {
   }
 });
 
-router.delete('/avaliacoes/:id', async (req, res) => {
+// varredura 2026-09: RHP-03 — delete HARD de avaliação 360° (ciclo PCS) rodava em
+// nível 2. Nível 4 é exatamente a régua que a própria aba PCS usa no front
+// (RH.jsx: `podeRemun = getAccessLevel(['rh']) >= 4` esconde a aba inteira).
+router.delete('/avaliacoes/:id', authorizeModule('rh', 4), async (req, res) => {
   try {
     const { error } = await supabase.from('rh_avaliacoes').delete().eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });

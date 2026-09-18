@@ -14,6 +14,7 @@
 // no dashboard. Conflito de CPF → identidade_pendencias (via matcher).
 
 const { supabase } = require('../utils/supabase');
+const { nomesPodemSerMesmaPessoa } = require('./duplicidadePolicy');
 const { extractNomeContraparte } = require('./ofxParser');
 const { nomeNormalizado, normalizarCpf, registrarObservacaoSegura } = require('./identidadeProgressiva');
 const { resolverMembroPorDocumento } = require('./financeiroClassificador');
@@ -106,9 +107,15 @@ async function indexarOfx(inicio, fim) {
 
 // Escolhe o candidato OFX pra uma linha do balanço (recebe candidatos JÁ
 // deduplicados). Retorna { cand, via } ou null.
-function escolherCandidato(balNomeNorm, cands) {
+function escolherCandidato(balNomeNorm, cands, disputantes = 1) {
   if (!cands || !cands.length) return null;
-  if (cands.length === 1) return { cand: cands[0], via: 'valor_data' };
+  // ⚠️⚠️ O atalho "candidato único → é ele" só vale quando a linha do balanço
+  // TAMBÉM é única naquele (valor, data). Se duas doações de R$ 100 do mesmo
+  // domingo disputam UM único PIX de R$ 100, é matematicamente impossível que
+  // as duas sejam aquele PIX — e o código antigo atribuía o mesmo doador às
+  // duas. Medido em 02/09/2026 no período do extrato: **242 linhas** nessa
+  // situação. Com disputa, o valor+data deixa de bastar e o nome tem de mandar.
+  if (cands.length === 1 && disputantes <= 1) return { cand: cands[0], via: 'valor_data' };
   if (balNomeNorm) {
     // 1) o CPF do candidato é um membro cujo nome bate com o do balanço (alta
     //    confiança · funciona no Santander, que não tem nome no OFX).
@@ -117,15 +124,50 @@ function escolherCandidato(balNomeNorm, cands) {
     // 2) nome limpo extraído do próprio OFX bate (Itaú traz nome no memo).
     const porNome = cands.filter((c) => c.nome_norm && c.nome_norm === balNomeNorm);
     if (porNome.length === 1) return { cand: porNome[0], via: 'valor_data_nome' };
+
+    // 3) nome PARECIDO — "versão abreviada" do mesmo nome. O balanço guarda o
+    //    nome civil completo e o banco costuma trazer a forma curta (ou o
+    //    contrário), então a igualdade exata deixa passar muita gente.
+    //    ⚠️ A régua é `duplicidadePolicy.nomesPodemSerMesmaPessoa` (mesmo
+    //    PRIMEIRO nome + ≥75% dos tokens do menor) — a mesma que resolveu o
+    //    telefone do voluntário em 13/08. NÃO afrouxar para similaridade solta:
+    //    aqui um acerto errado atribui DINHEIRO à pessoa errada.
+    const parecidos = candidatosParecidos(balNomeNorm, cands);
+    if (parecidos.length === 1) return { cand: parecidos[0], via: 'valor_data_nome_parecido' };
   }
   return null; // ambíguo → revisão
+}
+
+/**
+ * Candidatos cujo nome pode ser a mesma pessoa do balanço.
+ *
+ * ⚠️⚠️ É ISTO que decide se vale PERGUNTAR. Medido em 02/09/2026 no período que
+ * tinha extrato: dos 627 casos que iam para revisão, **428 (68%) não tinham
+ * NENHUM candidato parecido com o nome do balanço** — a tela mostrava, por
+ * exemplo, "Ana Magalhaes da Veiga Ribeiro · R$ 1.000" e oferecia Carlos, Sonia
+ * e Juliana. Não há como um humano responder isso, e qualquer clique atribui a
+ * doação de uma pessoa a outra. Perguntar ali é pior que não perguntar.
+ */
+function candidatosParecidos(balNomeNorm, cands) {
+  if (!balNomeNorm) return [];
+  return (cands || []).filter((c) => {
+    const alvo = c.membro_nome || c.nome_limpo || '';
+    return alvo && nomesPodemSerMesmaPessoa(balNomeNorm, alvo);
+  });
 }
 
 /**
  * Roda a conciliação num período. dryRun=true não grava nada (só relatório).
  * @returns { stats, revisao? }
  */
-async function conciliar({ inicio, fim, dryRun = false, userId = null } = {}) {
+// ⚠️⚠️ `criarAvulso` nasce FALSE — e isto é decisão, não descuido. Esta função
+// roda AUTOMATICAMENTE no fim de todo upload de OFX (`financeiroV2.js`), sobre o
+// período inteiro do arquivo. Enquanto o parser estava quebrado ela quase nunca
+// achava CPF; consertado o parser (02/09/2026), um extrato de 90 dias entrega
+// 1.948 CPFs distintos COM nome — e com o default antigo o upload cadastraria
+// centenas de pessoas de uma vez, sem ninguém decidir. Ligar quem já existe é
+// ganho puro; cadastrar é decisão humana depois de ver o número.
+async function conciliar({ inicio, fim, dryRun = false, userId = null, criarAvulso = false } = {}) {
   if (!inicio || !fim) throw new Error('inicio e fim são obrigatórios');
 
   const porVD = await indexarOfx(inicio, fim);
@@ -153,24 +195,47 @@ async function conciliar({ inicio, fim, dryRun = false, userId = null } = {}) {
       .or('forma_pagamento.ilike.%pix%,forma_pagamento.is.null'),
   );
 
-  const stats = { balanco_analisado: balanco.length, ofx_creditos: [...porVD.values()].reduce((s, a) => s + a.length, 0), auto: 0, revisao: 0, sem_match: 0, avulsos_criados: 0 };
+  // Quantas linhas do BALANÇO disputam cada (valor, data) — ver o porquê em
+  // `escolherCandidato`.
+  const disputaPorVD = new Map();
+  for (const b of balanco) {
+    const k = chaveVD(b.valor, b.data_competencia);
+    disputaPorVD.set(k, (disputaPorVD.get(k) || 0) + 1);
+  }
+
+  const stats = { balanco_analisado: balanco.length, ofx_creditos: [...porVD.values()].reduce((s, a) => s + a.length, 0), auto: 0, revisao: 0, sem_match: 0, avulsos_criados: 0, casou_cpf_sem_cadastro: 0 };
   const paraVincular = []; // { transacao_id, cand }
   const revisao = [];
 
   for (const b of balanco) {
     const nomeNorm = nomeNormalizado(b.descricao || b.referencia || '');
-    const cands = dedupCandidatos(porVD.get(chaveVD(b.valor, b.data_competencia)) || []);
-    const escolha = escolherCandidato(nomeNorm, cands);
+    const chave = chaveVD(b.valor, b.data_competencia);
+    const cands = dedupCandidatos(porVD.get(chave) || []);
+    const escolha = escolherCandidato(nomeNorm, cands, disputaPorVD.get(chave) || 1);
     if (escolha) {
       paraVincular.push({ transacao_id: b.id, cand: escolha.cand, via: escolha.via });
-    } else if (cands.length > 1) {
+    } else if (cands.length >= 1) {
+      // ⚠️⚠️ SÓ vai pra revisão o que um humano consegue decidir: existe ao menos
+      // um candidato cujo NOME pode ser a mesma pessoa do balanço. Sem isso, a
+      // tela pede uma escolha impossível e induz a atribuir dinheiro à pessoa
+      // errada (ver `candidatosParecidos`). O resto conta como `sem_match` — e é
+      // DECLARADO com motivo próprio, nunca sumindo em silêncio.
+      const parecidos = candidatosParecidos(nomeNorm, cands);
+      if (!parecidos.length) {
+        stats.sem_match++;
+        stats.sem_match_nome_nao_bate = (stats.sem_match_nome_nao_bate || 0) + 1;
+        continue;
+      }
       stats.revisao++;
       if (revisao.length < 500) revisao.push({
         transacao_id: b.id, nome: b.descricao || b.referencia, valor: Number(b.valor), data: String(b.data_competencia).slice(0, 10),
-        candidatos: cands.map((c) => ({
+        // ⚠️ Os PARECIDOS primeiro e marcados: a tela precisa dizer POR QUE
+        // aquele nome está ali, senão o operador escolhe o primeiro da lista.
+        candidatos: [...parecidos, ...cands.filter((c) => !parecidos.includes(c))].map((c) => ({
           bruto_id: c.bruto_id, cpf: c.cpf,
           nome: c.membro_nome || c.nome_limpo || null, // nome do membro (base) > nome do OFX
           ja_membro: !!c.membro_nome, hora: c.hora,
+          nome_parecido: parecidos.includes(c),
         })),
       });
     } else {
@@ -181,13 +246,13 @@ async function conciliar({ inicio, fim, dryRun = false, userId = null } = {}) {
 
   if (dryRun) return { stats, revisao };
 
-  // Resolve membro por CPF ÚNICO (dedup) — cria contribuinte_avulso p/ novo.
+  // Resolve membro por CPF ÚNICO (dedup). Cadastra só se `criarAvulso` — ver o topo.
   const cpfsUnicos = [...new Set(paraVincular.map((p) => p.cand.documento))];
   const membroPorDoc = new Map();
   await mapLimit(cpfsUnicos, 8, async (doc) => {
     const cand = paraVincular.find((p) => p.cand.documento === doc)?.cand;
     try {
-      const r = await resolverMembroPorDocumento(doc, cand?.nome_limpo || null, { criarSemNome: false });
+      const r = await resolverMembroPorDocumento(doc, cand?.nome_limpo || null, { criarSemNome: false, criar: criarAvulso });
       if (r?.membro_id) {
         membroPorDoc.set(doc, r.membro_id);
         if (r.criado_novo) stats.avulsos_criados++;
@@ -199,14 +264,33 @@ async function conciliar({ inicio, fim, dryRun = false, userId = null } = {}) {
   });
 
   // Grava o vínculo na LINHA DO BALANÇO (membro_id + hora + proveniência).
+  //
+  // ⚠️⚠️ CASOU ≠ TEM DONO. O casamento é balanço × extrato (valor+data+nome); o
+  // DONO só existe se aquele CPF já estiver em `mem_membros`. Medido em
+  // 02/09/2026: das 6.351 doações casadas, ~961 batem com um CPF que NÃO tem
+  // cadastro (dos 1.948 CPFs do extrato, só 786 = 40% têm ficha).
+  //
+  // Antes essas linhas eram simplesmente ABANDONADAS (`if (!membro_id) return`):
+  // não gravavam nada, então a rodada seguinte as reprocessava e elas voltavam a
+  // contar como "auto" para sempre — número que promete dono e não entrega.
+  // Agora a linha é MARCADA com o CPF e o status `sem_cadastro`: sai da fila,
+  // guarda a evidência, e no dia em que a pessoa se cadastrar dá pra religar.
   let vinculados = 0;
   await mapLimit(paraVincular, 8, async (p) => {
     const membro_id = membroPorDoc.get(p.cand.documento);
-    if (!membro_id) return;
+    const marca = { bruto_id: p.cand.bruto_id, cpf: p.cand.cpf, via: p.via, em: new Date().toISOString() };
+    if (!membro_id) {
+      const { error } = await supabase.from('fin_transacoes').update({
+        hora_real: p.cand.hora || undefined,
+        conciliacao_ofx: { ...marca, status: 'sem_cadastro' },
+      }).eq('id', p.transacao_id).is('membro_id', null).is('conciliacao_ofx', null);
+      if (!error) stats.casou_cpf_sem_cadastro++;
+      return;
+    }
     const { error } = await supabase.from('fin_transacoes').update({
       membro_id,
       hora_real: p.cand.hora || undefined,
-      conciliacao_ofx: { status: 'auto', bruto_id: p.cand.bruto_id, cpf: p.cand.cpf, via: p.via, em: new Date().toISOString() },
+      conciliacao_ofx: { ...marca, status: 'auto' },
     }).eq('id', p.transacao_id).is('membro_id', null);
     if (!error) vinculados++;
   });
@@ -251,6 +335,85 @@ async function confirmarVinculo({ transacaoId, brutoId, userId = null }) {
   return { ok: true, membro_id: r.membro_id, avulso: !!r.criado_novo };
 }
 
+/**
+ * O que JÁ FOI identificado no período — a lista que responde "quem foi?".
+ *
+ * ⚠️⚠️ Sem isto a tela só tinha CONTADORES e uma fila de revisão vazia, e a
+ * pergunta do Matheus (02/09/2026) foi literalmente "como vou saber quem foi?".
+ * Número sem a lista atrás não dá para conferir nem para corrigir.
+ *
+ * ⚠️ Cada linha traz o nome do BALANÇO e o nome do MEMBRO lado a lado, mais
+ * `nome_diverge` quando o primeiro nome não bate. Não é necessariamente erro —
+ * pagamento por terceiro (cônjuge, filho, sócio) é comum e legítimo — mas é
+ * exatamente o que precisa de olho humano, então vem PRIMEIRO na lista.
+ */
+async function listarIdentificados({ inicio, fim, limite = 500 } = {}) {
+  if (!inicio || !fim) throw new Error('inicio e fim são obrigatórios');
+
+  const linhas = await fetchAll(
+    'fin_transacoes',
+    'id, valor, data_competencia, descricao, referencia, membro_id, conciliacao_ofx',
+    (q) => q.not('membro_id', 'is', null).not('conciliacao_ofx', 'is', null)
+      .gte('data_competencia', inicio).lte('data_competencia', fim),
+  );
+  if (!linhas.length) return { total: 0, divergentes: 0, itens: [] };
+
+  // Nome do membro — em lotes de 200 (`.in()` longo estoura a URL do PostgREST).
+  const ids = [...new Set(linhas.map((l) => l.membro_id))];
+  const nomePorId = new Map();
+  for (let i = 0; i < ids.length; i += 200) {
+    const { data } = await supabase.from('mem_membros')
+      .select('id, nome, status').in('id', ids.slice(i, i + 200));
+    for (const m of data || []) nomePorId.set(m.id, m);
+  }
+
+  const primeiro = (n) => nomeNormalizado(n || '').split(' ')[0] || '';
+  const itens = linhas.map((l) => {
+    const m = nomePorId.get(l.membro_id) || {};
+    const nomeBal = l.descricao || l.referencia || '';
+    const diverge = !!(nomeBal && m.nome && primeiro(nomeBal) !== primeiro(m.nome));
+    return {
+      transacao_id: l.id,
+      valor: Number(l.valor),
+      data: String(l.data_competencia).slice(0, 10),
+      nome_balanco: nomeBal,
+      membro_id: l.membro_id,
+      membro_nome: m.nome || null,
+      membro_status: m.status || null,
+      cpf: l.conciliacao_ofx?.cpf || null,
+      via: l.conciliacao_ofx?.via || null,
+      nome_diverge: diverge,
+    };
+  });
+
+  // Divergentes primeiro, depois por valor — é a ordem de quem vai conferir.
+  itens.sort((a, b) => (Number(b.nome_diverge) - Number(a.nome_diverge)) || (b.valor - a.valor));
+
+  return {
+    total: itens.length,
+    divergentes: itens.filter((i) => i.nome_diverge).length,
+    pessoas: new Set(itens.map((i) => i.membro_id)).size,
+    valor_total: Number(itens.reduce((a, i) => a + i.valor, 0).toFixed(2)),
+    truncado: itens.length > limite,
+    itens: itens.slice(0, limite),
+  };
+}
+
+/**
+ * Desfaz um vínculo já feito — tira o membro e a marca de conciliação.
+ *
+ * ⚠️ A linha volta ao estado ANTERIOR (sem dono, sem decisão), então a próxima
+ * conciliação a reavalia. Sem isto, um vínculo errado seria permanente pela
+ * tela — e a lista de identificados existiria só para dar má notícia.
+ */
+async function desfazerVinculo({ transacaoId }) {
+  const { error } = await supabase.from('fin_transacoes')
+    .update({ membro_id: null, conciliacao_ofx: null })
+    .eq('id', transacaoId).not('conciliacao_ofx', 'is', null);
+  if (error) throw new Error(error.message);
+  return { ok: true };
+}
+
 // Ignora um caso (não reaparece na fila).
 async function ignorarVinculo({ transacaoId, userId = null }) {
   const { error } = await supabase.from('fin_transacoes').update({
@@ -260,4 +423,4 @@ async function ignorarVinculo({ transacaoId, userId = null }) {
   return { ok: true };
 }
 
-module.exports = { conciliar, listarRevisao, confirmarVinculo, ignorarVinculo };
+module.exports = { conciliar, listarRevisao, confirmarVinculo, ignorarVinculo, listarIdentificados, desfazerVinculo };

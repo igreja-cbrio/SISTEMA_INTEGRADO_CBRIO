@@ -51,6 +51,11 @@ vi.mock('../api', () => ({
                 { dia: '2026-08-10', iniciadas: 60, concluidas: 50 }],
       abandono: [{ pergunta_id: 'x', pergunta_texto: 'Pergunta cansativa', respostas: 40, pct_do_total: 40 }],
     })),
+    perfilMapa: vi.fn(async () => ({
+      bairros: [{ bairro: 'Barra da Tijuca', norm: 'barra da tijuca', total: 40, lat: -23, lng: -43 }],
+      total: 100, pessoas_no_mapa: 40, pessoas_sem_bairro: 30,
+      pessoas_sem_coordenada: 30, pessoas_sem_cadastro: 0, pessoas_fora_da_base: 0,
+    })),
     perfil: vi.fn(async () => ({
       titulo: 'Censo CBRio 2026', respondentes: 100,
       graficos: [
@@ -87,6 +92,15 @@ vi.mock('../contexts/AuthContext', () => ({
 }));
 
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+
+// ⚠️ maplibre não roda em jsdom (`window.URL.createObjectURL` não existe), e o
+// que esta suíte testa é a ABA — não o mapa. O componente real é exercitado na
+// Membresia, onde já está em produção. O mock declara que o mapa foi montado e
+// com quantos bairros, que é o contrato que a aba precisa garantir.
+vi.mock('../components/membresia/MapaBairros', () => ({
+  default: ({ bairros }: { bairros: unknown[] }) =>
+    <div data-testid="mapa-bairros">mapa com {bairros.length}</div>,
+}));
 
 import Censo from '../pages/censo/Censo';
 
@@ -173,6 +187,30 @@ describe('página /censo', () => {
     clicarAba(/Leitura da IA/);
     expect(await screen.findByText(/ainda não foram lidas/i)).toBeTruthy();
     expect(screen.getByRole('button', { name: /Gerar leitura/ })).toBeTruthy();
+  });
+
+  // ⚠️⚠️ O TESTE DA ABERTURA DO MÓDULO (14/09/2026). A aba /censo foi liberada
+  // para 43 dos 46 cargos, e 9 deles entram com NÍVEL 1 (só número agregado).
+  // As rotas `/respostas` e `/cuidado` exigem nível 2 — sem filtrar as abas, a
+  // pessoa entra, clica em "Respostas" e leva 403. Abrir a porta e deixar um
+  // cômodo trancado sem aviso é pior que não abrir.
+  it('nível 1 vê só o agregado — as abas nominais não aparecem', async () => {
+    const { censo } = await import('../api');
+    vi.mocked(censo.aux).mockResolvedValueOnce({
+      tipos_pergunta: ['secao', 'texto_curto'], tipos_pesquisa: ['censo'],
+      formatos: ['texto'], cuidado_tipos: ['oracao'],
+      consentimento_default: 'aviso', nivel: 1, pode_ver_sensivel: false,
+    });
+    render(<Censo />);
+    await screen.findByText('Censo CBRio 2026');
+    // Some o que o servidor recusaria...
+    expect(screen.queryByRole('tab', { name: /Respostas/ })).toBeNull();
+    expect(screen.queryByRole('tab', { name: /Cuidado/ })).toBeNull();
+    // ...e fica tudo o que o nível 1 pode abrir de verdade.
+    expect(screen.getByRole('tab', { name: /Pesquisas/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Cobertura/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Perfil/ })).toBeTruthy();
+    expect(screen.getByRole('tab', { name: /Leitura da IA/ })).toBeTruthy();
   });
 
   it('quem não está na equipe de cuidado vê a explicação, não os nomes', async () => {

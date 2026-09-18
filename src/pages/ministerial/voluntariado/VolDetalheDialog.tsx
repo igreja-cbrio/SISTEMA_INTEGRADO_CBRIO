@@ -12,6 +12,8 @@ import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
 import { voluntariado } from '@/api';
 import { hrefConversa } from '@/lib/conversas';
+// varredura 2026-09: B08 — espelha a régua de escrita do servidor.
+import { useVolPodeEscrever } from './hooks/useVolPodeEscrever';
 
 const TERMOMETRO: Record<string, { color: string; hint: string }> = {
   muito_ativo: { color: '#0f9d6b', hint: 'serve com frequência' },
@@ -39,6 +41,8 @@ const STATUS: Record<string, { label: string; cls: string }> = {
 };
 
 export default function VolDetalheDialog({ id, onClose }: { id: string | null; onClose: () => void }) {
+  // varredura 2026-09: B08 — PUT /profiles/:id/cadastro pede voluntariado>=3.
+  const podeEscrever = useVolPodeEscrever();
   const [editar, setEditar] = useState(false);
   const { data, isLoading } = useQuery({
     queryKey: ['vol', 'detalhe', id],
@@ -68,7 +72,7 @@ export default function VolDetalheDialog({ id, onClose }: { id: string | null; o
               size="sm" variant="outline"
               className="ml-auto mr-6 h-8 gap-1.5 shrink-0"
               onClick={() => setEditar(true)}
-              disabled={isLoading || !p.id}
+              disabled={isLoading || !p.id || !podeEscrever}
             >
               <Pencil className="w-3.5 h-3.5" /> Editar cadastro
             </Button>

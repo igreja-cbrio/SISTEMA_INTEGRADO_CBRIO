@@ -5,7 +5,7 @@
 // imprime 2 etiquetas (criança + responsável). Equivalente ao PC Check-Ins.
 // ============================================================================
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Search, Baby, Users, Printer, AlertTriangle, Plus, ArrowLeft, Loader2, CheckCircle2, Phone, Settings, LogOut, Sparkles, UserPlus, ShieldCheck, Maximize, Lock, Check, Camera, Pencil, X, BellRing } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -22,6 +22,9 @@ import EditarEtiquetaModal from './EditarEtiquetaModal';
 import QrScanner from '@/pages/ministerial/voluntariado/components/checkin/QrScanner';
 import { calcIdadeMeses, formatIdade, formatIdadeShort } from './lib/idade';
 import { imprimirEtiquetas, imprimirEtiquetasLote, reimprimirEtiqueta, reimprimirEtiquetasCompletas } from './lib/imprimir';
+import * as off from './lib/offlineKids';
+import { motivoFalhaBloco } from './lib/motivoBloco';
+import { ehFalhaDeRedeOuServidor } from '@/lib/falhaDeRede';
 import DataNascimentoPicker from './DataNascimentoPicker';
 import useConfirmarSaida from '@/hooks/useConfirmarSaida';
 import confetti from 'canvas-confetti';
@@ -154,8 +157,18 @@ function formatCpf(v: string): string {
   return d.replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d)/, '$1.$2').replace(/(\d{3})(\d{1,2})$/, '$1-$2');
 }
 
-// PIN do supervisor pra liberar o check-in SEM CPF (válvula · Marcos 2026-07-15).
-const DISPENSA_PIN = '0000';
+// ⚠️⚠️ SENHA ÚNICA DO TOTEM (Marcos 2026-09-11). Antes eram TRÊS coisas
+// diferentes pra decorar e o volunteer rotaciona toda semana:
+//   1. um PIN inventado no aparelho (localStorage) pra sair do modo totem;
+//   2. este PIN fixo, pra dispensar CPF e pra reimprimir;
+//   3. a senha do Kids da liderança (bcrypt no servidor), pra editar ficha.
+// Agora tudo que se faz DENTRO do totem aceita esta senha só. A senha da
+// liderança (Mari/Milena) continua valendo em todo lugar e segue sendo a ÚNICA
+// aceita FORA do totem (Gestão de Crianças) e pra trocar a própria senha.
+const SENHA_TOTEM = '0000';
+// Nome antigo mantido: era o PIN da dispensa de CPF (Marcos 2026-07-15).
+const DISPENSA_PIN = SENHA_TOTEM;
+
 // WhatsApp de retirada (código+QR pro responsável) OCULTO por enquanto — o envio
 // ainda não funciona e confundia no totem (Marcos 2026-07-15). Flip pra true quando
 // o disparo estiver no ar; o toggle e o envio voltam juntos.
@@ -179,7 +192,7 @@ function ModalCpfResponsavel({ respNome, onConfirmar, onDispensar, onCancelar }:
   const { tentarFechar } = useConfirmarSaida(!!(cpf || pin || motivo), onCancelar);
 
   function confirmarDispensa() {
-    if (pin.trim() !== DISPENSA_PIN) { setErro('PIN incorreto'); return; }
+    if (pin.trim() !== DISPENSA_PIN) { setErro('Senha incorreta'); return; }
     onDispensar(motivo.trim()); // motivo opcional · não trava o check-in (Marcos 2026-07-15)
   }
 
@@ -208,8 +221,8 @@ function ModalCpfResponsavel({ respNome, onConfirmar, onDispensar, onCancelar }:
           </div>
         ) : (
           <div className="space-y-3">
-            <p className="text-sm">Liberar o check-in <b>sem CPF</b> — só um supervisor (PIN). O responsável vai ser cobrado no próximo check-in.</p>
-            <Input type="password" inputMode="numeric" placeholder="PIN do supervisor" value={pin} autoFocus
+            <p className="text-sm">Liberar o check-in <b>sem CPF</b> — com a <b>senha do totem</b>. O responsável vai ser cobrado no próximo check-in.</p>
+            <Input type="password" inputMode="numeric" placeholder="Senha do totem" value={pin} autoFocus
               onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setErro(''); }} className="h-12 text-center tracking-widest" />
             <Input placeholder="Motivo (opcional · ex.: estrangeiro, esqueceu o documento)" value={motivo} onChange={(e) => { setMotivo(e.target.value); setErro(''); }} />
             {!!erro && <p className="text-xs text-red-500">{erro}</p>}
@@ -256,8 +269,8 @@ function DispensaCpfInline({ dispensado, onDispensar, onCancelar }: {
   }
   return (
     <div className="space-y-2 rounded-md border border-amber-400/60 p-2">
-      <p className="text-xs">Liberar o cadastro <b>sem CPF</b> — só um supervisor (PIN). O responsável vai ser cobrado no próximo check-in.</p>
-      <Input type="password" inputMode="numeric" placeholder="PIN do supervisor" value={pin}
+      <p className="text-xs">Liberar o cadastro <b>sem CPF</b> — com a <b>senha do totem</b>. O responsável vai ser cobrado no próximo check-in.</p>
+      <Input type="password" inputMode="numeric" placeholder="Senha do totem" value={pin}
         onChange={(e) => { setPin(e.target.value.replace(/\D/g, '')); setErro(''); }} className="h-10 text-center tracking-widest" />
       <Input placeholder="Motivo (opcional · ex.: estrangeiro, esqueceu o documento)" value={motivo}
         onChange={(e) => { setMotivo(e.target.value); setErro(''); }} />
@@ -265,7 +278,7 @@ function DispensaCpfInline({ dispensado, onDispensar, onCancelar }: {
       <div className="flex gap-2">
         <Button type="button" variant="outline" size="sm" className="flex-1" onClick={fechar}>Voltar</Button>
         <Button type="button" size="sm" className="flex-1 bg-amber-600 hover:bg-amber-700 text-white" onClick={() => {
-          if (pin.trim() !== DISPENSA_PIN) { setErro('PIN incorreto'); return; }
+          if (pin.trim() !== DISPENSA_PIN) { setErro('Senha incorreta'); return; }
           onDispensar(); setAberto(false); // motivo opcional
         }}>Liberar sem CPF</Button>
       </div>
@@ -318,7 +331,7 @@ function ModalSenhaReimpressao({ titulo, onLiberar, onCancelar }: {
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
-          <Input type="password" inputMode="numeric" autoComplete="off" autoFocus placeholder="Senha do Kids"
+          <Input type="password" inputMode="numeric" autoComplete="off" autoFocus placeholder="Senha do totem"
             value={senha} onChange={(e) => { setSenha(e.target.value); setErro(''); }}
             onKeyDown={(e) => { if (e.key === 'Enter') confirmar(); }}
             className="h-12 text-center text-lg tracking-widest" />
@@ -356,6 +369,7 @@ const TOTEM_KIDS_ATIVO_KEY = 'cbrio-totem-kids-ativo';
 
 export default function TotemKidsCheckin() {
   const navigate = useNavigate();
+
   const [sessao, setSessao] = useState<Sessao | null>(null);
   const [salas, setSalas] = useState<Sala[]>([]);
   const [carregando, setCarregando] = useState(true);
@@ -373,6 +387,96 @@ export default function TotemKidsCheckin() {
   const [respManualTel, setRespManualTel] = useState('');
   const [usarRespManual, setUsarRespManual] = useState(false);
   const [imprimindo, setImprimindo] = useState(false);
+  // ── Offline (02/09/2026) ──────────────────────────────────────────────────
+  const [filaOffline, setFilaOffline] = useState(0);
+  const [codigosOffline, setCodigosOffline] = useState(0);
+  const [sincronizando, setSincronizando] = useState(false);
+  // ⚠️⚠️ POR QUE o bloco está vazio (Marcos 2026-09-11). Antes o catch era mudo
+  // e a barra só sabia dizer "0 códigos": "o servidor recusou", "essa conta não
+  // tem permissão" e "a rede caiu" ficavam indistinguíveis, e a única saída era
+  // ler o log da função na Vercel. `null` = sem falha conhecida.
+  const [motivoBloco, setMotivoBloco] = useState<string | null>(null);
+
+  // ⚠️⚠️ O BLOCO É BAIXADO ENQUANTO HÁ REDE — é esse o ponto. Quem sorteia e
+  // garante a unicidade do código de retirada é o SERVIDOR; o totem só
+  // consome. Pedir isto offline não funciona, e não deve funcionar.
+  const recarregarBloco = useCallback(async (sessaoId?: string | null) => {
+    try {
+      // ⚠️⚠️ `checkin.` NÃO é enfeite: a função mora em `totemKids.checkin`
+      // (`src/api.js`). Chamada em `totemKids.reservarCodigos` — como ficou de
+      // 02/09 a 11/09 — é `undefined`, e o `await` de undefined lança
+      // `TypeError: não é função` ANTES de qualquer fetch: o pedido nunca saía,
+      // a tabela `kids_codigos_reservados` ficou VAZIA desde o dia em que foi
+      // criada e a barra dizia "espere a internet voltar". `src/api.js` é JS e
+      // `allowJs` está DESLIGADO no `tsconfig.app.json` ⇒ o módulo entra como
+      // `any` e o typecheck não vê caminho errado. Quem guarda é
+      // `src/test/apiCaminhoReservarCodigos.test.ts`.
+      const r: any = await totemKids.checkin.reservarCodigos({
+        estacao_ref: off.estacaoRef(),
+        sessao_id: sessaoId || null,
+        quantidade: 60,   // domingo tem pico de 125 simultâneos entre TODAS as estações
+      });
+      off.guardarCodigos(r?.codigos || []);
+      setCodigosOffline(off.codigosDisponiveis().length);
+      // ⚠️ Servidor respondeu OK e mandou lista VAZIA é outro estado: não é
+      // falha de rede nem de permissão — é o banco não ter conseguido reservar.
+      setMotivoBloco((r?.codigos || []).length ? null : 'O servidor respondeu, mas não devolveu código nenhum.');
+    } catch (e: unknown) {
+      // ⚠️ Falhar aqui NÃO trava o totem: ele segue online normalmente. O que
+      // não existe é a rede de segurança do offline — e a barra diz isso.
+      setCodigosOffline(off.codigosDisponiveis().length);
+      setMotivoBloco(motivoFalhaBloco(e));
+      // ⚠️ Vai pro console (e daí pra telemetria): o motivo do 503 vive no log
+      // da função, e sem esta linha ninguém liga uma coisa à outra.
+      console.error('[totem-kids] não deu pra reservar o bloco offline:', e);
+    }
+  }, []);
+
+  // ⚠️ Sincroniza quando a rede volta. `navigator.onLine` NÃO basta (ele só vê
+  // a placa de rede, e o incidente de 02/09 foi o BANCO fora com WiFi ok) —
+  // por isso também tenta de tempos em tempos.
+  const sincronizarFila = useCallback(async (silencioso = true) => {
+    if (off.filaCount() === 0 || sincronizando) return;
+    setSincronizando(true);
+    try {
+      const r = await off.sincronizar((payload) => totemKids.checkin.criar(payload as any));
+      setFilaOffline(off.filaCount());
+      if (r.enviados || r.duplicados) {
+        toast.success(`${r.enviados + r.duplicados} check-in(s) offline sincronizado(s).`);
+      }
+      // ⚠️⚠️ Conflito de código NUNCA é silencioso: a etiqueta já está impressa
+      // e precisa chegar em gente ANTES de a criança sair.
+      if (r.conflitoDeCodigo.length) {
+        toast.error(
+          `⚠️ ${r.conflitoDeCodigo.length} etiqueta(s) com código recusado: ${r.conflitoDeCodigo.map(i => `${i.crianca_nome} (${i.codigo})`).join(', ')}. NÃO reimprima — leve à coordenação do Kids.`,
+          { duration: 60000 },
+        );
+      }
+      if (!silencioso && !r.enviados && !r.duplicados && r.pendentes) {
+        toast.warning(`Ainda sem sistema — ${r.pendentes} na fila.`);
+      }
+    } finally { setSincronizando(false); }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sincronizando]);
+
+  useEffect(() => {
+    setFilaOffline(off.filaCount());
+    setCodigosOffline(off.codigosDisponiveis().length);
+  }, []);
+
+  useEffect(() => {
+    if (!sessao?.id) return;
+    recarregarBloco(sessao.id);
+    sincronizarFila();
+    // ⚠️ Recarrega o bloco periodicamente: um domingo de 4 cultos consome
+    // códigos, e bloco vazio na hora da queda é o mesmo que não ter offline.
+    const t = setInterval(() => { recarregarBloco(sessao.id); sincronizarFila(); }, 5 * 60_000);
+    const aoVoltar = () => { recarregarBloco(sessao.id); sincronizarFila(); };
+    window.addEventListener('online', aoVoltar);
+    return () => { clearInterval(t); window.removeEventListener('online', aoVoltar); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessao?.id]);
+
   const [enviarWpp, setEnviarWpp] = useState(WPP_RETIRADA_ATIVO); // código+QR de retirada por WhatsApp (oculto por enquanto)
 
   // Sessões ABERTAS que o SELETOR mostra (design v5 · Marcos 2026-07-22): só os
@@ -439,7 +543,6 @@ export default function TotemKidsCheckin() {
     try { return localStorage.getItem(TOTEM_KIDS_ATIVO_KEY) === '1'; } catch { return false; }
   });
   const [pinModal, setPinModal] = useState(false);
-  const [pinSetup, setPinSetup] = useState(false);
   const [pinInput, setPinInput] = useState('');
   const [pinErro, setPinErro] = useState('');
 
@@ -1050,35 +1153,27 @@ export default function TotemKidsCheckin() {
     setTotemMode(true);
     try { localStorage.setItem(TOTEM_KIDS_ATIVO_KEY, '1'); } catch { /* storage indisponível · segue */ }
   }
+  // ⚠️ Ativar o totem NÃO pede mais nada (Marcos 2026-09-11). Antes o primeiro
+  // a ativar tinha que INVENTAR um PIN — que ninguém anotava e que ficava preso
+  // num aparelho só. Entrar é inofensivo; quem protege é a saída.
   function iniciarModoTotem() {
-    let stored = '';
-    try { stored = localStorage.getItem(PIN_KEY) || ''; } catch { stored = ''; }
-    if (!stored) { setPinSetup(true); setPinInput(''); setPinErro(''); setPinModal(true); }
-    else ativarTotem();
+    ativarTotem();
   }
   function pedirSairTotem() {
-    setPinSetup(false); setPinInput(''); setPinErro(''); setPinModal(true);
+    setPinInput(''); setPinErro(''); setPinModal(true);
   }
   function confirmarPin() {
     const typed = pinInput.trim();
-    if (pinSetup) {
-      if (typed.length < 4) { setPinErro('O PIN precisa ter ao menos 4 dígitos'); return; }
-      try { localStorage.setItem(PIN_KEY, typed); } catch { /* storage indisponível · segue */ }
-      setPinSetup(false);
+    // Senha única do totem. ⚠️ O PIN antigo do aparelho continua valendo pra não
+    // trancar ninguém que já tinha um salvo — mas nada mais o cria.
+    let stored = '';
+    try { stored = (localStorage.getItem(PIN_KEY) || '').trim(); } catch { stored = ''; }
+    if (typed === SENHA_TOTEM || (!!stored && typed === stored)) {
       setPinModal(false); setPinInput(''); setPinErro('');
-      ativarTotem();
-    } else {
-      let stored = '';
-      try { stored = (localStorage.getItem(PIN_KEY) || '').trim(); } catch { stored = ''; }
-      // Fail-open quando NÃO há PIN salvo (storage limpo/indisponível) — não prende
-      // o voluntário no modo totem. Com PIN salvo, exige o PIN correto.
-      if (!stored || typed === stored) {
-        setPinModal(false); setPinInput(''); setPinErro('');
-        setTotemMode(false);
-        try { localStorage.removeItem(TOTEM_KIDS_ATIVO_KEY); } catch { /* storage indisponível · segue */ }
-        if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
-      } else { setPinErro('PIN incorreto'); setPinInput(''); }
-    }
+      setTotemMode(false);
+      try { localStorage.removeItem(TOTEM_KIDS_ATIVO_KEY); } catch { /* storage indisponível · segue */ }
+      if (document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    } else { setPinErro('Senha incorreta'); setPinInput(''); }
   }
 
   // Carrega os cultos de Kids de hoje (culto de agora vem pelo relógio) + salas
@@ -1316,7 +1411,60 @@ export default function TotemKidsCheckin() {
       if (cpfRes.cpf) payload.responsavel_cpf = cpfRes.cpf;
       if (cpfRes.dispensado) payload.permitir_sem_cpf = true;
 
-      const r = await totemKids.checkin.criar(payload);
+      // ⚠️⚠️ CHECK-IN OFFLINE (02/09/2026). O sistema caiu 1h34 numa quarta; num
+      // domingo isso é fila de pais na porta. Se o servidor não responde, o
+      // check-in NÃO se perde: saca um código do bloco RESERVADO, imprime a
+      // etiqueta igual e enfileira para sincronizar depois.
+      // ⚠️ Só cai na fila em falha de INFRA. Recusa de negócio (4xx: sem CPF,
+      // criança já com check-in, responsável errado) tem que aparecer para o
+      // voluntário — enfileirar isso esconderia a decisão do servidor.
+      let r: any;
+      let modoOffline = false;
+      try {
+        r = await totemKids.checkin.criar(payload);
+      } catch (e) {
+        if (!ehFalhaDeRedeOuServidor(e)) throw e;
+
+        const codigo = off.sacarCodigo();
+        // ⚠️⚠️ SEM BLOCO NÃO HÁ CHECK-IN OFFLINE, e isso é um NÃO honesto.
+        // Gerar código aqui daria 70% de colisão com 50 check-ins — duas
+        // crianças com a MESMA credencial de retirada.
+        if (!codigo) {
+          setImprimindo(false);
+          toast.error('Sem sistema e sem códigos reservados. Use a ficha de papel e avise a coordenação do Kids.', { duration: 10000 });
+          return;
+        }
+
+        const agoraIso = new Date().toISOString();
+        const item = off.enfileirar({
+          codigo,
+          crianca_id: crianca.id,
+          crianca_nome: crianca.nome,
+          sala_id: salaSelecionada,
+          sessao_id: String(sessao_id),
+          responsavel_nome: usarRespManual
+            ? respManualNome.trim()
+            : (crianca.responsaveis.find(x => x.membro_id === responsavelSelecionado)?.membro?.nome || 'Responsável'),
+          responsavel_telefone: usarRespManual ? respManualTel.trim() : null,
+          checkin_at: agoraIso,   // ⚠️ quando ACONTECEU, não quando sincronizar
+        });
+        off.marcarImpresso(item.local_id);
+        setFilaOffline(off.filaCount());
+        modoOffline = true;
+
+        // Resposta no MESMO formato do servidor — a etiqueta é idêntica, e é
+        // esse papel que o pai leva. A sala confere igual.
+        const salaEscolhida = salas.find((x: any) => x.id === salaSelecionada);
+        r = {
+          checkin: { id: item.local_id },
+          crianca: { nome: crianca.nome },
+          sala: { nome: salaEscolhida?.nome || '', cor: salaEscolhida?.cor || null, logo_url: (salaEscolhida as any)?.logo_url || null },
+          responsavel: { nome: item.responsavel_nome },
+          codigo_seguranca: codigo,
+          codigo_barras: codigo,
+          sessao: { culto: { nome: sessao?.culto?.nome || null, data: sessao?.culto?.data || null } },
+        };
+      }
 
       // Monta os dados da etiqueta e imprime. Guarda pra permitir REIMPRIMIR
       // (se a impressão falhar/borrar) sem criar outro check-in.
@@ -1333,8 +1481,16 @@ export default function TotemKidsCheckin() {
       });
       setUltimaEtiqueta(dadosEtiqueta);
 
-      toast.success(`${r.crianca.nome} · check-in OK · código ${r.codigo_seguranca}`, { duration: 4000 });
-      dispararConfete();
+      if (modoOffline) {
+        // ⚠️ NÃO diz "OK" nem solta confete: o check-in ainda não chegou ao
+        // servidor. A etiqueta vale (o código é reservado), mas prometer que
+        // está tudo certo seria a tela mentindo — foi assim que o portão
+        // enganou o voluntário por meses.
+        toast.warning(`${r.crianca.nome} · SEM SISTEMA · código ${r.codigo_seguranca} · a etiqueta vale, o registro sincroniza depois`, { duration: 9000 });
+      } else {
+        toast.success(`${r.crianca.nome} · check-in OK · código ${r.codigo_seguranca}`, { duration: 4000 });
+        dispararConfete();
+      }
       // Criança obrigada de pager (< 4 anos / espectro / limitação): a IMPRESSÃO
       // espera o número do pager (gate mole — o check-in já está salvo). Senão,
       // imprime na hora, como sempre.
@@ -1442,6 +1598,61 @@ export default function TotemKidsCheckin() {
     // TotemKidsAdmin (dialog aninhado + select), que é consistente entre si.
     <div className={totemMode ? 'fixed inset-0 z-[40] overflow-y-auto' : ''}>
     <KidsZoneShell fullscreen={totemMode}>
+      {/* ⚠️⚠️ ESTADO DO OFFLINE, DECLARADO (02/09/2026).
+          O voluntário rotaciona toda semana — não há o que ele "lembre" de um
+          treinamento. A barra tem que dizer o que está acontecendo e o que
+          fazer, na hora. Só aparece quando há algo a dizer. */}
+      {(filaOffline > 0 || codigosOffline < off.PISO_ALERTA_CODIGOS) && (
+        <div className={`mb-4 rounded-xl px-4 py-3 flex flex-wrap items-center justify-between gap-3 border ${
+          filaOffline > 0
+            ? 'bg-amber-50 border-amber-300 dark:bg-amber-950 dark:border-amber-700'
+            : 'bg-slate-50 border-slate-200 dark:bg-slate-900 dark:border-slate-700'
+        }`}>
+          <div className="flex items-center gap-3">
+            <AlertTriangle className={`h-6 w-6 shrink-0 ${filaOffline > 0 ? 'text-amber-600' : 'text-slate-400'}`} />
+            <div>
+              {filaOffline > 0 ? (
+                <>
+                  <p className="font-bold text-amber-900 dark:text-amber-100">
+                    {filaOffline} check-in{filaOffline > 1 ? 's' : ''} esperando o sistema voltar
+                  </p>
+                  {/* ⚠️ A etiqueta VALE: o código veio do bloco reservado pelo
+                      servidor, então é único de verdade. Dizer isso evita que
+                      alguém reimprima "por segurança" e crie confusão. */}
+                  <p className="text-sm text-amber-800 dark:text-amber-200">
+                    As etiquetas já impressas valem normalmente. Nada se perde — sincroniza sozinho.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="font-bold text-slate-700 dark:text-slate-200">
+                    Poucos códigos de reserva ({codigosOffline})
+                  </p>
+                  <p className="text-sm text-slate-500">
+                    O check-in está funcionando normalmente. Sem eles, o que não existe é a
+                    reserva para o totem seguir funcionando <b>se o sistema cair</b>.
+                  </p>
+                  {/* ⚠️ O PORQUÊ, quando há um. Sem esta linha a barra diz "0" e
+                      cala o motivo — foi por isso que ninguém soube explicar. */}
+                  {!!motivoBloco && (
+                    <p className="text-sm text-slate-600 dark:text-slate-300 mt-1">{motivoBloco}</p>
+                  )}
+                </>
+              )}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground tabular-nums">{codigosOffline} códigos</span>
+            <Button
+              size="sm" variant="outline" disabled={sincronizando}
+              onClick={() => { recarregarBloco(sessao?.id); sincronizarFila(false); }}
+            >
+              {sincronizando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Tentar agora'}
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Barra do topo · logo, sessão, relógio e alternância check-in/check-out */}
       <div className="flex flex-wrap items-center justify-between gap-4 pb-5 mb-6 border-b border-dashed border-slate-200">
         <div className="flex items-center gap-3">
@@ -1905,22 +2116,20 @@ export default function TotemKidsCheckin() {
         />
       )}
 
-      {/* Modo totem · cria/pede PIN */}
+      {/* Modo totem · pede a senha do totem pra sair */}
       <Dialog open={pinModal} onOpenChange={(o) => { if (!o) { setPinModal(false); setPinInput(''); setPinErro(''); } }}>
         <DialogContent className="max-w-xs">
           <DialogHeader>
-            <DialogTitle>{pinSetup ? 'Ativar modo totem' : 'Sair do modo totem'}</DialogTitle>
+            <DialogTitle>Sair do modo totem</DialogTitle>
             <DialogDescription>
-              {pinSetup
-                ? 'Crie um PIN. Ele será pedido pra sair do modo totem (trava o tablet na tela de check-in).'
-                : 'Digite o PIN pra sair do modo totem.'}
+              Digite a <b>senha do totem</b> — a mesma de reimprimir e de liberar sem CPF.
             </DialogDescription>
           </DialogHeader>
           <Input
             type="password"
             inputMode="numeric"
             autoFocus
-            placeholder="PIN"
+            placeholder="Senha do totem"
             value={pinInput}
             onChange={(e) => setPinInput(e.target.value.replace(/\D/g, ''))}
             onKeyDown={(e) => { if (e.key === 'Enter') confirmarPin(); }}
@@ -1939,7 +2148,7 @@ export default function TotemKidsCheckin() {
           <div className="flex gap-2">
             <Button variant="outline" className="flex-1" onClick={() => { setPinModal(false); setPinInput(''); setPinErro(''); }}>Cancelar</Button>
             <Button className="flex-1 bg-pink-600 hover:bg-pink-700" onClick={confirmarPin}>
-              {pinSetup ? 'Ativar' : 'Sair'}
+              Sair
             </Button>
           </div>
         </DialogContent>
@@ -2322,6 +2531,12 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose, onAdicionarI
   }, []);
 
   async function verificar() {
+    // ⚠️ Senha única do totem primeiro: resolve LOCAL, sem rede. Editar ficha
+    // é coisa que o voluntário faz na fila (corrigir nome, somar uma alergia) e
+    // não pode depender da internet nem de achar a Mari (Marcos 2026-09-11).
+    // A senha da liderança continua valendo aqui — e é a única que vale FORA
+    // do totem, na Gestão de Crianças.
+    if (senha.trim() === SENHA_TOTEM) { setFase('edit'); return; }
     setVerificando(true); setErro('');
     try {
       const r: any = await totemKids.editSenha.verificar(senha);
@@ -2496,15 +2711,30 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose, onAdicionarI
 
         {fase === 'senha' ? (
           <div className="space-y-3">
-            {senhaDefinida === false ? (
-              <div className="space-y-3">
-                <div className="rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-300 dark:border-amber-800 p-3 text-sm">
-                  Ainda não há senha de edição. Ela pode ser criada por um <b>líder do Kids</b> (Mari Gaia / Milena Rochet)
-                  ou por um <b>administrador do sistema</b> (Matheus / Marcos Paulo).
-                </div>
+            {/* ⚠️ O campo aparece SEMPRE (Marcos 2026-09-11). Antes, se a senha
+                da liderança ainda não existisse, a tela só oferecia "criar
+                senha" e o voluntário ficava sem saída — mesmo sabendo a senha
+                do totem, que resolve local. Criar senha virou um extra abaixo. */}
+            <div className="space-y-2">
+              <Input type="password" inputMode="numeric" autoComplete="new-password" autoFocus placeholder="Senha do totem"
+                value={senha} onChange={e => setSenha(e.target.value)}
+                onKeyDown={e => { if (e.key === 'Enter') verificar(); }} className="h-12 text-center text-lg" />
+              <Button className="w-full bg-pink-600 hover:bg-pink-700" onClick={verificar} disabled={verificando || !senha.trim()}>
+                {verificando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Desbloquear edição'}
+              </Button>
+              <p className="text-[11px] text-muted-foreground text-center">
+                A senha do totem — a mesma de reimprimir. A senha do Kids da liderança também vale.
+              </p>
+            </div>
+            {senhaDefinida === false && (
+              <div className="space-y-2 border-t pt-3">
+                <p className="text-xs text-muted-foreground">
+                  Ainda não há <b>senha do Kids</b> da liderança (a que vale também fora do totem, na Gestão de Crianças).
+                  Só <b>líder do Kids</b> (Mari / Milena) ou <b>administrador</b> (Matheus / Marcos Paulo) pode criar.
+                </p>
                 {!criandoSenha ? (
-                  <Button variant="outline" className="w-full" onClick={() => { setCriandoSenha(true); setErro(''); }}>
-                    Sou líder ou administrador · criar senha
+                  <Button variant="outline" size="sm" className="w-full" onClick={() => { setCriandoSenha(true); setErro(''); }}>
+                    Sou líder ou administrador · criar senha do Kids
                   </Button>
                 ) : (
                   <div className="space-y-2">
@@ -2519,15 +2749,6 @@ function ModalDetalhesCrianca({ crianca, atualizarCrianca, onClose, onAdicionarI
                     </div>
                   </div>
                 )}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                <Input type="password" inputMode="numeric" autoComplete="new-password" autoFocus placeholder="Senha do Kids"
-                  value={senha} onChange={e => setSenha(e.target.value)}
-                  onKeyDown={e => { if (e.key === 'Enter') verificar(); }} className="h-12 text-center text-lg" />
-                <Button className="w-full bg-pink-600 hover:bg-pink-700" onClick={verificar} disabled={verificando || senhaDefinida === null}>
-                  {verificando ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Desbloquear edição'}
-                </Button>
               </div>
             )}
             {erro && <p className="text-sm text-destructive text-center">{erro}</p>}
@@ -3228,7 +3449,16 @@ function ModalNovaCrianca(props: {
     nome: '', nasc: '', sexo: '', foto: null as string | null, consent: false,
     temAlergia: false, alergiaQual: '', temEspectro: false, espectroQual: '',
     temLimitacao: false, limitacaoQual: '', obsMed: '',
-    visitante: false, visitanteRelacao: 'amigo',
+    // ⚠️⚠️ TODA criança cadastrada NO TOTEM nasce VISITANTE (Marcos 2026-09-11).
+    // Antes era um toggle que nascia "não" e quase ninguém marcava — então
+    // criança nova entrava como frequentadora e o time perdia de vista quem
+    // era gente NOVA. A máquina se autocorrige: 3 dias distintos com check-in
+    // promovem a frequentadora sozinho (backend/utils/kidsVisitante.js), e o
+    // prazo de 28 dias ROLA a cada visita. Quem vem toda semana some da lista
+    // de visitante em ~2 semanas, sem ninguém clicar em nada.
+    // ⚠️ A relação nasce 'outros' (não 'amigo'): aqui "visitante" quer dizer
+    // "ainda não estabelecida", não "amiga de outra família".
+    visitante: true, visitanteRelacao: 'outros',
   });
   // Uma OU MAIS crianças de uma vez (irmãos/primos/amigos que vieram juntos ·
   // Marcos 2026-07-15) — mesma família, compartilham os responsáveis.
@@ -3425,12 +3655,17 @@ function ModalNovaCrianca(props: {
                 <Toggle on={c.temLimitacao} set={(b) => setCri(i, { temLimitacao: b })} label="Limitação física / deficiência" />
                 {c.temLimitacao && <Input placeholder="Qual limitação?" value={c.limitacaoQual} onChange={e => setCri(i, { limitacaoQual: e.target.value })} />}
                 <Input placeholder="Observações médicas (medicação, cuidados...)" value={c.obsMed} onChange={e => setCri(i, { obsMed: e.target.value })} />
-                {/* Visitante temporário (Marcos 2026-07-20): aparece ~4 semanas e some sozinho se não voltar */}
-                <Toggle on={!!c.visitante} set={(b) => setCri(i, { visitante: b })} label="É visitante?" />
+                {/* ⚠️ O toggle "É visitante?" SAIU (Marcos 2026-09-11): no totem
+                    toda criança nova nasce visitante e vira frequentadora sozinha
+                    na 3ª visita. Quem precisa marcar como frequentadora na mão
+                    tem o botão "Tornar frequentador" na ficha da criança. */}
                 {c.visitante && (
                   <div className="space-y-1.5 rounded-md border border-amber-300 dark:border-amber-800 bg-amber-50/60 dark:bg-amber-950/20 p-2">
-                    <label className="text-xs text-muted-foreground block">Relação com a família</label>
-                    <Select value={c.visitanteRelacao || 'amigo'} onValueChange={(v) => setCri(i, { visitanteRelacao: v })}>
+                    <p className="text-xs font-medium text-amber-900 dark:text-amber-100">
+                      Entra como <b>visitante</b> — vira frequentadora sozinha na 3ª visita.
+                    </p>
+                    <label className="text-xs text-muted-foreground block">Relação com a família <span className="text-muted-foreground/70">(opcional)</span></label>
+                    <Select value={c.visitanteRelacao || 'outros'} onValueChange={(v) => setCri(i, { visitanteRelacao: v })}>
                       <SelectTrigger className="h-9"><SelectValue placeholder="Relação" /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="amigo">Amigo(a)</SelectItem>
@@ -3440,7 +3675,9 @@ function ModalNovaCrianca(props: {
                         <SelectItem value="outros">Outros</SelectItem>
                       </SelectContent>
                     </Select>
-                    <p className="text-[11px] text-amber-700 dark:text-amber-300">Fica visível no check-in por ~4 semanas; depois sai sozinho se não voltar.</p>
+                    <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                      O prazo de ~4 semanas é RENOVADO a cada check-in — só sai da lista quem não voltar mesmo.
+                    </p>
                   </div>
                 )}
               </div>

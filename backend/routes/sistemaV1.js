@@ -126,7 +126,34 @@ router.get('/cron/incident-triage', requireCron, async (_req, res) => {
       } : {}),
       result: `${triagedCount} incidente(s) triado(s); ${diagnosis.diagnosed || 0} diagnosticado(s); ${proposedCount} proposta(s) de correcao`,
     });
-    res.json({ ...triage, mode: 'triage_diagnosis_and_correction_planning', diagnosis, correction });
+    // ⚠️⚠️ EMPURRÃO NO DISPATCHER DO WORKER — carona neste cron, de propósito.
+    //
+    // O relógio do time de agentes é `node-cron` DENTRO do worker, e o container
+    // do Railway não fica de pé (medido em 02/09: o dispatcher `*/10` aparece 2
+    // vezes em 25 h de log, sempre no 1º tique depois de um `Starting Container`).
+    // O padrão que sobrevive é "a Vercel manda, o worker executa" — o POST com
+    // HMAC ACORDA o container. Aqui é o lugar certo porque é ESTE cron que ACABA
+    // de planejar a correção e criar a tarefa: ela nasce e é despachada no mesmo
+    // tique, em vez de esperar o container acordar por acaso.
+    //
+    // ⚠️ `vercel.json` está com 47 crons, no teto do plano — não cabe cron novo.
+    // ⚠️ NÃO é keepalive: `acordarSeHouverTrabalho` só chama o worker quando há
+    // tarefa que o dispatcher pegaria e que não está bloqueada por ambiente.
+    // ⚠️ BLOCO PROTEGIDO: falhar aqui não pode derrubar a triagem de incidentes,
+    // que é o trabalho principal deste cron. E o empurrão é best-effort por
+    // construção — as tarefas já estão GRAVADAS; o que se perde é latência.
+    let dispatcher;
+    try {
+      const { acordarSeHouverTrabalho } = require('../services/diagnosticoResolver');
+      dispatcher = await acordarSeHouverTrabalho({ origem: 'cron_incident_triage' });
+      if (dispatcher.motivo === 'board_ilegivel' || dispatcher.worker?.chamado === false) {
+        console.error('[cron incident-triage / dispatcher]', dispatcher.detalhe || dispatcher.worker?.motivo);
+      }
+    } catch (dispatcherError) {
+      console.error('[cron incident-triage / dispatcher]', dispatcherError.message);
+      dispatcher = { acordado: false, motivo: 'excecao', detalhe: dispatcherError.message };
+    }
+    res.json({ ...triage, mode: 'triage_diagnosis_and_correction_planning', diagnosis, correction, dispatcher });
   } catch (error) {
     console.error('[cron incident-triage]', error.message);
     setSystemJobOutcome(res, {

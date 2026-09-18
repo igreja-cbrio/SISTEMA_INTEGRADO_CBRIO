@@ -8,7 +8,7 @@
 // respondeu. O bloco sensível já vem filtrado pelo SERVIDOR para quem não está
 // na lista de acesso — aqui só mostramos que existe algo oculto, nunca o
 // conteúdo. Não "melhorar" isso trazendo o item completo.
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { censo } from '../../api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -21,6 +21,11 @@ import { Loader2, Search, Trash2, Lock, User, UserX, ExternalLink } from 'lucide
 import EmptyState from '@/components/EmptyState';
 import { toast } from 'sonner';
 import { normalizarBusca, contemNormalizado } from '@/lib/busca';
+
+// 50 por página, como a lista de pessoas da Membresia. O número embaixo é o que
+// diz onde a pessoa está — "812" sozinho no topo não responde "e eu estou em
+// qual pedaço?".
+const POR_PAGINA = 50;
 
 type Linha = {
   id: string;
@@ -87,17 +92,74 @@ export default function AbaRespostas({ pesquisaId, podeApagar }: {
   const [detalhe, setDetalhe] = useState<Detalhe | null>(null);
   const [confirmar, setConfirmar] = useState<Linha | null>(null);
   const [apagando, setApagando] = useState(false);
+  // ⚠️ O TOTAL VEM DO BANCO, não do tamanho da lista (14/09/2026). Contar
+  // `linhas.length` fazia a aba anunciar "500 resposta(s)" com 812 no banco — e
+  // ninguém tinha como perceber olhando a tela.
+  const [total, setTotal] = useState<number | null>(null);
+  const [offset, setOffset] = useState(0);
+  const [carregandoPagina, setCarregandoPagina] = useState(false);
+  // Só existe enquanto a pessoa está BUSCANDO — ver `carregarTodasParaBusca`.
+  const [todas, setTodas] = useState<Linha[] | null>(null);
+  const [carregandoBusca, setCarregandoBusca] = useState(false);
+  const buscaEmVoo = useRef(false);
 
-  const carregar = useCallback(async () => {
+  const carregarPagina = useCallback(async (novoOffset: number, primeira = false) => {
     if (!pesquisaId) return;
-    setErro(null); setLinhas(null);
+    if (primeira) { setErro(null); setLinhas(null); setTotal(null); }
+    setCarregandoPagina(true);
     try {
-      setLinhas(await censo.respostas(pesquisaId, 500));
+      const r = await censo.respostas(pesquisaId, POR_PAGINA, novoOffset);
+      setLinhas(r.itens || []);
+      setTotal(r.total ?? (r.itens || []).length);
+      setOffset(novoOffset);
     } catch (e) {
-      setErro((e as Error)?.message || 'Não foi possível carregar as respostas.');
+      if (primeira) setErro((e as Error)?.message || 'Não foi possível carregar as respostas.');
+      else toast.error((e as Error)?.message || 'Não foi possível trocar de página.');
+    } finally {
+      setCarregandoPagina(false);
     }
   }, [pesquisaId]);
-  useEffect(() => { carregar(); }, [carregar]);
+
+  useEffect(() => {
+    setOffset(0); setTodas(null); buscaEmVoo.current = false;
+    carregarPagina(0, true);
+  }, [carregarPagina]);
+
+  // ⚠️⚠️ BUSCA OLHA TUDO, NÃO A PÁGINA. Com 50 por página, filtrar só o que
+  // está na tela responderia "não achei" para quem está na página 7 — e a
+  // pessoa concluiria que o fulano não respondeu o censo.
+  //
+  // Por que não buscar no servidor: a régua da casa (`contemNormalizado`) é
+  // acento-insensível, e o `ilike` do Postgres não é — "jose" deixaria de achar
+  // "José". Então, ao digitar, puxamos a lista inteira UMA vez (são centenas de
+  // linhas, não milhares) e filtramos aqui com a régua certa.
+  //
+  // ⚠️⚠️ A TRAVA DE "JÁ ESTOU BUSCANDO" É UM REF, NÃO ESTADO. Com
+  // `carregandoBusca` no array de dependências, o `setCarregandoBusca(true)`
+  // re-disparava o efeito, cuja LIMPEZA marcava `vivo = false` — a resposta
+  // chegava e era descartada por um cancelamento que o próprio efeito causou.
+  // Sintoma: a busca fazia a requisição certa e não mostrava nada. Pego pelo
+  // teste antes de ir pro ar.
+  useEffect(() => {
+    if (!pesquisaId || !normalizarBusca(busca) || todas || buscaEmVoo.current) return;
+    let vivo = true;
+    buscaEmVoo.current = true;
+    setCarregandoBusca(true);
+    censo.respostas(pesquisaId, 1000, 0)
+      .then((r: { itens?: Linha[]; total?: number }) => {
+        if (!vivo) return;
+        setTodas(r.itens || []);
+        if (r.total != null) setTotal(r.total);
+      })
+      .catch((e: Error) => { if (vivo) toast.error(e?.message || 'Não foi possível buscar.'); })
+      // ⚠️ SEM o guarda de `vivo` aqui, e de propósito: `setTodas` acima muda uma
+      // dependência do efeito, então a limpeza roda ANTES deste `finally` e
+      // marcaria `vivo = false` — o "buscando em todas…" ficaria na tela para
+      // sempre. O guarda protege quem NÃO pode aplicar resultado velho
+      // (`setTodas`); desligar o spinner é sempre seguro.
+      .finally(() => { buscaEmVoo.current = false; setCarregandoBusca(false); });
+    return () => { vivo = false; };
+  }, [pesquisaId, busca, todas]);
 
   useEffect(() => {
     if (!aberta) { setDetalhe(null); return; }
@@ -115,7 +177,13 @@ export default function AbaRespostas({ pesquisaId, podeApagar }: {
       await censo.removerResposta(confirmar.id);
       // Tira da lista local em vez de recarregar: a ação já foi confirmada pelo
       // servidor e o recálculo da lista é caro (mesma régua das filas de Entradas).
+      // ⚠️ O TOTAL TAMBÉM CAI. Sem isto a paginação passa a mentir logo depois
+      // de apagar — "1–50 de 812" com 811 no banco — e a última página fica
+      // vazia. Mesmo raciocínio do bug do total: o número é do banco, e apagar
+      // é a única ação daqui que muda o banco.
       setLinhas((l) => (l ? l.filter((x) => x.id !== confirmar.id) : l));
+      setTodas((l) => (l ? l.filter((x) => x.id !== confirmar.id) : l));
+      setTotal((t) => (t != null && t > 0 ? t - 1 : t));
       setConfirmar(null);
       setAberta(null);
       toast.success(`Resposta de ${confirmar.nome} apagada. Ela já pode responder de novo.`);
@@ -133,7 +201,7 @@ export default function AbaRespostas({ pesquisaId, podeApagar }: {
     return (
       <Card><CardContent className="p-5 space-y-3">
         <p className="text-sm text-red-600">{erro}</p>
-        <Button variant="outline" size="sm" onClick={carregar}>Tentar de novo</Button>
+        <Button variant="outline" size="sm" onClick={() => carregarPagina(0, true)}>Tentar de novo</Button>
       </CardContent></Card>
     );
   }
@@ -154,17 +222,20 @@ export default function AbaRespostas({ pesquisaId, podeApagar }: {
     );
   }
 
-  // Busca acento-insensível pela régua da casa (normaliza os DOIS lados).
-  const filtradas = normalizarBusca(busca)
-    ? linhas.filter((l) => contemNormalizado(l.nome, busca) || contemNormalizado(l.contato || '', busca))
-    : linhas;
+  // Busca acento-insensível pela régua da casa (normaliza os DOIS lados) e
+  // sobre a lista INTEIRA — nunca sobre a página que está na tela.
+  const buscando = !!normalizarBusca(busca);
+  const base = buscando ? (todas || []) : linhas;
+  const filtradas = buscando
+    ? base.filter((l) => contemNormalizado(l.nome, busca) || contemNormalizado(l.contato || '', busca))
+    : base;
 
   return (
     <div className="space-y-3">
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground">
-          {linhas.length} resposta(s) concluída(s)
-          {filtradas.length !== linhas.length && ` · ${filtradas.length} no filtro`}
+          {total ?? linhas.length} resposta(s) concluída(s)
+          {buscando && (carregandoBusca ? ' · buscando em todas…' : ` · ${filtradas.length} encontrada(s)`)}
         </p>
         <div className="relative w-full sm:w-72">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
@@ -241,6 +312,31 @@ export default function AbaRespostas({ pesquisaId, podeApagar }: {
           </table>
         </div>
       </Card>
+
+      {/* ── paginação · mesmo desenho da lista de pessoas da Membresia ──
+          Anterior · "1–50 de 812" · Próxima. Some durante a busca, que já olha
+          a lista inteira e tem o próprio contador. */}
+      {!buscando && total != null && total > POR_PAGINA && (
+        <div className="flex items-center justify-center gap-3 pt-1">
+          <Button
+            variant="outline" size="sm"
+            disabled={offset === 0 || carregandoPagina}
+            onClick={() => carregarPagina(Math.max(0, offset - POR_PAGINA))}
+          >
+            Anterior
+          </Button>
+          <span className="text-xs text-muted-foreground tabular-nums">
+            {offset + 1}–{Math.min(offset + POR_PAGINA, total)} de {total}
+          </span>
+          <Button
+            variant="outline" size="sm"
+            disabled={offset + POR_PAGINA >= total || carregandoPagina}
+            onClick={() => carregarPagina(offset + POR_PAGINA)}
+          >
+            Próxima
+          </Button>
+        </div>
+      )}
 
       {/* ── resposta individual ── */}
       <Dialog open={!!aberta} onOpenChange={(o) => !o && setAberta(null)}>

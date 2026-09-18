@@ -26,9 +26,10 @@ import AvatarVoluntario from './AvatarVoluntario';
 type Celula = { item_id: string | null; alvo: number; faltam: number; pessoas: any[] };
 type Linha = {
   chave: string; team_id: string | null; team: string; area: string; cor: string | null;
+  equipe_vinculada?: boolean;
   position_id: string | null; position: string | null; celulas: Record<string, Celula>;
 };
-type Subarea = { team_id: string | null; team: string; cor: string | null; linhas: Linha[] };
+type Subarea = { team_id: string | null; team: string; cor: string | null; vinculada: boolean; linhas: Linha[] };
 type Grupo = { area: string; subareas: Subarea[] };
 
 function IconeStatus({ status }: { status: string }) {
@@ -165,13 +166,25 @@ export default function MatrizCards({
                       ) : (
                         <div className="p-1.5 space-y-2">
                           {g.subareas.map(sub => {
-                            const linhasSub = doCulto.filter(x => (x.linha.team_id || x.linha.team) === (sub.team_id || sub.team));
+                            const linhasSub = doCulto.filter(x => (x.linha.team_id || `nome:${x.linha.team}`) === (sub.team_id || `nome:${sub.team}`));
                             if (!linhasSub.length) return null;
                             return (
                               <div key={sub.team_id || sub.team}>
                                 <div className="flex items-center gap-1.5 px-1 mb-1">
                                   {sub.cor && <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: sub.cor }} />}
                                   <span className="text-[10px] uppercase tracking-wide text-muted-foreground truncate">{sub.team}</span>
+                                  {/* ⚠️⚠️ TERCEIRO estado: a equipe é conhecida (o nome veio
+                                      do Planning Center) mas não está vinculada a uma equipe do
+                                      sistema — então ela não tem área, não entra na composição
+                                      e o supervisor da área não a vê. Sem este selo, a tela
+                                      mostrava o nome e ninguém entendia por que ela cai em
+                                      "Sem área". */}
+                                  {sub.vinculada === false && (
+                                    <span
+                                      className="shrink-0 rounded-full border border-amber-500/40 px-1.5 text-[9px] text-amber-600"
+                                      title="A equipe veio do Planning Center e não está vinculada a uma equipe do sistema. Por isso não tem área e não entra na composição da escala."
+                                    >não vinculada</span>
+                                  )}
                                   <button
                                     type="button"
                                     onClick={() => onFixar(sub.team_id)}

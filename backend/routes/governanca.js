@@ -31,6 +31,18 @@ router.use((req, res, next) => (
     : authenticate(req, res, next)
 ));
 
+// varredura 2026-09: A05 — `rd`/`wr` subiram de baixo (viviam depois do último
+// builder) porque as rotas de RELATÓRIO, que nascem antes delas no arquivo,
+// também precisam do guard: só `authenticate` deixava qualquer conta logada ler
+// o DRE (fin_contas/fin_transacoes/fin_contas_pagar/fin_reembolsos), OKR e
+// metas. Guard POR ROTA, nunca `router.use(authorizeModule(...))`: as rotas
+// `/cron/*` acima passam por segredo e não têm req.user.
+// Régua igual à da tela: `ModuleGuard moduleSlug="governanca" nivelMinimo={1}`
+// (src/App.tsx) para ler e `getAccessLevel(['governanca']) >= 3` para editar
+// (src/pages/governanca/RitualPage) — ninguém que já usava a tela perde acesso.
+const rd = authorizeModule('governanca', 1); // leitura
+const wr = authorizeModule('governanca', 3); // escrita
+
 // ── Helpers ──
 const hoje = () => new Date().toISOString().split('T')[0];
 function parseMes(input) {
@@ -73,7 +85,9 @@ const TIPOS = [
   { sigla: 'AG',  nome: 'Assembleia Geral', cor: '#06b6d4', recorrencia: 'Semestral', descricao: 'Prestação de contas completa à igreja' },
 ];
 
-router.get('/tipos', (req, res) => res.json(TIPOS));
+// varredura 2026-09: A05 — `rd` no catálogo de reuniões: era AUTHN_ONLY e serve
+// só a tela de governança, que já exige nível 1 no módulo.
+router.get('/tipos', rd, (req, res) => res.json(TIPOS));
 
 // ══════════════════════════════════════════════
 // BUILDERS — cada um retorna { checklist, resumo, dados }
@@ -403,7 +417,11 @@ async function buildAG() {
 // ENDPOINT PRINCIPAL
 // ══════════════════════════════════════════════
 
-router.get('/relatorio/:sigla', async (req, res) => {
+// varredura 2026-09: A05 — `rd` aqui é a correção de maior retorno: sem ela, um
+// GET com QUALQUER token válido (inclusive as 138 contas só-app) devolvia o DRE
+// do mês (saldos de fin_contas, descrição/valor de fin_transacoes, fornecedores
+// de fin_contas_pagar, fin_reembolsos), OKRs, metas e orçamento dos eventos.
+router.get('/relatorio/:sigla', rd, async (req, res) => {
   try {
     const sigla = req.params.sigla.toUpperCase();
     const tipo = TIPOS.find(t => t.sigla === sigla);
@@ -439,7 +457,10 @@ router.get('/relatorio/:sigla', async (req, res) => {
 // SALVAR OBSERVAÇÕES
 // ══════════════════════════════════════════════
 
-router.post('/relatorio/:sigla/observacoes', async (req, res) => {
+// varredura 2026-09: A05 — `wr` (nível 3) na única escrita solta do bloco: ela
+// cria ciclo/reunião e grava observação da diretoria; mesma régua das demais
+// escritas deste router e do botão de salvar da tela (canEdit >= 3).
+router.post('/relatorio/:sigla/observacoes', wr, async (req, res) => {
   try {
     const sigla = req.params.sigla.toUpperCase();
     const { observacoes } = req.body;
@@ -592,8 +613,9 @@ router.post('/cron/rotina-email', async (req, res) => {
 //   Quem opera = super-admin (Marcos) + override; diretoria entra leitura.
 // ════════════════════════════════════════════════════════════════════
 
-const rd = authorizeModule('governanca', 1); // leitura
-const wr = authorizeModule('governanca', 3); // escrita
+// varredura 2026-09: A05 — `rd`/`wr` agora são declarados no topo do arquivo
+// (logo abaixo do router.use de autenticação), porque as rotas de relatório
+// precisam deles antes deste ponto. Declaração removida daqui, uso inalterado.
 
 // Dados vivos do sistema por tipo de reunião (reusa os relatórios automáticos)
 // pra alimentar a IA (memória e pauta).

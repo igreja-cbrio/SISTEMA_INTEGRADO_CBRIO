@@ -16,6 +16,14 @@ const { sincronizarComMeta, seedDosEnvs } = require('../services/waTemplates');
 const { enfileirarLote } = require('../services/whatsappFila');
 const { AppError, ERROR_CODES } = require('../utils/appError');
 const { captureHandledException } = require('../utils/sentry');
+// Dashboard (F2 · 09/09/2026): régua pura + janela da casa + dia BRT
+const DASH = require('../utils/comunicacaoDashboard');
+const { resolverJanelaPeriodo, rotuloJanela } = require('../utils/janelaPeriodo');
+const { diaBrt } = require('../utils/whatsappModulo');
+// Novo envio (F3 · 09/09/2026): destinatários, prévia, custo e validação — régua pura
+const NOVO = require('../utils/novoEnvio');
+// Conexão (F4 · 09/09/2026): o que é alerta no card só-leitura — régua pura
+const CONEXAO = require('../utils/conexaoWhatsapp');
 
 function communicationError(error, publicMessage) {
   return new AppError(error?.message || publicMessage, {
@@ -244,6 +252,106 @@ router.put('/numeros/:id', authorizeModule('comunicacao', 5), async (req, res) =
 });
 
 // ── Templates ────────────────────────────────────────────────────────
+// ── CONEXÃO (F4 do redesenho · 09/09/2026) ────────────────────────────────────
+// A sub-aba Números virou um card SÓ LEITURA: qual número está em uso (o da env
+// — `wa_numeros` existe e nada o lê), webhook ligado?, quem responde, e sinais
+// de vida (última recebida, último envio, último sync de templates). A régua do
+// que é alerta mora em utils/conexaoWhatsapp (pura, no gate). Cada leitura é
+// best-effort: o que não veio entra em `avisos`, nunca vira zero.
+router.get('/conexao', async (_req, res, next) => {
+  try {
+    const avisos = [];
+    const ler = async (nome, fn, vazio) => {
+      try { return await fn(); }
+      catch (e) { console.warn(`[comunicacao] conexao ${nome}:`, e.message); avisos.push(nome); return vazio; }
+    };
+    const cfg = await ler('config', async () => {
+      const { data, error } = await supabase.from('whatsapp_config').select('ia_ativa, respostas_automaticas, updated_at').eq('id', 1).maybeSingle();
+      if (error) throw error;
+      return data;
+    }, null);
+    // Quem responde: a MESMA régua do seletor de três (bot-ia/config). Sem config
+    // legível, 'ninguem' — fail-closed, como o webhook faz.
+    const modo = await ler('modo', async () => {
+      if (!cfg) return 'ninguem';
+      const botIa = require('../services/botIaResposta');
+      const R = require('../utils/botIaRegras');
+      const c = await botIa.lerConfig();
+      return R.modoResposta({ cfg, erroCfg: null, botIa: c.botIa });
+    }, 'ninguem');
+    const numeros = await ler('numeros', async () => {
+      const { data, error } = await supabase.from('wa_numeros').select('id, phone_number_id, rotulo, is_default, ativo').order('created_at');
+      if (error) throw error;
+      return data || [];
+    }, []);
+    const ultimo = (nome, tabela, coluna, filtro) => ler(nome, async () => {
+      let q = supabase.from(tabela).select(coluna).not(coluna, 'is', null).order(coluna, { ascending: false }).limit(1);
+      if (filtro) q = filtro(q);
+      const { data, error } = await q;
+      if (error) throw error;
+      return (data && data[0] && data[0][coluna]) || null;
+    }, null);
+    const [ultimaRecebida, ultimoEnvio, ultimoSync] = await Promise.all([
+      ultimo('ultima_recebida', 'wa_mensagens', 'criado_em', q => q.eq('direcao', 'in')),
+      ultimo('ultimo_envio', 'whatsapp_envios', 'enviado_em', q => q.eq('status', 'enviado')),
+      ultimo('sync_templates', 'wa_templates', 'sincronizado_em'),
+    ]);
+    const tpl = await ler('templates', async () => {
+      const { data, error } = await supabase.from('wa_templates').select('status_meta');
+      if (error) throw error;
+      const total = (data || []).length;
+      const aprovados = (data || []).filter(t => String(t.status_meta || '').toUpperCase() === 'APPROVED').length;
+      return { total, aprovados };
+    }, { total: 0, aprovados: 0 });
+
+    const r = CONEXAO.avaliarConexao({
+      envPhoneId: process.env.WHATSAPP_PHONE_NUMBER_ID || null,
+      wabaId: process.env.WHATSAPP_BUSINESS_ACCOUNT_ID || null,
+      numeros, webhookLigado: cfg ? cfg.ia_ativa !== false : true, modo,
+      ultimoInboundEm: ultimaRecebida, ultimoOutboundEm: ultimoEnvio, ultimoSyncTemplatesEm: ultimoSync,
+      templatesAprovados: tpl.aprovados, templatesTotal: tpl.total, agoraMs: Date.now(),
+    });
+    res.json({
+      ...r,
+      alertas: r.alertas.map(codigo => ({ codigo, texto: CONEXAO.textoAlerta(codigo) })),
+      numeros_cadastrados: numeros,
+      config_atualizada_em: cfg ? cfg.updated_at || null : null,
+      avisos,
+    });
+  } catch (e) {
+    console.error('[comunicacao] conexao:', e.message);
+    next(communicationError(e, 'Erro ao consultar a conexão.'));
+  }
+});
+
+// O freio de emergência (`whatsapp_config.ia_ativa` = webhook inteiro). Nível 5:
+// desligado, TODA mensagem recebida deixa de ser registrada no inbox.
+router.put('/conexao', authorizeModule('comunicacao', 5), async (req, res, next) => {
+  try {
+    const v = req.body ? req.body.webhook_ligado : undefined;
+    if (typeof v !== 'boolean') return res.status(400).json({ error: 'Informe webhook_ligado como true ou false.' });
+    const { error } = await supabase.from('whatsapp_config')
+      .update({ ia_ativa: v, updated_at: new Date().toISOString(), updated_by: req.user?.userId || null }).eq('id', 1);
+    if (error) throw error;
+    res.json({ ok: true, webhook: v ? 'ligado' : 'desligado' });
+  } catch (e) {
+    console.error('[comunicacao] conexao put:', e.message);
+    next(communicationError(e, 'Erro ao alterar o webhook.'));
+  }
+});
+
+// Teste de template "pra mim" — veio de Bot → Configuração (F4). Mesma régua do
+// admin antigo (services/whatsappTesteDisparo), sob o guard deste módulo.
+router.post('/templates/testar', authorizeModule('comunicacao', 3), async (req, res, next) => {
+  try {
+    const { testarDisparoPara } = require('../services/whatsappTesteDisparo');
+    res.json(await testarDisparoPara(req.user?.userId, req.body ? req.body.chave : undefined));
+  } catch (e) {
+    console.error('[comunicacao] templates/testar:', e.message);
+    next(communicationError(e, 'Erro ao testar o template.'));
+  }
+});
+
 router.get('/templates', async (req, res) => {
   let q = supabase.from('wa_templates').select('*').order('nome');
   if (req.query.modulo) q = q.eq('modulo', String(req.query.modulo));
@@ -387,6 +495,57 @@ router.put('/atendentes/:id', authorizeModule('comunicacao', 3), async (req, res
   res.json(data);
 });
 
+// ── Equipe de atendimento (titular + suplente por área · 08/09/2026) ──────
+// Substitui a aba Atendentes: quem RECEBE a conversa de cada área ('Entrada' =
+// conversa ainda sem área). As rotas /atendentes acima ficam DORMENTES (tabela
+// wa_atendentes · nada as lê). A régua é pura em utils/equipeAtendimento.js.
+router.get('/equipe', async (_req, res) => {
+  const R = require('../utils/equipeAtendimento');
+  const { lerEquipe } = require('../services/waEquipe');
+  try {
+    const [eq, areasR, colabR] = await Promise.all([
+      lerEquipe(),
+      supabase.from('areas').select('nome').neq('ativo', false).order('nome'),
+      supabase.from('profiles').select('id, name, avatar_url, email, is_membro_only').eq('active', true).order('name'),
+    ]);
+    if (areasR.error) throw areasR.error;
+    if (colabR.error) throw colabR.error;
+    // mesmo recorte de gente do GET /wa-inbox/colaboradores: sem conta só-de-membro e sem agentes
+    const ehAgente = p => /^\s*agente\s/i.test(p.name || '') || /^agente\.[^@]+@cbrio\.org$/i.test(p.email || '');
+    const colaboradores = (colabR.data || [])
+      .filter(p => p.name && !p.is_membro_only && !ehAgente(p))
+      .map(p => ({ id: p.id, name: p.name, avatar_url: p.avatar_url || null }));
+    const linhas = R.montarLinhas({ areas: (areasR.data || []).map(a => a.nome), equipe: eq.equipe });
+    res.json({ migration_ok: !eq.migracaoAusente, linhas, colaboradores });
+  } catch (e) {
+    console.error('[comunicacao] equipe:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a equipe de atendimento' });
+  }
+});
+
+router.put('/equipe/:area', authorizeModule('comunicacao', 3), async (req, res) => {
+  const R = require('../utils/equipeAtendimento');
+  const v = R.validarEquipe({ area: req.params.area, titular_id: req.body?.titular_id, suplente_id: req.body?.suplente_id });
+  if (!v.ok) return res.status(400).json({ error: v.erro });
+  const linha = { ...v.valor, atualizado_em: new Date().toISOString(), atualizado_por: req.user?.userId || req.user?.id || null };
+  let { data, error } = await supabase.from('wa_equipe_atendimento')
+    .upsert(linha, { onConflict: 'area' }).select().maybeSingle();
+  // assinatura sem profile (conta de serviço) → grava sem ela; titular/suplente inválido segue 23503 abaixo
+  if (error && error.code === '23503' && linha.atualizado_por) {
+    ({ data, error } = await supabase.from('wa_equipe_atendimento')
+      .upsert({ ...linha, atualizado_por: null }, { onConflict: 'area' }).select().maybeSingle());
+  }
+  if (error) {
+    if (error.code === '42P01' || /wa_equipe_atendimento/.test(error.message || '')) {
+      return res.status(409).json({ error: 'A migration 20260908160000_wa_equipe_atendimento ainda não foi aplicada.' });
+    }
+    if (error.code === '23503') return res.status(400).json({ error: 'Titular ou suplente não é um usuário do sistema.' });
+    if (error.code === '23514') return res.status(400).json({ error: 'Titular e suplente não podem ser a mesma pessoa.' });
+    return res.status(400).json({ error: error.message });
+  }
+  res.json(data);
+});
+
 // Liga/desliga um disparo automático do catálogo (decisão do Marcos · 14/08:
 // "na aba de disparos automáticos eu não consigo cancelar isso"). Desligar NÃO
 // é caminho de envio — é o freio central que faltava; cada cron consulta a
@@ -468,6 +627,7 @@ router.get('/contatos', async (req, res) => {
       grupos: 'inscrição em grupo', grupos_lider: 'inscrição de líder',
       next: 'inscrição no Next', voluntariado: 'ficha de voluntariado',
       evento_externo: 'inscrição em evento', inscricoes: 'inscrição em evento',
+      censo: 'resposta do censo',
     };
     const porTel = new Map();
     for (const m of membros) {
@@ -596,6 +756,142 @@ router.get('/automaticas', async (req, res, next) => {
   }
 });
 
+// ── NOVO ENVIO (F3 do redesenho · 09/09/2026) ──────────────────────────────
+// Pedido do Marcos: fundir Envios + Disparos e ter um "Novo envio" (agora ·
+// agendado · recorrência) com PRÉVIA e CUSTO ESTIMADO antes de sair. A conta
+// mora em utils/novoEnvio (pura, no gate); aqui só se lê o catálogo de
+// templates e as tarifas. Agendado e recorrente continuam entrando pelo
+// POST /agendamentos (mesma tabela, mesmo cron horário). "Agora" entra na FILA
+// (whatsapp_envios) — quem ENTREGA é o cron horário da fila, com retry e o teto
+// de 2 por telefone por rodada; a tela DIZ isso em vez de prometer "enviado".
+async function templateDoCatalogo(nome) {
+  if (!nome) return null;
+  const { data, error } = await supabase.from('wa_templates')
+    .select('nome, idioma, categoria, status_meta, params_body, exemplo, componentes, ativo')
+    .eq('nome', String(nome)).order('idioma').limit(1);
+  if (error) throw error;
+  return (data && data[0]) || null;
+}
+// O corpo vem do componente BODY que a Meta devolveu no sync; `exemplo` é o
+// fallback (é o mesmo texto, renderizado no sync).
+function corpoDoTemplate(t) {
+  if (!t) return '';
+  const comps = Array.isArray(t.componentes) ? t.componentes : [];
+  const body = comps.find(c => c && String(c.type || '').toUpperCase() === 'BODY');
+  return String((body && body.text) || t.exemplo || '');
+}
+async function tarifasPorCategoria() {
+  const { data, error } = await supabase.from('wa_tarifas').select('categoria, tarifa');
+  if (error) throw error;
+  const m = {};
+  for (const t of data || []) m[String(t.categoria || '').toLowerCase()] = Number(t.tarifa) || 0;
+  return m;
+}
+async function montarPreviaEnvio(b) {
+  const dest = NOVO.normalizarDestinatarios(b.destinatarios);
+  const templateNome = String(b.template_nome || '').trim();
+  const tipo = templateNome ? 'template' : 'texto';
+  const tpl = tipo === 'template' ? await templateDoCatalogo(templateNome) : null;
+  const params = (Array.isArray(b.params) ? b.params : []).map(p => String(p ?? ''));
+  const corpo = tipo === 'template' ? corpoDoTemplate(tpl) : String(b.texto || '');
+  const previa = NOVO.renderizarCorpo(corpo, params);
+  const tarifas = await tarifasPorCategoria();
+  const templateEncontrado = tipo !== 'template' || !!tpl;
+  const custo = NOVO.custoEstimado({ quantidade: dest.validos.length, tipo, categoria: tpl ? tpl.categoria : null, tarifas });
+  const avisos = NOVO.avisos({ quantidade: dest.validos.length, tipo, categoria: tpl ? tpl.categoria : null, statusMeta: tpl ? tpl.status_meta : null, templateEncontrado });
+  return { dest, tipo, templateNome, tpl, templateEncontrado, params, corpo, previa, custo, avisos };
+}
+
+router.post('/envios/previa', async (req, res, next) => {
+  try {
+    const p = await montarPreviaEnvio(req.body || {});
+    res.json({
+      destinatarios: {
+        validos: p.dest.validos.length,
+        lista: p.dest.validos, // já normalizada · é ela que o agendamento grava
+        invalidos: p.dest.invalidos.slice(0, 50),
+        invalidos_total: p.dest.invalidos.length,
+        duplicados: p.dest.duplicados,
+      },
+      tipo: p.tipo,
+      template: p.tpl ? { nome: p.tpl.nome, categoria: p.tpl.categoria, status_meta: p.tpl.status_meta, params_body: p.tpl.params_body } : null,
+      template_encontrado: p.templateEncontrado,
+      params: NOVO.conferirParams(p.tpl ? p.tpl.params_body : null, p.params),
+      previa: p.previa,
+      custo: p.custo,
+      avisos: p.avisos.map(codigo => ({ codigo, texto: NOVO.textoAviso(codigo) })),
+    });
+  } catch (e) {
+    console.error('[comunicacao] envios/previa:', e.message);
+    next(communicationError(e, 'Erro ao montar a prévia do envio.'));
+  }
+});
+
+router.post('/envios/agora', authorizeModule('comunicacao', 3), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const agora = Date.now();
+    const p = await montarPreviaEnvio(b);
+    const v = NOVO.validarNovoEnvio({
+      modo: 'agora', destinatarios: p.dest.validos, template_nome: p.templateNome, texto: b.texto, params: p.params,
+      params_body: p.tpl ? p.tpl.params_body : null, templateEncontrado: p.templateEncontrado, agoraMs: agora,
+    });
+    if (!v.ok) return res.status(400).json({ error: v.erros.map(NOVO.textoErro).join(' · '), erros: v.erros });
+    // Freio: quem envia repete a contagem que leu na prévia (o mesmo freio dos
+    // disparos em massa dos grupos e do censo). Contagem divergente = a lista
+    // mudou depois da prévia, ou ninguém leu.
+    const confirmada = Number(b.confirmar_quantidade);
+    if (confirmada !== p.dest.validos.length) {
+      return res.status(409).json({
+        error: `A quantidade confirmada (${Number.isFinite(confirmada) ? confirmada : '—'}) não bate com os ${p.dest.validos.length} telefones válidos. Releia a prévia e confirme de novo.`,
+        codigo: 'contagem_divergente', validos: p.dest.validos.length,
+      });
+    }
+    const nome = String(b.nome || '').trim() || NOVO.nomePadrao({ agoraMs: agora, tipo: p.tipo, template: p.templateNome });
+    // 1 · o registro do disparo manual — na MESMA tabela das programadas: é o
+    //     histórico que a vista Agendados mostra ("Manual · enviado em…").
+    const { data: ag, error: errAg } = await supabase.from('wa_agendamentos').insert({
+      nome,
+      template_nome: p.tipo === 'template' ? p.templateNome : null,
+      texto: p.tipo === 'texto' ? String(b.texto) : null,
+      params: p.params,
+      audiencia: { tipo: 'telefones', telefones: p.dest.validos },
+      quando: new Date(agora).toISOString(),
+      recorrencia: null,
+      ativo: false,
+      criado_por: req.user?.userId || req.user?.id || null,
+    }).select('id').single();
+    if (errAg) throw errAg;
+    // 2 · a fila. Só GRAVA; quem entrega é o cron horário (retry/backoff, 2 por
+    //     telefone por rodada — a nota de qualidade do número decide o tier).
+    const itens = p.dest.validos.map(tel => ({
+      telefone: tel,
+      template: p.tipo === 'template' ? p.templateNome : undefined,
+      texto: p.tipo === 'texto' ? String(b.texto) : undefined,
+      params: p.params,
+      contexto: 'comunicacao.envio_manual',
+      refId: ag.id,
+    }));
+    const r = await enfileirarLote(itens);
+    if (!r.queued) {
+      // Envio que não enviou ninguém NÃO vira sucesso (lição do disparo do censo,
+      // 05/08): desfaz o registro e diz o motivo com todas as letras.
+      await supabase.from('wa_agendamentos').delete().eq('id', ag.id);
+      const motivo = r.motivo === 'disabled'
+        ? 'O envio de WhatsApp está desligado neste ambiente (credenciais/WHATSAPP_ENABLED). Nada saiu.'
+        : r.motivo === 'template_rejeitado_na_meta'
+          ? 'A Meta rejeitou ou pausou este template — nada foi enfileirado.'
+          : `Nada foi enfileirado (${r.motivo || 'motivo desconhecido'}).`;
+      return res.status(409).json({ error: motivo, codigo: r.motivo || 'nada_enfileirado', bloqueados_template: r.bloqueados_template || 0 });
+    }
+    await supabase.from('wa_agendamentos').update({ ultimo_disparo: new Date().toISOString() }).eq('id', ag.id);
+    res.status(201).json({ ok: true, agendamento_id: ag.id, na_fila: r.queued, total: p.dest.validos.length, bloqueados_template: r.bloqueados_template || 0 });
+  } catch (e) {
+    console.error('[comunicacao] envios/agora:', e.message);
+    next(communicationError(e, 'Erro ao enviar agora.'));
+  }
+});
+
 router.get('/envios/resumo', async (req, res, next) => {
   try {
     const dias = Math.min(parseInt(req.query.dias, 10) || 30, 120);
@@ -718,6 +1014,144 @@ router.get('/custo', async (req, res, next) => {
   }
 });
 
+// ── DASHBOARD do módulo (F2 do redesenho · 09/09/2026) ─────────────────────
+// Pedido do Marcos: pizza de mensagens por área, linha por dia, filtro por
+// data e por ano, engajamento dos disparos, quem espera resposta há +2 dias
+// (número principal, com a lista) e tempo de resposta por atendente/área.
+// A CONTA mora em utils/comunicacaoDashboard (pura, no gate); aqui só se lê.
+// Um endpoint, vários BLOCOS best-effort: bloco que falha entra em `avisos` e
+// vira NULL (a tela declara) — nunca zero. Um gráfico morto não pode derrubar
+// o número de quem está esperando resposta.
+// Janela: ?dias=7|30|90|365 (padrão 30) ou ?ano=AAAA — validada pela régua da
+// casa (utils/janelaPeriodo). ⚠️ Os dias são BRT: a régua devolve o dia LOCAL
+// do servidor (UTC na Vercel), então o recorte é refeito em diaBrt, e o filtro
+// no banco usa limitesUtc (03:00Z a 03:00Z) — a mensagem do culto de domingo à
+// noite fica no domingo.
+router.get('/dashboard', async (req, res, next) => {
+  try {
+    const agora = Date.now();
+    const j = resolverJanelaPeriodo({ dias: req.query.dias, ano: req.query.ano, diasValidos: [7, 30, 90, 365], diasPadrao: 30, agora });
+    const hoje = diaBrt(new Date(agora));
+    let inicio, fim;
+    if (j.ano) { inicio = j.inicio; fim = j.fim < hoje ? j.fim : hoje; }
+    else { fim = hoje; inicio = diaBrt(new Date(agora - (j.dias - 1) * 86400000)); }
+    const gran = DASH.granularidade({ dias: j.ano ? null : j.dias, ano: j.ano });
+    const { de, ate } = DASH.limitesUtc(inicio, fim);
+    const ateMs = new Date(ate).getTime();
+    // +7 dias de rabo: o engajamento conta resposta em até 7 dias DEPOIS do disparo.
+    const ateComRabo = new Date(ateMs + 7 * 86400000).toISOString();
+
+    const avisos = [];
+    const bloco = async (nome, fn, vazio) => {
+      try { return await fn(); }
+      catch (e) { console.warn(`[comunicacao] dashboard ${nome}:`, e.message); avisos.push(nome); return vazio; }
+    };
+    // Paginação que LANÇA em erro (fetchAllRows devolve o acumulado em silêncio,
+    // e aqui erro tem que virar aviso, não número menor). Com ORDER BY: range()
+    // sem ordem tem páginas indefinidas no PostgREST.
+    const lerTudo = async (build, { page = 1000, max = 20000 } = {}) => {
+      const out = [];
+      for (let from = 0; from < max; from += page) {
+        const { data, error } = await build().range(from, from + page - 1);
+        if (error) throw error;
+        out.push(...(data || []));
+        if (!data || data.length < page) return { rows: out, truncado: false };
+      }
+      return { rows: out, truncado: true };
+    };
+
+    // 1 · conversas — retrato de AGORA (quem espera), não da janela
+    const conversas = await bloco('conversas', async () => {
+      const r = await lerTudo(() => supabase.from('wa_conversas')
+        .select('id, nome, telefone, area, resolvida, atribuido_a, last_inbound_at, last_message_at, created_at, deleted_at')
+        .is('deleted_at', null).order('id'));
+      if (r.truncado) avisos.push('conversas_truncado');
+      return r.rows;
+    }, null);
+    // 2 · mensagens da janela (com o rabo de 7 dias, só pro engajamento)
+    const mensagens = await bloco('mensagens', async () => {
+      const r = await lerTudo(() => supabase.from('wa_mensagens')
+        .select('id, conversa_id, direcao, tipo, autor_id, criado_em')
+        .gte('criado_em', de).lt('criado_em', ateComRabo)
+        .order('criado_em').order('id'));
+      if (r.truncado) avisos.push('mensagens_truncado');
+      return r.rows;
+    }, null);
+    // 3 · disparos da janela — só o que SAIU
+    const disparos = await bloco('disparos', async () => {
+      const r = await lerTudo(() => supabase.from('whatsapp_envios')
+        .select('id, telefone, contexto, criado_em, enviado_em, tipo')
+        .eq('status', 'enviado').gte('criado_em', de).lt('criado_em', ate)
+        .order('criado_em').order('id'));
+      if (r.truncado) avisos.push('disparos_truncado');
+      return r.rows;
+    }, null);
+    // 4 · contagens da fila (o resumo que a aba já tinha, agora na MESMA janela)
+    const fila = await bloco('fila', async () => {
+      const conta = async (f) => {
+        let q = supabase.from('whatsapp_envios').select('id', { count: 'exact', head: true }).gte('criado_em', de).lt('criado_em', ate);
+        q = f(q);
+        const { count, error } = await q;
+        if (error) throw error;
+        return count || 0;
+      };
+      const [total, enviados, pendentes, erros, entregues, lidos, falhos_meta] = await Promise.all([
+        conta(q => q), conta(q => q.eq('status', 'enviado')), conta(q => q.eq('status', 'pendente')), conta(q => q.eq('status', 'erro')),
+        conta(q => q.not('delivered_at', 'is', null)), conta(q => q.not('read_at', 'is', null)), conta(q => q.not('failed_at', 'is', null)),
+      ]);
+      return { total, enviados, pendentes, erros, entregues, lidos, falhos_meta };
+    }, null);
+
+    // Fora do rabo: série, área e tempos são SÓ da janela.
+    const msgsJanela = (mensagens || []).filter(m => { const t = new Date(m.criado_em).getTime(); return Number.isFinite(t) && t < ateMs; });
+    const temMsgs = mensagens !== null;
+    const temConvs = conversas !== null;
+
+    const serie = temMsgs ? DASH.montarSerie(msgsJanela, { inicio, fim, gran }) : null;
+    const porArea = (temMsgs && temConvs) ? DASH.agruparPorArea(msgsJanela, conversas) : null;
+    const resumoConv = temConvs ? DASH.resumoConversas(conversas, { agoraMs: agora, inicio, fim, top: 30 }) : null;
+    const amostras = (temMsgs && temConvs) ? DASH.temposDeResposta(msgsJanela, conversas) : [];
+    const porAtendente = DASH.agregarTempos(amostras, 'autor_id');
+    // Nome de quem respondeu (best-effort · sem nome a tela mostra o id encurtado, nunca inventa).
+    const nomes = await bloco('atendentes', async () => {
+      const ids = porAtendente.map(a => a.autor_id);
+      const out = new Map();
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data, error } = await supabase.from('profiles').select('id, name').in('id', ids.slice(i, i + 200));
+        if (error) throw error;
+        for (const p of data || []) out.set(p.id, p.name);
+      }
+      return out;
+    }, new Map());
+
+    let engajamento = null;
+    if (temMsgs && temConvs && disparos !== null) {
+      const telDaConv = new Map(conversas.map(c => [c.id, c.telefone]));
+      const inbounds = mensagens.filter(m => m.direcao === 'in').map(m => ({ telefone: telDaConv.get(m.conversa_id), criado_em: m.criado_em }));
+      engajamento = DASH.engajamentoDisparos(disparos, inbounds, { janelaDias: 7 });
+    }
+
+    res.json({
+      janela: { inicio, fim, dias: j.ano ? null : j.dias, ano: j.ano || null, rotulo: rotuloJanela(j), gran, limite_sem_resposta_h: DASH.LIMITE_SEM_RESPOSTA_H },
+      agora: new Date(agora).toISOString(),
+      conversas: resumoConv,
+      por_area: porArea,
+      serie,
+      tempo_resposta: {
+        n: amostras.length,
+        por_atendente: porAtendente.map(a => ({ ...a, nome: nomes.get(a.autor_id) || null })),
+        por_area: DASH.agregarTempos(amostras, 'area'),
+      },
+      engajamento,
+      fila,
+      avisos,
+    });
+  } catch (e) {
+    console.error('[comunicacao] dashboard:', e.message);
+    next(communicationError(e, 'Erro ao montar o dashboard.'));
+  }
+});
+
 // ── Erros (falha terminal da fila + failed da Meta + órfãos) ─────────
 router.get('/erros', async (_req, res, next) => {
   try {
@@ -740,6 +1174,172 @@ router.get('/erros', async (_req, res, next) => {
   } catch (e) {
     console.error('[comunicacao] erros:', e.message);
     next(communicationError(e, 'Erro ao listar falhas.'));
+  }
+});
+
+// ── BOT DE IA POR ÁREA (Marcos · 08/09/2026) ─────────────────────────────
+// Configuração global (quem responde quem escreve · contato humano · tetos),
+// conhecimento e interruptor POR ÁREA, simulador (sem enviar) e resumo do que
+// o bot fez. A régua mora em utils/botIaRegras (pura, no gate); o caminho de
+// resposta em services/botIaResposta. Leitura = nível 1 (o router), escrita = 3.
+const MODOS_BOT = ['ninguem', 'menu', 'ia'];
+const MIGRATION_BOT_IA = 'A migration 20260908120000 ainda não foi aplicada — aplique e tente de novo.';
+
+router.get('/bot-ia/config', async (_req, res, next) => {
+  try {
+    const botIa = require('../services/botIaResposta');
+    const R = require('../utils/botIaRegras');
+    const { data: cfg, error } = await supabase.from('whatsapp_config')
+      .select('ia_ativa, respostas_automaticas').eq('id', 1).maybeSingle();
+    if (error) throw error;
+    const c = await botIa.lerConfig();
+    res.json({
+      modo: R.modoResposta({ cfg, erroCfg: null, botIa: c.botIa }),
+      ia_ativa: cfg?.ia_ativa !== false,
+      menu_ligado: cfg?.respostas_automaticas !== false,
+      bot_ia: c.botIa,
+      migration_ok: !c.migracaoAusente,
+      modelo: botIa.MODEL,
+      limites_padrao: R.LIMITES_PADRAO,
+      anthropic_configurada: !!process.env.ANTHROPIC_API_KEY,
+    });
+  } catch (e) {
+    console.error('[comunicacao] bot-ia config:', e.message);
+    next(communicationError(e, 'Erro ao ler a configuração do bot.'));
+  }
+});
+
+router.put('/bot-ia/config', authorizeModule('comunicacao', 3), async (req, res, next) => {
+  try {
+    const b = req.body || {};
+    const botIa = require('../services/botIaResposta');
+    const R = require('../utils/botIaRegras');
+    const atual = await botIa.lerConfig();
+    if (atual.migracaoAusente) return res.status(409).json({ error: MIGRATION_BOT_IA });
+    const patch = { updated_at: new Date().toISOString() };
+    const novo = { ...atual.botIa };
+    if ('modo' in b) {
+      if (!MODOS_BOT.includes(b.modo)) return res.status(400).json({ error: 'Modo inválido.' });
+      // ⚠️ Um seletor, duas colunas: o MENU vive em `respostas_automaticas`
+      // (a lei do freio de 26/08) e a IA em `bot_ia.ativo`. Escrever os dois
+      // juntos é o que impede menu E ia ligados ao mesmo tempo.
+      patch.respostas_automaticas = b.modo === 'menu';
+      novo.ativo = b.modo === 'ia';
+    }
+    if ('contato_humano' in b) novo.contato_humano = String(b.contato_humano || '').trim().slice(0, 60);
+    for (const k of ['limite_dia', 'limite_conversa_dia', 'horas_silencio_apos_humano']) if (k in b) novo[k] = Number(b[k]);
+    if ('instrucoes' in b) novo.instrucoes = String(b.instrucoes || '').slice(0, 2000);
+    const n = R.lerConfigBotIa(novo);
+    patch.bot_ia = {
+      ativo: n.ativo, contato_humano: n.contato_humano, limite_dia: n.limite_dia,
+      limite_conversa_dia: n.limite_conversa_dia, horas_silencio_apos_humano: n.horas_silencio_apos_humano,
+      instrucoes: n.instrucoes,
+    };
+    const { error } = await supabase.from('whatsapp_config').update(patch).eq('id', 1);
+    if (error) throw error;
+    const { data: cfg } = await supabase.from('whatsapp_config').select('ia_ativa, respostas_automaticas').eq('id', 1).maybeSingle();
+    res.json({ ok: true, bot_ia: n, modo: R.modoResposta({ cfg, erroCfg: null, botIa: n }) });
+  } catch (e) {
+    console.error('[comunicacao] bot-ia config put:', e.message);
+    next(communicationError(e, 'Erro ao salvar a configuração do bot.'));
+  }
+});
+
+router.get('/bot-ia/areas', async (_req, res, next) => {
+  try {
+    const botIa = require('../services/botIaResposta');
+    const a = await botIa.lerAreas();
+    const { data: cat } = await supabase.from('areas').select('nome').neq('ativo', false).order('nome');
+    res.json({ areas: a.areas, catalogo: (cat || []).map(x => x.nome).filter(Boolean), migration_ok: !a.migracaoAusente, erro: a.erro || null });
+  } catch (e) {
+    console.error('[comunicacao] bot-ia areas:', e.message);
+    next(communicationError(e, 'Erro ao listar as áreas do bot.'));
+  }
+});
+
+router.put('/bot-ia/areas/:area', authorizeModule('comunicacao', 3), async (req, res, next) => {
+  try {
+    const area = String(req.params.area || '').trim().slice(0, 80);
+    if (!area) return res.status(400).json({ error: 'Informe a área.' });
+    const b = req.body || {};
+    const row = { area, atualizado_em: new Date().toISOString(), atualizado_por: req.user?.userId || req.user?.id || null };
+    if ('ativo' in b) row.ativo = b.ativo === true;
+    if ('descricao' in b) row.descricao = String(b.descricao || '').trim().slice(0, 300) || null;
+    if ('conhecimento' in b) row.conhecimento = String(b.conhecimento || '').trim().slice(0, 6000) || null;
+    if ('encaminhar_para' in b) row.encaminhar_para = String(b.encaminhar_para || '').trim().slice(0, 300) || null;
+    if (Array.isArray(b.links)) {
+      // Lista FECHADA do que o bot pode enviar: só http(s), teto de 20.
+      row.links = b.links
+        .map(l => ({ rotulo: String(l?.rotulo || '').trim().slice(0, 80), url: String(l?.url || '').trim().slice(0, 500) }))
+        .filter(l => /^https?:\/\//i.test(l.url)).slice(0, 20);
+    }
+    let r = await supabase.from('wa_bot_areas').upsert(row, { onConflict: 'area' }).select().single();
+    if (r.error && r.error.code === '23503') {
+      // autor sem profile (conta de serviço) — grava sem a assinatura
+      r = await supabase.from('wa_bot_areas').upsert({ ...row, atualizado_por: null }, { onConflict: 'area' }).select().single();
+    }
+    if (r.error) {
+      if (r.error.code === '42P01') return res.status(409).json({ error: MIGRATION_BOT_IA });
+      throw r.error;
+    }
+    res.json(require('../utils/botIaRegras').lerArea(r.data));
+  } catch (e) {
+    console.error('[comunicacao] bot-ia area put:', e.message);
+    next(communicationError(e, 'Erro ao salvar a área do bot.'));
+  }
+});
+
+router.post('/bot-ia/simular', authorizeModule('comunicacao', 3), async (req, res, next) => {
+  try {
+    const texto = String(req.body?.texto || '').trim();
+    if (!texto) return res.status(400).json({ error: 'Escreva a mensagem a simular.' });
+    const r = await require('../services/botIaResposta').simular({
+      texto: texto.slice(0, 1500),
+      conversaId: req.body?.conversa_id || null,
+      telefone: req.body?.telefone || null,
+    });
+    res.json(r);
+  } catch (e) {
+    console.error('[comunicacao] bot-ia simular:', e.message);
+    next(communicationError(e, 'Erro ao simular o bot.'));
+  }
+});
+
+router.get('/bot-ia/resumo', async (req, res, next) => {
+  try {
+    const dias = Math.min(parseInt(req.query.dias, 10) || 7, 90);
+    const desde = new Date(Date.now() - dias * 86400000).toISOString();
+    const rows = [];
+    for (let from = 0; from < 5000; from += 1000) {
+      const { data, error } = await supabase.from('whatsapp_coletas')
+        .select('id, parsed, erro, created_at').eq('modulo_destino', 'bot_ia').is('deleted_at', null)
+        .gte('created_at', desde).order('created_at', { ascending: true }).order('id', { ascending: true })
+        .range(from, from + 999);
+      if (error) throw error;
+      rows.push(...(data || []));
+      if (!data || data.length < 1000) break;
+    }
+    const porAcao = {}; const porArea = {}; const porMotivo = {}; let tokens = 0;
+    for (const r of rows) {
+      const b = r.parsed?.bot_ia || {};
+      const acao = b.acao || String(r.erro || '').replace(/^bot_ia:/, '') || 'desconhecido';
+      porAcao[acao] = (porAcao[acao] || 0) + 1;
+      const area = b.area || '(sem área)';
+      porArea[area] = porArea[area] || { total: 0, responder: 0, encaminhar: 0, silencio: 0 };
+      porArea[area].total += 1;
+      if (Object.prototype.hasOwnProperty.call(porArea[area], acao)) porArea[area][acao] += 1;
+      if (b.motivo) porMotivo[b.motivo] = (porMotivo[b.motivo] || 0) + 1;
+      tokens += (b.uso?.input || 0) + (b.uso?.output || 0);
+    }
+    res.json({
+      dias, total: rows.length, por_acao: porAcao,
+      por_area: Object.entries(porArea).map(([area, v]) => ({ area, ...v })).sort((a, b) => b.total - a.total),
+      por_motivo: Object.entries(porMotivo).map(([motivo, n]) => ({ motivo, n })).sort((a, b) => b.n - a.n).slice(0, 12),
+      tokens, truncado: rows.length >= 5000,
+    });
+  } catch (e) {
+    console.error('[comunicacao] bot-ia resumo:', e.message);
+    next(communicationError(e, 'Erro ao resumir o bot.'));
   }
 });
 

@@ -238,10 +238,11 @@ export default function PerguntaCampo({ pergunta: p, valor, onChange, faltando, 
     <input
       style={base}
       type={formato === 'email' ? 'email' : 'text'}
-      inputMode={formato === 'telefone' || formato === 'cep' ? 'numeric' : formato === 'email' ? 'email' : 'text'}
+      inputMode={formato === 'telefone' || formato === 'cep' || formato === 'cpf' ? 'numeric' : formato === 'email' ? 'email' : 'text'}
       autoComplete={formato === 'email' ? 'email' : formato === 'telefone' ? 'tel' : formato === 'cep' ? 'postal-code' : 'off'}
       placeholder={formato === 'instagram' ? '@seuperfil'
         : formato === 'telefone' ? '(21) 99999-9999'
+        : formato === 'cpf' ? '000.000.000-00'
         : formato === 'cep' ? '00000-000' : ''}
       value={typeof valor === 'string' ? valor : ''}
       onChange={(e) => {
@@ -260,6 +261,17 @@ export default function PerguntaCampo({ pergunta: p, valor, onChange, faltando, 
         // espalha endereço/bairro/cidade é o CensoForm, que tem a lista de
         // perguntas e o mapa de respostas. Aqui só a máscara.
         if (formato === 'cep') v = mascaraCep(v);
+        // ⚠️ Máscara de CPF (11/09/2026): o campo era texto livre, então letra,
+        // dígito faltando e 15 números passavam daqui. O dígito verificador é
+        // cobrado no avanço (`bloqueios()`), mas a máscara é o que evita o erro
+        // em vez de só reclamar dele — e teclado numérico no celular.
+        if (formato === 'cpf') {
+          const d = v.replace(/\D/g, '').slice(0, 11);
+          v = d.length <= 3 ? d
+            : d.length <= 6 ? `${d.slice(0, 3)}.${d.slice(3)}`
+            : d.length <= 9 ? `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6)}`
+            : `${d.slice(0, 3)}.${d.slice(3, 6)}.${d.slice(6, 9)}-${d.slice(9)}`;
+        }
         onChange(v);
       }}
     />

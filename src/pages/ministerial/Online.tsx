@@ -530,6 +530,99 @@ function OAuthStatusCardInner() {
   );
 }
 
+
+// ⚠️⚠️ Alcance da comunidade do Online no WhatsApp · input MENSAL.
+//
+// Pedido do Matheus (02/09/2026). Ele pediu SOMADO ao "Investir tempo com Deus"
+// da mandala; a medição mostrou que somar enterraria a variação do devocional
+// (2→14 pessoas de jul→ago, contra uma comunidade de ordem de grandeza maior)
+// e misturaria ESTOQUE com FLUXO. Decisão: as duas parcelas aparecem lado a
+// lado na pétala, nunca somadas. Ver `supabase/migrations/20260902180000`.
+//
+// ⚠️ Gate por `isAdmin`, e não pelo `podeEditarOnline` do resto da tela: o
+// endpoint `POST /kpis/cultura/mensal` é `authorize('admin','diretor')`, então
+// quem tem `online` nível 3 sem ser diretor veria o botão e levaria 403 —
+// botão que sempre falha é pior que botão ausente.
+function ComunidadeOnlineCard() {
+  // ⚠️ Gate do MÓDULO, não `isAdmin`: a rota nova é `authorizeModule('online', 3)`
+  // e a coordenação do Online chega lá pelo BOOST DE ÁREA (quem tem a área
+  // "Online" recebe Math.max(nivel,5)). Medido em 02/09/2026: renata.martins
+  // tem a área, logo escrita efetiva 5 — e por isso não foi preciso mexer na
+  // matriz de permissões.
+  const { getAccessLevel, isAdmin } = useAuth();
+  const podeSalvar = isAdmin || (getAccessLevel?.(['online']) ?? 0) >= 3;
+  const [mes, setMes] = useState(() => new Date().toISOString().slice(0, 7));
+  const [valor, setValor] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const [salvo, setSalvo] = useState<string | null>(null);
+
+  if (!podeSalvar) return null;
+
+  const salvar = async () => {
+    // ⚠️ Vazio LIMPA (grava null = "não informado"); não é o mesmo que 0.
+    const limpo = valor.trim();
+    if (limpo !== '' && !/^\d{1,7}$/.test(limpo)) {
+      toast.error('Informe só números (ou deixe vazio para limpar).');
+      return;
+    }
+    setSalvando(true);
+    try {
+      // ⚠️ Manda SÓ estas duas chaves. O endpoint virou patch-style em
+      // 02/09/2026 justamente por isso — antes ele montava o payload inteiro e
+      // apagaria frequência, decisões e grupos daquele mês.
+      // ⚠️ Rota ESTREITA: o endpoint genérico de cultura_mensal escreve também
+      // dizimistas, ofertantes, frequências, decisões e grupos — abri-lo ao
+      // módulo daria à equipe do Online escrita sobre o financeiro e sobre a
+      // mandala inteira. Aqui não há caminho para tocar outra coluna.
+      await online.comunidadeMensal(mes, limpo === '' ? null : Number(limpo));
+      setSalvo(new Date().toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }));
+      toast.success(limpo === '' ? 'Valor limpo.' : 'Comunidade registrada.');
+    } catch (e: any) {
+      toast.error(e?.message || 'Não foi possível salvar.');
+    } finally {
+      setSalvando(false);
+    }
+  };
+
+  return (
+    <Card className="mb-6">
+      <CardContent className="p-4 sm:p-5">
+        <div className="flex flex-wrap items-end gap-3">
+          <div className="flex-1 min-w-[200px]">
+            <h3 className="text-sm font-semibold text-foreground">Comunidade do Online no WhatsApp</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Total de pessoas na comunidade neste mês. Aparece na pétala <strong>Investir</strong> da
+              mandala <strong>ao lado</strong> do devocional — os dois não são somados, porque medem
+              coisas diferentes (a comunidade é acumulada, o devocional é do mês).
+            </p>
+          </div>
+          <div>
+            <label className="block text-[11px] text-muted-foreground mb-1">Mês</label>
+            <input
+              type="month" value={mes} onChange={(e) => setMes(e.target.value)}
+              className="h-9 rounded-md border bg-background px-2 text-sm"
+            />
+          </div>
+          <div>
+            <label className="block text-[11px] text-muted-foreground mb-1">Pessoas</label>
+            <input
+              type="text" inputMode="numeric" value={valor} placeholder="ex.: 800"
+              onChange={(e) => setValor(e.target.value)}
+              className="h-9 w-28 rounded-md border bg-background px-2 text-sm"
+            />
+          </div>
+          <Button onClick={salvar} disabled={salvando} size="sm">
+            {salvando ? 'Salvando…' : 'Salvar'}
+          </Button>
+        </div>
+        {salvo && (
+          <p className="text-[11px] text-muted-foreground mt-2">Salvo em {salvo}.</p>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export default function Online() {
   const { getAccessLevel, isAdmin } = useAuth();
   const podeEditarOnline = isAdmin || (getAccessLevel?.(['online']) ?? 0) >= 3;
@@ -892,6 +985,7 @@ export default function Online() {
       <CultoYouTubePanel />
 
       {/* Diagnóstico · so admin · pra investigar zeros nas metricas */}
+      <ComunidadeOnlineCard />
       {isAdmin && <OnlineDebugPanel />}
 
       {/* Footer info */}

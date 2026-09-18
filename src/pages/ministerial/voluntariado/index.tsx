@@ -29,6 +29,8 @@ import VolEmails from './VolEmails';
 import VolScanTotem from './VolScanTotem';
 import VolTemplatesEscala from './VolTemplatesEscala';
 import VolNavBar from './components/VolNavBar';
+// varredura 2026-09: B08 — régua de escrita do módulo (espelha o servidor).
+import { useVolPodeEscrever } from './hooks/useVolPodeEscrever';
 
 export default function Voluntariado() {
   const { isAdmin, isColaborador } = useAuth();
@@ -51,6 +53,11 @@ export default function Voluntariado() {
   return (
     <div className="p-4 md:p-6">
       <VolNavBar />
+      {/* varredura 2026-09: B08 — aviso único de modo leitura. A área continua
+          aberta por `leitura >= 1` (VoluntariadoGuard), mas a escrita do módulo
+          agora exige `voluntariado escrita >= 3` no servidor: sem o aviso, o
+          botão desabilitado parece bug em vez de permissão. */}
+      <VolAvisoSomenteLeitura />
       <Routes>
         <Route index element={<VolDashboard />} />
         <Route path="checkin" element={<VolCheckin />} />
@@ -72,6 +79,21 @@ export default function Voluntariado() {
         <Route path="admin" element={<VolAdmin />} />
         <Route path="*" element={<Navigate to="/ministerial/voluntariado" replace />} />
       </Routes>
+    </div>
+  );
+}
+
+// varredura 2026-09: B08 — faixa de "somente leitura" pras telas de gestão.
+// Some pra quem escreve (o caso normal); ⚠️ some também enquanto as permissões
+// carregam, porque `useVolPodeEscrever` devolve true nesse intervalo.
+function VolAvisoSomenteLeitura() {
+  const podeEscrever = useVolPodeEscrever();
+  if (podeEscrever) return null;
+  return (
+    <div className="mb-4 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-sm text-amber-900 dark:text-amber-200">
+      <strong>Somente leitura.</strong> Você consulta as telas do voluntariado, mas não pode
+      criar, editar nem apagar — isso exige permissão de <em>escrita nível 3</em> no módulo
+      Voluntariado. Peça ao seu gestor se precisar operar.
     </div>
   );
 }

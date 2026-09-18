@@ -41,6 +41,14 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Request-ID'],
   exposedHeaders: ['X-Request-ID'],
+  // ⚠️ CACHE DO PREFLIGHT (11/09/2026). O front chama a API em OUTRO host
+  // (`crmcbrio.vercel.app`), então todo POST com `Content-Type: application/json`
+  // é precedido de um OPTIONS. Sem `maxAge` o navegador cacheia por ~5s e
+  // refaz o preflight quase toda chamada: DOBRA as requisições na borda e soma
+  // um round trip no celular — no WiFi cheio de um culto isso é sentido.
+  // 24h é o teto que Chrome e Firefox respeitam. Não afeta o limiter (o OPTIONS
+  // é respondido aqui, antes dos routers).
+  maxAge: 86400,
 }));
 app.use(rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -67,6 +75,10 @@ app.use(rateLimit({
     // estas portas existem pra resolver. Limiters próprios nos dois routers.
     || req.path.startsWith('/api/public/decisao-culto')
     || req.path.startsWith('/api/public/decisao-online')
+    // VISITANTE (09/09/2026): QR nos cartazes do hall/estacionamento/banheiro —
+    // a igreja inteira atrás do mesmo NAT no intervalo do culto. Limiter
+    // próprio em routes/publicVisitante.js.
+    || req.path.startsWith('/api/public/visitante')
     // Doação: a tela de pagamento faz POLLING do status, então sob o teto por IP
     // a pessoa tomaria 429 no meio do próprio pagamento — e a igreja inteira sai
     // por 1 IP no culto. Limiter próprio em routes/publicGenerosidade.js.
@@ -238,6 +250,9 @@ app.use('/api/public/generosidade', require('./routes/publicGenerosidade'));
 // vivem nos dois routers.
 app.use('/api/public/decisao-culto', require('./routes/publicDecisaoCulto'));
 app.use('/api/public/decisao-online', require('./routes/publicDecisaoOnline'));
+// Porta do VISITANTE (QR nos cartazes · voucher da cafeteria · pesquisa) —
+// ANTES do publicLimiter estrito e no skip() do global, pelo mesmo motivo.
+app.use('/api/public/visitante', require('./routes/publicVisitante'));
 // ⚠️ CAMPANHAS montada ANTES do publicLimiter estrito: a barrinha de progresso
 // vai para as TELAS LATERAIS DO CULTO e faz polling, com a igreja inteira atrás
 // do mesmo NAT — sob 30/15min por IP ela congelaria no meio do lançamento, e
@@ -280,6 +295,7 @@ app.use('/api/kpis', require('./routes/kpis'));
 app.use('/api/online', require('./routes/online'));
 app.use('/api/wifi', require('./routes/wifi'));
 app.use('/api/cuidados', require('./routes/cuidados'));
+app.use('/api/visitantes', require('./routes/visitantes')); // porta /visitante · voucher · ponte c/ Próximos passos
 app.use('/api/next-convite', require('./routes/nextConvite'));
 app.use('/api/wa-inbox', require('./routes/waInbox'));
 app.use('/api/agente-primeiro-contato', require('./routes/agentePrimeiroContato'));
@@ -331,6 +347,9 @@ app.use('/api/planejamento-anual', require('./routes/planejamentoAnual'));
 app.use('/api/lgpd', require('./routes/lgpd'));
 app.use('/api/feedback', require('./routes/feedback'));
 
+// Cache do /api/health/db · a rota nao pode virar carga sobre o que ela vigia.
+let _cacheHealthDb = { em: 0, resp: null };
+
 // ── Health check ──
 // Inclui status do Supabase client pra diagnóstico de "Não autorizado" em prod
 app.get('/api/health', (req, res) => {
@@ -350,30 +369,40 @@ app.get('/api/health', (req, res) => {
   });
 });
 
-// ── Health check do BANCO ──
-// Nasceu em 2026-09-16: algo externo já vinha batendo HEAD/GET aqui e
-// caindo no 404 genérico (ou pior, sem nenhuma rota registrada) — visível
-// como "HEAD /api/health/db · HTTP 503" na aba Web & API do /sistema. Em vez
-// de só devolver 404, a rota passou a existir de verdade: confere se o
-// PostgREST responde dentro de um teto curto, e falha CLARO (503 com motivo
-// entregue via `falhaInterna`) em vez de silencioso.
+// ── Health check DE VERDADE (o que faltava em 02/09/2026) ──
+// ⚠️⚠️ A rota ACIMA responde 200 `ok` com o banco MORTO: ela só olha se as env
+// vars existem. Está catalogada como `critical` e vigiada a cada 5 min — e
+// durante a queda de 1h34 respondeu "ok" o tempo todo, junto com o painel do
+// Supabase dizendo ACTIVE_HEALTHY. Dois sinais verdes medindo a coisa errada.
+// NÃO mexer nela (outros consumidores dependem do contrato); para "o sistema
+// está utilizável?", é ESTA aqui.
+//
+// ⚠️ A régua vive em `utils/saudeBanco` (pura, no gate). Aqui é casca fina.
+// ⚠️ PÚBLICA de propósito: monitor externo não carrega credencial nossa. Não
+// devolve dado nenhum — só se respondeu e em quanto tempo.
 app.get('/api/health/db', async (req, res) => {
-  const { supabase } = require('./utils/supabase');
-  const { falhaInterna } = require('./utils/responderFalha');
-  if (!supabase) {
-    return falhaInterna(res, 'Banco não configurado neste runtime.', new Error('supabase_client_ausente'), { status: 503 });
+  const { sondar, respostaSaude, CACHE_MS } = require('./utils/saudeBanco');
+  const agora = Date.now();
+  let resp = (agora - _cacheHealthDb.em < CACHE_MS) ? _cacheHealthDb.resp : null;
+  const doCache = !!resp;
+
+  if (!resp) {
+    const { supabase } = require('./utils/supabase');
+    resp = respostaSaude(await sondar(supabase));
+    _cacheHealthDb = { em: agora, resp };
+    if (resp.status !== 200) console.error('[HEALTH/DB] banco nao respondeu:', resp.corpo.erro);
   }
-  const inicio = Date.now();
-  try {
-    const consulta = supabase.from('modulos').select('id', { count: 'exact', head: true }).limit(1);
-    const teto = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout_5s')), 5000));
-    const { error } = await Promise.race([consulta, teto]);
-    if (error) throw error;
-    setSystemJobOutcome(res, { status: 'success', effectStatus: 'confirmed', outputCount: 1, result: 'db_healthy' });
-    return res.json({ status: 'ok', db: true, latency_ms: Date.now() - inicio, timestamp: new Date().toISOString() });
-  } catch (erro) {
-    return falhaInterna(res, 'Banco de dados indisponível.', erro, { status: 503 });
-  }
+
+  setSystemJobOutcome(res, {
+    status: resp.status === 200 ? 'success' : 'failed',
+    effectStatus: 'confirmed',
+    outputCount: resp.status === 200 ? 1 : 0,
+    result: resp.status === 200 ? 'db_healthy' : 'db_down',
+  });
+  // ⚠️ Retry-After faz monitor e cliente RECUAREM em vez de martelar um banco
+  // que esta tentando levantar.
+  if (resp.retryApos) res.set('Retry-After', String(resp.retryApos));
+  return res.status(resp.status).json({ ...resp.corpo, cache: doCache, timestamp: new Date().toISOString() });
 });
 
 // ── API 404 (evita fallback HTML para rotas inexistentes) ──

@@ -1,4 +1,5 @@
 const { supabase } = require('../utils/supabase');
+const { respostaDeFalhaAuth, ehFalhaDeInfra } = require('../utils/falhaInfra');
 
 // LEGADO · ROLE_MAP é usado apenas internamente por `authorizeCycle` (cycles.js).
 // Manter até `authorizeCycle` migrar pra autorizacao por módulo (`authorizeModule`).
@@ -47,8 +48,33 @@ const ROUTE_MODULE_MAP = {
   'online':       ['online'],
   'wifi':         ['wifi'],
   'next':         ['next'],
+  // Gestão do Next (`/api/next`) · 03/09/2026. Aceita `next` OU `integracao`
+  // porque a aba Next vive DENTRO da página de Integração desde o #2856:
+  // gatear só por ['next'] daria 403 pra quem tem apenas `integracao` (medido:
+  // 2 pessoas ativas, ambas nível 5) numa tela que elas sempre puderam abrir.
+  'next-gestao':  ['next', 'integracao'],
   'next-batismo': ['next-batismo'],
+  // varredura 2026-09 · LEITURA das inscrições de batismo (GET /kpis/batismos e
+  // /batismos/cobertura-convertidos). Espelha o `authorizeBatismo` da ESCRITA em
+  // modo leitura: a tela `/batismo` é gateada pelo módulo `batismo` e a aba
+  // Batismos da Integração pelo `integracao` (src/App.tsx:845-846), então as
+  // DUAS portas valem — gatear só por uma daria 403 numa tela que a pessoa
+  // sempre pôde abrir. Chave PRÓPRIA de propósito: o slug `batismo` nunca teve
+  // entrada aqui, e criá-la mudaria em silêncio o `getEffectiveLevel(req,
+  // 'batismo')` que os guards de ESCRITA já usam.
+  'batismo-leitura': ['integracao', 'batismo'],
   'voluntariado': ['voluntariado'],
+  // varredura 2026-09 (A04) · check-in devocional (`mem_devocionais`, 43 linhas). As DUAS
+  // portas valem porque a tela tem dois donos medidos: o DevocionalAdmin/DevocionalPanel
+  // mora na aba Devocionais de Cuidados (src/pages/ministerial/Cuidados.tsx:2706) e o
+  // histórico por pessoa é lido na ficha da Membresia (Membresia.jsx:982) — gatear só por
+  // `cuidados` daria 403 numa tela que a Membresia sempre pôde abrir.
+  // ⚠️ Chave PRÓPRIA e ESTREITA de propósito: NÃO usar a chave ampla `membros` (12 módulos)
+  // — prática devocional é convicção religiosa (LGPD art. 11) e produção/marketing/logística
+  // não têm o que ver ali. Leitura NOMINAL é nível 2 (nível 1 fica só nos agregados
+  // /kpis e /stats): com nível 1 e `membresia` na lista, o atalho de `role === 'voluntario'`
+  // (auth.js:683 · exige nivelMinimo <= 1) liberaria o histórico de qualquer membro.
+  'devocionais':  ['cuidados', 'membresia'],
   'membresia':    ['membresia'],
   // Censo/pesquisas. Nível 1 = agregado; 2 = resposta nominal (mesma régua da
   // membresia). Sem esta entrada, moduleNames viria vazio e o guard cairia no
@@ -65,12 +91,24 @@ const ROUTE_MODULE_MAP = {
   // ⚠️ Escrever link é nível 4 de propósito: repontar um destino redireciona em
   // silêncio TODO cartaz já impresso. Ver `src/test/routeModuleMap.test.ts`.
   'links':        ['links'],
+  // Visitantes (09/09/2026): porta pública /visitante + voucher da cafeteria.
+  // Módulo próprio = unidade de permissão (quem resgata café não vê ficha pastoral).
+  'visitantes':   ['visitantes'],
   // Leitura de dados de PESSOA (nome/CPF/telefone) é legítima em vários módulos
   // ministeriais que trabalham com gente. Quem tem QUALQUER um destes em leitura
   // passa; quem não tem (ex.: conta só de logística/financeiro/produção/marketing,
   // ou membro/voluntário sem módulo ministerial) é bloqueado. Fecha o vazamento de
   // PII em rotas que antes eram só `authenticate`.
   'membros':      ['membresia','grupos','cuidados','integracao','next','next-batismo','voluntariado','kids','ami','bridge','online','face'],
+  // varredura 2026-09 (A01) · painel de novos convertidos — o componente
+  // JornadaConvertidos, montado em 5 telas (cuidados, online, ami, bridge, kids).
+  // Chave ESTREITA de propósito: a lista traz nome, telefone e CPF, e
+  // `src/test/jornadaPiiGuard.test.ts` fixou que lista de PII não usa a chave
+  // ampla `membros` (12 módulos, inclui produção e marketing). Aqui entram só os
+  // 5 donos reais da tela. E, ao contrário de `membros`, esta lista NÃO tem
+  // `membresia` — então também não pega o atalho de `role === 'voluntario'`
+  // (L617-621), que libera sem olhar se o método é leitura ou escrita.
+  'jornada-convertidos': ['cuidados','online','ami','bridge','kids'],
   // Dado financeiro do membro (contribuições) · membresia OU financeiro, nível 2.
   'membros-financeiro': ['membresia','financeiro'],
   // Como 'membros', + a conta de quiosque do lounge (módulo totem-membro ·
@@ -271,12 +309,60 @@ async function authenticate(req, res, next) {
   const { data: { user }, error } = await supabase.auth.getUser(token);
 
   if (error || !user) {
-    console.warn('[AUTH] Token rejeitado pelo Supabase:', error?.message || 'usuario null');
-    return res.status(401).json({
-      error: 'Token inválido ou expirado',
-      reason: 'invalid_token',
+    // ⚠️⚠️ BANCO FORA NÃO É TOKEN INVÁLIDO (incidente de 02/09/2026).
+    // Durante a queda do Supabase, `getUser` falha por REDE e o código antigo
+    // devolvia 401 — 442 pessoas leram "sessão expirada" com o token perfeito,
+    // e a instrução implícita ("faça login de novo") era justamente a que não
+    // funcionava, porque o login fala direto com o Auth que estava fora.
+    // ⚠️ FAIL-CLOSED: só vira 503 com SINAL de infra; na dúvida segue 401.
+    const { status, corpo } = respostaDeFalhaAuth(error);
+    if (status === 503) {
+      console.error('[AUTH] Auth indisponível (infra):', error?.message);
+      res.set('Retry-After', '30');
+    } else {
+      console.warn('[AUTH] Token rejeitado pelo Supabase:', error?.message || 'usuario null');
+    }
+    return res.status(status).json({
+      ...corpo,
       detail: error?.message || 'getUser retornou null · token pode ser de outro projeto Supabase',
     });
+  }
+
+  // varredura 2026-09: AUTH-02 `banned_until` do GoTrue era ignorado pelo sistema inteiro (0 ocorrências no repo) — banir alguém pelo painel do Supabase, que é o gesto natural de quem opera o Auth, NÃO desativava o profile e a pessoa continuava passando por aqui.
+  // ⚠️ São dois cadastros de banimento: `auth.users.banned_until` (GoTrue) e `profiles.active` (checado logo abaixo). Hoje os 3 banidos só não têm acesso por coincidência — os 3 também estão com active=false. Daqui em diante o ban do GoTrue vale sozinho.
+  //
+  // ⚠️⚠️ POR QUE `auth.admin.getUserById` E NÃO O `user` QUE O `getUser` ACABOU DE
+  // DEVOLVER — MEDIDO em produção (09/2026): `GET /auth/v1/user`, que é o endpoint
+  // que `supabase.auth.getUser(token)` chama, NÃO traz o campo `banned_until`. Ele
+  // só existe nos endpoints ADMIN (`/auth/v1/admin/users` e `/auth/v1/admin/users/:id`)
+  // e, mesmo lá, SÓ aparece quando não é nulo (conferido nos 3 banidos de verdade).
+  // A primeira versão desta trava lia `user.banned_until`: dava `undefined` sempre,
+  // `Date.parse(undefined)` é NaN e ela NUNCA disparava — inerte, e inerte em silêncio.
+  // ⚠️ CAMPO AUSENTE = NÃO BANIDO, e é o caso normal (o GoTrue omite o nulo).
+  // ⚠️ CUSTO: só no CACHE-MISS. O cache de auth por token (60s · linha ~289) responde
+  // antes daqui, então isto é ~1 chamada admin extra por usuário por minuto.
+  // ⚠️⚠️ NÃO É FAIL-CLOSED, DE PROPÓSITO: se a chamada admin falhar (rede, GoTrue fora),
+  // o login SEGUE. `profiles.active` (logo abaixo) continua sendo o portão principal, e
+  // trancar a igreja inteira num soluço do GoTrue seria estrago maior que um banido
+  // passar até o serviço voltar. O `console.warn` é alto pra isso não virar silêncio.
+  // ⚠️ O ban só é visto no próximo cache-miss: quem já estava dentro passa por até 1
+  // minuto. `bustPermissionCaches()` zera na hora, e `PUT /permissoes/usuario/:id/ativo`
+  // (permissoes.js) o chama — mas ⚠️ HOJE ESSA ROTA NÃO TEM CAMINHO PELO PRODUTO:
+  // varredura 2026-09 não achou chamador em `src/api.js` nem botão em tela nenhuma. Ou
+  // seja, banir alguém segue sendo gesto no painel do Supabase, e o corte leva até 1
+  // minuto pra valer. Ligar a tela é o que torna o "zera na hora" alcançável.
+  let banidoAte = null;
+  try {
+    const { data: contaAuth, error: erroAdmin } = await supabase.auth.admin.getUserById(user.id);
+    if (erroAdmin) throw erroAdmin;
+    banidoAte = contaAuth?.user?.banned_until || null;
+  } catch (e) {
+    console.warn('[AUTH] ⚠️ Não deu pra conferir banimento no GoTrue (seguindo só com profiles.active):', e?.message || e);
+  }
+  const banidoAteMs = banidoAte ? Date.parse(banidoAte) : NaN;
+  if (!Number.isNaN(banidoAteMs) && banidoAteMs > Date.now()) {
+    console.warn('[AUTH] Conta banida no Auth tentou entrar:', user.email, '· banned_until =', banidoAte);
+    return res.status(403).json({ error: 'Acesso suspenso', reason: 'banned_user', detail: `banned_until=${banidoAte}` });
   }
 
   // Busca perfil do usuário (role, name, área etc.)
@@ -288,6 +374,15 @@ async function authenticate(req, res, next) {
 
   if (profileError) {
     console.error('[AUTH] Erro ao buscar profile:', profileError.message);
+    // ⚠️ Mesma distinção: banco fora é 503 (o cliente espera e volta), não 500
+    // (que o front trata como defeito permanente e não retenta).
+    if (ehFalhaDeInfra(profileError)) {
+      res.set('Retry-After', '30');
+      return res.status(503).json({
+        error: 'O sistema está temporariamente indisponível. Aguarde um instante.',
+        reason: 'banco_indisponivel', retry_apos_seg: 30, detail: profileError.message,
+      });
+    }
     return res.status(500).json({ error: 'Erro ao carregar perfil', reason: 'profile_query_error', detail: profileError.message });
   }
 
@@ -778,7 +873,24 @@ function applyAccessFilter(query, req, routeKey, opts = {}) {
   return query.eq('id', '00000000-0000-0000-0000-000000000000');
 }
 
-module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, bustPermissionCaches, ROLE_MAP, ROUTE_MODULE_MAP,
+// varredura 2026-09: A05 — "autenticado" NÃO é "colaborador". O login do app de
+// membros e o do ERP compartilham o mesmo Supabase Auth: das 201 contas ativas
+// medidas em 04/09, 138 são `is_membro_only` (membro/quiosque). Rotas de
+// governança, estratégia, expansão, dashboards e orçamento de evento trazem
+// número financeiro e discussão estratégica — não é conteúdo de membro.
+// Extraído de `routes/ataSemanal.js`, que já aplicava exatamente esta fronteira,
+// para que os demais routers possam reusar em vez de recriar o bloco.
+// ⚠️ É PISO, não substituto de `authorizeModule`: bloqueia a conta só-app, mas
+// não distingue módulo nem nível. Onde houver routeKey no ROUTE_MODULE_MAP,
+// prefira o guard de módulo por rota.
+function apenasColaborador(req, res, next) {
+  if (req.user?.is_membro_only) {
+    return res.status(403).json({ error: 'Acesso restrito a colaboradores' });
+  }
+  next();
+}
+
+module.exports = { authenticate, authorize, authorizeCycle, authorizeModule, authorizeKpiArea, getMyPermissions, getEffectiveLevel, getUserAreas, applyAccessFilter, bustPermissionCaches, ROLE_MAP, ROUTE_MODULE_MAP, apenasColaborador,
   // exports aditivos · reuso da resolução de permissão (ex.: cobertura de férias,
   // grade de acesso efetivo por módulo na tela de Permissões > Usuários)
   resolveEffectivePerms, getCargoMatrix, getModulos, AREA_MODULO_BOOST, _normalizarArea,

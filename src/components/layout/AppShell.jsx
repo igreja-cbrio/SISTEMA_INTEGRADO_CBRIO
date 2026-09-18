@@ -10,6 +10,7 @@ import PrimeiroAcessoSenhaModal from '../auth/PrimeiroAcessoSenhaModal';
 import PrimeiroAcessoFotoModal from '../auth/PrimeiroAcessoFotoModal';
 import FotoLightboxGlobal from '../FotoLightboxGlobal';
 import { playNotificationSound, playMessageSound } from '../../lib/sounds';
+import { proximoIntervalo, deveRecuar } from '@/lib/pollingResiliente';
 import { isPushSupported, getCurrentSubscription, subscribePush, unsubscribePush } from '../../lib/pushNotifications';
 import MegaMenu from '../ui/mega-menu';
 import { CommandSearch } from '../ui/command-search';
@@ -25,6 +26,70 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
 import { Button } from '../ui/button';
 import { Avatar, AvatarFallback, AvatarImage } from '../ui/avatar';
 import { GlobalChartGradients } from '../charts/ChartGradients';
+
+/**
+ * Polling que NÃO empilha e NÃO martela (incidente de 02/09/2026).
+ *
+ * ⚠️⚠️ O `setInterval(fn, 30000)` cru tinha dois defeitos que só aparecem
+ * quando o servidor está mal — que é exatamente quando eles doem:
+ *   1. dispara de novo mesmo com a anterior EM VOO (com o backend pendurando
+ *      300 s, cada aba empilhava ~10 chamadas vivas por endpoint);
+ *   2. mantém o ritmo fixo durante a queda, ajudando a afogar o banco que
+ *      está tentando levantar.
+ *
+ * Usa `setTimeout` reagendado (não `setInterval`): é o que permite o intervalo
+ * MUDAR entre um ciclo e outro.
+ */
+function usePollingResiliente(fn, ativo, deps) {
+  const fnRef = useRef(fn);
+  fnRef.current = fn;
+  useEffect(() => {
+    if (!ativo) return;
+    let vivo = true;
+    let timer = null;
+    let emVoo = false;
+    let falhas = 0;
+
+    const ciclo = async () => {
+      // ⚠️ Guarda de "em voo": é ela que impede o empilhamento.
+      if (emVoo) { agenda(); return; }
+      emVoo = true;
+      try {
+        await fnRef.current();
+        falhas = 0;               // ⚠️ sucesso zera o recuo NA HORA
+      } catch (e) {
+        if (deveRecuar(e)) falhas += 1;
+      } finally {
+        emVoo = false;
+        if (vivo) agenda();
+      }
+    };
+    const agenda = () => {
+      if (!vivo) return;
+      clearTimeout(timer);
+      timer = setTimeout(ciclo, proximoIntervalo(falhas));
+    };
+
+    ciclo();
+    // Voltar pra aba ressincroniza na hora e ZERA o recuo: a pessoa está
+    // olhando, e o cenário mais comum é o sistema já ter voltado.
+    const onVisible = () => {
+      if (document.visibilityState !== 'visible') return;
+      falhas = 0;
+      ciclo();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('focus', onVisible);
+    return () => {
+      vivo = false;
+      clearTimeout(timer);
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('focus', onVisible);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, deps);
+}
+
 
 const SEV_COLORS = { urgente: '#ef4444', aviso: '#f59e0b', info: '#00B39D' };
 const MOD_COLORS = { rh: '#8b5cf6', financeiro: '#10b981', logistica: '#ef4444', patrimonio: '#6366f1', membresia: '#00B39D', eventos: '#3b82f6', projetos: '#ec4899', kpis: '#f97316', cuidados: '#ef476f', processos: '#00B39D', nps: '#06b6d4', sistema: '#6b7280' };
@@ -129,7 +194,6 @@ const NAV_ITEMS = [
           { label: 'Jornada da Igreja', description: 'Profundidade da igreja · 5 valores · Membro Modelo (≥2 valores)', icon: Sparkles, path: '/jornada', module: 'membresia' },
           { label: 'Dashboard Semanal', description: 'Painel da reunião de quarta · semanal · mensal · metas · gerador IA', icon: LayoutDashboard, path: '/dashboard-semanal' },
           { label: 'ATA Semanal', description: 'Ata da reunião ministerial de segunda · redigida a partir da gravação', icon: FileText, path: '/ata-semanal' },
-          { label: 'Minha Área', description: 'KPIs (resultado) e Dados (entrada) da sua área', icon: BarChart2, path: '/minha-area', module: 'minha-area' },
         ],
       },
       {
@@ -183,14 +247,22 @@ const NAV_ITEMS = [
       {
         title: 'Áreas ministeriais',
         items: [
-          { label: 'Integração', description: 'Batismo, apresentação e cultos', icon: UserCheck, path: '/ministerial/integracao', module: 'integracao', perm: 'canMembresia' },
-          { label: 'Next', description: 'Turmas, matrículas e presenças do Next', icon: GraduationCap, path: '/ministerial/next', module: 'next' },
-          { label: 'Batismo', description: 'Inscrições, horários, agendamento e check-in de batismo', icon: Droplets, path: '/batismo', module: 'batismo' },
+          // ⚠️ 'Next' e 'Batismo' SAÍRAM daqui em 03/09/2026 (pedido do Matheus): os dois
+          // já vivem como ABA desta página — `/ministerial/next` era só um redirect pra
+          // `?tab=next`, e `/batismo` renderiza o MESMO componente `Batismos` que a aba.
+          // ⚠️ As ROTAS ficam (link salvo, push e deep link continuam abrindo). Tirar do
+          // menu é tirar do NAV_ITEMS, nunca da rota — quem decide acesso é o ModuleGuard.
+          { label: 'Integração', description: 'Cultos, decisões, batismos e Next', icon: UserCheck, path: '/ministerial/integracao', module: 'integracao' },
           { label: 'Membresia', description: 'Cadastros, trilha dos valores e Jornada', icon: BookOpen, path: '/ministerial/membresia', perm: 'canMembresia' },
           { label: 'Cuidados', description: 'Capelania e aconselhamento', icon: Heart, path: '/ministerial/cuidados', module: 'cuidados' },
+          // ⚠️ "Visitantes" SAIU do menu em 11/09/2026 (decisão do Marcos: "não
+          // queria um módulo"). O visitante vive em Cuidados → Próximos passos,
+          // etiquetado. A rota /visitantes continua existindo SEM menu, porque a
+          // cafeteria resgata o voucher e não pode ter o módulo cuidados.
+          // Não recriar este item sem falar com ele.
           { label: 'Comunicação', description: 'Central de WhatsApp · chat, envios, templates, atendentes e relatórios', icon: MessageSquare, path: '/comunicacao', module: 'comunicacao' },
-          { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos', module: 'grupos', perm: 'canMembresia' },
-          { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', perm: 'canMembresia' },
+          { label: 'Grupos', description: 'Grupos de conexão · pedidos · QR · mapa', icon: UsersRound, path: '/grupos', module: 'grupos' },
+          { label: 'Voluntariado', description: 'Check-in, escalas e QR codes', icon: HandHelping, path: '/ministerial/voluntariado', module: 'voluntariado' },
           { label: 'Entradas', description: 'Porta de entrada · uma pessoa = um cadastro · liga inscrição ao membro e funde duplicados', icon: UserSearch, path: '/entradas', module: 'next-batismo' },
         ],
       },
@@ -210,7 +282,7 @@ const NAV_ITEMS = [
       {
         title: 'Visualização por culto',
         items: [
-          { label: 'Online', description: 'Visão do canal YouTube e séries de pregação', icon: Youtube, path: '/online', perm: 'canMembresia' },
+          { label: 'Online', description: 'Visão do canal YouTube e séries de pregação', icon: Youtube, path: '/online', module: 'online' },
           { label: 'Kids · Indicadores', description: 'Gestão do ministério (vínculos, equipe, estoque...) + KPIs e saúde', icon: Baby, path: '/kids', module: 'kids' },
           { label: 'AMI', description: 'Indicadores do culto AMI', icon: GraduationCap, path: '/ami', module: 'ami' },
           { label: 'Bridge', description: 'Indicadores do culto Bridge', icon: ArrowRightLeft, path: '/bridge', module: 'bridge' },
@@ -343,23 +415,10 @@ export default function AppShell() {
     return ORDEM_GRUPOS_NOTIF.filter(g => mapa[g]?.length).map(g => ({ label: g, items: mapa[g] }));
   }, [notifs, notifFiltro]);
 
-  useEffect(() => {
-    loadNotifCount();
-    // Polling como safety net (caso o WebSocket caia ou o navegador hiberne a aba).
-    // O canal Realtime abaixo entrega INSERTs em < 1s · o polling so existe pra
-    // ressincronizar se algum evento for perdido.
-    const interval = setInterval(loadNotifCount, 30000);
-    // Ao voltar pra aba (que estava em segundo plano · WebSocket pode ter
-    // hibernado e perdido eventos), ressincroniza na hora — sem esperar o poll.
-    const onVisible = () => { if (document.visibilityState === 'visible') loadNotifCount(); };
-    document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('focus', onVisible);
-    return () => {
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('focus', onVisible);
-    };
-  }, []);
+  // ⚠️ Polling com guarda de "em voo" + recuo no erro (incidente de 02/09/2026).
+  // Cobre o refoco da aba também. Realtime segue entregando em < 1 s; isto é
+  // só a rede de segurança que ressincroniza o que o WebSocket perder.
+  usePollingResiliente(loadNotifCount, true, []);
 
   // Realtime · escuta INSERTs em `notificações` filtrado pelo usuário logado.
   // Quando uma nova chega, toca o som, incrementa o badge e (se o dropdown
@@ -411,7 +470,13 @@ export default function AppShell() {
       }
       prevNotifCount.current = count;
       setNotifCount(count);
-    } catch { /* backend might not be ready */ }
+    } catch (e) {
+      // ⚠️⚠️ RELANÇA de propósito: o `catch` mudo engolia a falha e o polling
+      // nunca sabia que o servidor estava mal — era isso que mantinha o ritmo
+      // fixo de 30 s durante a queda. O badge continua degradando sozinho
+      // (fica no último valor); quem decide o recuo é o hook.
+      throw e;
+    }
   }
 
   // ── Conversas (WhatsApp) · badge dedicado no header ──────────────────
@@ -432,30 +497,33 @@ export default function AppShell() {
       if (total > 0 && prevWaUnread.current >= 0 && total > prevWaUnread.current) playMessageSound();
       prevWaUnread.current = total;
       setWaUnread(total);
-    } catch { /* sem acesso ao módulo · ignora */ }
+    } catch (e) {
+      // ⚠️ Sem permissão no módulo (403) NÃO é falha de infra: o hook trata
+      // isso em `deveRecuar` e segue no ritmo normal. Relançar é o que permite
+      // essa distinção — o catch mudo tratava 403 e banco-fora igual.
+      throw e;
+    }
   }
   useEffect(() => {
     if (!podeConversas) { setWaUnread(0); return; }
-    loadWaUnread();
-    const interval = setInterval(loadWaUnread, 30000);
-    const onVisible = () => { if (document.visibilityState === 'visible') loadWaUnread(); };
-    document.addEventListener('visibilitychange', onVisible);
-    window.addEventListener('focus', onVisible);
+    // ⚠️ polling e refoco: `usePollingResiliente` (abaixo)
     let ch = null;
     if (supabase && profile?.id) {
       ch = supabase.channel(`wa-unread:${profile.id}`)
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wa_mensagens' }, () => loadWaUnread())
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'wa_conversas' }, () => loadWaUnread())
+        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'wa_mensagens' }, () => { loadWaUnread().catch(() => {}); })
+        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'wa_conversas' }, () => { loadWaUnread().catch(() => {}); })
         .subscribe();
     }
     return () => {
-      clearInterval(interval);
-      document.removeEventListener('visibilitychange', onVisible);
-      window.removeEventListener('focus', onVisible);
+
       if (ch) supabase.removeChannel(ch);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [podeConversas, profile?.id]);
+
+  // ⚠️ Mesmo polling resiliente do sino. `ativo = podeConversas`: quem não tem
+  // o módulo não fica batendo num endpoint que responde 403.
+  usePollingResiliente(loadWaUnread, podeConversas, [podeConversas]);
 
   const loadNotifs = useCallback(async () => {
     setNotifsLoading(true);

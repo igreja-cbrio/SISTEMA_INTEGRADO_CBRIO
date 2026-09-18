@@ -22,6 +22,7 @@ export const INDICADORES = [
   { key: 'frequencia_total',  label: 'Frequência Total (Templo + Kids)', usa_ocupacao: false },
   { key: 'aceitacoes',        label: 'Aceitações',        usa_ocupacao: false },
   { key: 'aceitacoes_online', label: 'Aceitações Online', usa_ocupacao: false },
+  { key: 'aceitacoes_kids',   label: 'Aceitações Kids',   usa_ocupacao: false },
   { key: 'aceitacoes_total',  label: 'Aceitações (Presencial + Online)', usa_ocupacao: false },
   { key: 'aceitacoes_total_kids', label: 'Aceitações (Presencial + Online + Kids)', usa_ocupacao: false },
   { key: 'ao_vivo',           label: 'Ao vivo',           usa_ocupacao: false },

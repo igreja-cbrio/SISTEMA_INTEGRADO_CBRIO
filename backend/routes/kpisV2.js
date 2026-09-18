@@ -188,7 +188,21 @@ router.use((req, res, next) => {
 // ----------------------------------------------------------------------------
 // Trigger manual (admin) - dry-run ou execucao
 // ----------------------------------------------------------------------------
-router.post('/coletar', async (req, res) => {
+// varredura 2026-09: A06 · POST /coletar era só `authenticate` — qualquer uma das
+// 201 contas logadas disparava a coleta INTEIRA (CPU + custo) com um curl.
+// Régua = SOMA (LEI da escrita × leitura): admin/diretor OU líder de KPI
+// (`profiles.kpi_areas`), a mesma régua que o POST /registros já usa. Não uso
+// `authorize('admin','diretor')` puro porque o botão "Recalcular KPIs" da tela
+// do NEXT (src/pages/ministerial/Next.tsx:82) chama esta rota e o líder do NEXT
+// não é diretor — ele tomaria 403 num botão que sempre funcionou.
+function podeDispararColeta(req, res, next) {
+  if (!req.user) return res.status(401).json({ error: 'Não autenticado' });
+  if (['admin', 'diretor'].includes(req.user.role)) return next();
+  if ((req.user.kpi_areas || []).length > 0) return next();
+  return res.status(403).json({ error: 'Apenas admin/diretor ou líder de área de KPI pode disparar a coleta' });
+}
+
+router.post('/coletar', podeDispararColeta, async (req, res) => { // varredura 2026-09: A06 escrita sem autorização — coleta completa era aberta a qualquer logado
   try {
     const dryRun = req.query.dry_run === 'true' || req.body?.dry_run === true;
     const fontes = req.query.fontes ? String(req.query.fontes).split(',').filter(Boolean) : null;
@@ -692,7 +706,20 @@ router.post('/registros', async (req, res) => {
 // ----------------------------------------------------------------------------
 // PUT /registros/:id - editar
 // ----------------------------------------------------------------------------
-router.put('/registros/:id', async (req, res) => {
+// varredura 2026-09: A06 · o POST /registros checa kpi_areas e o PUT/DELETE do
+// MESMO registro não checavam nada — a assimetria era o esquecimento. Helper
+// resolve a área do registro pelo indicador dele (kpi_registros.indicador_id →
+// kpi_indicadores_taticos.area) pra alimentar `authorizeKpiArea`, que é o mesmo
+// guard já usado em PUT/DELETE /taticos/:id.
+async function fetchRegistroArea(registroId) {
+  if (!registroId) return null;
+  const { data } = await supabase.from('kpi_registros')
+    .select('indicador_id').eq('id', registroId).maybeSingle();
+  if (!data?.indicador_id) return null;
+  return fetchIndicadorArea(data.indicador_id);
+}
+
+router.put('/registros/:id', authorizeKpiArea(req => fetchRegistroArea(req.params.id)), async (req, res) => { // varredura 2026-09: A06 escrita sem autorização — qualquer logado editava um dos 2.775 registros que alimentam /painel
   const { id } = req.params;
   const allowed = ['valor_realizado', 'valor_texto', 'observacoes', 'responsavel', 'periodo_referencia'];
   const update = { updated_at: new Date().toISOString() };
@@ -714,7 +741,7 @@ router.put('/registros/:id', async (req, res) => {
 // ----------------------------------------------------------------------------
 // DELETE /registros/:id
 // ----------------------------------------------------------------------------
-router.delete('/registros/:id', async (req, res) => {
+router.delete('/registros/:id', authorizeKpiArea(req => fetchRegistroArea(req.params.id)), async (req, res) => { // varredura 2026-09: A06 delete sem autorização e sem volta — mesma régua de área do POST/PUT
   const { id } = req.params;
   const { error } = await supabase.from('kpi_registros').delete().eq('id', id);
   if (error) return res.status(500).json({ error: error.message });

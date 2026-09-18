@@ -3,6 +3,9 @@ import { describe, it, expect } from 'vitest';
 import {
   HORARIO_NEXT, ENCONTROS_POR_TURMA, domingosDoMes, diaDaSemana, nomeTurma,
   turmasPlanejadas, mesesAGarantir, domingosInscritiveis, proximoMes, hojeBRT, mesDe,
+  proximaTurma,
+  proximasTurmas,
+  TURMAS_OFERECIDAS,
 } from '../../backend/utils/nextTurmas.js';
 
 describe('nextTurmas · a régua das turmas do mês', () => {
@@ -136,5 +139,125 @@ describe('nextTurmas · a régua das turmas do mês', () => {
     expect(domingosInscritiveis(['', 'amanhã', '2026-9-6', '2026-09-06'] as any, agora))
       .toEqual(['2026-09-06']);
     expect(domingosInscritiveis(null as any, agora)).toEqual([]);
+  });
+});
+
+// ────────────────────────────────────────────────────────────────────────────
+// 15/09/2026 · só a PRÓXIMA turma (pedido do Kevyn).
+//
+// ⚠⚠ Medido no dia: 9 turmas abertas, 6 apareciam no formulário (20/09 a
+// 25/10). E o resolvedor do fallback ordenava por created_at desc — como a
+// rotina cria os domingos em ordem, ele devolvia a MAIS DISTANTE.
+describe('proximaTurma', () => {
+  // As 9 turmas abertas REAIS de 15/09 (3 já passadas, 6 futuras).
+  const abertas = [
+    { id: 'a', data: '2026-08-30' }, { id: 'b', data: '2026-09-06' },
+    { id: 'c', data: '2026-09-13' }, { id: 'd', data: '2026-09-20' },
+    { id: 'e', data: '2026-09-27' }, { id: 'f', data: '2026-10-04' },
+    { id: 'g', data: '2026-10-11' }, { id: 'h', data: '2026-10-18' },
+    { id: 'i', data: '2026-10-25' },
+  ];
+
+  it('devolve a próxima, não a mais distante', () => {
+    expect(proximaTurma(abertas, '2026-09-15')?.id).toBe('d'); // 20/09
+  });
+
+  // ⚠⚠ A ordem de chegada do banco é arbitrária: pegar o primeiro do array
+  // daria a resposta errada na maior parte das vezes.
+  it('a ordem do array não decide — a DATA decide', () => {
+    const embaralhada = [...abertas].reverse();
+    expect(proximaTurma(embaralhada, '2026-09-15')?.id).toBe('d');
+  });
+
+  it('o domingo de HOJE ainda conta (o encontro é hoje às 9h30)', () => {
+    expect(proximaTurma(abertas, '2026-09-20')?.id).toBe('d');
+  });
+
+  it('passado nunca é oferecido', () => {
+    expect(proximaTurma(abertas, '2026-10-26')).toBeNull();
+  });
+
+  // ⚠️ Sem data não dá pra ser "a próxima" — a matrícula nasceria num domingo
+  // que ninguém sabe qual é.
+  it('turma sem data fica de fora', () => {
+    expect(proximaTurma([{ id: 'x', data: null }, { id: 'y', data: '2026-09-20' }], '2026-09-15')?.id).toBe('y');
+    expect(proximaTurma([{ id: 'x', data: null }], '2026-09-15')).toBeNull();
+    expect(proximaTurma([{ id: 'x', data: '20/09/2026' }], '2026-09-15')).toBeNull();
+  });
+
+  it('entrada inválida não inventa turma', () => {
+    expect(proximaTurma(null as any, '2026-09-15')).toBeNull();
+    expect(proximaTurma(abertas, 'hoje' as any)).toBeNull();
+    // ⚠⚠ String VAZIA é o caso que morde: qualquer data é >= '', então sem a
+    // guarda a função devolveria a turma mais ANTIGA da lista — um domingo que
+    // já passou — como se fosse "a próxima".
+    expect(proximaTurma(abertas, '')).toBeNull();
+    expect(proximaTurma([], '2026-09-15')).toBeNull();
+  });
+});
+
+// ⚠️⚠️ 16/09/2026 · o Kevyn mudou de ideia: *"queria que as inscrições do next
+// tivessem as 3 próximas datas e não só a próxima (...) a ideia é poder se
+// inscrever nas 3 próximas turmas apenas"*. O teto continua existindo — o
+// problema de 15/09 nunca foi "mais de uma", foi "sem teto" (9 abertas, 6
+// apareciam, até 25/10).
+describe('proximasTurmas', () => {
+  const abertas = [
+    { id: 'a', data: '2026-08-30' }, { id: 'b', data: '2026-09-06' },
+    { id: 'c', data: '2026-09-13' }, { id: 'd', data: '2026-09-20' },
+    { id: 'e', data: '2026-09-27' }, { id: 'f', data: '2026-10-04' },
+    { id: 'g', data: '2026-10-11' }, { id: 'h', data: '2026-10-18' },
+    { id: 'i', data: '2026-10-25' },
+  ];
+
+  it('oferece TRÊS por padrão, da mais perto para a mais longe', () => {
+    expect(TURMAS_OFERECIDAS).toBe(3);
+    expect(proximasTurmas(abertas, '2026-09-15').map(t => t.id)).toEqual(['d', 'e', 'f']);
+  });
+
+  // ⚠️⚠️ O mutante que importa: tirar o teto. Com as 9 turmas reais de 15/09,
+  // sem `.slice` voltariam 6 — exatamente o que o Kevyn mandou fechar.
+  it('o teto é o ponto: nunca devolve tudo que está aberto', () => {
+    expect(proximasTurmas(abertas, '2026-09-15').length).toBe(3);
+    expect(proximasTurmas(abertas, '2026-09-15').some(t => t.data > '2026-10-04')).toBe(false);
+  });
+
+  it('a ordem do array não decide — a DATA decide', () => {
+    expect(proximasTurmas([...abertas].reverse(), '2026-09-15').map(t => t.id)).toEqual(['d', 'e', 'f']);
+  });
+
+  it('havendo menos que o teto, devolve o que há', () => {
+    expect(proximasTurmas(abertas, '2026-10-18').map(t => t.id)).toEqual(['h', 'i']);
+    expect(proximasTurmas(abertas, '2026-10-25').map(t => t.id)).toEqual(['i']);
+  });
+
+  it('passado nunca é oferecido, e sem futuro devolve lista vazia', () => {
+    expect(proximasTurmas(abertas, '2026-10-26')).toEqual([]);
+  });
+
+  // ⚠️⚠️ Teto inválido devolve VAZIO, nunca a lista inteira: teto que falha
+  // aberto é o mesmo que não ter teto — o estado de antes de 15/09.
+  it('teto inválido não vira "sem teto"', () => {
+    expect(proximasTurmas(abertas, '2026-09-15', 0)).toEqual([]);
+    expect(proximasTurmas(abertas, '2026-09-15', -1)).toEqual([]);
+    expect(proximasTurmas(abertas, '2026-09-15', 2.5 as any)).toEqual([]);
+    expect(proximasTurmas(abertas, '2026-09-15', null as any)).toEqual([]);
+  });
+
+  it('entrada inválida devolve lista vazia, nunca null', () => {
+    expect(proximasTurmas(null as any, '2026-09-15')).toEqual([]);
+    expect(proximasTurmas(abertas, '')).toEqual([]);
+    expect(proximasTurmas(abertas, 'hoje' as any)).toEqual([]);
+  });
+
+  // ⚠️⚠️ As telas de balcão (QR do fim do encontro, check-in do totem, walk-in)
+  // precisam de UM destino. Oferecer três a quem está no atendimento seria pedir
+  // uma decisão que ele não tem como tomar — por isso `proximaTurma` continua
+  // devolvendo uma só, e é a PRIMEIRA da mesma lista.
+  it('proximaTurma é a primeira de proximasTurmas — uma régua só', () => {
+    for (const hoje of ['2026-09-15', '2026-09-20', '2026-10-25', '2026-10-26']) {
+      expect(proximaTurma(abertas, hoje)?.id ?? null)
+        .toBe(proximasTurmas(abertas, hoje)[0]?.id ?? null);
+    }
   });
 });

@@ -22,6 +22,7 @@
 // ============================================================================
 const { supabase } = require('../utils/supabase');
 const { listarDiagnosticos } = require('./agentDiagnosticos');
+const { decidirAcordar } = require('../utils/acordarDispatcher');
 const {
   FAIXAS, distribuir, andamentoDoAchado, resumirAndamento,
 } = require('../utils/diagnosticoAutonomia');
@@ -74,12 +75,50 @@ async function tarefasPorIncidente(incidenteIds) {
  * ⚠️ Uma consulta pro lote inteiro: a aba é aberta a partir de um push e 19
  * achados não podem virar 19 idas ao banco.
  */
+/**
+ * Quais destas tarefas estão TRAVADAS POR AMBIENTE, e por quê.
+ *
+ * ⚠️⚠️ O preflight do `devAgent` registra `executor_sem_ambiente` UMA vez por
+ * tarefa (senão o dispatcher, que tenta de 10 em 10 min, transformaria a tarefa
+ * num diário de erro). O efeito colateral é que a tarefa fica `agendada` e nada
+ * na tela dizia que a fila não anda — foi assim que o card prometeu "o executor
+ * pega em até 10 minutos" por dois dias seguidos.
+ *
+ * ⚠️ BEST-EFFORT: falhar aqui devolve mapa vazio e o card volta ao texto
+ * genérico. Perder o AVISO é ruim; derrubar a aba inteira por causa dele é pior
+ * — e o aviso reaparece na próxima abertura.
+ *
+ * ⚠️ O texto vem do WORKER (é ele que sabe o que faltou) e vai pra TELA, então
+ * é truncado. Motivo auto-descritivo é o que faz a pessoa entender sem abrir log.
+ */
+async function bloqueiosDeAmbiente(ids) {
+  const alvo = [...new Set((ids || []).filter((i) => typeof i === 'string' && i))];
+  const mapa = new Map();
+  if (!alvo.length) return mapa;
+  const { data, error } = await supabase
+    .from('agent_task_events')
+    .select('tarefa_id, detalhe')
+    .eq('evento', 'executor_sem_ambiente')
+    .in('tarefa_id', alvo);
+  if (error) {
+    console.error('[diagnosticoResolver] bloqueios de ambiente ilegíveis:', error.message);
+    return mapa;
+  }
+  for (const e of data || []) {
+    const motivo = String(e?.detalhe?.motivo || '').trim();
+    if (motivo) mapa.set(e.tarefa_id, motivo.slice(0, 240));
+  }
+  return mapa;
+}
+
 async function anexarAndamento(itens) {
   const d = distribuir(itens);
   const mapa = await tarefasPorIncidente(d.itens.map((i) => i.incidente?.id));
+  const bloqueios = await bloqueiosDeAmbiente([...mapa.values()].map((t) => t?.id));
   const comAndamento = d.itens.map((item) => {
-    const tarefa = item.incidente?.id ? (mapa.get(item.incidente.id) || null) : null;
-    const { andamento, motivo } = andamentoDoAchado(item, tarefa);
+    const bruta = item.incidente?.id ? (mapa.get(item.incidente.id) || null) : null;
+    const tarefa = bruta ? { ...bruta, bloqueio_ambiente: bloqueios.get(bruta.id) || null } : null;
+    const { andamento, motivo, fila_travada: filaTravada } = andamentoDoAchado(item, tarefa);
     return {
       ...item,
       tarefa: tarefa ? {
@@ -92,6 +131,7 @@ async function anexarAndamento(itens) {
       } : null,
       andamento,
       andamento_motivo: motivo,
+      ...(filaTravada ? { fila_travada: filaTravada } : {}),
     };
   });
   return {
@@ -289,7 +329,7 @@ async function resolver({ autorId, ids, reenfileirar } = {}) {
  * aparecer como sucesso. Por isso `chamado: false` + motivo em português sobem
  * pra tela (a lição do disparo do censo, 05/08 — caixa verde com nada enviado).
  */
-async function acordarExecutor() {
+async function acordarExecutor({ trigger = 'manual', origem = 'diagnosticos' } = {}) {
   const url = process.env.AGENT_WORKER_URL;
   const segredo = process.env.AGENT_WORKER_HMAC_SECRET;
   if (!url || !segredo) {
@@ -297,7 +337,7 @@ async function acordarExecutor() {
   }
   try {
     const { sign } = require('../utils/workerHmac');
-    const body = JSON.stringify({ config: { trigger: 'manual', origem: 'diagnosticos' } });
+    const body = JSON.stringify({ config: { trigger, origem } });
     const resp = await fetch(`${url.replace(/\/$/, '')}/run/dev_dispatcher`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'X-Agent-Signature': sign(body) },
@@ -326,6 +366,67 @@ async function acordarExecutor() {
   }
 }
 
+/**
+ * O cron acorda o dispatcher QUANDO HÁ TRABALHO — e só então.
+ *
+ * ⚠️⚠️ O FILTRO DE TAREFA AQUI É ESPELHO do `devDispatcher.ts` do worker
+ * (`agente_key='developer_agent'` · `agendada` OU `nova`+`classe='bug'` · não
+ * apagada). Divergir produz os dois estragos silenciosos: acordar o container
+ * por tarefa que o dispatcher não pega (custo à toa) ou não acordar por tarefa
+ * que ele pegaria (a retentativa que esta função existe pra criar). Mudou lá,
+ * muda aqui.
+ *
+ * ⚠️ A DECISÃO é pura e mora em `utils/acordarDispatcher` (entra no gate). Aqui
+ * só se lê o banco — guarda que decide algo e vive no serviço é guarda que
+ * nenhum mutante alcança.
+ */
+async function acordarSeHouverTrabalho({ origem = 'cron' } = {}) {
+  const { data, error } = await supabase
+    .from('agent_tarefas')
+    .select('id')
+    .eq('agente_key', 'developer_agent')
+    .or('and(status.eq.agendada),and(status.eq.nova,classe.eq.bug)')
+    .is('deleted_at', null)
+    .limit(50);
+  // ⚠️ Não deu pra LER o board não é "não há trabalho": declara e sai sem
+  // acordar (a leitura volta no tique seguinte). Erro nunca vira fila vazia.
+  if (error) {
+    return { acordado: false, motivo: 'board_ilegivel', detalhe: error.message, elegiveis: [], adiadas: [] };
+  }
+  const ids = (data || []).map((t) => t.id);
+  if (!ids.length) return { acordado: false, ...decidirAcordar({ tarefas: [] }) };
+
+  // ⚠️ Falha ao ler os eventos NÃO impede o despertar, ao contrário do board:
+  // aqui o desconhecido é "quais estão bloqueadas", e tratar tudo como bloqueada
+  // faria a retentativa nunca acontecer — o silêncio que esta função combate. O
+  // custo de acordar à toa é um POST; o de nunca acordar é o recurso não existir.
+  // A ignorância vai DECLARADA (`bloqueadas_desconhecidas`) pra não virar hábito.
+  let bloqueadas = [];
+  let bloqueadasDesconhecidas = false;
+  const ev = await supabase
+    .from('agent_task_events')
+    .select('tarefa_id')
+    .eq('evento', 'executor_sem_ambiente')
+    .in('tarefa_id', ids);
+  if (ev.error) {
+    bloqueadasDesconhecidas = true;
+    console.error('[acordarSeHouverTrabalho] eventos ilegíveis:', ev.error.message);
+  } else {
+    bloqueadas = (ev.data || []).map((e) => e.tarefa_id);
+  }
+
+  const decisao = decidirAcordar({ tarefas: ids, bloqueadas });
+  if (!decisao.acordar) return { acordado: false, bloqueadas_desconhecidas: bloqueadasDesconhecidas, ...decisao };
+
+  const r = await acordarExecutor({ trigger: 'cron', origem });
+  return {
+    acordado: r.chamado === true && r.executando === true,
+    bloqueadas_desconhecidas: bloqueadasDesconhecidas,
+    ...decisao,
+    worker: r,
+  };
+}
+
 module.exports = {
   TETO_RODADA,
   NAO_REENFILEIRA,
@@ -334,4 +435,5 @@ module.exports = {
   previa,
   resolver,
   acordarExecutor,
+  acordarSeHouverTrabalho,
 };

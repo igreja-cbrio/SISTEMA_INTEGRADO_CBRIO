@@ -98,6 +98,31 @@ jobs:
       - name: Interruptor dos disparos automaticos (id casado ponta a ponta)
         run: npm run test:disparo-interruptor
 
+      # Porta do VISITANTE (09/09): validacao do formulario (CPF com DV, aceite
+      # === true, local fechado), voucher (alfabeto sem O/0/I/1), a hora certa da
+      # pesquisa depois do culto (dia BRT) e o token com namespace proprio.
+      - name: Porta do visitante (regras puras + token)
+        run: npm run test:visitante
+
+      # FLUXO DE PORTA (11/09): o que a igreja DEVE fazer com quem entrou, ate
+      # quando, e se foi feito. Duas leis que este teste segura e que so existem
+      # porque foram medidas: (1) so e cobrado o que e dever da IGREJA — quem nao
+      # retirou o cafe nao esta em atraso com ninguem, e painel injusto para de
+      # ser olhado; (2) todo fluxo tem que FECHAR — em 90 dias o convertido teve
+      # 147/153 primeiros contatos e ZERO desfechos, porque o passo sem tela nao
+      # existe na pratica. Tambem trava o prazo em dia BRT (culto da noite nao
+      # pode escorregar um dia) e a adesao nula quando nada venceu ainda.
+      - name: Fluxo de porta (dever da igreja, prazo BRT, fechamento)
+        run: npm run test:fluxo-porta
+
+      # ENDERECO DO GRUPO no formulario publico (16/09): rua e NUMERO aparecem,
+      # apartamento/bloco NUNCA. A lei 2 e de seguranca — o grupo e na casa de
+      # alguem, e a rua mais a altura da via bastam pra pessoa decidir. O teste
+      # tambem guarda que nenhuma rota publica devolve o grupo cru (o deep-link
+      # ?grupo=<id> mandava o `complemento` do cadastro junto).
+      - name: Endereco do grupo no formulario publico (sem complemento)
+        run: npm run test:endereco-grupo
+
       # Trava de 24/08: a politica 'ligar' do contrato de porta nao consolidava
       # CPF nem acumulava contato — 18 CPFs e 14 telefones presos na linha da
       # inscricao no Celebra 2026, com o cadastro ao lado sem CPF.
@@ -116,6 +141,14 @@ jobs:
       - name: Janela do check-in do supervisor (dia do culto em BRT)
         run: npm run test:checkin-janela
 
+      # DADO DA PESSOA. "Falta" no completar-cadastro do check-in e a UNIAO de
+      # vol_profiles + mem_membros: medido em 16/09, dos 516 voluntarios com
+      # check-in no semestre so 4 tinham telefone no vol_profiles e 379 tinham
+      # no membro vinculado. Olhar so a tabela do voluntariado faria o modal
+      # pedir de novo, a cada culto, o telefone que a igreja ja tem.
+      - name: Completar cadastro no check-in (falta = uniao das 2 tabelas)
+        run: npm run test:vol-cadastro-checkin
+
       # PERMISSAO. O rodizio da casa e semana do mes x dia x periodo (lista da
       # Ariel), NAO horario de culto — medido no PCO: 102 dos 110 escalados tem so
       # horario de ensaio e os 8 restantes tem as QUATRO horas.
@@ -132,6 +165,26 @@ jobs:
       # somar camadas que geram dupla contagem (LEI No 6 do nucleo).
       - name: Digito verificador de campanha (JS x espelho SQL)
         run: npm run test:campanha-digito
+
+      - name: Censo · pergunta vira gráfico (e identificação nunca vira)
+        run: npm run test:censo-grafico
+
+      - name: Censo · material do relatório (só agregado, com motivo e controle)
+        run: npm run test:censo-relatorio
+
+      # FILA DE TRABALHO do cadastro de grupos (16/09). O risco guardado aqui
+      # nao e deixar de acusar — e ACUSAR FALTA QUE NAO EXISTE: uma lista que
+      # manda abrir um grupo onde nao ha nada errado para de ser lida, e a
+      # falta real passa junto. Guarda tambem que o bundle novo contra backend
+      # antigo (derivados `undefined`) nunca inventa pendencia.
+      # A rede dos grupos ESVAZIOU sozinha: 80 salvamentos apagaram `rede_id`
+      # de carona em outra edicao (16/09). Campo vazio nao apaga mais nada —
+      # so apaga quem PEDE (`rede_limpar`). Este gate guarda as duas pontas.
+      - name: Grupos · campo vazio nao apaga a rede
+        run: npm run test:grupo-rede
+
+      - name: Grupos · o que falta no cadastro (fila por campo)
+        run: npm run test:grupo-cadastro
 
       - name: Install Vercel CLI
         run: npm install -g vercel@latest

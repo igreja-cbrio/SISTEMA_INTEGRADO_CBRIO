@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { ModuleHeader } from '../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../contexts/AuthContext';
-import { nps as api, next as nextApi } from '../api';
+import { nps as api } from '../api';
 import { DatePicker } from '@/components/ui/date-picker';
 import { toast } from 'sonner';
 import QrLinkDialog from '../components/QrLinkDialog';
@@ -1131,10 +1131,8 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
   const [excluindo, setExcluindo] = useState(false);
   const [copied, setCopied] = useState(false);
   const [editOpen, setEditOpen] = useState(false);
-  // Filtro por turma (NPS do Next por turma). Mapa turma_id → nome resolvido via
-  // next.turmas.list(). 'todas' = consolidado.
+  // Filtro por turma (NPS do Next por turma). 'todas' = consolidado.
   const [turmaFiltro, setTurmaFiltro] = useState('todas');
-  const [turmaNomes, setTurmaNomes] = useState({});
   const [importRespOpen, setImportRespOpen] = useState(false);
 
   async function load() {
@@ -1156,17 +1154,19 @@ function DetalheModal({ id, onClose, onChanged, canWrite, onResponder }) {
 
   useEffect(() => { load(); }, [id]);
 
-  // Resolve os NOMES das turmas (turma_id → nome) pro seletor. Carrega uma vez
-  // por pesquisa; se a lista falhar, o seletor cai em "Turma (sem nome)".
-  const precisaTurmas = pesquisa?.contexto_kpi === 'nps_next' || respostas.some(r => r.turma_id);
-  useEffect(() => {
-    if (!precisaTurmas) return;
-    let vivo = true;
-    nextApi.turmas.list()
-      .then((lista) => { if (vivo) setTurmaNomes(Object.fromEntries((lista || []).map(t => [t.id, t.nome]))); })
-      .catch(() => { /* mantém fallback "sem nome" */ });
-    return () => { vivo = false; };
-  }, [precisaTurmas]);
+  // NOMES das turmas (turma_id → nome) pro seletor. Vem embutido em cada
+  // resposta (`turma_nome`), resolvido pelo backend do NPS.
+  //
+  // ⚠️ Era um 2º request pra `next.turmas.list()` até 03/09/2026. O `/api/next`
+  // ganhou guard de módulo (#2859) e aquele request passou a exigir `next` ou
+  // `integracao`: quem cuida do NPS sem ser do Next perdia o nome da turma.
+  // Agora não há request nenhum — e o fallback "Turma (sem nome)" segue de pé
+  // pro caso de turma apagada.
+  const turmaNomes = useMemo(() => Object.fromEntries(
+    (respostas || [])
+      .filter((r) => r.turma_id && r.turma_nome)
+      .map((r) => [r.turma_id, r.turma_nome])
+  ), [respostas]);
 
   const linkPublico = useMemo(() => {
     if (!pesquisa?.link_publico_token) return null;

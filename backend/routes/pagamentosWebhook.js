@@ -32,6 +32,8 @@ const pagamentos = require('../services/pagamentos');
 const { AppError, ERROR_CODES } = require('../utils/appError');
 const { captureHandledException } = require('../utils/sentry');
 const { outcomeFromSteps, setSystemJobOutcome } = require('../services/systemJobOutcome');
+// varredura 2026-09: PUB-03 (CRON_SECRET em query string, comparação não timing-safe) — passa a usar a régua única de cron (utils/cronAuth), já timing-safe.
+const { isAuthorizedCron } = require('../utils/cronAuth');
 
 function paymentCronError(error, publicMessage) {
   return new AppError(error?.message || publicMessage, {
@@ -61,12 +63,12 @@ const limiter = rateLimit({
   legacyHeaders: false,
 });
 
-function cronAutorizado(req) {
-  const segredo = process.env.CRON_SECRET;
-  if (!segredo) return false;          // fail-closed: sem env, ninguém roda
-  const header = req.headers.authorization || '';
-  return header === `Bearer ${segredo}` || req.query.secret === segredo;
-}
+// varredura 2026-09: PUB-03 — `cronAutorizado` local REMOVIDA. Aceitava o
+// CRON_SECRET em `?secret=` (URL vaza em log de borda/Sentry/referrer) e comparava
+// com `===` (timing side-channel). Os 5 endpoints abaixo passam a usar
+// `isAuthorizedCron` de utils/cronAuth: só header (`Authorization`/`x-cron-secret`),
+// comparação timing-safe, mesmo fail-closed sem CRON_SECRET.
+// Conferido antes de remover: nem vercel.json nem .github/workflows usam `?secret=`.
 
 // ── Entrega do PSP ─────────────────────────────────────────────────────────
 // Responde 200 pra tudo, exceto assinatura inválida (401). 4xx/5xx viram
@@ -100,7 +102,7 @@ router.post('/:provider', limiter, async (req, res) => {
 // cron. Nenhuma etapa aborta as outras: expiração é DB puro e barata, enquanto
 // a reconciliação depende do PSP e é a que pode falhar por rede.
 router.get('/cron/tick', async (req, res) => {
-  if (!cronAutorizado(req)) return res.status(401).json({ error: 'não autorizado' });
+  if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'não autorizado' }); // varredura 2026-09: PUB-03 — régua única timing-safe, sem ?secret= na URL
   const out = {};
   // Expirar primeiro: libera vaga o quanto antes, e não depende de rede.
   try {
@@ -145,7 +147,7 @@ router.get('/cron/tick', async (req, res) => {
 // Expira cobrança vencida e dispara o handler do domínio (que libera a vaga).
 // Nunca expira quem já pagou algo. Avulso: use pra depurar/forçar.
 router.get('/cron/expirar', async (req, res, next) => {
-  if (!cronAutorizado(req)) return res.status(401).json({ error: 'não autorizado' });
+  if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'não autorizado' }); // varredura 2026-09: PUB-03 — régua única timing-safe, sem ?secret= na URL
   try {
     const r = await pagamentos.expirarVencidas({ limite: 200 });
     res.json({ ok: true, ...r });
@@ -158,7 +160,7 @@ router.get('/cron/expirar', async (req, res, next) => {
 // A VERDADE do estado. O webhook é otimização de latência: se ele falhar, sumir
 // ou for desativado pelo PSP, é este cron que fecha o ciclo.
 router.get('/cron/reconciliar', async (req, res, next) => {
-  if (!cronAutorizado(req)) return res.status(401).json({ error: 'não autorizado' });
+  if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'não autorizado' }); // varredura 2026-09: PUB-03 — régua única timing-safe, sem ?secret= na URL
   try {
     const dias = Math.min(parseInt(req.query.dias) || 30, 180);
     const r = await pagamentos.reconciliar({ dias, limite: 200 });
@@ -172,7 +174,7 @@ router.get('/cron/reconciliar', async (req, res, next) => {
 // Reprocessa eventos que ficaram como 'erro' (replay do payload guardado, sem
 // depender de reentrega do PSP).
 router.get('/cron/replay', async (req, res, next) => {
-  if (!cronAutorizado(req)) return res.status(401).json({ error: 'não autorizado' });
+  if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'não autorizado' }); // varredura 2026-09: PUB-03 — régua única timing-safe, sem ?secret= na URL
   try {
     const r = await pagamentos.reprocessarWebhooksPendentes({ limite: 50 });
     res.json({ ok: true, ...r });
@@ -185,7 +187,7 @@ router.get('/cron/replay', async (req, res, next) => {
 // Sonda de credencial FORÇADA (ignora o intervalo de 1x/dia). Avulso pra
 // depurar e pra conferir antes de um lançamento de evento pago.
 router.get('/cron/saude', async (req, res, next) => {
-  if (!cronAutorizado(req)) return res.status(401).json({ error: 'não autorizado' });
+  if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'não autorizado' }); // varredura 2026-09: PUB-03 — régua única timing-safe, sem ?secret= na URL
   try {
     const r = await pagamentos.verificarSaude({ forcar: true });
     res.json({ ok: true, ...r });

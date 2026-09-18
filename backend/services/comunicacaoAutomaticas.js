@@ -393,6 +393,35 @@ async function publicoCampanhaSemanal() {
  * O número aqui é quantas doações AINDA não foram agradecidas — que é a
  * pergunta útil, e a que revela fila parada.
  */
+// Boas-vindas do NOVO CONVERTIDO (totem · 01/09): disparo REATIVO — sai na hora
+// do registro. O "público" aqui é a leitura de quantas decisões o fluxo do
+// totem registrou nos últimos 30 dias (o elo é a observação que o endpoint
+// grava — a decisão não tem coluna de proveniência própria de propósito:
+// `fonte` ficou no DEFAULT do cadastro manual, decisão do Marcos).
+async function publicoConvertidoBoasVindas() {
+  const desde = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { count } = await supabase.from('cultos_decisoes_pessoas')
+    .select('id', { count: 'exact', head: true })
+    .eq('observacoes', 'Registrado no totem · fluxo novo convertido')
+    .is('deleted_at', null)
+    .gte('created_at', desde);
+  return {
+    total: count || 0,
+    pessoas: [],
+    universo: { rotulo: 'decisões registradas pelo totem nos últimos 30 dias', qtd: count || 0 },
+  };
+}
+
+/**
+ * ESPELHO de services/visitantePesquisa.enviarPesquisasDevidas: visitas com opt-in
+ * de WhatsApp e sem pesquisa enviada, nas últimas 72h (a validade da régua).
+ * A contagem sai do PRÓPRIO serviço (publicoPesquisaVisitante) — uma régua só.
+ */
+async function publicoVisitantePesquisa() {
+  const { publicoPesquisaVisitante } = require('./visitantePesquisa');
+  return publicoPesquisaVisitante();
+}
+
 async function publicoCampanhaAgradecimento() {
   const { data: campanhas } = await supabase.from('camp_campanhas')
     .select('id, nome, digito, data_inicio, data_fim')
@@ -504,6 +533,28 @@ const CATALOGO = [
     publico: publicoEscalaVespera,
   },
   {
+    id: 'convertido_boas_vindas',
+    nome: 'Boas-vindas ao novo convertido (totem)',
+    quando: 'Reativo · na hora em que a pessoa registra a decisão no fluxo "Novo convertido" do totem',
+    regra: 'Quem registra a própria decisão no totem E marcou o opt-in de WhatsApp na tela 1 '
+      + '(o template pode ser da categoria Marketing pela régua da Meta — "boas-vindas" é '
+      + 'Marketing pra eles, e Marketing exige opt-in; a prova fica em inscricao_consentimentos). '
+      + '1 mensagem por pessoa (só no primeiro registro do dia; a retentativa do quiosque não '
+      + 'duplica). A mensagem cita quem vai contatar (o responsável escolhido na tela da equipe).',
+    fonte: 'POST /api/membresia/totem/novo-convertido → routes/membresia.js',
+    contexto: 'cuidados.convertido_boas_vindas',
+    // ⚠️ `envTemplate` NULL de propósito: o nome do template é FIXO no código
+    // (`novo_convertido_boas_vindas` · env WHATSAPP_TEMPLATE_CONVERTIDO_BOAS_VINDAS
+    // só como override), então "env vazia" NÃO é bloqueio — declarar aqui
+    // pintaria de vermelho um disparo configurado (a classe de mentira que esta
+    // tela evita · mesmo caso do campanha_agradecimento).
+    envTemplate: null,
+    // ⚠️ Nasce DESLIGADO (id em whatsapp_config.disparos_off · decisão do
+    // Marcos 01/09): liga quando o número oficial da igreja entrar na
+    // plataforma. Ligar é o switch desta tela — sem PR.
+    publico: publicoConvertidoBoasVindas,
+  },
+  {
     id: 'campanha_semanal',
     nome: 'Pocket semanal da campanha (e-mail)',
     quando: 'Toda segunda-feira · o resumo do domingo, com o link do vídeo e o CTA de contribuição',
@@ -543,6 +594,23 @@ const CATALOGO = [
     },
     tabelaPropria: 'camp_agradecimentos',
     publico: publicoCampanhaAgradecimento,
+  },
+  {
+    id: 'visitante_pesquisa',
+    nome: 'Pesquisa de satisfação do visitante (depois do culto)',
+    quando: 'Horário · na rodada seguinte ao fim do culto (início + 2h30; sem culto, registro + 2h) · validade 72h',
+    regra: 'Quem registrou a visita pelo QR dos cartazes (/visitante) E marcou o opt-in de WhatsApp. '
+      + '1 mensagem por visita, com o botão "Avaliar minha visita" que abre o formulário no WhatsApp (estrelas 1 a 5 + comentário). '
+      + 'Depois de 72h a pesquisa não sai mais (fora de hora).',
+    fonte: 'GET /api/public/grupos/cron/whatsapp-fila → services/visitantePesquisa.js',
+    contexto: 'cuidados.visitante_pesquisa',
+    // Nome do template FIXO no código (`visitante_pesquisa_satisfacao` · env
+    // WHATSAPP_TEMPLATE_VISITANTE_PESQUISA só como override) — mesma decisão do
+    // convertido_boas_vindas: declarar envTemplate pintaria de vermelho um disparo configurado.
+    envTemplate: null,
+    // ⚠️ Nasce DESLIGADO (migration 20260909120000 põe o id em disparos_off):
+    // liga pelo switch desta tela quando o template estiver aprovado na Meta.
+    publico: publicoVisitantePesquisa,
   },
 ];
 

@@ -475,6 +475,7 @@ function AbaGeral({ det, podeEditar, podeAtivar, onMudou }: any) {
       </Card>
 
       <div className="space-y-4">
+        <ConfigIdentidade det={det} podeEditar={podeAtivar} onMudou={onMudou} />
         <ConfigDigito det={det} podeAtivar={podeAtivar} onMudou={onMudou} />
 
         <Card><CardContent className="p-5 space-y-3">
@@ -545,6 +546,114 @@ function AbaGeral({ det, podeEditar, podeAtivar, onMudou }: any) {
  * servidor FIXA o passado antes de trocar e devolve quantos lançamentos fixou —
  * e é isso que esta tela declara. Por isso é rota própria e nível 4.
  */
+/**
+ * Nome e descrição curta da campanha.
+ *
+ * Pedido do Matheus (01/09/2026): *"preciso que dê para editar o nome da campanha
+ * na tela de configurações, e isso deve refletir em todos os locais."*
+ *
+ * ⚠️⚠️ O "reflete em todos os locais" JÁ é verdade, e foi MEDIDO: nenhuma tabela
+ * guarda cópia do nome, e `camp_digitos_ativos()` lê `c.nome` ao vivo. Renomear
+ * aparece sozinho na barrinha, no dígito, no seletor do /doar e no app.
+ *
+ * ⚠️ As DUAS exceções estão escritas na tela, porque as duas são desejadas e
+ * ninguém adivinharia: o link público (slug) não muda, e o recibo de quem já
+ * doou mantém o nome de quando doou.
+ */
+function ConfigIdentidade({ det, podeEditar, onMudou }: any) {
+  const c = det?.campanha || det || {};
+  const [editando, setEditando] = useState(false);
+  const [nome, setNome] = useState('');
+  const [desc, setDesc] = useState('');
+  const [salvando, setSalvando] = useState(false);
+
+  const abrir = () => {
+    setNome(c.nome || '');
+    setDesc(c.descricao_curta || '');
+    setEditando(true);
+  };
+
+  const salvar = async () => {
+    const n = nome.replace(/\s+/g, ' ').trim();
+    // ⚠️ A tela evita a ida ao servidor, mas quem DECIDE é o backend — este bloco
+    // é conveniência, não a trava (a régua está em `utils/campanhaIdentidade`).
+    if (!n) return toast.error('Dê um nome à campanha.');
+    if (n.length > 80) return toast.error('O nome cabe em até 80 caracteres.');
+    setSalvando(true);
+    try {
+      await campanhas.atualizar(c.id, { nome: n, descricao_curta: desc.trim() });
+      toast.success('Campanha atualizada');
+      setEditando(false);
+      onMudou();
+    } catch (e: any) { toast.error(e?.message || 'Erro ao salvar'); }
+    finally { setSalvando(false); }
+  };
+
+  return (
+    <Card><CardContent className="p-5 space-y-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="font-medium text-sm">Nome e descrição</div>
+        {podeEditar && !editando && (
+          <Button variant="ghost" size="sm" onClick={abrir}>
+            <Pencil className="h-4 w-4 mr-1" /> Editar
+          </Button>
+        )}
+      </div>
+
+      {!editando ? (
+        <div className="text-sm space-y-1">
+          <div className="font-medium">{c.nome}</div>
+          {c.descricao_curta
+            ? <div className="text-xs text-muted-foreground">{c.descricao_curta}</div>
+            : <div className="text-xs text-muted-foreground">Sem descrição curta.</div>}
+          <div className="text-xs text-muted-foreground pt-1">
+            A descrição curta aparece embaixo do seletor de campanha na tela de doar.
+          </div>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">Nome da campanha</label>
+            <Input value={nome} maxLength={80} onChange={(e) => setNome(e.target.value)} />
+          </div>
+          <div>
+            <label className="block text-xs text-muted-foreground mb-1">
+              Descrição curta <span className="text-muted-foreground">(opcional)</span>
+            </label>
+            <Input value={desc} maxLength={160} onChange={(e) => setDesc(e.target.value)}
+              placeholder="transformar o espaço onde as crianças são cuidadas" />
+          </div>
+
+          {/* ⚠️⚠️ As duas consequências que ninguém adivinharia, DITAS antes de salvar. */}
+          <div className="text-xs rounded-md p-3 space-y-1" style={{ background: 'var(--surface)' }}>
+            <div>
+              O nome novo aparece <strong>em todos os lugares</strong>: barrinha, telas do culto,
+              seletor de campanha na tela de doar e no app.
+            </div>
+            <div className="text-muted-foreground">
+              ⚠️ O <strong>link público não muda</strong> — cartaz e QR já impressos continuam
+              funcionando.
+            </div>
+            <div className="text-muted-foreground">
+              ⚠️ Quem <strong>já doou</strong> mantém no recibo o nome de quando doou. O valor
+              continua somando nesta campanha.
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <Button size="sm" onClick={salvar} disabled={salvando}>
+              {salvando ? 'Salvando…' : 'Salvar'}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setEditando(false)} disabled={salvando}>
+              Cancelar
+            </Button>
+          </div>
+        </div>
+      )}
+    </CardContent></Card>
+  );
+}
+
 function ConfigDigito({ det, podeAtivar, onMudou }: any) {
   const c = det.campanha;
   const [editando, setEditando] = useState(false);

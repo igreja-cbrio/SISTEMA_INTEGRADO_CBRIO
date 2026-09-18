@@ -36,10 +36,9 @@ Responda SOMENTE este JSON, sem texto em volta e sem quebras de linha fora das s
 {"grupos_similares":[{"proposta_ids":["..."],"motivo":"..."}],"observacoes":["..."]}
 
 REGRAS:
-- "grupos_similares": propostas que parecem cobrir o mesmo evento, projeto, público-alvo ou objetivo, candidatas a serem mescladas ou a terem os líderes conversando entre si antes da decisão. Use somente ids que vieram na lista, nunca invente. Cada grupo tem 2 ou mais ids. "motivo" é uma frase curta e direta (times parecidos, mesmo público, mesmo objetivo, mesma época). Sem nenhuma parecida, devolva um array vazio.
-- "observacoes": no máximo 5 frases curtas com outros pontos que valham a atenção da diretoria (por exemplo: várias propostas da mesma área concentradas no mesmo período, proposta com objetivo pouco claro, público-alvo sobreposto entre áreas diferentes). Se o MESMO problema aparecer em várias propostas, junte tudo numa única observação citando as propostas envolvidas, em vez de repetir uma frase quase igual para cada uma. Não repita aqui conflitos de agenda ou espaço, que já são calculados à parte, sem IA. Sem nada relevante, devolva um array vazio.
-- Escreva em português direto, como alguém anotando um ponto numa reunião: frases curtas, verbo direto ("defina a data" em vez de "recomenda-se definir a data"). Sem travessão. Sem tom de relatório corporativo.
-- Nunca opine sobre mérito, aprovação, nota ou orçamento: isso é decisão exclusiva da diretoria e do Pastor presidente, não sua.`;
+- "grupos_similares": propostas que parecem cobrir o MESMO evento, projeto, público-alvo ou objetivo — candidatas a serem MESCLADAS ou a terem os líderes conversando entre si antes da decisão. Use SOMENTE ids que vieram na lista, nunca invente. Cada grupo tem 2 ou mais ids. "motivo" é uma frase curta (times parecidos, mesmo público, mesmo objetivo, mesma época). Se nada se parece, devolva um array vazio.
+- "observacoes": no máximo 5 frases curtas com outros pontos que valham a atenção da diretoria (ex.: várias propostas da mesma área concentradas no mesmo período, proposta com objetivo pouco claro, sobreposição de público-alvo entre áreas diferentes). NÃO repita aqui conflitos de agenda/espaço — esses já são calculados à parte, sem IA. Se não houver nada relevante, devolva um array vazio.
+- Nunca opine sobre mérito, aprovação, nota ou orçamento — isso é decisão exclusiva da diretoria e do Pastor presidente, não sua.`;
 
 function propostaParaPrompt(p, liderNome, localNome) {
   return {
@@ -88,7 +87,7 @@ async function gerarSimilaridade(propostas, { liderNomeById, locaisById }) {
     texto = (r.content || []).map((c) => c.text || '').join('');
   } catch (e) {
     console.error('[planejamentoAnualInsights] chamada à IA falhou:', e.message);
-    return { disponivel: false, motivo: 'a IA não respondeu, tente atualizar em instantes', grupos_similares: [], observacoes: [] };
+    return { disponivel: false, motivo: 'a IA não respondeu — tente atualizar em instantes', grupos_similares: [], observacoes: [] };
   }
 
   let json;

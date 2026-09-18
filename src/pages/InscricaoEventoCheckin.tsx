@@ -25,12 +25,22 @@ type ItemLista = {
   id: string; nome_completo: string; telefone: string | null;
   numero_sorte: number | null; status: string;
   checkin_em: string | null; checkin_modo?: string | null;
+  /** Opções marcadas na pergunta agrupável (ex.: ministério). Só as OPÇÕES —
+   *  o texto cru da resposta não vem do servidor. */
+  opcoes?: string[];
+};
+type Agrupamento = {
+  campo: { key: string; label: string; opcoes: string[] };
+  porOpcao: { opcao: string; inscritos: number; presentes: number }[];
+  sem_resposta: number; nao_reconhecido: number; pessoas: number; presentes: number;
+  multipla: boolean;
 };
 type Estado = {
   evento: { id: string; nome: string; slug: string; data: string | null; hora: string | null; local: string | null; status: string; checkin_ativo: boolean; tem_sorteio: boolean; pagamento_ativo: boolean; vagas: number | null;
     // Perguntas do formulário do evento — a inscrição de balcão precisa fazê-las.
     campos?: { key: string; label: string; tipo?: string; opcoes?: string[]; obrigatorio?: boolean }[] | null };
   inscritos: number; presentes: number; lista: ItemLista[];
+  agrupamento?: Agrupamento | null;
 };
 type Feedback = {
   tipo: 'ok' | 'ja' | 'aviso' | 'erro';
@@ -70,6 +80,9 @@ export default function InscricaoEventoCheckin() {
   // precisar procurar nome por nome. Ordenado pelo check-in mais RECENTE: na
   // portaria a dúvida é quase sempre sobre quem acabou de passar.
   const [aba, setAba] = useState<'todos' | 'presentes' | 'faltam'>('todos');
+  // Filtro por ÁREA (a resposta do formulário) — pedido do Matheus (01/09):
+  // "quantas pessoas da produção vieram". `null` = todas.
+  const [areaSel, setAreaSel] = useState<string | null>(null);
   const [resultadoCpf, setResultadoCpf] = useState<ItemLista[] | null>(null);
   const [buscandoCpf, setBuscandoCpf] = useState(false);
   const [feedback, setFeedback] = useState<Feedback | null>(null);
@@ -132,23 +145,29 @@ export default function InscricaoEventoCheckin() {
           norm(i.nome_completo).includes(q)
           || String(i.numero_sorte || '') === q.replace(/\D/g, ''))
       : estado.lista;
-    if (aba === 'faltam') return base.filter(i => !i.checkin_em && i.status !== 'cancelada');
+    // ⚠️ A área recorta ANTES das abas: "presentes da Produção" é a pergunta,
+    // não "presentes, e por acaso da Produção".
+    const porArea = areaSel ? base.filter(i => (i.opcoes || []).includes(areaSel)) : base;
+    if (aba === 'faltam') return porArea.filter(i => !i.checkin_em && i.status !== 'cancelada');
     if (aba === 'presentes') {
-      return base.filter(i => !!i.checkin_em)
+      return porArea.filter(i => !!i.checkin_em)
         .sort((a, b) => String(b.checkin_em).localeCompare(String(a.checkin_em)));
     }
-    return base;
-  }, [estado, busca, buscaPorDoc, resultadoCpf, aba]);
+    return porArea;
+  }, [estado, busca, buscaPorDoc, resultadoCpf, aba, areaSel]);
 
   // Contadores dos chips: saem da lista INTEIRA, nunca do recorte visível —
   // senão o número muda quando alguém digita na busca e deixa de responder
   // "quantos entraram".
   const totais = useMemo(() => {
-    const l = estado?.lista || [];
+    // ⚠️ Com uma área escolhida, os chips passam a contar DENTRO dela — senão
+    // a tela diria "39 inscritos" da Produção e "194 presentes" da igreja toda.
+    const todaLista = estado?.lista || [];
+    const l = areaSel ? todaLista.filter(i => (i.opcoes || []).includes(areaSel)) : todaLista;
     const presentes = l.filter(i => !!i.checkin_em).length;
     const faltam = l.filter(i => !i.checkin_em && i.status !== 'cancelada').length;
     return { todos: l.length, presentes, faltam };
-  }, [estado]);
+  }, [estado, areaSel]);
 
   function mostrarFeedback(f: Feedback) {
     if (feedbackTimer.current) clearTimeout(feedbackTimer.current);
@@ -492,6 +511,52 @@ export default function InscricaoEventoCheckin() {
               <p className="text-[11px] text-muted-foreground mt-1.5">
                 {buscandoCpf ? 'Consultando por documento…' : `Busca por CPF/telefone (${(resultadoCpf || []).length} resultado${(resultadoCpf || []).length === 1 ? '' : 's'})`}
               </p>
+            )}
+
+            {/* ── Filtro por ÁREA (a resposta do formulário) ─────────────────
+                Pedido do Matheus (01/09): "quantas pessoas da produção vieram".
+                ⚠️ Aparece só quando o evento TEM pergunta com lista de opções —
+                evento sem isso não ganha um filtro que não filtra nada. */}
+            {estado?.agrupamento && estado.agrupamento.porOpcao.length > 1 && (
+              <div className="mt-3">
+                <div className="flex items-center justify-between gap-2 mb-1.5">
+                  <span className="text-[11px] font-semibold text-muted-foreground">
+                    {estado.agrupamento.campo.label}
+                  </span>
+                  {areaSel && (
+                    <button onClick={() => setAreaSel(null)} className="text-[11px] text-primary font-semibold">
+                      limpar
+                    </button>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-1.5">
+                  {estado.agrupamento.porOpcao.map(o => (
+                    <button
+                      key={o.opcao}
+                      onClick={() => setAreaSel(areaSel === o.opcao ? null : o.opcao)}
+                      title={`${o.presentes} de ${o.inscritos} inscritos vieram`}
+                      className={`rounded-full px-2.5 py-1 text-[11px] font-semibold transition ${
+                        areaSel === o.opcao
+                          ? 'bg-primary text-primary-foreground'
+                          : 'bg-foreground/5 text-muted-foreground hover:text-foreground'
+                      }`}
+                    >
+                      {/* ⚠️ "presentes/inscritos" JUNTOS: só o total de vindos
+                          não diz se a área compareceu bem ou é grande. */}
+                      {o.opcao} <span className="tabular-nums opacity-80">{o.presentes}/{o.inscritos}</span>
+                    </button>
+                  ))}
+                </div>
+                {/* ⚠️⚠️ A soma das áreas PASSA do total de pessoas quando o campo
+                    é de múltipla escolha — quem marcou 2 áreas conta nas 2. Sem
+                    dizer isso, alguém soma as colunas e conclui que a conta está
+                    errada (a lição de "participações × pessoas" dos Grupos). */}
+                <p className="mt-1.5 text-[10px] text-muted-foreground">
+                  {estado.agrupamento.multipla && 'quem marcou mais de uma área conta em cada uma — a soma passa do total. '}
+                  {estado.agrupamento.sem_resposta > 0 && `${estado.agrupamento.sem_resposta} sem resposta. `}
+                  {estado.agrupamento.nao_reconhecido > 0 && `${estado.agrupamento.nao_reconhecido} com resposta fora da lista.`}
+                </p>
+              </div>
             )}
 
             <div className="mt-3 flex gap-1.5">

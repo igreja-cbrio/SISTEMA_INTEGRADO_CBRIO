@@ -12,7 +12,7 @@
 ## Backend
 - `backend/routes/inscricoes.js`
 Guard: `authorizeModule('inscricoes-totem', 1)`
-<details><summary>Endpoints (61)</summary>
+<details><summary>Endpoints (62)</summary>
 - `DELETE /api/inscricoes/email-templates/:tipo`
 - `DELETE /api/inscricoes/eventos/:id`
 - `DELETE /api/inscricoes/eventos/:id/beneficios/:beneficioId`
@@ -57,6 +57,7 @@ Guard: `authorizeModule('inscricoes-totem', 1)`
 - `POST /api/inscricoes/eventos/:id/checkin`
 - `POST /api/inscricoes/eventos/:id/checkin/aviso-app`
 - `POST /api/inscricoes/eventos/:id/checkin/aviso-email`
+- `POST /api/inscricoes/eventos/:id/importar-einscricao`
 - `POST /api/inscricoes/eventos/:id/inscrever-na-hora`
 - `POST /api/inscricoes/eventos/:id/inscricoes/:inscricaoId/bolsa`
 - `POST /api/inscricoes/eventos/:id/inscricoes/:inscricaoId/comprovantes/:comprovanteId/aceitar`
@@ -80,11 +81,13 @@ Guard: `authorizeModule('inscricoes-totem', 1)`
 
 - `backend/utils/campoKey.js`
 - `backend/utils/checkoutExterno.js`
+- `backend/utils/eInscricao.js`
 - `backend/utils/eventoCheckinToken.js`
 - `backend/utils/exclusaoInscricaoLote.js`
 - `backend/utils/lotesEvento.js`
 - `backend/utils/pagination.js`
 - `backend/utils/prontidaoCadastro.js`
+- `backend/utils/respostaOpcoes.js`
 - `backend/utils/sanitize.js`
 - `backend/utils/supabase.js`
 - `backend/utils/totemCerco.js`
@@ -94,6 +97,7 @@ Guard: `authorizeModule('inscricoes-totem', 1)`
 - `backend/services/appPush.js`
 - `backend/services/avisoComprovanteEmail.js`
 - `backend/services/email.js`
+- `backend/services/importarEInscricao.js`
 - `backend/services/inscricaoCheckin.js`
 - `backend/services/inscricaoComprovante.js`
 - `backend/services/inscricaoContagem.js`
@@ -101,6 +105,7 @@ Guard: `authorizeModule('inscricoes-totem', 1)`
 - `backend/services/inscricaoEmail.js`
 - `backend/services/inscricaoPortas.js`
 - `backend/services/inscricaoSorteio.js`
+- `backend/services/membroMatch.js`
 - `backend/services/pagamentos.js`
 - `backend/services/totemEstacao.js`
 

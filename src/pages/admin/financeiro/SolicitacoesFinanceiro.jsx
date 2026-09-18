@@ -10,6 +10,7 @@ import { Badge } from '../../../components/ui/badge';
 import { Avatar, AvatarImage, AvatarFallback } from '../../../components/ui/avatar';
 import { DatePicker } from '@/components/ui/date-picker';
 import { financeiro, solicitacoes } from '../../../api';
+import { ehImagem, nomeDoArquivo, rotuloTipo } from '@/lib/anexoSolicitacao';
 
 const fmtMoney = (v) => v == null ? '—' : Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
 const fmtDate = (iso) => iso ? new Date(iso).toLocaleString('pt-BR') : '—';
@@ -431,6 +432,39 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
             )}
           </div>
         )}
+
+        {/* ⚠️⚠️ ANEXOS · bloco GERAL, fora do `categoria === 'reembolso'`
+            (03/09/2026). Os links de comprovante/NF viviam DENTRO daquele bloco,
+            então em `compras`, `pagamento` e `servico` o financeiro aprovava sem
+            ver anexo nenhum — inclusive o orçamento em PDF, que é o documento
+            que justifica o valor. O nome do arquivo vai à vista: três propostas
+            anexadas precisam ser distinguíveis sem abrir as três. */}
+        {(() => {
+          const anexos = [
+            ...(Array.isArray(s.imagens_url) ? s.imagens_url : []),
+            ...(s.categoria !== 'reembolso' && s.documento_url ? [s.documento_url] : []),
+            ...(s.categoria !== 'reembolso' && s.nota_fiscal_url ? [s.nota_fiscal_url] : []),
+          ].filter(Boolean);
+          if (!anexos.length) return null;
+          return (
+            <div className="space-y-1.5 bg-muted/30 border border-border rounded-md p-3 mb-3">
+              <div className="text-[10px] uppercase font-semibold text-muted-foreground">Anexos</div>
+              <div className="flex flex-wrap gap-1.5">
+                {anexos.map((url, i) => (
+                  <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                     title={nomeDoArquivo(url)}
+                     className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs text-foreground hover:border-primary/50 max-w-[220px]">
+                    <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
+                    <span className="truncate">{nomeDoArquivo(url)}</span>
+                    {!ehImagem(url) && (
+                      <span className="text-[9px] text-muted-foreground shrink-0">{rotuloTipo(url)}</span>
+                    )}
+                  </a>
+                ))}
+              </div>
+            </div>
+          );
+        })()}
 
         {!reprovaModal && !sobrestaModal ? (
           <>

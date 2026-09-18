@@ -27,12 +27,20 @@ const { safeEqual, isAuthorizedCron } = require('../utils/cronAuth');
 const { notificar } = require('../services/notificar');
 const wpp = require('../services/whatsappService');
 const { traduzErroUmPaiUmaMae } = require('../utils/kidsResponsavel');
+// FOTO da apresentação pro telão do culto (16/09/2026) — a MESMA régua da
+// porta pública, pra o caminho e o nome do download saírem iguais nas 2 pontas.
+const { extensaoDeMime, extensaoDoCaminho, nomeArquivoFoto, PREFIXO_FOTO } = require('../utils/fotoApresentacao');
+const { randomUUID: _uuidFoto } = require('crypto');
 // (templates deste arquivo migraram pra FILA no C2 · lote 5 — só o texto livre segue direto)
 const { enviarTexto: enviarTextoWpp } = require('../services/whatsappSend');
 const { acharOuCriarGuardado, ehNomePlaceholder } = require('../services/membroMatch');
 const { atualizarStatusInscricao } = require('../services/volInscricaoStatus');
 const { frequentaNaJanela, avaliarFrequencia } = require('../utils/kidsFrequencia');
 const { agruparMotivos, montarContagens, rotuloMotivo } = require('../utils/kidsSituacao');
+const { avaliarResolucao: avaliarResolucaoKids, resumoFila: resumoFilaKids } = require('../utils/kidsConversaoFila');
+// Apresentação de crianças · horário do culto (08/09/2026): catálogo
+// `apresentacao_horarios` (9h30 até o limite → 11h30) editável AQUI pela equipe.
+const { horariosConfigurados: apresHorariosConfigurados, ocupacaoPorHorario: apresOcupacaoPorHorario } = require('../services/apresentacaoHorarios');
 // O Planning Center Check-Ins saiu do código (Marcos 2026-07-20): a frequência
 // do Kids é 100% do nosso totem (kids_checkins). Sobrou só a coluna legada
 // kids_criancas.planning_center_id e a tabela kids_pco_presencas (histórico
@@ -2379,38 +2387,393 @@ router.patch('/batismos/:id', authorizeModule('kids', 3), async (req, res) => {
 // Apresentação de crianças · inscrições do form público (agrupadas por turma na UI)
 router.get('/apresentacoes', authorizeModule('kids', 1), async (req, res) => {
   try {
-    const { data } = await supabase.from('apresentacao_criancas')
-      // ⚠️ `crianca_data_nascimento` (22/08/2026): `crianca_idade` é SNAPSHOT do dia
-      // da inscrição e envelhece sozinho — "8 meses" de maio segue 8 meses em
-      // setembro. Com a data, o app calcula a idade de HOJE.
-      // ⚠️ Nada de CPF, e-mail ou endereço aqui: a lista é PII na tela de um
-      // celular, e nada disso é preciso pra contatar a família.
-      .select('id, nome_pai, nome_mae, crianca_nome, crianca_idade, crianca_data_nascimento, telefone, data_apresentacao, status, observacoes, origem, crianca_id, created_at')
-      .is('deleted_at', null)
-      .order('data_apresentacao', { ascending: false, nullsFirst: false })
-      .order('created_at', { ascending: false })
-      .limit(1000);
-    res.json(data || []);
+    // ⚠️ `crianca_data_nascimento` (22/08/2026): `crianca_idade` é SNAPSHOT do dia
+    // da inscrição e envelhece sozinho — "8 meses" de maio segue 8 meses em
+    // setembro. Com a data, o app calcula a idade de HOJE.
+    // ⚠️ Nada de CPF, e-mail ou endereço aqui: a lista é PII na tela de um
+    // celular, e nada disso é preciso pra contatar a família. A ficha completa
+    // (o que a pessoa preencheu) é `GET /apresentacoes/:id`, aberta de propósito.
+    // `horario_culto` (08/09): o culto da família — 9h30/11h30 pela régua.
+    const BASE = 'id, nome_pai, nome_mae, crianca_nome, crianca_idade, crianca_data_nascimento, crianca_sexo, telefone, data_apresentacao, status, observacoes, origem, crianca_id, created_at';
+    // ⚠️⚠️ COLUNAS QUE DEPENDEM DE MIGRATION ficam nesta lista, nunca soltas no
+    // select: pedir uma que não existe faz o PostgREST recusar a query INTEIRA
+    // (42703) e a lista do Kids apareceria VAZIA, em silêncio (lição do
+    // `parcelas_max`). O laço abaixo derruba UMA por vez até a query passar —
+    // generalizado em 15/09 quando `presente_em` (check-in) entrou ao lado do
+    // `horario_culto` de 08/09.
+    // ⚠️ `foto_storage_path` entra aqui, e não no BASE: a lista é onde a equipe
+    // vê QUEM AINDA NÃO MANDOU a foto, mas a coluna depende da migration
+    // `20260916140000` — solta no BASE, derrubaria a lista inteira (42703).
+    const OPCIONAIS = ['horario_culto', 'presente_em', 'foto_storage_path'];
+    const listar = (cols) => {
+      let q = supabase.from('apresentacao_criancas')
+        .select(cols.length ? `${BASE}, ${cols.join(', ')}` : BASE)
+        .is('deleted_at', null)
+        .order('data_apresentacao', { ascending: false, nullsFirst: false });
+      if (cols.includes('horario_culto')) q = q.order('horario_culto', { ascending: true, nullsFirst: false });
+      return q.order('created_at', { ascending: false }).limit(1000);
+    };
+    let cols = [...OPCIONAIS];
+    let { data, error } = await listar(cols);
+    while (error && error.code === '42703' && cols.length) {
+      const faltando = cols.find((c) => (error.message || "").includes(c)) || cols[cols.length - 1];
+      console.warn(`[totemKids] apresentacoes: coluna ${faltando} ausente (migration não aplicada) — listando sem ela`);
+      cols = cols.filter((c) => c !== faltando);
+      ({ data, error } = await listar(cols));
+    }
+    if (error) throw error;
+    // ⚠️⚠️ O CAMINHO do arquivo não vai pra lista. A tela só precisa saber SE
+    // tem foto; caminho cru numa resposta de lista é matéria-prima pra montar
+    // URL na mão, e some o motivo de o bucket ser privado. Quem resolve em URL
+    // assinada é a FICHA, uma inscrição por vez, de propósito.
+    const linhas = (data || []).map(({ foto_storage_path, ...r }) => ({
+      ...r, tem_foto: Boolean(foto_storage_path),
+    }));
+    res.json(linhas);
   } catch (e) {
     console.error('[totemKids] apresentacoes:', e.message);
     res.status(500).json({ error: 'Erro ao carregar apresentações' });
   }
 });
 
+// ── Horários da apresentação (catálogo `apresentacao_horarios`) ──────────────
+// Pedido do Marcos (08/09): "até 6 inscrições no 9h30, passando de 6 vai pro
+// 11h30, com a possibilidade de editar dentro da área do Kids". A régua que
+// atribui vive em utils/apresentacaoHorario; aqui a equipe mexe no CATÁLOGO
+// (abrir/fechar, limite, rótulo, ordem) e vê a ocupação da próxima turma.
+// ⚠️ Definidas ANTES de `/apresentacoes/:id` pra `horarios` não virar um id.
+function _proximoSegundoDomingoKids() {
+  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+  const seg = (y, m) => { const p1 = new Date(y, m, 1); return new Date(y, m, 1 + ((7 - p1.getDay()) % 7) + 7); };
+  let y = hoje.getFullYear(), m = hoje.getMonth();
+  let d = seg(y, m);
+  if (d < hoje) { m += 1; if (m > 11) { y += 1; m = 0; } d = seg(y, m); }
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// GET /apresentacoes/horarios?data= — catálogo inteiro (incl. fechados) + ocupação da turma
+router.get('/apresentacoes/horarios', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const data = /^\d{4}-\d{2}-\d{2}$/.test(String(req.query.data || '')) ? String(req.query.data) : _proximoSegundoDomingoKids();
+    const [horarios, ocup, semH] = await Promise.all([
+      apresHorariosConfigurados(),
+      apresOcupacaoPorHorario(data),
+      supabase.from('apresentacao_criancas').select('id', { count: 'exact', head: true })
+        .eq('data_apresentacao', data).is('horario_culto', null).is('deleted_at', null).neq('status', 'cancelado'),
+    ]);
+    if (horarios === null) return res.status(500).json({ error: 'Não consegui ler os horários' });
+    res.json({
+      data_apresentacao: data,
+      horarios: horarios.map((h) => ({ ...h, inscritos: ocup[h.horario] || 0 })),
+      // Inscrições da turma ainda SEM culto (chegaram com o catálogo lotado ou
+      // antes da régua existir) — a equipe precisa atribuir na mão.
+      sem_horario: semH.count || 0,
+    });
+  } catch (e) {
+    console.error('[totemKids] apresentacoes/horarios:', e.message);
+    res.status(500).json({ error: 'Erro ao listar horários' });
+  }
+});
+
+// POST /apresentacoes/horarios — adiciona um horário ao catálogo
+router.post('/apresentacoes/horarios', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const horario = String(req.body?.horario || '').trim().slice(0, 40);
+    if (!/^\d{2}:\d{2}$/.test(horario)) return res.status(400).json({ error: 'Horário no formato HH:MM (ex.: 09:30)' });
+    const label = String(req.body?.label || '').trim().slice(0, 120)
+      || `Culto das ${horario.replace(/^0/, '').replace(':00', 'h').replace(':', 'h')}`;
+    const limite = req.body?.limite != null && req.body.limite !== '' ? parseInt(req.body.limite, 10) : null;
+    const aberto = req.body?.aberto !== false;
+    const ordem = Number.isFinite(+req.body?.ordem) ? +req.body.ordem : 99;
+    const { data, error } = await supabase.from('apresentacao_horarios')
+      .insert({ horario, label, limite: Number.isFinite(limite) ? Math.max(0, limite) : null, aberto, ordem })
+      .select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[totemKids] apresentacoes/horarios POST:', e.message);
+    res.status(500).json({ error: e.code === '23505' ? 'Esse horário já existe' : 'Erro ao criar horário' });
+  }
+});
+
+// PATCH /apresentacoes/horarios/:id — abrir/fechar, limite, label, ordem
+router.patch('/apresentacoes/horarios/:id', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const upd = { updated_at: new Date().toISOString() };
+    if (typeof req.body?.aberto === 'boolean') upd.aberto = req.body.aberto;
+    if (req.body?.label != null) upd.label = String(req.body.label).trim().slice(0, 120);
+    if ('limite' in (req.body || {})) {
+      const l = req.body.limite;
+      upd.limite = (l === null || l === '') ? null : (Number.isFinite(+l) ? Math.max(0, parseInt(l, 10)) : null);
+    }
+    if (Number.isFinite(+req.body?.ordem)) upd.ordem = +req.body.ordem;
+    const { data, error } = await supabase.from('apresentacao_horarios')
+      .update(upd).eq('id', req.params.id).is('deleted_at', null).select().single();
+    if (error) throw error;
+    res.json(data);
+  } catch (e) {
+    console.error('[totemKids] apresentacoes/horarios PATCH:', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar horário' });
+  }
+});
+
+// DELETE /apresentacoes/horarios/:id — remove do catálogo (soft). Inscrições já
+// atribuídas a ele MANTÊM o horario_culto — a tela mostra o valor cru.
+router.delete('/apresentacoes/horarios/:id', authorizeModule('kids', 4), async (req, res) => {
+  try {
+    const { error } = await supabase.from('apresentacao_horarios')
+      .update({ deleted_at: new Date().toISOString() }).eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[totemKids] apresentacoes/horarios DELETE:', e.message);
+    res.status(500).json({ error: 'Erro ao remover horário' });
+  }
+});
+
+// GET /apresentacoes/:id — a FICHA: tudo o que a pessoa preencheu no formulário.
+// Pedido do Marcos (08/09): "quero a opção de ver o preenchimento do formulário
+// pela pessoa, pois aí qualquer problema nós conseguimos ver" (o gatilho foi o
+// nome da mãe dobrado no certificado). Aqui vai o CPF/e-mail/endereço que a
+// lista omite, + consentimentos (prova legal) + saúde da ficha do Kids +
+// quem é o responsável no sistema. É PII de menor: abre-se UMA inscrição, de
+// propósito, e nunca em lista.
+router.get('/apresentacoes/:id', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data: insc, error } = await supabase.from('apresentacao_criancas')
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (error) throw error;
+    if (!insc) return res.status(404).json({ error: 'Inscrição não encontrada' });
+
+    const [cons, kid, resp] = await Promise.all([
+      supabase.from('inscricao_consentimentos')
+        .select('tipo, aceito, texto, em, ip_origem, user_agent')
+        .eq('porta', 'apresentacao').eq('ref_id', insc.id).is('deleted_at', null).order('em'),
+      insc.crianca_id
+        ? supabase.from('kids_criancas')
+          .select('id, nome, data_nascimento, sexo, visitante, tem_alergia, alergia_qual, tem_espectro, espectro_qual, tem_limitacao_fisica, limitacao_fisica_qual, observacoes_internas')
+          .eq('id', insc.crianca_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+      insc.responsavel_membro_id
+        ? supabase.from('mem_membros').select('id, nome, telefone, email, status').eq('id', insc.responsavel_membro_id).maybeSingle()
+        : Promise.resolve({ data: null }),
+    ]);
+    // ⚠️⚠️ O caminho NUNCA vai cru pro cliente: o bucket é privado e quem serve
+    // é uma URL ASSINADA de 30 min, gerada aqui, em rota autenticada.
+    // Duas URLs porque são dois atos diferentes: VER na ficha e BAIXAR o arquivo
+    // pra passar no culto — esta última carregando o nome da criança, senão 14
+    // arquivos `a3f9c1d2-...jpg` chegam juntos na pasta de quem monta o culto.
+    let fotoUrl = null;
+    let fotoDownloadUrl = null;
+    let fotoNome = null;
+    if (insc.foto_storage_path) {
+      fotoNome = nomeArquivoFoto(insc.crianca_nome, insc.data_apresentacao, extensaoDoCaminho(insc.foto_storage_path));
+      const [ver, baixar] = await Promise.all([
+        supabase.storage.from('kids-documentos').createSignedUrl(insc.foto_storage_path, 60 * 30),
+        supabase.storage.from('kids-documentos').createSignedUrl(insc.foto_storage_path, 60 * 30, { download: fotoNome }),
+      ]);
+      fotoUrl = (ver.data && ver.data.signedUrl) || null;
+      fotoDownloadUrl = (baixar.data && baixar.data.signedUrl) || null;
+    }
+
+    res.json({
+      ...insc,
+      foto_url: fotoUrl,
+      foto_download_url: fotoDownloadUrl,
+      foto_nome_arquivo: fotoNome,
+      consentimentos: cons.data || [],
+      crianca_kids: kid.data || null,
+      responsavel_membro: resp.data || null,
+    });
+  } catch (e) {
+    console.error('[totemKids] apresentacao detalhe:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a ficha' });
+  }
+});
+
 router.patch('/apresentacoes/:id', authorizeModule('kids', 3), async (req, res) => {
   try {
-    const allowed = ['status', 'observacoes', 'data_apresentacao', 'crianca_idade'];
+    // `horario_culto` (08/09): a equipe corrige o culto da criança na tela.
+    // `nome_pai`/`nome_mae`: pra consertar o nome dobrado sem mexer no banco.
+    const allowed = ['status', 'observacoes', 'data_apresentacao', 'crianca_idade', 'horario_culto', 'nome_pai', 'nome_mae'];
     const payload = { updated_at: new Date().toISOString() };
     for (const k of allowed) if (req.body[k] !== undefined) payload[k] = req.body[k];
+    for (const k of ['nome_pai', 'nome_mae']) {
+      if (k in payload) payload[k] = payload[k] ? (String(payload[k]).trim().replace(/\s+/g, ' ').slice(0, 200) || null) : null;
+    }
+    if ('horario_culto' in payload) {
+      const h = payload.horario_culto ? String(payload.horario_culto).trim().slice(0, 40) : null;
+      if (h && !/^\d{2}:\d{2}$/.test(h)) return res.status(400).json({ error: 'Horário no formato HH:MM' });
+      payload.horario_culto = h;
+    }
     const { data, error } = await supabase.from('apresentacao_criancas')
       .update(payload).eq('id', req.params.id).is('deleted_at', null)
-      .select('id, status, observacoes, data_apresentacao, crianca_idade').single();
+      .select('id, status, observacoes, data_apresentacao, crianca_idade, horario_culto, nome_pai, nome_mae').single();
     if (error) throw error;
     res.json(data);
   } catch (e) {
     console.error('[totemKids] apresentacao update:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar apresentação' });
   }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  POST /apresentacoes/:id/checkin — "quem foi" no dia (Kids · 15/09/2026)
+//
+//  Pedido do Marcos (via Milena): "no dia a Milena poder marcar quem foi, para
+//  saber se já foi entregue o kit".
+//
+//  ⚠️⚠️ NÃO é `status = realizado`. Aquele é carimbado no LOTE pra turma
+//  inteira depois da cerimônia (medido em 15/09: as 14 linhas de 13/09 estão
+//  realizado), então usá-lo como presença diria que TODO mundo veio, inclusive
+//  quem faltou. Granularidades diferentes: status é o ciclo da inscrição,
+//  `presente_em` é o fato daquele domingo, por família.
+//
+//  ⚠️ Nível 2 (e não 3, do PATCH): marcar presença é trabalho de quem está no
+//  balcão no domingo, é reversível e não edita o cadastro de ninguém.
+// ════════════════════════════════════════════════════════════════════════════
+router.post('/apresentacoes/:id/checkin', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const marcar = req.body?.presente !== false;
+    const patch = marcar
+      ? { presente_em: new Date().toISOString(), presente_por: req.user?.id ?? null }
+      : { presente_em: null, presente_por: null };
+
+    // ⚠️ No MARCAR o UPDATE é condicionado a `presente_em` vazio: dois toques
+    // não reescrevem a hora de quem já entrou nem trocam o autor do check-in.
+    let q = supabase.from('apresentacao_criancas')
+      .update({ ...patch, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id).is('deleted_at', null);
+    if (marcar) q = q.is('presente_em', null);
+    const { data, error } = await q.select('id, presente_em').maybeSingle();
+
+    // ⚠️ Sem a migration `20260915180000` a coluna não existe: 409 DIZENDO o
+    // motivo, nunca 500 genérico — quem clica precisa saber que falta migration.
+    if (error && error.code === '42703') {
+      return res.status(409).json({ error: 'O check-in ainda não está disponível — falta aplicar a migration 20260915180000.' });
+    }
+    if (error) throw error;
+
+    // 0 linhas no MARCAR = já estava presente (o `.is` barrou). Idempotente:
+    // relê e devolve o estado atual em vez de erro.
+    if (!data) {
+      const { data: atual } = await supabase.from('apresentacao_criancas')
+        .select('id, presente_em').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+      if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada' });
+      return res.json(atual);
+    }
+    res.json(data);
+  } catch (e) {
+    console.error('[totemKids] apresentacao checkin:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar o check-in' });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════════
+//  FOTO da apresentação (16/09/2026) · a que vai no TELÃO durante o culto
+//
+//  A família manda pelo formulário público. Estas rotas existem pro caso comum
+//  de sobra: a foto chegou pelo WhatsApp da Milena, ou veio tremida e a mãe
+//  mandou outra. Nível 2 — o mesmo do check-in: é trabalho de quem opera o
+//  domingo, é reversível e não edita o cadastro de ninguém.
+//
+//  ⚠️⚠️ MULTIPART aqui também. `/api/totem-kids` cai no `express.json` global de
+//  1mb (server.js) — dataURL de foto de celular não passa. É a armadilha em que
+//  o `/criancas/:id/foto` já está: ele confere 5MB no código, mas o parser
+//  recusa antes, por volta de 750KB de imagem.
+//
+//  ⚠️ Foto nova NÃO reaproveita o caminho da antiga (uuid novo + upsert:false):
+//  sobrescrever deixaria a URL assinada velha — válida por mais 30 min —
+//  apontando pra imagem NOVA. A antiga só é apagada DEPOIS que a linha já
+//  aponta pra nova: nessa ordem, falha no meio deixa arquivo órfão, nunca ficha
+//  cega.
+// ════════════════════════════════════════════════════════════════════════════
+const uploadFotoApres = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 8 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, cb) => cb(null, Boolean(extensaoDeMime(file.mimetype))),
+});
+
+router.post('/apresentacoes/:id/foto', authorizeModule('kids', 2), uploadFotoApres.single('foto'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Envie uma imagem JPG, PNG ou WEBP de até 8MB.' });
+    const ext = extensaoDeMime(req.file.mimetype);
+    if (!ext) return res.status(400).json({ error: 'Formato não aceito. Use JPG, PNG ou WEBP.' });
+
+    const { data: atual } = await supabase.from('apresentacao_criancas')
+      .select('id, crianca_nome, data_apresentacao, foto_storage_path')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada' });
+
+    const caminho = `${PREFIXO_FOTO}${_uuidFoto()}.${ext}`;
+    const { error: upErr } = await supabase.storage.from('kids-documentos')
+      .upload(caminho, req.file.buffer, { contentType: req.file.mimetype, upsert: false });
+    if (upErr) throw upErr;
+
+    const { error: eUp } = await supabase.from('apresentacao_criancas').update({
+      foto_storage_path: caminho,
+      foto_enviada_em: new Date().toISOString(),
+      foto_enviada_por: (req.user && (req.user.id || req.user.userId)) || null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id);
+    // ⚠️ Sem a migration `20260916140000` a coluna não existe: 409 DIZENDO o
+    // motivo, nunca 500 genérico (a lei do check-in, 15/09). E o arquivo que
+    // acabou de subir sai junto — senão vira lixo sem linha que o aponte.
+    if (eUp && eUp.code === '42703') {
+      await supabase.storage.from('kids-documentos').remove([caminho]).catch(() => {});
+      return res.status(409).json({ error: 'A foto ainda não está disponível — falta aplicar a migration 20260916140000.' });
+    }
+    if (eUp) throw eUp;
+
+    if (atual.foto_storage_path && atual.foto_storage_path !== caminho) {
+      await supabase.storage.from('kids-documentos').remove([atual.foto_storage_path]).catch(() => {});
+    }
+
+    const nome = nomeArquivoFoto(atual.crianca_nome, atual.data_apresentacao, ext);
+    const [ver, baixar] = await Promise.all([
+      supabase.storage.from('kids-documentos').createSignedUrl(caminho, 60 * 30),
+      supabase.storage.from('kids-documentos').createSignedUrl(caminho, 60 * 30, { download: nome }),
+    ]);
+    res.json({
+      foto_url: (ver.data && ver.data.signedUrl) || null,
+      foto_download_url: (baixar.data && baixar.data.signedUrl) || null,
+      foto_nome_arquivo: nome,
+    });
+  } catch (e) {
+    console.error('[totemKids] apresentacao foto:', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a foto' });
+  }
+});
+
+// DELETE /apresentacoes/:id/foto — nível 3, como o PATCH: apagar a foto que a
+// família mandou não é operação de balcão.
+router.delete('/apresentacoes/:id/foto', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { data: atual } = await supabase.from('apresentacao_criancas')
+      .select('id, foto_storage_path').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada' });
+    const { error } = await supabase.from('apresentacao_criancas').update({
+      foto_storage_path: null, foto_enviada_em: null, foto_enviada_por: null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', req.params.id);
+    if (error && error.code === '42703') return res.status(409).json({ error: 'A foto ainda não está disponível — falta aplicar a migration 20260916140000.' });
+    if (error) throw error;
+    if (atual.foto_storage_path) {
+      await supabase.storage.from('kids-documentos').remove([atual.foto_storage_path]).catch(() => {});
+    }
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[totemKids] apresentacao foto delete:', e.message);
+    res.status(500).json({ error: 'Erro ao remover a foto' });
+  }
+});
+
+// ⚠️ Erro do multer vira mensagem NOSSA (mesma razão da porta pública): o padrão
+// dele é 500 com stack, e quem clicou precisa saber que o problema é o arquivo.
+router.use('/apresentacoes/:id/foto', (err, _req, res, _next) => {
+  if (err && err.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: 'A foto passa de 8MB. Envie uma versão menor.' });
+  console.error('[totemKids] multer foto:', err && err.message);
+  res.status(400).json({ error: 'Não conseguimos ler esse arquivo. Use JPG, PNG ou WEBP.' });
 });
 
 router.delete('/apresentacoes/:id', authorizeModule('kids', 4), async (req, res) => {
@@ -3640,6 +4003,41 @@ router.get('/checkins-abertos/buscar', authorizeModule('kids', 2), async (req, r
 });
 
 // POST /api/totem-kids/checkin · cria check-in + gera código + retorna pra impressão
+// ── Bloco de códigos para o totem usar OFFLINE ──────────────────────────────
+// ⚠️⚠️ É o que torna o check-in offline SEGURO. O código de retirada tem 20
+// bits e a unicidade vem de um TRIGGER NO INSERT — offline não há INSERT, logo
+// gerar no cliente é sorte, não garantia: medido, 50 check-ins offline num
+// namespace curto dão **70% de colisão**. Aqui quem sorteia e arbitra continua
+// sendo o SERVIDOR; o totem só consome o que já foi reservado.
+// ⚠️ Chamado enquanto HÁ REDE (na abertura da sessão e periodicamente). Pedir
+// isto offline não faz sentido e não funciona — é esse o ponto.
+router.post('/codigos-reservados', authorizeModule('kids', 2), async (req, res) => {
+  try {
+    const estacaoRef = String(req.body?.estacao_ref || '').trim();
+    if (!estacaoRef) return res.status(400).json({ error: 'estacao_ref obrigatório' });
+    const sessaoId = req.body?.sessao_id || null;
+    // ⚠️ Teto de 200 espelha o da função SQL: bloco gigante esgota o espaço de
+    // 1 M de códigos e faz o gerador online começar a falhar por exaustão.
+    const qtd = Math.min(Math.max(parseInt(req.body?.quantidade, 10) || 60, 1), 200);
+
+    const { data, error } = await supabase.rpc('fn_kids_reservar_codigos', {
+      p_estacao_ref: estacaoRef,
+      p_sessao_id: sessaoId,
+      p_quantidade: qtd,
+      p_estacao_id: req.body?.estacao_id || null,
+    });
+    if (error) throw error;
+
+    const codigos = (data || []).map((r) => (typeof r === 'string' ? r : r.codigo)).filter(Boolean);
+    return res.json({ codigos, total: codigos.length, estacao_ref: estacaoRef });
+  } catch (e) {
+    console.error('[totemKids/codigos-reservados]', e?.message);
+    // ⚠️ Falhar aqui NÃO pode travar o totem: sem bloco ele segue online
+    // normalmente, e é só a rede de segurança do offline que não existe.
+    return res.status(503).json({ error: 'Não foi possível reservar códigos agora.', detalhe: e?.message });
+  }
+});
+
 router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
   try {
     const {
@@ -3825,11 +4223,39 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
 
     // INSERT primário. Se dois totens sortearem o mesmo código no mesmo instante,
     // o trigger do banco rejeita um deles e aqui geramos outro automaticamente.
+    // ⚠️⚠️ CÓDIGO JÁ IMPRESSO É IMUTÁVEL (02/09/2026).
+    // Quando o check-in vem da FILA OFFLINE, a etiqueta JÁ SAIU da impressora
+    // com um código reservado — e o pai está com ela no bolso. Se a
+    // sincronização gerar outro código, o banco fica consistente e o PAPEL
+    // FICA INVÁLIDO: ninguém percebe até a hora da retirada. Por isso o retry
+    // abaixo NÃO pode rodar para código reservado; ele é só para o caminho
+    // online, onde nada foi impresso ainda.
+    const codigoReservado = typeof req.body?.codigo_reservado === 'string'
+      ? req.body.codigo_reservado.toUpperCase().trim() : null;
+    let reservaOk = false;
+    if (codigoReservado) {
+      // ⚠️ A reserva PRECISA existir e estar livre. Aceitar um código que o
+      // cliente inventou seria abrir a porta que a pré-alocação fecha.
+      const { data: r } = await supabase
+        .from('kids_codigos_reservados')
+        .select('codigo, status')
+        .eq('codigo', codigoReservado)
+        .maybeSingle();
+      reservaOk = !!r && r.status === 'reservado';
+      if (!reservaOk) {
+        return res.status(409).json({
+          error: 'Código offline não reconhecido ou já usado. Confira a etiqueta com a coordenação do Kids.',
+          codigo_invalido: true,
+        });
+      }
+    }
+
     let codigoFinal = null;
     let checkin = null;
     let errIns = null;
-    for (let tentativa = 0; tentativa < 5; tentativa++) {
-      codigoFinal = await gerarCodigo();
+    const maxTentativas = reservaOk ? 1 : 5;  // reservado: NUNCA troca
+    for (let tentativa = 0; tentativa < maxTentativas; tentativa++) {
+      codigoFinal = reservaOk ? codigoReservado : await gerarCodigo();
       const insercao = await supabase.from('kids_checkins').insert({
         sessao_id,
         crianca_id,
@@ -3849,6 +4275,16 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       if (!colisaoCodigo(errIns)) break;
     }
     if (colisaoCodigo(errIns)) {
+      // ⚠️⚠️ Com código RESERVADO isto não deveria acontecer (a reserva é única
+      // e o gerador a respeita). Se acontecer, é EXCEÇÃO PARA HUMANO — jamais
+      // trocar o código de uma etiqueta impressa em silêncio.
+      if (reservaOk) {
+        console.error('[totemKids/checkin] colisão em código RESERVADO:', codigoReservado);
+        return res.status(409).json({
+          error: 'Este código já está em uso. NÃO reimprima: leve a etiqueta à coordenação do Kids.',
+          codigo_conflito: true, codigo: codigoReservado,
+        });
+      }
       return res.status(503).json({ error: 'Não foi possível reservar um código livre. Tente novamente.', pode_tentar_novamente: true });
     }
     // 23505 = índice único (check-in aberto) — corrida entre 2 totens ou
@@ -3857,6 +4293,16 @@ router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
       return res.status(409).json({ error: 'Criança já está com check-in nessa sessão. Perdeu a etiqueta? Use "Imprimir etiqueta de novo".' });
     }
     if (errIns) throw errIns;
+
+    // ⚠️ Queima a reserva. Best-effort: o check-in JÁ está gravado e a etiqueta
+    // impressa — falhar aqui não pode desfazer nada. O custo de não queimar é
+    // um código a menos no bloco, e o gerador online já não o sorteia.
+    if (reservaOk) {
+      supabase.from('kids_codigos_reservados')
+        .update({ status: 'usado', usado_em: new Date().toISOString(), checkin_id: checkin.id })
+        .eq('codigo', codigoFinal).eq('status', 'reservado')
+        .then(() => {}, (e) => console.error('[totemKids/checkin] queimar reserva:', e?.message));
+    }
 
     // Fez check-in → a criança está ativa de novo. Reativa se tinha sido
     // inativada (visitante vencido, age-out, depuração antiga).
@@ -4699,6 +5145,276 @@ router.get('/decisoes/resumo-por-crianca', authorizeModule('kids', 1), async (re
     res.json(data || []);
   } catch (e) {
     res.status(500).json({ error: 'Erro ao buscar resumo de decisões' });
+  }
+});
+
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DECISÕES DE FÉ · REGISTRO E CONFERÊNCIA (gerencial · 2026-09-02)
+// ═══════════════════════════════════════════════════════════════════════════
+// ⚠️ Isto NÃO é a tela do totem (`/ministerial/totem-kids/decisoes`), que exige
+// sessão ABERTA hoje + o código de 4 chars da etiqueta impressa naquele dia e
+// é estruturalmente incapaz de registrar decisão de culto passado. Aqui é o
+// gerencial: o que já está registrado e o que espera conferência humana.
+//
+// ⚠️ Dado sensível de MENOR (LGPD art. 5º II + art. 14 §1º). Leitura exige
+// nível 1 em kids; decidir exige 3. Nenhuma policy para anon.
+
+// GET /api/totem-kids/decisoes/registro · a tela inteira numa ida
+router.get('/decisoes/registro', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    // ⚠️ o parâmetro é `diasPadrao` (não `padraoDias`) e `diasValidos` tem que
+    // listar TODAS as opções que a tela oferece — 1095 fora da lista cairia no
+    // padrão em silêncio. E o rótulo é a FUNÇÃO `rotuloJanela`: ele não vem no
+    // retorno. Errar isso fazia `inicio` virar "NaN-NaN-NaN" e a tela morrer
+    // com 500 (aconteceu em 02/09).
+    const janela = resolverJanelaPeriodo({
+      dias: req.query.dias, ano: req.query.ano,
+      diasValidos: [90, 365, 1095], diasPadrao: 365,
+    });
+    const { inicio, fim } = janela;
+
+    // ⚠️ Erro PROPAGA: "nenhuma decisão registrada" e "a consulta falhou"
+    // levam a decisões opostas (lei: erro nunca vira fila vazia).
+    const { data: filaRaw, error: eFila } = await supabase
+      .from('kids_conversoes_import')
+      .select('id, lote, linha, nome_planilha, idade_planilha, tel_planilha, data_decisao, periodo, culto_txt, obs_planilha, faixa, motivo, crianca_id, culto_id, culto_origem, decisao_id, status, decidido_em, decisao_nota')
+      .is('deleted_at', null)
+      .order('status')
+      .order('data_decisao');
+    if (eFila) throw eFila;
+    const fila = filaRaw || [];
+
+    // nomes das crianças e dos cultos, em lote (≤200 por ida · lei do .in())
+    const criancaIds = [...new Set(fila.map(f => f.crianca_id).filter(Boolean))];
+    const nomePorCrianca = new Map();
+    for (let i = 0; i < criancaIds.length; i += 200) {
+      const { data, error } = await supabase.from('kids_criancas')
+        .select('id, nome, ativo, data_nascimento, data_conversao')
+        .in('id', criancaIds.slice(i, i + 200));
+      if (error) throw error;
+      (data || []).forEach(k => nomePorCrianca.set(k.id, k));
+    }
+
+    const cultoIds = [...new Set(fila.map(f => f.culto_id).filter(Boolean))];
+    const cultoPorId = new Map();
+    for (let i = 0; i < cultoIds.length; i += 200) {
+      const { data, error } = await supabase.from('cultos')
+        .select('id, nome, data, hora, decisoes_kids')
+        .in('id', cultoIds.slice(i, i + 200));
+      if (error) throw error;
+      (data || []).forEach(c => cultoPorId.set(c.id, c));
+    }
+
+    // o que já está registrado como decisão nominal do Kids, na janela
+    let q = supabase
+      .from('vw_kids_decisoes_historico_crianca')
+      .select('decisao_id, crianca_id, crianca_nome, culto_id, culto_nome, data_culto, data_decisao, sequencia_decisao, total_decisoes_crianca')
+      .gte('data_decisao', inicio);
+    if (fim) q = q.lte('data_decisao', fim);
+    const { data: nominaisRaw, error: eNom } = await q.order('data_decisao', { ascending: false }).limit(500);
+    if (eNom) throw eNom;
+
+    res.json({
+      janela: { inicio, fim, rotulo: rotuloJanela(janela) },
+      resumo: resumoFilaKids(fila),
+      fila: fila.map(f => ({
+        ...f,
+        crianca: f.crianca_id ? (nomePorCrianca.get(f.crianca_id) || null) : null,
+        culto: f.culto_id ? (cultoPorId.get(f.culto_id) || null) : null,
+      })),
+      nominais: nominaisRaw || [],
+      // ⚠️ teto DECLARADO: corte silencioso se lê como "é tudo que existe"
+      nominais_teto: 500,
+      nominais_truncado: (nominaisRaw || []).length === 500,
+    });
+  } catch (e) {
+    console.error('[totemKids/decisoes/registro]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o registro de decisões', detalhe: e.message });
+  }
+});
+
+// GET /api/totem-kids/decisoes/fila/:id/candidatos · SUGESTÃO para a linha pendente
+// ⚠️ É sugestão ORDENADA, nunca decisão: quem escolhe é a coordenação. A linha
+// caiu na fila justamente por não ter candidato único.
+router.get('/decisoes/fila/:id/candidatos', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const { data: linha, error: eL } = await supabase
+      .from('kids_conversoes_import')
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (eL) throw eL;
+    if (!linha) return res.status(404).json({ error: 'Linha não encontrada' });
+
+    const tokens = String(linha.nome_norm_planilha || '')
+      .split(/\s+/).filter(t => t.length >= 3 && !['de','da','do','das','dos','e'].includes(t));
+    if (!tokens.length) return res.json({ linha, candidatos: [] });
+
+    // busca por QUALQUER token do nome (a base tem 4.386 · sem cap de 1000 aqui
+    // porque o filtro por token deixa o conjunto em dezenas)
+    const vistos = new Map();
+    for (const t of tokens) {
+      const { data, error } = await supabase.from('kids_criancas')
+        .select('id, nome, nome_norm, ativo, data_nascimento, data_conversao, visitante')
+        .ilike('nome_norm', `%${t}%`)
+        .is('deleted_at', null)
+        .limit(60);
+      if (error) throw error;
+      (data || []).forEach(k => vistos.set(k.id, k));
+    }
+
+    const idadeNa = (nasc) => {
+      if (!nasc) return null;
+      const d = new Date(`${nasc}T12:00:00`);
+      const ref = new Date(`${linha.data_decisao}T12:00:00`);
+      let a = ref.getFullYear() - d.getFullYear();
+      const m = ref.getMonth() - d.getMonth();
+      if (m < 0 || (m === 0 && ref.getDate() < d.getDate())) a -= 1;
+      return a;
+    };
+
+    const candidatos = [...vistos.values()].map(k => {
+      const tk = String(k.nome_norm || '').split(/\s+/).filter(Boolean);
+      const comuns = tokens.filter(t => tk.some(x => x === t)).length;
+      const ina = idadeNa(k.data_nascimento);
+      // ⚠️ idade é VETO, nunca confirmador: só serve pra REJEITAR
+      const idadeVeta = linha.idade_planilha != null && ina != null && Math.abs(linha.idade_planilha - ina) > 1;
+      return {
+        ...k, idade_na_data: ina, tokens_comuns: comuns, idade_veta: idadeVeta,
+        idade_confere: linha.idade_planilha != null && ina != null && Math.abs(linha.idade_planilha - ina) <= 1,
+      };
+    }).sort((a, b) =>
+      (a.idade_veta ? 1 : 0) - (b.idade_veta ? 1 : 0) ||
+      b.tokens_comuns - a.tokens_comuns ||
+      (b.idade_confere ? 1 : 0) - (a.idade_confere ? 1 : 0) ||
+      (b.ativo ? 1 : 0) - (a.ativo ? 1 : 0) ||
+      String(a.nome).localeCompare(String(b.nome))
+    ).slice(0, 10);
+
+    res.json({ linha, candidatos, total_examinados: vistos.size });
+  } catch (e) {
+    console.error('[totemKids/decisoes/candidatos]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar candidatos', detalhe: e.message });
+  }
+});
+
+// PATCH /api/totem-kids/decisoes/fila/:id · a coordenação decide
+router.patch('/decisoes/fila/:id', authorizeModule('kids', 3), async (req, res) => {
+  try {
+    const { acao, crianca_id: criancaId, culto_id: cultoId, nota } = req.body || {};
+
+    const { data: linha, error: eL } = await supabase
+      .from('kids_conversoes_import')
+      .select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (eL) throw eL;
+    if (!linha) return res.status(404).json({ error: 'Linha não encontrada' });
+
+    // ⚠️ A régua que DECIDE é pura e está no gate (kidsConversaoFila).
+    const v = avaliarResolucaoKids({ linha, acao, criancaId, nota });
+    if (!v.ok) return res.status(v.codigo === 'transicao_invalida' ? 409 : 400).json({ error: v.mensagem, codigo: v.codigo });
+
+    const patch = {
+      status: v.statusNovo,
+      decidido_por: req.user?.id ?? null,
+      decidido_em: new Date().toISOString(),
+      decisao_nota: typeof nota === 'string' && nota.trim() ? nota.trim().slice(0, 500) : linha.decisao_nota,
+      updated_at: new Date().toISOString(),
+    };
+
+    if (v.vincula) {
+      // a criança tem que existir, estar viva, e ser criança de verdade
+      const { data: k, error: eK } = await supabase.from('kids_criancas')
+        .select('id, nome, data_conversao').eq('id', criancaId).is('deleted_at', null).maybeSingle();
+      if (eK) throw eK;
+      if (!k) return res.status(400).json({ error: 'Criança não encontrada', codigo: 'crianca_inexistente' });
+
+      // culto: aceita o que a coordenação escolher; sem escolha, mantém o resolvido
+      let cultoFinal = linha.culto_id;
+      if (cultoId) {
+        const { data: c, error: eC } = await supabase.from('cultos')
+          .select('id, data').eq('id', cultoId).maybeSingle();
+        if (eC) throw eC;
+        if (!c) return res.status(400).json({ error: 'Culto não encontrado', codigo: 'culto_inexistente' });
+        // ⚠️ o culto tem que ser DO DIA da decisão — senão a decisão entraria no
+        // culto errado, que é o bug de 12/07 (19 nomes no culto errado)
+        if (c.data !== linha.data_decisao) {
+          return res.status(400).json({ error: 'O culto escolhido não é do dia desta decisão.', codigo: 'culto_de_outro_dia' });
+        }
+        cultoFinal = cultoId;
+      }
+
+      // ⚠️ tipo_decisao='kids' é a ÚNICA barreira que mantém a criança fora da
+      // membresia (os triggers saem no ramo 'kids'). Valor errado aqui criaria
+      // cadastro de menor + trilha + NSM sem consentimento do responsável.
+      const { data: dec, error: eD } = await supabase
+        .from('cultos_decisoes_pessoas')
+        .insert({
+          culto_id: cultoFinal,
+          tipo_decisao: 'kids',
+          nome: linha.nome_planilha,
+          idade: linha.idade_planilha,
+          kids_crianca_id: criancaId,
+          decidiu_em: linha.data_decisao,
+          fonte: 'importacao_planilha_kids',
+          responsavel_telefone: linha.tel_planilha,
+          observacoes: `Conferido na tela · planilha CONVERSOES_CBKIDS 2026 linha ${linha.linha} · ${linha.culto_txt}`
+            + (nota ? ` · nota: ${String(nota).slice(0, 200)}` : ''),
+        })
+        .select('id')
+        .maybeSingle();
+      if (eD && eD.code !== '23505') throw eD;
+
+      let decisaoId = dec?.id || null;
+      if (!decisaoId) {
+        // já existia (unique parcial) — reencontra em vez de duplicar
+        const { data: ja } = await supabase.from('cultos_decisoes_pessoas')
+          .select('id').eq('fonte', 'importacao_planilha_kids')
+          .eq('kids_crianca_id', criancaId).eq('decidiu_em', linha.data_decisao)
+          .is('deleted_at', null).limit(1).maybeSingle();
+        decisaoId = ja?.id || null;
+      }
+
+      patch.crianca_id = criancaId;
+      patch.culto_id = cultoFinal;
+      patch.decisao_id = decisaoId;
+      patch.data_conversao_antes = k.data_conversao;
+      patch.status = 'aplicada';
+
+      // ⚠️ SÓ-ONDE-VAZIA: nunca sobrescreve declaração humana (política do censo)
+      if (!k.data_conversao) {
+        const { error: eU } = await supabase.from('kids_criancas')
+          .update({ data_conversao: linha.data_decisao })
+          .eq('id', criancaId).is('data_conversao', null);
+        if (eU) console.error('[decisoes/fila] data_conversao:', eU.message);
+      }
+
+      // agregado do culto · ⚠️ greatest, nunca "=": a contagem da SALA pode ser
+      // maior que os nomes registrados, e sobrescrever apagaria decisão real
+      if (cultoFinal) {
+        const { count } = await supabase.from('cultos_decisoes_pessoas')
+          .select('id', { count: 'exact', head: true })
+          .eq('culto_id', cultoFinal).eq('tipo_decisao', 'kids').is('deleted_at', null);
+        const { data: cAtual } = await supabase.from('cultos')
+          .select('decisoes_kids').eq('id', cultoFinal).maybeSingle();
+        const novo = Math.max(Number(cAtual?.decisoes_kids || 0), Number(count || 0));
+        if (novo !== Number(cAtual?.decisoes_kids || 0)) {
+          const { error: eAg } = await supabase.from('cultos')
+            .update({ decisoes_kids: novo }).eq('id', cultoFinal);
+          if (eAg) console.error('[decisoes/fila] agregado:', eAg.message);
+        }
+      }
+    }
+
+    const { data: fim, error: eF } = await supabase
+      .from('kids_conversoes_import')
+      .update(patch).eq('id', linha.id).is('deleted_at', null)
+      .select('*').maybeSingle();
+    if (eF) throw eF;
+    if (!fim) return res.status(409).json({ error: 'A linha mudou enquanto você decidia. Recarregue.' });
+
+    res.json({ ok: true, linha: fim });
+  } catch (e) {
+    console.error('[totemKids/decisoes/fila PATCH]', e.message);
+    res.status(500).json({ error: 'Erro ao registrar a decisão', detalhe: e.message });
   }
 });
 
@@ -5659,7 +6375,7 @@ router.get('/voluntariado-inscricoes', authorizeModule('kids', 1), async (req, r
     const status = req.query.status ? String(req.query.status) : null;
     const search = req.query.search ? String(req.query.search).trim() : null;
     let q = supabase.from('vol_inscricoes')
-      .select('id, nome_completo, nome, sobrenome, telefone, email, status, ministerios_interesse, dom_predominante, data_inscricao, feedback, integrado_em')
+      .select('id, nome_completo, nome, sobrenome, telefone, email, status, ministerios_interesse, dom_predominante, data_inscricao, feedback, integrado_em, membro_id')
       .eq('area', 'kids')
       .is('deleted_at', null)
       .order('data_inscricao', { ascending: false, nullsFirst: false })

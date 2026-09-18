@@ -208,7 +208,7 @@ async function aprenderClassificacao({ documento, nome, plano_contas_id, centro_
  * Passar `criarSemNome: true` explicitamente segue possível, mas hoje NENHUM
  * caller faz isso — e reintroduzir é criar cadastro de pessoa sem nome.
  */
-async function resolverMembroPorDocumento(documento, nome, { criarSemNome = false } = {}) {
+async function resolverMembroPorDocumento(documento, nome, { criarSemNome = false, criar = true } = {}) {
   if (!documento) return null;
   const cleanDoc = documento.replace(/\D/g, '');
   if (cleanDoc.length !== 11 && cleanDoc.length !== 14) return null;
@@ -228,6 +228,14 @@ async function resolverMembroPorDocumento(documento, nome, { criarSemNome = fals
   if (existente) {
     return { membro_id: existente.id, criado_novo: false };
   }
+
+  // ⚠️⚠️ `criar: false` = SÓ LIGA no que já existe, nunca cadastra pessoa. É o
+  // modo que a conciliação em massa usa desde 02/09/2026: um extrato de 90 dias
+  // trouxe 1.948 CPFs distintos com nome, e criar tudo num upload dobraria a
+  // base de pessoas com gente que nunca pediu relação com a igreja — a forma
+  // nova do desastre de 29/07 (3.441 fantasmas). Cadastrar é decisão humana,
+  // depois de olhar o número; ligar é ganho puro e reversível.
+  if (!criar) return null;
 
   // Decisão do Matheus (2026-07-30): nos caminhos automáticos do OFX, só cria
   // contribuinte se vier CPF *E* nome real. Sem nome (ex.: Santander manda só o

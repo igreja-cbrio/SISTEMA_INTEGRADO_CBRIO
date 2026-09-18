@@ -151,9 +151,19 @@ function AbaDiagnostico() {
   useEffect(() => { carregar(); }, [carregar]);
 
   const cobrar = async (lider) => {
-    if (!window.confirm(`Enviar lembrete pra ${lider.nome}?`)) return;
+    // O backend aceita `mensagem` desde sempre e a tela nunca mandava — então
+    // toda cobrança saía com o texto genérico. Aqui a pessoa pode dizer O QUE
+    // falta; vazio mantém o texto padrão.
+    const sugestao = lider.pont_atrasado + lider.pont_nunca > 0
+      ? `${lider.pont_atrasado + lider.pont_nunca} indicador(es) sem dado no último período fechado.`
+      : '';
+    const msg = window.prompt(
+      `Mensagem para ${lider.nome} (deixe vazio para o texto padrão):`,
+      sugestao,
+    );
+    if (msg === null) return; // cancelou
     try {
-      await gestaoApi.cobrar(lider.id);
+      await gestaoApi.cobrar(lider.id, msg.trim() ? { mensagem: msg.trim() } : {});
       toast.success(`Lembrete enviado para ${lider.nome}`);
     } catch (e) {
       toast.error(formatErro(e) + ' (líder tem profile vinculado?)');
@@ -165,69 +175,136 @@ function AbaDiagnostico() {
 
   return (
     <>
-      {/* Stats globais · fusao Pulso + Saúde */}
+      {/* Stats globais · uma pergunta por número (04/09/2026)
+          ⚠️ "Sem dado 60d" saiu do topo: a janela era FIXA e não sabia a
+          periodicidade do KPI. Quem responde "quem está atrasado" agora é
+          Vencidos, que conta em períodos do próprio indicador. */}
       <Stats stats={[
         { label: 'KPIs ativos', value: pulso?.total_kpis_ativos ?? saude?.total_kpis_ativos ?? 0, cor: C.text },
-        { label: 'KPIs críticos', value: pulso?.cronicamente_vermelhos?.length || 0, cor: '#EF4444' },
-        { label: 'Líderes com pendência', value: (pulso?.lideres || []).filter(l => l.criticos > 0 || l.atrasados > 0).length, cor: '#EF4444' },
-        { label: 'Sem dado 60d', value: saude?.sem_registro_60d?.total || 0, cor: '#F59E0B' },
-        { label: 'Sem meta', value: saude?.sem_meta?.total || 0, cor: '#9CA3AF' },
+        { label: `Cobertura ${pulso?.cobertura?.janela_periodos ?? 3} períodos`, value: `${pulso?.cobertura?.pct ?? 0}%`, cor: (pulso?.cobertura?.pct ?? 0) >= 70 ? '#10B981' : '#F59E0B' },
+        { label: 'Vencidos agora', value: pulso?.vencidos?.length || 0, cor: '#F59E0B' },
+        { label: 'Sem fonte viva', value: pulso?.fonte_morta?.length || 0, cor: '#8B5CF6' },
+        { label: 'Abaixo da meta', value: pulso?.abaixo_da_meta?.length || 0, cor: '#EF4444' },
         { label: 'Sem dono', value: saude?.sem_dono?.total || 0, cor: '#9CA3AF' },
       ]} />
+
+      {/* ⚠️ Cobertura incompleta é DECLARADA: ranking de preenchimento em cima
+          de leitura falha vira cobrança indevida, e cobrança errada só se gasta
+          uma vez. */}
+      {pulso?.cobertura?.incompleto && (
+        <div style={{
+          background: '#F59E0B18', border: '1px solid #F59E0B55', borderRadius: 8,
+          padding: '10px 12px', marginBottom: 16, fontSize: 12, color: C.text,
+          display: 'flex', alignItems: 'center', gap: 8,
+        }}>
+          <AlertCircle size={14} style={{ color: '#F59E0B', flexShrink: 0 }} />
+          {pulso.cobertura.aviso}
+        </div>
+      )}
 
       {/* SECAO 1 · STATUS OPERACIONAL (do Pulso) */}
       <h3 style={hSec}>Status operacional</h3>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(440px, 1fr))', gap: 16, marginBottom: 24 }}>
-        <Card title="Líderes com pendências" subtitle="Ordenado por gravidade (críticos > atrasados > sem dado)">
+        <Card title="Preenchimento por dono" subtitle="% dos períodos fechados com valor · ordenado por pendência de preenchimento">
           {!pulso?.lideres?.length ? (
-            <Vazio>Nenhum líder com pendência.</Vazio>
+            <Vazio>Nenhum KPI tem dono atribuído.</Vazio>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {pulso.lideres.slice(0, 12).map(l => (
-                <div key={l.id} style={{
-                  display: 'flex', alignItems: 'center', gap: 12,
-                  padding: '10px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, minHeight: 52,
-                }}>
-                  <div style={{
-                    width: 34, height: 34, borderRadius: '50%',
-                    background: C.primaryBg, color: C.primaryDark,
-                    display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    fontSize: 13, fontWeight: 700, flexShrink: 0,
-                  }}>{(l.nome || '?').charAt(0).toUpperCase()}</div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.3 }}>{l.nome}</div>
-                    <div style={{ fontSize: 10, color: C.t3, marginTop: 2, lineHeight: 1.4 }}>
-                      {l.cargo || ''}{l.area ? ` · ${l.area}` : ''} · {l.total_kpis} KPIs · {l.percentual_em_dia}% em dia
+              {pulso.lideres.slice(0, 12).map(l => {
+                const cor = l.percentual_cobertura >= 70 ? '#10B981' : l.percentual_cobertura >= 40 ? '#F59E0B' : '#EF4444';
+                return (
+                  <div key={l.id} style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '10px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8, minHeight: 52,
+                  }}>
+                    <div style={{
+                      width: 34, height: 34, borderRadius: '50%',
+                      background: C.primaryBg, color: C.primaryDark,
+                      display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      fontSize: 13, fontWeight: 700, flexShrink: 0,
+                    }}>{(l.nome || '?').charAt(0).toUpperCase()}</div>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.3 }}>{l.nome}</div>
+                      <div style={{ fontSize: 10, color: C.t3, marginTop: 2, lineHeight: 1.4 }}>
+                        {l.cargo || ''}{l.area ? ` · ${l.area}` : ''} · {l.total_kpis} KPIs ·{' '}
+                        <strong style={{ color: cor }}>{l.percentual_cobertura}% preenchido</strong>
+                        {(l.des_no_alvo + l.des_abaixo) > 0 && ` · ${l.percentual_no_alvo}% no alvo`}
+                      </div>
                     </div>
+                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                      {l.pont_atrasado > 0 && <Badge cor="#F59E0B" label={`${l.pont_atrasado} atr`} title={`${l.pont_atrasado} atrasado(s) — tinha dado e parou`} />}
+                      {l.pont_nunca > 0 && <Badge cor="#9CA3AF" label={`${l.pont_nunca} nunca`} title={`${l.pont_nunca} nunca tiveram valor`} />}
+                      {l.des_abaixo > 0 && <Badge cor="#EF4444" label={`${l.des_abaixo} abx`} title={`${l.des_abaixo} abaixo da meta (com dado recente)`} />}
+                      {l.fonte_morta > 0 && <Badge cor="#8B5CF6" label={`${l.fonte_morta} fonte`} title={`${l.fonte_morta} sem fonte viva — é engenharia, não cobrança`} />}
+                    </div>
+                    <button onClick={() => cobrar(l)} style={btnSm} title="Enviar lembrete">
+                      <Bell size={12} />
+                    </button>
                   </div>
-                  <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
-                    {l.criticos > 0 && <Badge cor="#EF4444" label={`${l.criticos}c`} title={`${l.criticos} críticos`} />}
-                    {l.atrasados > 0 && <Badge cor="#F59E0B" label={`${l.atrasados}a`} title={`${l.atrasados} atrasados`} />}
-                    {l.sem_dado > 0 && <Badge cor="#9CA3AF" label={`${l.sem_dado}?`} title={`${l.sem_dado} sem dado`} />}
-                  </div>
-                  <button onClick={() => cobrar(l)} style={btnSm} title="Enviar lembrete">
-                    <Bell size={12} />
-                  </button>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </Card>
 
-        <Card title="KPIs cronicamente críticos" subtitle="Indicadores em vermelho que precisam de atenção da diretoria">
-          {!pulso?.cronicamente_vermelhos?.length ? (
-            <Vazio>Nenhum KPI cronicamente vermelho.</Vazio>
+        {/* A FILA DE COBRANÇA · o período fechou e não tem valor, e a fonte
+            está viva (ou seja: dá pra cobrar de alguém). */}
+        <Card title="Vencidos agora" subtitle="Último período fechado sem valor · fonte viva · é aqui que a cobrança faz sentido">
+          {!pulso?.vencidos?.length ? (
+            <Vazio>Nenhum indicador vencido — todo período fechado tem valor.</Vazio>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {pulso.cronicamente_vermelhos.slice(0, 10).map(k => (
+              {pulso.vencidos.slice(0, 12).map(k => (
                 <div key={k.kpi_id} onClick={() => setDetalheKpiId(k.kpi_id)}
                   style={{
                     display: 'flex', alignItems: 'center', gap: 12,
                     padding: '10px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8,
-                    cursor: 'pointer', minHeight: 52, transition: 'background 0.15s',
-                  }}
-                  onMouseEnter={e => e.currentTarget.style.background = 'var(--cbrio-card)'}
-                  onMouseLeave={e => e.currentTarget.style.background = 'var(--cbrio-input-bg)'}>
+                    cursor: 'pointer', minHeight: 52,
+                  }}>
+                  <div style={{
+                    width: 34, height: 34, borderRadius: '50%',
+                    background: '#FEF3C7', color: '#B45309',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                    fontSize: 12, fontWeight: 800,
+                  }}>{k.periodos_atraso ?? '?'}</div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.indicador}</div>
+                    <div style={{ fontSize: 10, color: C.t3, textTransform: 'capitalize', marginTop: 2 }}>
+                      {k.area} · {k.periodicidade} · {k.pontualidade === 'nunca'
+                        ? 'nunca teve valor'
+                        : `${k.periodos_atraso} período(s) sem dado`}
+                      {' · '}
+                      <span style={{ textTransform: 'none' }}>{k.dono || 'sem dono'}</span>
+                    </div>
+                  </div>
+                  {k.is_okr && <Badge cor="#B45309" label="OKR" bg="#FEF3C7" />}
+                  <ChevronRight size={14} style={{ color: C.t3, flexShrink: 0 }} />
+                </div>
+              ))}
+              {pulso.vencidos.length > 12 && (
+                <div style={{ fontSize: 11, color: C.t3, padding: '4px 12px' }}>
+                  e mais {pulso.vencidos.length - 12} — a lista completa vem na API.
+                </div>
+              )}
+            </div>
+          )}
+        </Card>
+
+        {/* CRÔNICO É HISTÓRICO, não a foto de hoje: os DOIS últimos períodos
+            fechados abaixo da meta. O card antigo dizia "cronicamente
+            vermelhos" mostrando quem está vermelho agora. */}
+        <Card title="Crônicos" subtitle="Abaixo da meta nos DOIS últimos períodos fechados — precisa de decisão, não de cobrança">
+          {!pulso?.cronicos?.length ? (
+            <Vazio>Nenhum indicador ficou abaixo da meta em dois períodos seguidos.</Vazio>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {pulso.cronicos.slice(0, 10).map(k => (
+                <div key={k.kpi_id} onClick={() => setDetalheKpiId(k.kpi_id)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '10px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8,
+                    cursor: 'pointer', minHeight: 52,
+                  }}>
                   <div style={{
                     width: 34, height: 34, borderRadius: '50%',
                     background: '#FEE2E2', color: '#EF4444',
@@ -236,7 +313,8 @@ function AbaDiagnostico() {
                   <div style={{ flex: 1, minWidth: 0 }}>
                     <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.indicador}</div>
                     <div style={{ fontSize: 10, color: C.t3, textTransform: 'capitalize', marginTop: 2 }}>
-                      {k.area} · {k.percentual_meta != null ? `${k.percentual_meta}% da meta` : 'sem dado'}
+                      {k.area} · {k.percentual_meta != null ? `${k.percentual_meta}% da meta` : 'sem % de meta'}
+                      {' · '}<span style={{ textTransform: 'none' }}>{k.dono || 'sem dono'}</span>
                     </div>
                   </div>
                   {k.is_okr && <Badge cor="#B45309" label="OKR" bg="#FEF3C7" />}
@@ -247,11 +325,49 @@ function AbaDiagnostico() {
           )}
         </Card>
 
-        <Card title="Saúde por área" subtitle="Percentual de KPIs em dia em cada área" full>
+        {/* FILA DE ENGENHARIA · sai da cobrança de propósito: a fórmula roda e
+            não acha dado, ou o coletor nunca produziu linha. Cobrar o líder
+            aqui é a cobrança errada. */}
+        <Card title="Sem fonte viva" subtitle="A fórmula não devolve valor (ou nunca rodou) — é trabalho de dado, não de cobrança">
+          {!pulso?.fonte_morta?.length ? (
+            <Vazio>Toda fonte está devolvendo valor.</Vazio>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {pulso.fonte_morta.slice(0, 10).map(k => (
+                <div key={k.kpi_id} onClick={() => setDetalheKpiId(k.kpi_id)}
+                  style={{
+                    display: 'flex', alignItems: 'center', gap: 12,
+                    padding: '10px 12px', background: 'var(--cbrio-input-bg)', borderRadius: 8,
+                    cursor: 'pointer', minHeight: 52,
+                  }}>
+                  <div style={{
+                    width: 34, height: 34, borderRadius: '50%',
+                    background: '#8B5CF618', color: '#8B5CF6',
+                    display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                  }}><Zap size={16} /></div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.text, lineHeight: 1.3, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{k.indicador}</div>
+                    <div style={{ fontSize: 10, color: C.t3, textTransform: 'capitalize', marginTop: 2 }}>
+                      {k.area} · {k.fonte === 'nula' ? 'a fórmula roda e devolve nulo' : 'o coletor nunca produziu linha'}
+                    </div>
+                  </div>
+                  <ChevronRight size={14} style={{ color: C.t3, flexShrink: 0 }} />
+                </div>
+              ))}
+              {pulso.fonte_morta.length > 10 && (
+                <div style={{ fontSize: 11, color: C.t3, padding: '4px 12px' }}>
+                  e mais {pulso.fonte_morta.length - 10}.
+                </div>
+              )}
+            </div>
+          )}
+        </Card>
+
+        <Card title="Saúde por área" subtitle="Cobertura de preenchimento (e o desempenho ao lado, quando é julgável)" full>
           {!pulso?.areas?.length ? <Vazio>Nenhuma área cadastrada.</Vazio> : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 10 }}>
               {pulso.areas.map(a => {
-                const cor = a.percentual_em_dia >= 70 ? '#10B981' : a.percentual_em_dia >= 40 ? '#F59E0B' : '#EF4444';
+                const cor = a.percentual_cobertura >= 70 ? '#10B981' : a.percentual_cobertura >= 40 ? '#F59E0B' : '#EF4444';
                 return (
                   <div key={a.area} style={{
                     padding: 14, background: 'var(--cbrio-input-bg)', borderRadius: 8,
@@ -259,13 +375,14 @@ function AbaDiagnostico() {
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, marginBottom: 8 }}>
                       <strong style={{ fontSize: 13, textTransform: 'capitalize', color: C.text }}>{a.area}</strong>
-                      <span style={{ fontSize: 22, fontWeight: 800, color: cor, lineHeight: 1 }}>{a.percentual_em_dia}%</span>
+                      <span style={{ fontSize: 22, fontWeight: 800, color: cor, lineHeight: 1 }}>{a.percentual_cobertura}%</span>
                     </div>
                     <div style={{ fontSize: 10, color: C.t3, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                      <span><strong style={{ color: '#10B981' }}>{a.em_dia}</strong> dia</span>
-                      <span><strong style={{ color: '#F59E0B' }}>{a.atrasados}</strong> atras</span>
-                      <span><strong style={{ color: '#EF4444' }}>{a.criticos}</strong> crit</span>
-                      <span><strong style={{ color: '#9CA3AF' }}>{a.sem_dado}</strong> ?</span>
+                      <span title="preencheram o último período fechado"><strong style={{ color: '#10B981' }}>{a.pont_em_dia}</strong> em dia</span>
+                      <span title="tinham dado e pararam"><strong style={{ color: '#F59E0B' }}>{a.pont_atrasado}</strong> atras</span>
+                      <span title="nunca tiveram valor"><strong style={{ color: '#9CA3AF' }}>{a.pont_nunca}</strong> nunca</span>
+                      <span title="abaixo da meta, com dado recente"><strong style={{ color: '#EF4444' }}>{a.des_abaixo}</strong> abx</span>
+                      {a.fonte_morta > 0 && <span title="sem fonte viva — é engenharia"><strong style={{ color: '#8B5CF6' }}>{a.fonte_morta}</strong> fonte</span>}
                     </div>
                   </div>
                 );
@@ -282,6 +399,11 @@ function AbaDiagnostico() {
           <ListaSaude titulo="Sem meta definida"
             subtitulo="KPIs que precisam de uma meta antes de poder cobrar"
             items={saude.sem_meta.items} cor="#EF4444" onAbrirKpi={setDetalheKpiId} />
+          {saude.meta_so_texto?.total > 0 && (
+            <ListaSaude titulo="Meta só em texto"
+              subtitulo="Têm meta escrita, mas sem número — o farol não consegue julgar se bateu"
+              items={saude.meta_so_texto.items} cor="#F59E0B" onAbrirKpi={setDetalheKpiId} />
+          )}
           <ListaSaude titulo="Sem dono atribuído"
             subtitulo="KPIs sem líder responsável — ninguém é cobrado"
             items={saude.sem_dono.items} cor="#F59E0B" onAbrirKpi={setDetalheKpiId} />
@@ -289,9 +411,13 @@ function AbaDiagnostico() {
             subtitulo="Não alimentam cascata automática" items={saude.sem_objetivo.items} cor="#3B82F6" onAbrirKpi={setDetalheKpiId} />
           <ListaSaude titulo="Sem valores da Jornada"
             subtitulo="Não aparecem na matriz nem nas mandalas" items={saude.sem_valores.items} cor="#8B5CF6" onAbrirKpi={setDetalheKpiId} />
+          {/* ⚠️ Janela FIXA de 60 dias: não sabe a periodicidade do KPI, então
+              serve pra "nunca teve dado nenhum" e NÃO pra atraso. Quem responde
+              atraso é o card Vencidos, acima, que conta em períodos do próprio
+              indicador. */}
           <ListaSaude titulo="Sem dado nenhum nos últimos 60 dias"
             subtitulo={saude.sem_registro_60d.aviso
-              || 'Nem preenchimento manual, nem valor calculado — ninguém alimenta'}
+              || 'Nem preenchimento manual, nem valor calculado · janela fixa — para atraso, veja Vencidos'}
             items={saude.sem_registro_60d.items}
             cor={saude.sem_registro_60d.incompleto ? '#F59E0B' : '#EF4444'}
             onAbrirKpi={setDetalheKpiId} />

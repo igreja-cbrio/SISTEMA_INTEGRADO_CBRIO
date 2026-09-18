@@ -1,11 +1,43 @@
 const router = require('express').Router();
-const { authenticate, authorize } = require('../middleware/auth');
+const { authenticate, authorize, authorizeModule } = require('../middleware/auth'); // varredura 2026-09: A06 escrita sem autorizacao — passa a gatear por modulo, nao so por role
 const { supabase } = require('../utils/supabase');
 const { enqueueSync } = require('../services/cerebroSync');
 
 router.use(authenticate);
 
 const isUUID = (s) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+
+// varredura 2026-09: A06 - as rotas de "operacao" deste arquivo (status de tarefa,
+// subtarefa, comentario, status de marco e os PATCH de kpi/risco/orcamento) eram
+// AUTHN_ONLY: qualquer uma das 201 contas logadas (138 so-app) escrevia nelas com
+// um curl. Regua = modulo `projetos` (routeKey 'projects' ja existe no
+// ROUTE_MODULE_MAP), nivel 2 - o MESMO que a tela ja exige pra abrir
+// (`canProjetos` = canAccessModule(['projetos','Projetos','Tarefas'], leitura>=2)
+// em AuthContext.jsx:382 + ModuleGuard em App.tsx:781). Nivel 2 e nao 3 porque
+// nenhuma dessas telas gateia botao por nivel: subir a regua da escrita acima da
+// que abre a tela criaria 403 em botao visivel. O CRUD estrutural continua em
+// `authorize('admin','diretor')`, como ja estava. Trava POR ROTA, nunca router.use.
+const escritaProjetos = authorizeModule('projects', 2);
+
+// varredura 2026-09: A06 mass-assignment - os PATCH abaixo gravavam `req.body` cru,
+// entao qualquer coluna da tabela (inclusive project_id, created_by e o proprio id)
+// era escrevivel pelo cliente. As listas saem dos INSERT correspondentes DESTE
+// arquivo, que sao o contrato real do formulario.
+const CAMPOS_FASE = ['name', 'phase_order', 'date_start', 'date_end', 'status', 'responsible', 'notes'];
+const CAMPOS_MARCO = ['name', 'description', 'date_start', 'date_end', 'status'];
+const CAMPOS_KPI = ['name', 'target_value', 'current_value', 'unit', 'instrument'];
+const CAMPOS_RISCO = ['title', 'description', 'probability', 'impact', 'score', 'mitigation', 'owner_name', 'status'];
+const CAMPOS_ORCAMENTO = ['description', 'category', 'planned_amount', 'actual_amount', 'date', 'notes'];
+
+// varredura 2026-09: A06 whitelist de escrita - so o que esta na lista atravessa.
+// Campo ausente no corpo NAO e tocado (patch parcial continua parcial).
+function somenteCampos(corpo, permitidos) {
+  const out = {};
+  for (const k of permitidos) {
+    if (corpo && Object.prototype.hasOwnProperty.call(corpo, k)) out[k] = corpo[k];
+  }
+  return out;
+}
 
 // ── CATEGORIES (deve vir antes de /:id) ──
 router.get('/categories', async (req, res) => {
@@ -197,7 +229,8 @@ router.post('/:id/phases', authorize('admin', 'diretor'), async (req, res) => {
 
 router.patch('/phases/:phaseId', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const { data, error } = await supabase.from('project_phases').update(req.body).eq('id', req.params.phaseId).select().single();
+    const update = somenteCampos(req.body, CAMPOS_FASE); // varredura 2026-09: A06 mass-assignment - `.update(req.body)` cru deixava o cliente escrever qualquer coluna
+    const { data, error } = await supabase.from('project_phases').update(update).eq('id', req.params.phaseId).select().single();
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
@@ -239,7 +272,7 @@ router.put('/tasks/:taskId', authorize('admin', 'diretor'), async (req, res) => 
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.patch('/tasks/:taskId/status', async (req, res) => {
+router.patch('/tasks/:taskId/status', escritaProjetos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorizacao - mudar status de tarefa exige o modulo projetos
   try {
     const { data, error } = await supabase.from('project_tasks').update({ status: req.body.status }).eq('id', req.params.taskId).select().single();
     if (error) throw error;
@@ -256,7 +289,7 @@ router.delete('/tasks/:taskId', authorize('admin', 'diretor'), async (req, res) 
 });
 
 // ── SUBTASKS ──
-router.post('/tasks/:taskId/subtasks', async (req, res) => {
+router.post('/tasks/:taskId/subtasks', escritaProjetos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorizacao - criar subtarefa exige o modulo projetos
   try {
     const { data, error } = await supabase.from('project_task_subtasks').insert({
       task_id: req.params.taskId, name: req.body.name, done: false,
@@ -266,7 +299,7 @@ router.post('/tasks/:taskId/subtasks', async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.patch('/subtasks/:subId', async (req, res) => {
+router.patch('/subtasks/:subId', escritaProjetos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorizacao - marcar subtarefa exige o modulo projetos
   try {
     const { data, error } = await supabase.from('project_task_subtasks').update({ done: req.body.done }).eq('id', req.params.subId).select().single();
     if (error) throw error;
@@ -282,7 +315,7 @@ router.delete('/subtasks/:subId', authorize('admin', 'diretor'), async (req, res
 });
 
 // ── COMMENTS ──
-router.post('/tasks/:taskId/comments', async (req, res) => {
+router.post('/tasks/:taskId/comments', escritaProjetos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorizacao - comentar exige o modulo projetos
   try {
     const { data, error } = await supabase.from('project_task_comments').insert({
       task_id: req.params.taskId, author_id: req.user.userId, author_name: req.user.name, text: req.body.text,
@@ -309,13 +342,14 @@ router.post('/:id/milestones', authorize('admin', 'diretor'), async (req, res) =
 
 router.put('/milestones/:mId', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const { data, error } = await supabase.from('project_milestones').update(req.body).eq('id', req.params.mId).select().single();
+    const update = somenteCampos(req.body, CAMPOS_MARCO); // varredura 2026-09: A06 mass-assignment - whitelist derivada do INSERT de marcos
+    const { data, error } = await supabase.from('project_milestones').update(update).eq('id', req.params.mId).select().single();
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.patch('/milestones/:mId/status', async (req, res) => {
+router.patch('/milestones/:mId/status', escritaProjetos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorizacao - mudar status de marco exige o modulo projetos
   try {
     const { data, error } = await supabase.from('project_milestones').update({ status: req.body.status }).eq('id', req.params.mId).select().single();
     if (error) throw error;
@@ -338,9 +372,10 @@ router.post('/:id/kpis', authorize('admin', 'diretor'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.patch('/kpis/:kpiId', async (req, res) => {
+router.patch('/kpis/:kpiId', escritaProjetos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorizacao + mass-assignment
   try {
-    const { data, error } = await supabase.from('project_kpis').update(req.body).eq('id', req.params.kpiId).select().single();
+    const update = somenteCampos(req.body, CAMPOS_KPI); // varredura 2026-09: A06 mass-assignment - whitelist derivada do INSERT de kpis
+    const { data, error } = await supabase.from('project_kpis').update(update).eq('id', req.params.kpiId).select().single();
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
@@ -370,11 +405,13 @@ router.post('/:id/risks', authorize('admin', 'diretor'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.patch('/risks/:riskId', async (req, res) => {
+router.patch('/risks/:riskId', escritaProjetos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorizacao + mass-assignment
   try {
-    const d = req.body;
-    if (d.probability && d.impact) d.score = d.probability * d.impact;
-    const { data, error } = await supabase.from('project_risks').update(d).eq('id', req.params.riskId).select().single();
+    const update = somenteCampos(req.body, CAMPOS_RISCO); // varredura 2026-09: A06 mass-assignment - whitelist derivada do INSERT de riscos
+    // varredura 2026-09: A06 o `score` e DERIVADO aqui, nunca aceito cru do cliente - score solto faria o risco mentir na ordenacao da lista
+    if (update.probability && update.impact) update.score = update.probability * update.impact;
+    else delete update.score;
+    const { data, error } = await supabase.from('project_risks').update(update).eq('id', req.params.riskId).select().single();
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
@@ -403,9 +440,10 @@ router.post('/:id/budget', authorize('admin', 'diretor'), async (req, res) => {
   } catch (e) { res.status(500).json({ error: 'Erro' }); }
 });
 
-router.patch('/budget/:itemId', async (req, res) => {
+router.patch('/budget/:itemId', escritaProjetos, async (req, res) => { // varredura 2026-09: A06 escrita sem autorizacao + mass-assignment
   try {
-    const { data, error } = await supabase.from('project_budget_items').update(req.body).eq('id', req.params.itemId).select().single();
+    const update = somenteCampos(req.body, CAMPOS_ORCAMENTO); // varredura 2026-09: A06 mass-assignment - whitelist derivada do INSERT de orcamento
+    const { data, error } = await supabase.from('project_budget_items').update(update).eq('id', req.params.itemId).select().single();
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro' }); }

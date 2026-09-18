@@ -8,11 +8,24 @@ const { notificar } = require('../services/notificar');
 const { donosDoGrupo } = require('../services/gruposDestinatarios');
 const { avisarPedidoNovoNoApp } = require('../services/gruposAvisoApp');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED } = require('../services/storageService');
-const { acharMembroGuardado, ehNomeDerivadoDeEmail } = require('../services/membroMatch');
+// varredura 2026-09: PUB-01 (2ª rodada) — `registrarContatoDaPorta` entra aqui
+// porque o contato que o censo deixou de APLICAR não pode sumir: ele passa a ser
+// ACUMULADO em mem_contatos (destino já desenhado pra contato divergente).
+const { acharMembroGuardado, ehNomeDerivadoDeEmail, registrarContatoDaPorta } = require('../services/membroMatch');
 const { registrarObservacaoSegura } = require('../services/identidadeProgressiva');
 const { cpfValido, emailValido } = require('../services/inscricaoContrato');
 const { verificarTokenCenso } = require('../utils/censoToken');
+// varredura 2026-09: PUB-02 — mesma régua PURA do /prefill do censo ("CPF
+// IDENTIFICA, NÃO AUTENTICA"), reaproveitada em vez de recopiada: o motivo
+// está escrito lá e já entra no gate de deploy (src/test/censoPrefill.test.ts).
+const { podeIdentificarPorCpf } = require('../utils/censoPrefill');
 const { avaliarProntidao } = require('../utils/prontidaoCadastro');
+// varredura 2026-09: PUB-01 — busca PAGINADA do auth user por e-mail. Era um
+// helper local aqui; virou util compartilhada porque o /devocional/login fazia a
+// MESMA pergunta com o bug da 1ª página. Uma régua só, um lugar só.
+const { acharAuthUserPorEmail } = require('../utils/authUsers');
+// REM-03: o link de acesso passa pela régua única, que GERA e ENVIA.
+const { enviarLinkDeAcesso } = require('../utils/magicLink');
 const { canonizarBairro } = require('../services/bairroCanonico');
 
 const uploadMw = multer({
@@ -67,6 +80,77 @@ function soDigitos(v) {
   return (v || '').toString().replace(/\D+/g, '');
 }
 
+// varredura 2026-09: PUB-01 — base do link de acesso (mesma régua do
+// publicDevocional.js; cópia local porque cada porta pública resolve a sua).
+function getFrontendUrl() {
+  if (process.env.FRONTEND_URL) return process.env.FRONTEND_URL.replace(/\/+$/, '');
+  if (process.env.VERCEL_URL) return `https://${process.env.VERCEL_URL}`;
+  return 'http://localhost:5173';
+}
+
+// varredura 2026-09: PUB-02 (CPF respondia "esta pessoa está na base da igreja?") —
+// balde do probing de IDENTIDADE chaveado pelo CPF TENTADO, não pelo IP.
+// ⚠️ O teto por IP NÃO defende esta rota: no culto a igreja inteira sai por 1 IP
+// via NAT (é por isso que `lookupLimiter` é 3.000 e o do censo é 6.000), e quem
+// varre uma lista de CPFs comprada troca de IP de graça. Por CPF, o MESMO
+// documento só aceita algumas tentativas por janela — o que mata a força bruta
+// da data de nascimento (a segunda metade da prova) sem tocar em quem está
+// preenchendo o próprio cadastro, que consulta 1-2 vezes.
+// ⚠️ Sem CPF na requisição o balde cai no IP: chave ausente não pode virar
+// "sem limite".
+// ⚠️ SEM `validate: { ... }` — produção roda a árvore do BACKEND
+// (express-rate-limit 7.5.1), onde a opção não existe e responde
+// ERR_ERL_UNKNOWN_VALIDATION a cada construção (lição de app.js:164-168).
+const cpfProbeLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.PUBLIC_MEMBRESIA_CPF_PROBE_MAX) || 20,
+  keyGenerator: (req) => {
+    const d = soDigitos(req.query?.cpf);
+    return d.length === 11 ? `cpfprobe:${d}` : `cpfprobe:ip:${req.ip}`;
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Muitas consultas para este CPF. Tente novamente em alguns minutos.' },
+});
+
+// varredura 2026-09: PUB-01 (2ª rodada) — balde PRÓPRIO do ramo que CRIA CONTA,
+// chaveado pelo E-MAIL ALVO (mesmo desenho do `cpfProbeLimiter` acima).
+// ⚠️ O `cadastroLimiter` NÃO defende isto: ele é 10.000/15min por IP, calibrado
+// pro culto inteiro sair por um NAT só. Mas o ramo de criação de conta é outra
+// coisa — é uma porta ANÔNIMA que dispara e-mail (magic link) pra um endereço
+// que quem chama digitou, e cada tentativa custa um `createUser` + um
+// `generateLink` no GoTrue. `if (authUserNovo)` já impede que uma conta
+// EXISTENTE receba qualquer coisa; falta impedir que um e-mail SEM conta seja
+// bombardeado, e o teto por IP não faz isso (trocar de IP é de graça).
+// ⚠️ NÃO responde 429 e NÃO manda header: estourar o balde apenas PULA a criação
+// de conta (`req.contaPorEmailEstourou`), nunca derruba a submissão — perder o
+// cadastro (e o consentimento LGPD que ele carrega) por causa do balde do
+// acessório é o contrário da política deste arquivo. Sem `standardHeaders` pra
+// não devolver a quem sonda quantas tentativas restam para aquele e-mail.
+// ⚠️ `skip` mantém fora do balde quem nem pediu conta (sem `senha`/sem `email`):
+// o balde é do RAMO, não da rota.
+// ⚠️ Sem e-mail utilizável a chave cai no IP: chave ausente não pode virar
+// "sem limite" (mesma regra do `cpfProbeLimiter`). Com o `skip` acima esse ramo
+// é quase inalcançável (só e-mail em branco passa) — fica como cinto extra.
+// ⚠️ SEM `validate: { ... }` — produção roda express-rate-limit 7.5.1, que
+// responde ERR_ERL_UNKNOWN_VALIDATION a cada construção (lição de app.js:164-168).
+const contaPorEmailLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: parseInt(process.env.PUBLIC_MEMBRESIA_CONTA_EMAIL_MAX) || 3,
+  skip: (req) => !req.body?.senha || !req.body?.email,
+  keyGenerator: (req) => {
+    const e = String(req.body?.email || '').trim().toLowerCase();
+    return e ? `contaemail:${e}` : `contaemail:ip:${req.ip}`;
+  },
+  handler: (req, _res, next) => {
+    req.contaPorEmailEstourou = true;
+    console.warn('[PUBLIC CADASTRO] criação de conta bloqueada pelo balde por e-mail alvo');
+    next();
+  },
+  standardHeaders: false,
+  legacyHeaders: false,
+});
+
 // Vocabulário do vínculo AUTODECLARADO no censo (espelha o CHECK da migration
 // 20260803160000). Sem acento: é identificador persistido.
 const VINCULOS_DECLARADOS = ['membro', 'congregado', 'visitante'];
@@ -75,15 +159,28 @@ const VINCULOS_DECLARADOS = ['membro', 'congregado', 'visitante'];
 // (20260803160000_censo_recadastramento.sql · mem_cadastros_pendentes).
 const COLUNAS_CENSO = ['censo', 'vinculo_declarado', 'censo_conflitos'];
 
+// ⚠️⚠️ TODA coluna que este INSERT só tem depois de uma migration entra AQUI.
+// O fallback abaixo era específico do censo, e com ele assim uma coluna nova
+// (as da carta de transferência, 20260915120000) faria o INSERT falhar e a
+// retentativa falhar de novo — pelo mesmo 42703 — perdendo a submissão da
+// pessoa, que é justamente o que o fallback existe pra impedir.
+// Lista em UM lugar: esquecer de acrescentar aqui é perder cadastro, não perder
+// um campo.
+const COLUNAS_OPCIONAIS = [
+  ...COLUNAS_CENSO,
+  // 20260915120000 · "Seja membro": carta de transferência + igreja de origem
+  'carta_transferencia', 'igreja_anterior',
+];
+
 // 42703 = undefined_column. O PostgREST recusa a query INTEIRA quando uma
 // coluna não existe, então pedir coluna nova antes da migration derrubaria o
 // formulário pra TODO MUNDO (lição do `parcelas_max`). Aqui a submissão é o que
 // não pode se perder: tenta com as colunas do censo e, se elas não existirem
 // ainda, repete SEM elas — a pessoa se cadastra, só a marcação do censo espera
 // a migration.
-function semColunasDoCenso(payload) {
+function semColunasOpcionais(payload) {
   const copia = { ...payload };
-  for (const c of COLUNAS_CENSO) delete copia[c];
+  for (const c of COLUNAS_OPCIONAIS) delete copia[c];
   return copia;
 }
 function ehColunaAusente(error) {
@@ -153,9 +250,23 @@ router.post('/upload-foto', cadastroLimiter, uploadMw.single('foto'), async (req
 let _bairrosCache = { em: 0, itens: null };
 const BAIRROS_CACHE_MS = 10 * 60 * 1000;
 
+// ⚠️ 5 min de cache NA BORDA além do cache em memória (11/09/2026). Medido: a
+// resposta saía com `max-age=0, must-revalidate` e `X-Vercel-Cache: MISS`, e a
+// pergunta de BAIRRO do censo chama este catálogo — ou seja, num culto de 500
+// pessoas são 500 invocações da função e 500 fichas no balde de 3.000/15min do
+// `lookupLimiter`, que é COMPARTILHADO com lookup de CPF, família e carteirinha.
+// O catálogo é agregado (bairro + contagem), igual para todo mundo e muda
+// devagar: é o caso exato de cache de borda. Mesmo truque do questionário do
+// censo e do NPS.
+// ⚠️ SÓ O SUCESSO é cacheado — a saída de erro devolve lista vazia, e guardar
+// isso por 5 minutos transformaria uma falha de 1 segundo em 5 minutos de campo
+// de bairro sem lista.
+const BAIRROS_CACHE_BORDA = 'public, s-maxage=300, stale-while-revalidate=600';
+
 router.get('/bairros', lookupLimiter, async (req, res) => {
   try {
     if (_bairrosCache.itens && Date.now() - _bairrosCache.em < BAIRROS_CACHE_MS) {
+      res.set('Cache-Control', BAIRROS_CACHE_BORDA);
       return res.json({ bairros: _bairrosCache.itens, cache: true });
     }
     const { data, error } = await supabase.rpc('fn_dem_bairros_catalogo');
@@ -167,6 +278,7 @@ router.get('/bairros', lookupLimiter, async (req, res) => {
       apelidos: b.apelidos || [],
     }));
     _bairrosCache = { em: Date.now(), itens };
+    res.set('Cache-Control', BAIRROS_CACHE_BORDA);
     res.json({ bairros: itens, cache: false });
   } catch (e) {
     // ⚠️ Catálogo indisponível NÃO pode travar cadastro: o seletor cai em campo
@@ -353,14 +465,36 @@ router.get('/censo/meus-dados', lookupLimiter, async (req, res) => {
 // retorna apenas { found, primeiroNome, iniciaisSobrenome, fonte } pra
 // confirmação visual. Se confirmar, o backend já faz o de-dup correto
 // na submissao via duplicado_de_id.
+//
+// varredura 2026-09: PUB-02 — EXIGE CPF **+ DATA DE NASCIMENTO**, como o
+// /prefill do censo (publicCenso.js + utils/censoPrefill.js). Só o CPF fazia
+// esta porta responder "esta pessoa está na base da CBRio?" a qualquer um com
+// uma lista de CPFs na mão — e estar na base de uma igreja é convicção
+// religiosa, dado sensível do art. 5º, II da LGPD. O estágio "só o CPF" já
+// tinha MORRIDO no censo em 17/08/2026; esta porta tinha ficado para trás.
+// ⚠️ RECUSA NEUTRA: falta de nascimento, nascimento errado e CPF inexistente
+// devolvem EXATAMENTE o mesmo corpo. Qualquer diferença devolve o oráculo.
 // ─────────────────────────────────────────────────────────────────────────
-router.get('/lookup-cpf', lookupLimiter, async (req, res) => {
+router.get('/lookup-cpf', lookupLimiter, cpfProbeLimiter, async (req, res) => {
+  // varredura 2026-09: PUB-02 — corpo único de recusa (nada distingue os casos).
+  const neutra = { found: false };
   try {
     const cpf = req.query.cpf;
+    // varredura 2026-09: PUB-02 — `reason:'invalid'` some junto: era o
+    // discriminador que separava "CPF malformado" de "não está na base".
     if (!cpf || !cpfValido(cpf)) {
-      return res.json({ found: false, reason: 'invalid' });
+      return res.json(neutra);
     }
     const d = soDigitos(cpf);
+
+    // varredura 2026-09: PUB-02 — sem o nascimento a resposta é a MESMA de CPF
+    // inexistente; aceita `nascimento` e `data_nascimento` (o formulário já
+    // coleta o campo, só precisa mandá-lo junto).
+    const nascimento = String(req.query.data_nascimento || req.query.nascimento || '').trim();
+    const temNascimento = /^\d{4}-\d{2}-\d{2}$/.test(nascimento);
+    if (!podeIdentificarPorCpf({ cpfValido: true, temNascimento })) {
+      return res.json(neutra);
+    }
 
     // 1. mem_membros ativos
     const { data: m } = await supabase
@@ -369,6 +503,11 @@ router.get('/lookup-cpf', lookupLimiter, async (req, res) => {
       .eq('cpf', d)
       .eq('active', true)
       .maybeSingle();
+
+    // varredura 2026-09: PUB-02 — nascimento divergente = mesma recusa neutra.
+    if (m && m.data_nascimento !== nascimento) {
+      return res.json(neutra);
+    }
 
     if (m) {
       const partes = (m.nome || '').trim().split(/\s+/);
@@ -384,12 +523,20 @@ router.get('/lookup-cpf', lookupLimiter, async (req, res) => {
     }
 
     // 2. Cadastro pendente
+    // varredura 2026-09: PUB-02 — `data_nascimento` entra no select porque a
+    // fila de cadastros responde a mesma pergunta sensível que mem_membros e
+    // precisa da mesma prova.
     const { data: p } = await supabase
       .from('mem_cadastros_pendentes')
-      .select('id, nome, status')
+      .select('id, nome, status, data_nascimento')
       .eq('cpf', d)
       .in('status', ['pendente', 'duplicado'])
       .maybeSingle();
+
+    // varredura 2026-09: PUB-02 — nascimento divergente = mesma recusa neutra.
+    if (p && p.data_nascimento !== nascimento) {
+      return res.json(neutra);
+    }
 
     if (p) {
       const partes = (p.nome || '').trim().split(/\s+/);
@@ -404,10 +551,12 @@ router.get('/lookup-cpf', lookupLimiter, async (req, res) => {
       });
     }
 
-    return res.json({ found: false });
+    return res.json(neutra);
   } catch (e) {
     console.error('[PUBLIC] lookup-cpf error:', e.message);
-    res.json({ found: false, reason: 'error' });
+    // varredura 2026-09: PUB-02 — `reason:'error'` some: mesmo corpo de recusa
+    // em TODA saída sem sucesso (erro do banco não pode virar sinal).
+    res.json(neutra);
   }
 });
 
@@ -417,7 +566,10 @@ router.get('/lookup-cpf', lookupLimiter, async (req, res) => {
 // - Honeypot (website): bots tendem a preencher qualquer input visível
 // - LGPD: aceita_termos é obrigatório; snapshot do texto consentido é gravado
 // - Detecta duplicados por email OU (nome + telefone) em mem_membros
-router.post('/cadastro', cadastroLimiter, async (req, res) => {
+// varredura 2026-09: PUB-01 (2ª rodada) — `contaPorEmailLimiter` entra DEPOIS do
+// balde geral e só conta quem pediu conta; ele nunca recusa a submissão, só
+// marca `req.contaPorEmailEstourou` pro ramo de criação de conta lá embaixo.
+router.post('/cadastro', cadastroLimiter, contaPorEmailLimiter, async (req, res) => {
   try {
     const {
       nome,
@@ -441,6 +593,15 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       whatsapp_optin, // consentimento p/ mensagens no WhatsApp (Marketing · LGPD)
       consentimento_texto,
       converteu_na_cbrio, // autodeclarado (checkbox) · NUNCA vira convertido/NSM
+      // "Seja membro" · carta de transferência (Pr. Nélio · 15/09/2026).
+      // ⚠️⚠️ AUTODECLARADO, como o `vinculo_declarado` do censo: marcar a caixa
+      // NÃO muda `mem_membros.status` nem aprova nada. Quem confere o documento
+      // e decide a membresia é a igreja.
+      // ⚠️ `igreja_anterior` é DE ONDE A PESSOA VEM — não é onde ela foi
+      // batizada (isso é `mem_membros.igreja_batismo_anterior`, outra coluna e
+      // outro fato · ver a migration 20260915120000).
+      carta_transferencia,
+      igreja_anterior,
       // Censo / recadastramento (2026-08-03). `vinculo_declarado` é
       // AUTODECLARADO (membro|congregado|visitante) e NUNCA vira
       // mem_membros.status — quem é membro é decisão da igreja.
@@ -520,25 +681,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
     const generoNorm = String(genero || '').trim().toLowerCase();
     if (!['masculino', 'feminino'].includes(generoNorm)) {
       return res.status(400).json({ error: 'Selecione o sexo (masculino ou feminino).', campo: 'genero' });
-
-
-    // CEP OBRIGATÓRIO nesta porta (pedido do Matheus · 25/08/2026, antes do
-    // censo presencial). ⚠️ É decisão DESTA porta, não do Contrato de
-    // Inscrição — endereço segue fixo-opcional nas outras 6.
-    //
-    // ⚠️ Exige COMPLETO (8 dígitos), não "preenchido": CEP pela metade entra
-    // no cadastro parecendo endereço e o mapa da aba Perfil não consegue
-    // posicionar a pessoa — `regiaoDeCep` recusa qualquer coisa que não tenha
-    // 8. O censo já coletou CEP de 7 dígitos por engano justamente porque o
-    // formulário não avisava.
-    if (!cepCompleto(cep)) {
-      return res.status(400).json({
-        error: String(cep || '').trim()
-          ? 'CEP incompleto — informe os 8 dígitos.'
-          : 'CEP é obrigatório.',
-        campo: 'cep',
-      });
-    }    }
+    }
 
     // ⚠️ Espelho do CHECK `mem_cadastros_pendentes_origem_check` (o banco é a
     // régua; aqui é só a porta recusando cedo). `online` entrou em 27/08/2026 e
@@ -548,6 +691,34 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
     // recusar o cadastro por causa de um parâmetro de URL seria perder a pessoa.
     const origemValida = ['site', 'qr_code', 'evento', 'importacao', 'online'];
     const origemFinal = origemValida.includes(origem) ? origem : 'site';
+
+    // CEP OBRIGATÓRIO — SÓ NA PORTA DO SITE (pedido do Matheus · 25/08/2026,
+    // antes do censo presencial). É decisão DESTA porta, não do Contrato de
+    // Inscrição — endereço segue fixo-opcional nas outras 6.
+    //
+    // ⚠⚠ POR QUE SÓ `site` (auditoria REM-01 · medido em 16/09/2026): esta
+    // guarda nasceu ANINHADA dentro do `if` do sexo, depois do `return` dele —
+    // sintaticamente válida, semanticamente inalcançável, nunca cobrou nada. Ao
+    // desaninhar, ela passa a valer de verdade, e aí a medição manda: dos 166
+    // cadastros criados desde 25/08, **141 vieram por `qr_code` e NENHUM tem
+    // CEP** (o formulário do QR não pergunta), contra **24 de 25 COM CEP na
+    // porta do site** (o front já exige, `CadastroMembresia.jsx`). Ligar para
+    // todas as origens fecharia a porta do censo em 85% das submissões reais.
+    // Quando o formulário do QR passar a coletar CEP, basta tirar a condição.
+    //
+    // ⚠️ Exige COMPLETO (8 dígitos), não "preenchido": CEP pela metade entra
+    // no cadastro parecendo endereço e o mapa da aba Perfil não consegue
+    // posicionar a pessoa — `regiaoDeCep` recusa qualquer coisa que não tenha
+    // 8. O censo já coletou CEP de 7 dígitos por engano justamente porque o
+    // formulário não avisava.
+    if (origemFinal === 'site' && !cepCompleto(cep)) {
+      return res.status(400).json({
+        error: String(cep || '').trim()
+          ? 'CEP incompleto — informe os 8 dígitos.'
+          : 'CEP é obrigatório.',
+        campo: 'cep',
+      });
+    }
 
     // Uma grafia só para o bairro, antes de qualquer gravação.
     // ⚠️ Best-effort por dentro: catálogo fora do ar devolve o texto trimado —
@@ -641,6 +812,18 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       // Só inclui a coluna quando a pessoa marcou (tolera a migration ainda não
       // aplicada · flow antigo sem o checkbox não toca a coluna).
       ...(converteu_na_cbrio ? { converteu_na_cbrio: true } : {}),
+      // Mesma política do `converteu_na_cbrio`: a coluna só entra no INSERT
+      // quando a pessoa respondeu — com a migration `20260915120000` ainda não
+      // aplicada, quem não responde nem toca nela (e quem responde cai no
+      // fallback de coluna ausente logo abaixo, sem perder a submissão).
+      // ⚠️ `=== true`, nunca truthy: o corpo vem de JSON, e a string "false" é
+      // truthy — registraria carta de transferência que ninguém declarou.
+      ...(carta_transferencia === true ? { carta_transferencia: true } : {}),
+      // ⚠️ Teto de 160 e trim: é texto livre de porta pública. Sem limite, o
+      // campo aceita o que couber no corpo da requisição.
+      ...(typeof igreja_anterior === 'string' && igreja_anterior.trim()
+        ? { igreja_anterior: igreja_anterior.trim().slice(0, 160) }
+        : {}),
       familia_sugerida_id: familia_sugerida_id || null,
       foto_url: foto_url || null,
       status: duplicadoDeId ? 'duplicado' : 'pendente',
@@ -658,10 +841,10 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
       .single();
 
     if (error && ehColunaAusente(error)) {
-      console.warn('[PUBLIC CADASTRO] colunas do censo ausentes (parte 1 da migration, 20260803160000, não aplicada) — gravando sem elas');
+      console.warn('[PUBLIC CADASTRO] coluna opcional ausente (migration do censo 20260803160000 ou da carta 20260915120000 não aplicada) — gravando sem elas');
       ({ data, error } = await supabase
         .from('mem_cadastros_pendentes')
-        .insert(semColunasDoCenso(payload))
+        .insert(semColunasOpcionais(payload))
         .select('id, status')
         .single());
     }
@@ -688,12 +871,80 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
     if (ehCenso && duplicadoDeId) {
       try {
         const { reconciliarCenso } = require('../services/censoReconciliar');
+
+        // ⚠️⚠️ varredura 2026-09: PUB-01 (2ª rodada) — TOMADA DE CONTA EM DOIS
+        // PASSOS PELA PORTA DO CENSO. Mandar `email`/`telefone` daqui reabria,
+        // por desvio, o buraco que o resto do lote fechou:
+        //   1. um anônimo posta este /cadastro com `censo:true`, o CPF da VÍTIMA
+        //      e o PRÓPRIO e-mail. `acharMembroGuardado` casa por CPF, então
+        //      `matchedBy='cpf'` e `podeAplicar` trata como sinal FORTE;
+        //   2. em `decidirCampos`, se `mem_membros.email` da vítima estiver
+        //      VAZIO, o e-mail cai em `aplicar` (destino vazio → enriquece) e
+        //      NÃO em `CAMPOS_ACUMULAVEIS`, que só protege quem JÁ tem e-mail.
+        //      O endereço do atacante vira o e-mail OFICIAL do membro;
+        //   3. ele vai no /devocional/login, que acha o membro por
+        //      `ilike('email', ...)` e grava `profiles.membro_id = membro.id` —
+        //      exatamente o desfecho (ficha, família, filhos, contribuições via
+        //      `current_user_membro_id()`) que este lote removeu do /cadastro.
+        // A trava é de ORIGEM, não de valor: o TOKEN PESSOAL do censo é a única
+        // prova de posse do contato nesta porta (link assinado que o sistema
+        // entregou no WhatsApp/e-mail DELA). CPF digitado numa porta anônima
+        // identifica, não autentica — e nunca pode escolher a chave de login.
+        const contatoProvado = matchedBy === 'token_censo';
+
+        // ⚠️ O que foi cortado NÃO SE PERDE. Sem o token, o contato vira contato
+        // ACUMULADO em `mem_contatos` — o destino que a decisão de 17/07 já
+        // desenhou pra contato divergente, e o mesmo que o `reconciliarCenso`
+        // usaria. A equipe vê o e-mail novo na tela e decide; ele só não vira o
+        // `mem_membros.email` que o /devocional/login usa como identidade.
+        // Best-effort (não retorna promise): falha aqui não desfaz nada.
+        //
+        // varredura 2026-09: PUB-01 (3ª rodada) — este bloco roda ANTES do
+        // `await reconciliarCenso`, não depois. O serviço propaga erro de infra
+        // DE PROPÓSITO; com o acúmulo lá embaixo, no mesmo `try`, uma falha do
+        // reconciliador pulava direto pro `catch` e o contato não chegava nem em
+        // `mem_membros` (cortado pela trava) nem em `mem_contatos` — o "não se
+        // perde" caía justamente no caminho de erro. A ordem não muda nada pra
+        // quem lê: a função é best-effort e não retorna promise.
+        if (!contatoProvado && (emailLimpo || telefoneLimpo)) {
+          registrarContatoDaPorta(
+            duplicadoDeId,
+            { telefone: telefoneLimpo || null, email: emailLimpo || null },
+            'censo',
+          );
+
+          // varredura 2026-09: PUB-01 (3ª rodada) — RASTRO NO HISTÓRICO. Antes da
+          // trava, contato divergente entrava pelo `acumular` do
+          // `reconciliarCenso` e o serviço escrevia `[censo] contato acumulado:
+          // email` em `mem_historico`. Agora o contato nem chega no `dados`, então
+          // `acumular` fica vazio e o acúmulo acontecia SEM linha na linha do tempo
+          // do membro — cego exatamente no caso que mais interessa auditar depois
+          // (alguém de fora tentando mexer no cadastro). Escrevemos a linha aqui.
+          // Schema VIVO de `mem_historico` (mesma nota do censoReconciliar/
+          // cpfReconciliar): `tipo` é NOT NULL com CHECK que aceita 'outro'; a ação
+          // vai no prefixo da descrição.
+          // Best-effort e SEM `await`: histórico não pode derrubar a rota.
+          const camposContato = [
+            emailLimpo ? 'email' : null,
+            telefoneLimpo ? 'telefone' : null,
+          ].filter(Boolean).join(', ');
+          supabase.from('mem_historico').insert({
+            membro_id: duplicadoDeId,
+            tipo: 'outro',
+            descricao: `[censo] contato de porta anônima acumulado (sem token pessoal): ${camposContato} (cadastro ${data.id})`,
+            created_at: new Date().toISOString(),
+          }).then(({ error: eHist }) => {
+            if (eHist) console.warn('[PUBLIC CADASTRO censo] histórico do contato não gravado:', eHist.message);
+          }, (e) => console.warn('[PUBLIC CADASTRO censo] histórico do contato não gravado:', e?.message));
+        }
+
         censoResultado = await reconciliarCenso({
           membroId: duplicadoDeId,
           matchedBy,
           origemId: data.id,
           dados: {
-            email: emailLimpo, telefone: telefoneLimpo, data_nascimento,
+            ...(contatoProvado ? { email: emailLimpo, telefone: telefoneLimpo } : {}),
+            data_nascimento,
             estado_civil, endereco, bairro, cidade, cep, profissao,
           },
         });
@@ -873,19 +1124,45 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
     }
 
     // Cria conta de acesso (auth user + profile) se a pessoa preencheu senha.
-    // - Se já existe membro vinculado (duplicadoDeId) · profile aponta pra ele
-    //   e a pessoa já tem acesso ao devocional imediatamente.
-    // - Se for cadastro novo (sem match) · cria auth user + profile com
-    //   membro_id=null. Acesso ao devocional vai depender do admin promover
-    //   o cadastro_pendente pra mem_membros depois.
+    // - Cria auth user + profile SEM `membro_id` e SEM senha; o acesso sai por
+    //   magic link no e-mail. O vínculo com mem_membros só nasce quando a
+    //   equipe promove o `mem_cadastros_pendentes`.
+    //
+    // ⚠️⚠️ varredura 2026-09: PUB-01 — ESTE BLOCO ENTREGAVA A CONTA DE OUTRA
+    // PESSOA. Era uma porta SEM LOGIN: quem soubesse só o CPF de um membro
+    // (2.390 têm CPF gravado) enviava o formulário com o PRÓPRIO e-mail e a
+    // PRÓPRIA senha e recebia uma conta já confirmada cujo `profiles.membro_id`
+    // apontava pro membro casado por CPF. E `profiles.membro_id` não é
+    // etiqueta: alimenta `current_user_membro_id()`, usada nas policies de
+    // contribuições e Kids (migration 20260816194649), e é o vínculo que o app
+    // de membros lê (routes/app.js). Ficha, família, filhos, grupos,
+    // inscrições e contribuição da vítima — sem nenhum aviso a ela, porque o
+    // e-mail era marcado confirmado sem verificação nenhuma.
+    // Três travas, todas aqui:
+    //   (1) `membro_id` NUNCA sai do casamento por CPF nesta porta;
+    //   (2) nada de senha escolhida por quem chama — entrada só pelo link que
+    //       chega no e-mail (posse provada), padrão do publicDevocional.js;
+    //   (3) `email_confirm: false` — o endereço passa a ser verificado.
+    //   (4) varredura 2026-09: PUB-01 (2ª rodada) — o ramo inteiro fica atrás do
+    //       `contaPorEmailLimiter`, balde estreito chaveado pelo E-MAIL ALVO
+    //       (~3/15min). Estourar não recusa a submissão: só pula a criação de
+    //       conta, que é acessório desta porta.
     let accountCreated = false;
     let canLoginDevocional = false;
-    if (senha && emailLimpo) {
+    if (senha && emailLimpo && !req.contaPorEmailEstourou) {
       try {
         // 1. Acha ou cria auth user
         let authUserId = null;
-        const { data: { users } = { users: [] } } = await supabase.auth.admin.listUsers();
-        const existing = users?.find(u => (u.email || '').toLowerCase() === emailLimpo);
+        // varredura 2026-09: PUB-01 — só a conta CRIADA agora recebe link de
+        // acesso. Quem já tinha conta já tem caminho próprio (/devocional/login)
+        // e disparar e-mail pra ela daqui transformaria uma porta anônima em
+        // gatilho de mensagem pro endereço de qualquer um.
+        let authUserNovo = false;
+        // varredura 2026-09: PUB-01 — `listUsers()` sem paginação lê só a 1ª
+        // página (50 no supabase-js 2.x) e não via ~155 dos 205 usuários: quem
+        // já tinha conta caía no ramo de CRIAR, e um e-mail existente virava
+        // erro silencioso (ou pior, tratamento de conta nova).
+        const existing = await acharAuthUserPorEmail(emailLimpo);
         if (existing) {
           authUserId = existing.id;
           // SEGURANÇA: NÃO sobrescrever a senha de uma conta que já existe.
@@ -896,8 +1173,15 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
         } else {
           const { data: created, error: createErr } = await supabase.auth.admin.createUser({
             email: emailLimpo,
-            password: senha,
-            email_confirm: true,
+            // varredura 2026-09: PUB-01 — SEM `password`. A senha vinha do
+            // chamador numa porta anônima: era credencial escolhida por um
+            // desconhecido para um e-mail que ninguém verificou. Quem entra,
+            // entra pelo link que chega no e-mail (abaixo); quem quiser senha
+            // define depois, autenticado, pelo /redefinir-senha.
+            // varredura 2026-09: PUB-01 — `email_confirm: false`: marcar
+            // confirmado sem verificar era o que tirava o dono legítimo do
+            // circuito (nenhum e-mail, nenhum aviso).
+            email_confirm: false,
             // ⚠️ `full_name` é OBRIGATÓRIO aqui. O gatilho de signup em auth.users
             // faz COALESCE(full_name, name, split_part(email,'@',1)) — sem ele, o
             // PREFIXO DO E-MAIL vira o nome da pessoa no profile E no cadastro que
@@ -915,6 +1199,7 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
             console.error('[PUBLIC CADASTRO] createUser:', createErr.message);
           } else {
             authUserId = created.user?.id;
+            authUserNovo = !!authUserId;   // varredura 2026-09: PUB-01
           }
         }
 
@@ -932,7 +1217,13 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
               email: emailLimpo,
               name: nome.trim(),
               role: null,
-              membro_id: duplicadoDeId || null,
+              // varredura 2026-09: PUB-01 — `membro_id` NASCE NULO nesta porta.
+              // Era aqui que o CPF de outra pessoa virava acesso ao cadastro
+              // dela. O vínculo com mem_membros é ato da EQUIPE, ao promover o
+              // `mem_cadastros_pendentes` (a fila continua com o
+              // `duplicado_de_id`, então nada se perde — só deixa de ser
+              // automático a partir de uma porta anônima).
+              membro_id: null,
               is_membro_only: true,
               active: true,
             });
@@ -940,7 +1231,9 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
             // O gatilho de auth.users cria o profile ANTES daqui, então este ramo
             // é o caminho normal — e era onde o nome ruim ficava para sempre.
             const patch = {};
-            if (duplicadoDeId && !profileExistente.membro_id) patch.membro_id = duplicadoDeId;
+            // varredura 2026-09: PUB-01 — o patch de `membro_id` SAIU pelo mesmo
+            // motivo do insert acima: casamento por CPF numa porta sem login não
+            // pode ligar a conta de quem chama ao membro casado.
             if (ehNomeDerivadoDeEmail(profileExistente.name, emailLimpo)) patch.name = nome.trim();
             if (Object.keys(patch).length) {
               await supabase.from('profiles').update(patch).eq('id', authUserId);
@@ -950,7 +1243,12 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
             // É o caso da pessoa que preencheu este formulário corretamente e
             // ganhou um segundo registro vazio minutos depois. Guarda estreita:
             // só reescreve quando o nome atual É PROVADAMENTE derivado do e-mail.
-            const membroDoLogin = profileExistente.membro_id || duplicadoDeId;
+            // varredura 2026-09: PUB-01 — só `profileExistente.membro_id`. Com
+            // `|| duplicadoDeId`, o casamento por CPF autorizava um anônimo a
+            // ESCREVER no `mem_membros` de outra pessoa (a guarda do nome
+            // derivado de e-mail é estreita, mas a autorização vinha do lugar
+            // errado). O vínculo já provado no profile continua valendo.
+            const membroDoLogin = profileExistente.membro_id;
             if (membroDoLogin) {
               const { data: mem } = await supabase.from('mem_membros')
                 .select('id, nome, email').eq('id', membroDoLogin).maybeSingle();
@@ -963,7 +1261,49 @@ router.post('/cadastro', cadastroLimiter, async (req, res) => {
             }
           }
           accountCreated = true;
-          canLoginDevocional = !!duplicadoDeId; // so quem já e membro entra no devocional na hora
+          // varredura 2026-09: PUB-01 — a ENTRADA passa a ser o link no e-mail
+          // (mesmo desenho do publicDevocional.js): é ele que prova a posse do
+          // endereço. Best-effort — o cadastro já está gravado e não se desfaz
+          // porque o envio falhou; a pessoa entra depois pelo /devocional/login.
+          // ⚠⚠ REM-03 (17/09/2026) — DOIS defeitos aqui, e o segundo é pior.
+          //
+          // 1) O link era GERADO E DESCARTADO: `generateLink` devolve o link em
+          //    `data.properties.action_link` e NÃO manda e-mail. Combinado com
+          //    o PUB-01 logo acima (`createUser` **sem senha** e com
+          //    `email_confirm: false`), a conta nascia sem NENHUM caminho de
+          //    entrada: sem senha, sem confirmação e sem o link que a tela
+          //    prometia. Todo cadastro desta porta desde 09/09 caiu nisso.
+          //
+          // 2) O destino era `/devocional/hoje`, que NÃO EXISTE MAIS — as telas
+          //    web do devocional saíram quando ele migrou pro app. Mesmo se o
+          //    e-mail tivesse saído, o link pousava na página de “migrou pro
+          //    app”. Agora pousa em `/redefinir-senha`: a pessoa chega logada
+          //    pelo link, define a senha e passa a conseguir entrar no APP —
+          //    que é exatamente o que o comentário do PUB-01 já mandava fazer
+          //    (“quem quiser senha define depois, autenticado, pelo
+          //    /redefinir-senha”).
+          //
+          // ⚠️ Best-effort de propósito, ao contrário das portas do voluntário:
+          // o cadastro e o consentimento LGPD JÁ ESTÃO GRAVADOS, e derrubá-los
+          // porque o e-mail falhou é o contrário da política deste arquivo. A
+          // equipe cria o acesso depois, pela fila.
+          if (authUserNovo) {
+            const envioLink = await enviarLinkDeAcesso({
+              email: emailLimpo,
+              redirectTo: `${getFrontendUrl()}/redefinir-senha`,
+              nome: nome.trim(),
+              assunto: 'Seu acesso · Comunidade Batista do Rio',
+              chamada: 'Recebemos seu cadastro. Para criar sua senha e usar o aplicativo da igreja, toque no botão abaixo — ele já abre você logado.',
+              textoBotao: 'Criar minha senha',
+              rodape: 'O link é pessoal e vale por pouco tempo. Se não foi você que se cadastrou, pode ignorar este e-mail.',
+              tag: 'PUBLIC CADASTRO',
+            });
+            if (!envioLink.ok) console.error('[PUBLIC CADASTRO] link de acesso nao saiu:', envioLink.motivo);
+          }
+          // varredura 2026-09: PUB-01 — sempre `false`: sem `membro_id`, e sem
+          // senha, ninguém "entra na hora" a partir desta porta. A tela cai no
+          // caminho de sucesso normal, que é o correto agora.
+          canLoginDevocional = false;
         }
       } catch (accErr) {
         // Não bloqueia o cadastro · so loga · admin pode criar acesso depois

@@ -25,7 +25,8 @@
 const express = require('express');
 const crypto = require('crypto');
 const router = express.Router();
-const { authenticate } = require('../middleware/auth');
+const { authenticate, authorizeModule } = require('../middleware/auth');
+const { nivelGuardNext, ROUTE_KEY: NEXT_ROUTE_KEY } = require('../utils/nextGuardNivel');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
@@ -53,6 +54,20 @@ function recalcularKpisNext() {
 }
 
 router.use(authenticate);
+
+// ⚠️⚠️ Guard de MÓDULO (03/09/2026) — este arquivo rodou até hoje só com
+// `authenticate`: qualquer autenticado do ERP escrevia no Next. Aplicado no
+// router (e não rota a rota) de propósito: são ~40 endpoints e um novo nasce
+// coberto por definição. A régua de nível mora em `utils/nextGuardNivel.js`.
+// `POST /matriculas/backfill-membros` mantém o `podeBackfillNext` por cima —
+// é mutação em lote e continua exigindo nível 3.
+const guardNextLeitura = authorizeModule(NEXT_ROUTE_KEY, 1);
+const guardNextEscrita = authorizeModule(NEXT_ROUTE_KEY, 2);
+router.use((req, res, next) => (
+  nivelGuardNext(req.method) === 2
+    ? guardNextEscrita(req, res, next)
+    : guardNextLeitura(req, res, next)
+));
 
 // ----------------------------------------------------------------------------
 // Eventos

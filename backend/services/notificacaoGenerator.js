@@ -6,6 +6,7 @@ const { calcularDepreciacao } = require('../utils/patrimonioDepreciacao');
 // números medidos e o porquê da chave de dedup estável estão no cabeçalho de
 // `utils/avisoAgregado.js`. A régua vive em utils/ pra entrar no gate de deploy.
 const { amostraNomes, plural } = require('../utils/avisoAgregado');
+const { periodosFechados } = require('./kpiPontualidade');
 
 /**
  * Gera todas as notificações automáticas de todos os módulos.
@@ -1247,29 +1248,108 @@ async function gerarNotificacoesRitual() {
       .eq('periodicidade', 'semanal');
 
     if (kpisSemanais?.length) {
-      // Achar quem tem registro da semana atual
-      const inicioSemana = new Date(hoje);
-      inicioSemana.setDate(hoje.getDate() - hoje.getDay()); // domingo
-      const inicioSemanaStr = inicioSemana.toISOString().slice(0, 10);
+      // ⚠️⚠️ MEDIA O CAMPO ERRADO: usava `data_preenchimento` (QUANDO alguém
+      // digitou) em vez de `periodo_referencia` (QUAL período foi coberto).
+      // Efeito: um backfill de março lançado nesta semana "cumpria" a semana
+      // corrente e o KPI saía da fila sem ninguém ter medido a semana. E o
+      // inverso também: quem lançou a semana passada no domingo aparecia como
+      // pendente. É a mesma classe do farol que lia uma fonte só.
+      //
+      // A pergunta certa é sobre o último período FECHADO — cobrar a semana em
+      // curso na quarta é cobrar o que ainda não terminou.
+      const semanaCobrada = periodosFechados('semanal', 1, hoje)[0];
 
-      const { data: regs } = await supabase
-        .from('kpi_registros')
-        .select('indicador_id')
-        .gte('data_preenchimento', inicioSemanaStr);
-      const preenchidos = new Set((regs || []).map(r => r.indicador_id));
+      const [regsRes, calcRes] = await Promise.all([
+        supabase.from('kpi_registros')
+          .select('indicador_id, valor_realizado')
+          .eq('periodo_referencia', semanaCobrada),
+        supabase.from('kpi_valores_calculados')
+          .select('kpi_id, valor_calculado')
+          .eq('periodo_referencia', semanaCobrada),
+      ]);
+
+      // ⚠️ Falha de leitura NÃO vira "ninguém preencheu": seria transformar
+      // instabilidade de banco em fila de cobrança indevida.
+      if (regsRes.error || calcRes.error) {
+        console.warn('[notif] kpis semanais: leitura incompleta, pulando a cobrança desta rodada');
+        return count;
+      }
+
+      // ⚠️ As DUAS fontes de valor (manual e fórmula) — ler só `kpi_registros`
+      // acusaria como pendente todo KPI calculado.
+      const preenchidos = new Set();
+      (regsRes.data || []).forEach(r => { if (r.valor_realizado != null) preenchidos.add(r.indicador_id); });
+      (calcRes.data || []).forEach(c => { if (c.valor_calculado != null) preenchidos.add(c.kpi_id); });
 
       const pendentes = kpisSemanais.filter(k => !preenchidos.has(k.id));
       if (pendentes.length > 0) {
-        const semanaKey = `${ano}-W${Math.ceil((hoje - new Date(ano, 0, 1)) / 86400000 / 7)}`;
-        count += await notificar({
-          modulo: 'kpis',
-          tipo: 'kpis_semanais_pendentes',
-          titulo: `${pendentes.length} KPI(s) semanal(is) pendente(s)`,
-          mensagem: `Você tem ${pendentes.length} indicadores semanais sem registro nesta semana. Preenche em "Meus KPIs".`,
-          link: '/meus-kpis',
-          severidade: 'info',
-          chaveDedup: `kpis_semanais_${semanaKey}`,
+        // ⚠️⚠️ AVISAVA UMA PESSOA SÓ, e não era o dono do KPI: sem `targetIds`
+        // o destinatário sai de `notificacao_regras` do módulo `kpis`, que tem
+        // UMA linha configurada. O texto dizia "VOCÊ tem N pendentes" pra quem
+        // não responde por nenhum deles, e os donos não sabiam de nada.
+        //
+        // Agora avisa CADA DONO com o que é DELE, e a régua cai no antigo
+        // (fila de `notificacao_regras`) só pro que não tem dono — o que existe
+        // e é decisão de gestão, não silêncio.
+        const semDono = [];
+        const porDono = new Map();
+        pendentes.forEach(k => {
+          if (k.lider_funcionario_id) {
+            if (!porDono.has(k.lider_funcionario_id)) porDono.set(k.lider_funcionario_id, []);
+            porDono.get(k.lider_funcionario_id).push(k);
+          } else semDono.push(k);
         });
+
+        // funcionário -> profile (o mesmo caminho por e-mail que a cobrança do
+        // PMO usa · sem profile, o KPI cai na fila geral em vez de sumir)
+        const profilePorFunc = new Map();
+        if (porDono.size > 0) {
+          const { data: funcs, error: eFuncs } = await supabase
+            .from('rh_funcionarios')
+            .select('id, email')
+            .in('id', [...porDono.keys()]);
+          if (eFuncs) {
+            console.warn('[notif] kpis semanais: nao resolvi os donos, avisando a fila geral');
+            porDono.forEach(lista => semDono.push(...lista));
+            porDono.clear();
+          } else {
+            const emails = (funcs || []).map(f => (f.email || '').toLowerCase()).filter(Boolean);
+            const { data: profs } = emails.length
+              ? await supabase.from('profiles').select('id, email').in('email', emails)
+              : { data: [] };
+            const idPorEmail = new Map((profs || []).map(pr => [(pr.email || '').toLowerCase(), pr.id]));
+            (funcs || []).forEach(f => {
+              const pid = idPorEmail.get((f.email || '').toLowerCase());
+              if (pid) profilePorFunc.set(f.id, pid);
+            });
+          }
+        }
+
+        const avisar = async ({ lista, targetIds }) => {
+          if (!lista.length) return;
+          const nomes = amostraNomes(lista.map(k => k.indicador), 3);
+          const seu = targetIds ? 'Seus' : 'Há';
+          count += await notificar({
+            modulo: 'kpis',
+            tipo: 'kpis_semanais_pendentes',
+            titulo: `${lista.length} KPI(s) semanal(is) sem dado em ${semanaCobrada}`,
+            mensagem: `${seu} ${plural(lista.length, 'indicador semanal', 'indicadores semanais')} sem valor na semana ${semanaCobrada}${nomes ? `: ${nomes}` : ''}.`,
+            link: '/painel',
+            severidade: 'info',
+            // ⚠️ A chave amarra o aviso ao PERÍODO COBRADO + destinatário: o
+            // cron roda toda quarta, e chave por "semana de hoje" repetiria o
+            // aviso quando a régua já mudou de período.
+            chaveDedup: `kpis_semanais_${semanaCobrada}_${targetIds ? targetIds.join('_') : 'fila'}`,
+            ...(targetIds ? { targetIds } : {}),
+          });
+        };
+
+        for (const [funcId, lista] of porDono.entries()) {
+          const pid = profilePorFunc.get(funcId);
+          if (pid) await avisar({ lista, targetIds: [pid] });
+          else semDono.push(...lista);
+        }
+        await avisar({ lista: semDono });
       }
     }
   }

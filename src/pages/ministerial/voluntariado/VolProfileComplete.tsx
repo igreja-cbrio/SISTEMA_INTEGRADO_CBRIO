@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { voluntariado } from '@/api';
 import { toast } from 'sonner';
 import { CheckCircle2, User, Phone, CreditCard, Loader2 } from 'lucide-react';
+import { tirarCodigoPais } from '@/lib/inscricao';
 
 interface Props {
   onComplete: () => void;
@@ -21,7 +22,11 @@ function formatCpf(value: string): string {
 }
 
 function formatPhone(value: string): string {
-  const digits = value.replace(/\D/g, '').slice(0, 11);
+  // ⚠️⚠️ `tirarCodigoPais` ANTES do slice: truncar primeiro transforma
+  // "+55 21 99999-8888" em `55219999988` e COME os 2 últimos dígitos —
+  // irrecuperáveis. Medido em 02/09/2026: 21 cadastros assim, o mais
+  // recente do dia anterior. Ver a lei de 31/07 no CLAUDE.md.
+  const digits = tirarCodigoPais(value.replace(/\D/g, '')).slice(0, 11);
   if (digits.length <= 2) return digits;
   if (digits.length <= 7) return `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
   return `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;

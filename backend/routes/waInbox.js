@@ -10,6 +10,7 @@ const wpp = require('../services/whatsappService');
 const waInbox = require('../services/waInbox');
 const { escapePostgrestValue } = require('../utils/sanitize');
 const { notificar } = require('../services/notificar');
+const waEquipe = require('../services/waEquipe');
 
 // profile_id[] de todos os usuários da área (mesma fn usada pelo bot de triagem)
 async function profilesDaArea(areaNome) {
@@ -396,7 +397,11 @@ router.get('/conversas', authorizeModule('conversas', 1), async (req, res) => {
       .not('last_message_at', 'is', null) // esconde conversas criadas só por clique (sem nenhuma mensagem)
       .order('last_message_at', { ascending: false, nullsFirst: false })
       .limit(200);
+    // 08/09/2026: os chips do inbox pedem TRÊS vistas — abertas · finalizadas ·
+    // todas. 'sem resposta' é recorte do cliente sobre as abertas (régua pura
+    // em src/lib/waConversaEstado.ts), então não é status do servidor.
     if (status === 'abertas') query = query.eq('resolvida', false);
+    else if (status === 'finalizadas') query = query.eq('resolvida', true);
     // escapePostgrestValue: vírgula/parêntese cru no .or() quebra a query
     // inteira do PostgREST e o catch da UI virava "Nenhuma conversa aqui"
     // (buscar "Silva, Maria" = inbox falsamente vazio).
@@ -718,7 +723,15 @@ router.patch('/conversas/:id', authorizeModule('conversas', 2), async (req, res)
       if (r2.error) throw r2.error;
       data = r2.data;
     }
-    res.json({ ...comJanela(data), pesquisa_enviada: pesquisaEnviada });
+    // Equipe de atendimento (08/09/2026): triar pra uma área (ou devolver pra
+    // Entrada) atribui ao titular dela — só se ninguém já estiver atribuído e o
+    // corpo não veio decidindo o responsável. Best-effort: nunca lança.
+    let equipe = null;
+    if ('area' in patch && !('atribuido_a' in patch)) {
+      equipe = await waEquipe.atribuirPelaEquipe({ conversaId: req.params.id, area: patch.area, origem: 'triagem' });
+      if (equipe?.atribuido) data = { ...data, atribuido_a: equipe.profileId };
+    }
+    res.json({ ...comJanela(data), pesquisa_enviada: pesquisaEnviada, equipe });
   } catch (e) {
     console.error('[wa-inbox] patch:', e.message);
     res.status(500).json({ error: 'Erro ao atualizar conversa' });
@@ -738,6 +751,11 @@ router.post('/conversas/:id/transferir', authorizeModule('conversas', 2), async 
     // transfere: nova área, tira da fila do responsável atual, reabre se resolvida
     await supabase.from('wa_conversas')
       .update({ area, atribuido_a: null, resolvida: false }).eq('id', conv.id);
+    // Equipe de atendimento (08/09/2026): a área nova tem titular? A conversa
+    // já nasce na fila dele e o aviso abaixo vai SÓ pra ele (senão, como antes,
+    // pra todo mundo da área). `avisar: false` — quem avisa é o bloco abaixo,
+    // com o texto de TRANSFERÊNCIA, pra não sair aviso em dobro.
+    const equipe = await waEquipe.atribuirPelaEquipe({ conversaId: conv.id, area, origem: 'triagem', avisar: false });
     // nota de sistema na thread
     await semFalhar(supabase.from('wa_mensagens').insert({
       conversa_id: conv.id, direcao: 'out', tipo: 'sistema', autor_id: uid(req),
@@ -745,11 +763,11 @@ router.post('/conversas/:id/transferir', authorizeModule('conversas', 2), async 
     }), '[wa-inbox]');
     // notifica a equipe da nova área
     try {
-      const alvos = await profilesDaArea(area);
+      const alvos = equipe?.atribuido ? [equipe.profileId] : await profilesDaArea(area);
       await notificar({
         modulo: 'conversas', tipo: 'conversa_transferida',
         titulo: `Conversa transferida · ${area}`,
-        mensagem: `${conv.nome || conv.telefone} (${conv.protocolo || '—'}) foi transferida pra ${area}.`,
+        mensagem: `${conv.nome || conv.telefone} (${conv.protocolo || '—'}) foi transferida pra ${area}${equipe?.atribuido ? ' — atribuída a você' : ''}.`,
         link: `/comunicacao?tab=conversas&area=${encodeURIComponent(area)}`,
         chaveDedup: `conversa_transf_${conv.id}_${area}`,
         targetIds: alvos.length ? alvos : undefined,

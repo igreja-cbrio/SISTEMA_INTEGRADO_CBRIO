@@ -86,26 +86,11 @@ const HEADER_MAP = {
   'id da transacao':            'e2e_id',
 };
 
-/**
- * Parseia data BR (DD/MM/YYYY) ou ISO (YYYY-MM-DD)
- * Retorna string YYYY-MM-DD
- */
-function parseDateBR(raw) {
-  if (!raw) return null;
-  if (raw instanceof Date) {
-    const pad = (n) => String(n).padStart(2, '0');
-    return `${raw.getFullYear()}-${pad(raw.getMonth() + 1)}-${pad(raw.getDate())}`;
-  }
-  const s = String(raw).trim();
-  // DD/MM/YYYY
-  const br = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (br) {
-    return `${br[3]}-${String(br[2]).padStart(2, '0')}-${String(br[1]).padStart(2, '0')}`;
-  }
-  // YYYY-MM-DD
-  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
-  return null;
-}
+// ⚠️ A régua de data MUDOU DE CASA para `utils/dataBr.js` (03/09/2026) e é
+// RE-EXPORTADA aqui — nenhum importador existente muda. Motivo: este arquivo
+// requer `xlsx`, e régua do gate que dependesse dele quebrava o CI com
+// `Cannot find module 'xlsx'` (o pacote é de `backend/package.json`).
+const { parseDateBR } = require('../utils/dataBr');
 
 /**
  * Converte valor (number ou string BR) pra Number

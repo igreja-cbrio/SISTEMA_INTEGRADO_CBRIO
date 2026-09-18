@@ -104,8 +104,13 @@ function descreverFalhaGit(r: { code: number | string; stderr: string; motivo: s
   const stderr = r.stderr.trim();
   if (stderr) return stderr.slice(0, 500);
   if (r.code === "ENOENT") {
+    // ⚠️ A instrução aqui é LIDA POR GENTE (vai pro comentário da tarefa e pro
+    // log). Ela dizia `nixpacks.toml` e isso era conselho ERRADO: a Railway usa
+    // o Railpack por padrão e ignora aquele arquivo — foi assim que o git ficou
+    // ausente por 2 dias com a config "certa" commitada.
     return 'o binário `git` NÃO existe no container do worker (spawn ENOENT). '
-      + 'Instalar no Railway: `agent-worker/nixpacks.toml` com git em [phases.setup].';
+      + 'Instalar no Railway: `agent-worker/railpack.json` com git em `deploy.aptPackages` '
+      + '(o builder padrão é o Railpack, que NÃO lê nixpacks.toml).';
   }
   return `${r.motivo || 'sem stderr'} (code=${r.code})`;
 }
