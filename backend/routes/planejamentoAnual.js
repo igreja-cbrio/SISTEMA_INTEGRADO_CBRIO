@@ -758,6 +758,58 @@ router.post('/propostas/:id/apontamentos', authorizeModule(MOD, 1), async (req, 
   res.status(201).json(data);
 });
 
+// ── Apontamento do Pastor sobre custo/recorrência/data (2026-09-18) ─────
+// Distinto de /apontamentos (que é um comentário/observação sobre um
+// campo apontável genérico): este é o valor NUMÉRICO/estruturado que
+// substitui custo/recorrência/data para o cálculo do orçamento "aprovadas
+// em tempo real" (ver planejamentoAnualRegras.distribuirCustoPorMes).
+// `valor: null` limpa o apontamento daquele campo (volta ao original) —
+// cobre o caso de "remover apontamento" sem precisar de rota DELETE.
+const CAMPOS_APONTAMENTO_PASTOR = ['custo', 'recorrencia', 'data'];
+router.put('/propostas/:id/apontamento-pastor', authorizeModule(MOD, 1), async (req, res) => {
+  if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Apontar custo/recorrência/data é prerrogativa do Pastor presidente' });
+  const p = await carregarProposta(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });
+  const campo = req.body?.campo;
+  if (!CAMPOS_APONTAMENTO_PASTOR.includes(campo)) {
+    return res.status(400).json({ error: 'Campo inválido (use custo, recorrencia ou data)' });
+  }
+  const valor = req.body?.valor === undefined ? null : req.body.valor;
+  const patch = { apontamento_pastor_em: new Date().toISOString(), apontamento_pastor_por: req.user.id };
+  if (campo === 'custo') {
+    if (valor !== null && (Number.isNaN(Number(valor)) || Number(valor) < 0)) {
+      return res.status(422).json({ error: 'Custo apontado inválido' });
+    }
+    patch.custo_apontado = valor === null ? null : Number(valor);
+  } else if (campo === 'recorrencia') {
+    const validas = ['unica', 'diaria', 'semanal', 'mensal', 'trimestral', 'semestral', 'personalizada'];
+    if (valor !== null && !validas.includes(valor)) {
+      return res.status(422).json({ error: 'Recorrência apontada inválida' });
+    }
+    patch.recorrencia_apontada = valor;
+    // dia_semana só faz sentido para recorrências semanais/diárias — aceito
+    // junto quando o campo permite, senão limpa.
+    if (valor === null) {
+      patch.dia_semana_apontado = null;
+    } else if (req.body.dia_semana !== undefined) {
+      const ds = req.body.dia_semana === null ? null : Number(req.body.dia_semana);
+      if (ds !== null && (Number.isNaN(ds) || ds < 0 || ds > 6)) {
+        return res.status(422).json({ error: 'Dia da semana apontado inválido (0-6)' });
+      }
+      patch.dia_semana_apontado = ds;
+    }
+  } else if (campo === 'data') {
+    if (valor !== null && !/^\d{4}-\d{2}-\d{2}$/.test(String(valor))) {
+      return res.status(422).json({ error: 'Data apontada inválida (YYYY-MM-DD)' });
+    }
+    patch.data_inicio_apontada = valor;
+    patch.precisao_inicio_apontada = valor === null ? null : (req.body.precisao || 'dia');
+  }
+  const { data, error } = await supabase.from('plan_propostas').update(patch).eq('id', p.id).select().single();
+  if (error) return res.status(500).json({ error: 'Erro ao gravar o apontamento' });
+  res.json(data);
+});
+
 router.delete('/apontamentos/:id', authorizeModule(MOD, 1), async (req, res) => {
   if (!(await ehPastorOuSuper(req))) return res.status(403).json({ error: 'Remover apontamento é prerrogativa do Pastor presidente' });
   const { error } = await supabase.from('plan_apontamentos')
@@ -1063,9 +1115,19 @@ router.get('/ciclos/:id/orcamento/pastor', authorizeModule(MOD, 1), async (req, 
     quorum: ctx.avaliadores.length,
     caixaLivre: caixa,
   });
+  // 2026-09-18: "comprometido" passa a refletir os apontamentos do Pastor
+  // (custoMensalAprovadas usa valorEfetivoProposta) — antes era o rateio
+  // simples sem considerar apontamento. "todas_propostas" é a linha nova,
+  // imutável (NUNCA usa apontamento), com todas as propostas do funil.
+  const comprometidoComApontamento = PA.custoMensalAprovadas(visao.aprovadas);
+  // A simulação de UMA proposta isolada (query `simular`) preserva o
+  // comportamento existente: `propostas` já foi filtrado acima para
+  // conter só a proposta simulada + as já aprovadas.
+  const todasPropostas = PA.custoMensalTodasPropostas(ctx.propostas);
   res.json({
     caixa_livre: caixa,
-    comprometido: visao.comprometido,
+    comprometido: comprometidoComApontamento,
+    todas_propostas: todasPropostas,
     propostos: visao.propostos,
     saldo: visao.saldo,
     meses_negativos: visao.mesesNegativos,
@@ -1073,7 +1135,7 @@ router.get('/ciclos/:id/orcamento/pastor', authorizeModule(MOD, 1), async (req, 
     enviado_em: header.enviado_em,
     premissas: header.premissas || [],
     obs: header.obs || null,
-    itens: visao.aprovadas.map((p) => ({ id: p.id, nome: p.nome, rateio: PA.rateioMensal(p) })),
+    itens: visao.aprovadas.map((p) => ({ id: p.id, nome: p.nome, rateio: PA.distribuirCustoPorMes(p, { usarApontamento: true }) })),
     pendentes: visao.pendentes.map((p) => ({ id: p.id, nome: p.nome, rateio: PA.rateioMensal(p) })),
   });
 });

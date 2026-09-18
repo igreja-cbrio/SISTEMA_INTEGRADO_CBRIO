@@ -4,24 +4,13 @@ import { ClipboardCheck } from 'lucide-react';
 import { planejamentoAnual as api, users as usersApi } from '../../api';
 import {
   C, cardStyle, btn, input, label, hint, fmtBRL, fmtQuando, thStyle, tdStyle, Badge,
-  NATUREZAS, RECORRENCIAS, DIAS_SEMANA, rotuloArea, rotuloDiretoria,
+  NATUREZAS, RECORRENCIAS, DIAS_SEMANA, rotuloArea, rotuloDiretoria, evidenciaCriterio,
 } from './comum';
 
-// Evidência do proponente exibida ao lado de cada critério (protótipo · coluna 2)
-function evidencia(chave, p) {
-  if (!p) return '';
-  switch (chave) {
-    case 'relevancia': return `Alcance estimado ${p.alcance_pct ?? '—'}% de ${p.publico_considerado === 'recorte_geracional' ? 'recorte geracional' : 'igreja inteira'}`;
-    case 'pertencimento': return p.pertencimento || '—';
-    case 'transformacao': return (Array.isArray(p.valores) && p.valores.length)
-      ? p.valores.map((v) => `${v.nome}: ${v.justificativa || '—'}`).join(' · ') : 'Nenhum valor marcado';
-    case 'visao': return p.visao_explique || '—';
-    case 'impacto': return p.impacto || '—';
-    case 'custo': return `Custo ${fmtBRL(p.custo)} · arrecadação ${p.tem_arrecadacao ? fmtBRL(p.arrecadacao_prevista) : 'nenhuma'} · líquido ${fmtBRL(p.liquido_exibicao ?? p.liquido)}`;
-    case 'sustentabilidade': return p.custeio?.rotulo || '—';
-    default: return '';
-  }
-}
+// Evidência do proponente exibida ao lado de cada critério — extraída pra
+// comum.jsx (2026-09-18) como `evidenciaCriterio`, compartilhada com
+// PastorTab.jsx. Mantido como alias local para não tocar nos usos abaixo.
+const evidencia = evidenciaCriterio;
 
 const ORDENS = [
   { valor: 'pendente', rotulo: 'Pendentes primeiro' },

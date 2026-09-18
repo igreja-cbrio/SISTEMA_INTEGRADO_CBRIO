@@ -4700,6 +4700,12 @@ export const planejamentoAnual = {
     remanejar: (id, corpo) => put(`/planejamento-anual/propostas/${id}/remanejar`, corpo),
     apontar: (id, corpo) => post(`/planejamento-anual/propostas/${id}/apontamentos`, corpo),
     removerApontamento: (apontamentoId) => del(`/planejamento-anual/apontamentos/${apontamentoId}`),
+    // Apontamento de custo/recorrência/data (2026-09-18) — distinto do
+    // `apontar` acima (que é comentário sobre um campo genérico).
+    apontarPastor: (id, { campo, valor, dia_semana, precisao } = {}) =>
+      put(`/planejamento-anual/propostas/${id}/apontamento-pastor`, { campo, valor, dia_semana, precisao }),
+    removerApontamentoPastor: (id, campo) =>
+      put(`/planejamento-anual/propostas/${id}/apontamento-pastor`, { campo, valor: null }),
   },
 };
 
