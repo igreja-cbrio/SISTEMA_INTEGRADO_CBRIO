@@ -573,6 +573,29 @@ function OAuthStatusCardInner() {
     onError: (e: any) => toast.error(e?.message || 'Erro na coleta de engajamento'),
   });
 
+  // Backfill das views por dia — a fonte do card "views da semana".
+  // ⚠️ 130 dias numa chamada só: a Analytics devolve o período inteiro com
+  // `dimensions=day`, então o card nasce com semanas de comparação prontas em
+  // vez de encher 5 dias por vez pelo cron.
+  const coletarViewsDia = useMutation({
+    mutationFn: () => online.coletar.viewsDia(130),
+    onSuccess: (r: any) => {
+      // ⚠️ O coletor devolve `ok: false` com motivo em vez de lançar — erro de
+      // Analytics não pode virar "coletado: 0", que se lê como audiência zero.
+      if (r?.ok === false) {
+        toast.error(`Não coletou: ${r?.erro || 'motivo não informado'}`);
+        return;
+      }
+      if (!r?.coletados) {
+        toast.message(r?.aviso || 'A Analytics não devolveu nenhum dia.');
+        return;
+      }
+      toast.success(`${r.coletados} dias coletados · ${r.janela}`);
+      queryClient.invalidateQueries({ queryKey: ['online', 'dashboard'] });
+    },
+    onError: (e: any) => toast.error(e?.message || 'Erro na coleta de views por dia'),
+  });
+
   const conectado = status?.conectado;
 
   return (
@@ -641,6 +664,10 @@ function OAuthStatusCardInner() {
               <Button size="sm" variant="outline" onClick={() => coletarEngajamento.mutate()} disabled={coletarEngajamento.isPending}>
                 {coletarEngajamento.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
                 Engajamento (ano)
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => coletarViewsDia.mutate()} disabled={coletarViewsDia.isPending}>
+                {coletarViewsDia.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+                Views por dia (130d)
               </Button>
               <Button size="sm" variant="ghost" onClick={() => desconectar.mutate()} disabled={desconectar.isPending}>
                 <Unlink className="h-3.5 w-3.5 mr-1.5" />

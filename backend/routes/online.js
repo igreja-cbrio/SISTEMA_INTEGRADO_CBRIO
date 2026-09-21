@@ -270,6 +270,25 @@ router.post('/coletar/catch-up', authorize('admin', 'diretor'), async (req, res)
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Engajamento de conteúdo · backfill do ano (jan→hoje). ?ano=2026 opcional.
+// Backfill manual das views por dia.
+//
+// ⚠️⚠️ POR QUE EXISTE, mesmo já havendo `/cron/views-dia-collect`: aquele é
+// guardado por `autorizaCron`, que aceita o CRON_SECRET **só em HEADER**
+// (`x-cron-secret` ou `Authorization: Bearer`) — nunca em query string, de
+// propósito: segredo em URL vaza no histórico do navegador, no log do servidor
+// e em qualquer print da tela. Abrir a URL do cron no navegador devolve
+// `{"error":"unauthorized"}` e SEMPRE vai devolver.
+//
+// ⇒ O caminho humano é este: autenticado por SESSÃO, disparado por botão, sem
+// nenhum segredo passando pela mão de ninguém. Mesmo padrão de /coletar/ds e
+// /coletar/ddus.
+//
+// ⚠️ O teto de 400 dias mora no coletor (`viewsDiaCollector`), não aqui — é
+// uma régua só, e a Analytics devolve o período inteiro numa chamada.
+router.post('/coletar/views-dia', authorize('admin', 'diretor'), async (req, res) => {
+  try { res.json(await collectors.viewsDiaCollector({ dias: Number(req.query.dias) || 5 })); }
+  catch (e) { console.error('[coletar/views-dia]', e.message); res.status(500).json({ error: e.message }); }
+});
 router.post('/coletar/engajamento', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const ano = req.query.ano ? Number(req.query.ano) : undefined;

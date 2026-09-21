@@ -15653,6 +15653,15 @@ upsert que deixa o número se corrigir sozinho).
 (falhar ali não pode derrubar o DS, que é o trabalho principal daquele cron). O
 `vercel.json` está no teto.
 
+⚠️⚠️ **O CRON_SECRET só viaja em HEADER — abrir a URL do cron no navegador
+SEMPRE devolve `unauthorized`** (`isAuthorizedCron` lê `x-cron-secret` e
+`Authorization`, nunca `req.query`). Foi o que aconteceu em 21/09 ao tentar
+rodar o backfill. **Não "facilitar" aceitando `?secret=`**: a URL fica no
+histórico do navegador, no log de acesso, no `Referer` e no print que alguém
+manda no chat. ⇒ Todo cron de coleta do Online tem **gêmeo humano** autenticado
+por SESSÃO (`POST /coletar/views-dia`, botão "Views por dia (130d)" na tela),
+e `src/test/cronSecretHeader.test.ts` trava as duas pontas.
+
 ⚠️ **Semana SEG→DOM em BRT** (`backend/utils/semanaOnline.js`, no gate):
 `isoWeek.js` decide tudo em UTC, então usá-lo direto faria a semana virar às
 **21h de domingo** — bem na faixa do culto de domingo à noite. QUAL semana se

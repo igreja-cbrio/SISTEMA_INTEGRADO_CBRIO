@@ -4648,6 +4648,10 @@ export const online = {
     backfillCultos: () => post('/online/coletar/backfill-cultos', {}),
     catchUp: (limit = 5) => post(`/online/coletar/catch-up?limit=${limit}`, {}),
     engajamento: (ano) => post(`/online/coletar/engajamento${ano ? `?ano=${ano}` : ''}`, {}),
+    // ⚠️ Views por dia (Analytics). O gêmeo /cron/views-dia-collect exige o
+    // CRON_SECRET em HEADER e nunca funciona no navegador — este é o caminho
+    // humano, autenticado por sessão.
+    viewsDia: (dias = 5) => post(`/online/coletar/views-dia?dias=${dias}`, {}),
   },
   debug: {
     canaisAutorizados: () => get('/online/debug/canais-autorizados'),
