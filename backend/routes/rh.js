@@ -1,6 +1,16 @@
 const router = require('express').Router();
 const multer = require('multer');
 const crypto = require('crypto'); // rota POST /foto (admissão sobe a foto antes de existir o id)
+// Régua PURA da ficha da CONTRATADA (Anexo II) · está no gate de deploy.
+const { ehContratada, estadoFicha, bloqueioFolha } = require('../utils/fichaContratada');
+// ⚠️ A base do link vem da régua ÚNICA da casa, que é CONSTANTE e NÃO lê env
+// (lei de 20/08): `FRONTEND_URL` existe em produção com valor encriptado e pode
+// apontar pro domínio da Vercel — e já houve link de `localhost` entregue a uma
+// líder por WhatsApp. Este link vai pro WhatsApp de prestador externo.
+const { basePublica } = require('../utils/linkInscricaoApp');
+// ⚠️ 30 dias: o link carrega dado bancário e o `onboarding_token` irmão, que
+// NÃO expira, deixou 33 tokens de agosto vivos até hoje. Renovar é 1 clique.
+const DIAS_VALIDADE_FICHA = 30;
 const { authenticate, authorizeModule, applyAccessFilter, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED, sanitizePath } = require('../services/storageService');
@@ -820,6 +830,12 @@ const CAMPOS_ADMISSAO_CONFIDENCIAIS = [
 ];
 
 const CAMPOS_RH_CONFIDENCIAIS = [
+  // ⚠️⚠️ A ficha da CONTRATADA inteira é confidencial — ela carrega CNPJ,
+  // endereço da sede, CPF do representante, banco, conta e CHAVE PIX. Por ser
+  // um jsonb, esta ÚNICA linha protege o bloco todo, e campo novo dentro dela
+  // nasce protegido em vez de nascer exposto. É o defeito RHP-03 ao contrário:
+  // com colunas escalares, esquecer UMA nesta lista é vazamento silencioso.
+  'ficha_contratada',
   'cpf',
   'salario', 'remuneracao_bruta', 'grau_id', 'data_enquadramento',
   'complemento_salario', 'alimentacao', 'transporte', 'saude', 'seguro_vida', 'educacao',
@@ -860,6 +876,7 @@ const RH_FIELD_TYPES = {
   nome: 'text', cpf: 'text', email: 'text', telefone: 'fone', cargo: 'text',
   area: 'text', tipo_contrato: 'upper', observacoes: 'text', status: 'text', foto_url: 'text',
   setor_id: 'int',
+  ficha_contratada: 'json', // ⚠️ CONFIDENCIAL (ver CAMPOS_RH_CONFIDENCIAIS) — carrega CNPJ, CPF do representante e chave PIX
   salario: 'num', remuneracao_bruta: 'num',
   // Benefícios / descontos / totais / provisões — editados na seção Benefícios da
   // ficha. Antes NÃO entravam no payload (eram descartados silenciosamente) → a
@@ -873,7 +890,12 @@ const RH_FIELD_TYPES = {
   bonus_anual_50: 'num', bonus_anual_integral: 'num', ferias_integral: 'num',
   data_admissao: 'date', data_demissao: 'date', data_enquadramento: 'date', data_nascimento: 'date',
   grau_id: 'uuid',
-  admissao_dados: 'json', // jsonb com dados extras do onboarding (RG, PJ, contrato…) · não sensível
+  // ⚠️⚠️ O comentário aqui dizia "não sensível" e MENTIA — e mentia justamente
+  // sobre o campo mais tóxico da tabela: `admissao_dados` carrega RG, CPF,
+  // salário, o HTML do contrato e as chaves `pj_*`, e a lista
+  // CAMPOS_ADMISSAO_CONFIDENCIAIS (logo acima) redige tudo isso para nível < 4.
+  // Comentário podre em cima de campo sensível engana a próxima sessão.
+  admissao_dados: 'json', // CONFIDENCIAL por chave (ver CAMPOS_ADMISSAO_CONFIDENCIAIS)
   // Modernização do cadastro (revisão Feedz/HRIS, 2026-08-12): matrícula,
   // cargo visível e endereço estruturado (padrão do censo · cepAutopreenche.ts).
   matricula: 'text', cargo_visivel: 'text',
@@ -1201,6 +1223,107 @@ router.post('/organograma/ia/aplicar', async (req, res) => {
   } catch (e) {
     console.error('[RH] aplicar organograma IA:', e.message);
     res.status(500).json({ error: 'Erro ao aplicar mudanças.' });
+  }
+});
+
+// ── Ficha da CONTRATADA (Anexo II) ───────────────────────────────────────────
+// POST /api/rh/funcionarios/:id/ficha-contratada-link — gera o link pessoal.
+//
+// ⚠️ SÓ PJ. A régua é `ehContratada` (no gate): 13 CLT e 1 PREBENDA ativos não
+// têm empresa, e mandar o link para eles é pedir CNPJ a quem não tem. Recusa
+// com 400 e diz o motivo, em vez de gerar um link que abre num formulário
+// impossível de preencher.
+//
+// ⚠️ Token com EXPIRAÇÃO — diferente do `onboarding_token`, que não expira
+// (medido em 21/09: 33 tokens de agosto seguem válidos, e aquele link é um
+// handle de ESCRITA permanente no cadastro). Este carrega dado bancário.
+router.post('/funcionarios/:id/ficha-contratada-link', authorizeModule('rh', 2), async (req, res) => {
+  try {
+    const { data: func, error } = await supabase.from('rh_funcionarios')
+      .select('id, nome, tipo_contrato, ficha_contratada_token')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (error) return res.status(503).json({ error: 'Não consegui consultar agora.' });
+    if (!func) return res.status(404).json({ error: 'Colaborador não encontrado' });
+
+    if (!ehContratada(func.tipo_contrato)) {
+      return res.status(400).json({
+        error: `A ficha da contratada é só para PJ — este colaborador é ${func.tipo_contrato || 'sem tipo definido'}.`,
+      });
+    }
+
+    const regenerar = !!(req.body && req.body.regenerar);
+    const token = (!func.ficha_contratada_token || regenerar)
+      ? crypto.randomBytes(24).toString('base64url')
+      : func.ficha_contratada_token;
+
+    const expira = new Date();
+    expira.setDate(expira.getDate() + DIAS_VALIDADE_FICHA);
+
+    const { error: upErr } = await supabase.from('rh_funcionarios').update({
+      ficha_contratada_token: token,
+      ficha_contratada_enviado_em: new Date().toISOString(),
+      ficha_contratada_expira_em: expira.toISOString(),
+    }).eq('id', func.id);
+    if (upErr) return res.status(400).json({ error: upErr.message });
+
+    res.json({
+      url: `${basePublica()}/ficha-contratada/${token}`,
+      token,
+      nome: func.nome,
+      expira_em: expira.toISOString(),
+    });
+  } catch (e) {
+    console.error('[RH] ficha-contratada-link:', e.message);
+    res.status(500).json({ error: 'Erro ao gerar o link.' });
+  }
+});
+
+// GET /api/rh/ficha-contratada/pendentes — quem ainda não entregou a ficha.
+//
+// ⚠️⚠️ É a lista NOMINAL, e é ela que materializa a decisão de condicionar o
+// pagamento: o sistema NÃO emite folha (`rh_folha_snapshots` é um agregado de
+// 3 linhas e o módulo só CONCILIA o que já foi pago), então não existe botão de
+// pagamento para travar. O que dá para fazer — e é o que isto faz — é tornar o
+// bloqueio VISÍVEL e nominal para quem libera o PIX. Prometer "folha travada"
+// num software que não paga seria a tela afirmando o que o produto não faz.
+router.get('/ficha-contratada/pendentes', authorizeModule('rh', 2), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('rh_funcionarios')
+      .select('id, nome, cargo, tipo_contrato, status, email, telefone, ficha_contratada, ficha_contratada_enviado_em, ficha_contratada_preenchido_em')
+      .is('deleted_at', null)
+      .eq('status', 'ativo');
+    if (error) return res.status(503).json({ error: 'Não consegui carregar a lista agora.' });
+
+    const pjs = (data || []).filter((f) => ehContratada(f.tipo_contrato));
+    const itens = pjs.map((f) => {
+      const e = estadoFicha(f);
+      const b = bloqueioFolha(f);
+      return {
+        id: f.id,
+        nome: f.nome,
+        cargo: f.cargo || null,
+        // ⚠️ Declara se DÁ pra cobrar: 2 dos 32 PJ não têm e-mail nem telefone,
+        // e "não respondeu" é coisa diferente de "não tem como receber o link".
+        tem_canal: !!(f.email || f.telefone),
+        link_enviado_em: f.ficha_contratada_enviado_em || null,
+        preenchido_em: f.ficha_contratada_preenchido_em || null,
+        completa: e.completa,
+        aceita: e.aceita,
+        faltando: e.faltando,
+        bloqueado: b.bloqueado,
+        motivo: b.motivo,
+      };
+    });
+
+    res.json({
+      total_pj: pjs.length,
+      bloqueados: itens.filter((i) => i.bloqueado).length,
+      sem_canal: itens.filter((i) => !i.tem_canal).length,
+      itens: itens.sort((a, b2) => Number(b2.bloqueado) - Number(a.bloqueado) || a.nome.localeCompare(b2.nome)),
+    });
+  } catch (e) {
+    console.error('[RH] ficha-contratada/pendentes:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a lista.' });
   }
 });
 
