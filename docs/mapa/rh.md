@@ -14,7 +14,7 @@
 - `backend/routes/painelRh.js`
 - `backend/routes/rh.js`
 Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
-<details><summary>Endpoints (100)</summary>
+<details><summary>Endpoints (101)</summary>
 - `DELETE /api/events/:id`
 - `DELETE /api/events/attachments/:attachId`
 - `DELETE /api/events/risks/:riskId`
@@ -90,6 +90,7 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 - `POST /api/rh/avaliacoes/iniciar-ciclo`
 - `POST /api/rh/coberturas/:id/cancelar`
 - `POST /api/rh/extras`
+- `POST /api/rh/ficha-contratada/cobrar`
 - `POST /api/rh/folha/auto-vincular`
 - `POST /api/rh/foto`
 - `POST /api/rh/funcionarios`
@@ -133,6 +134,7 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 - `backend/services/cobertura.js`
 - `backend/services/notificar.js`
 - `backend/services/organogramaIA.js`
+- `backend/services/rhFichaEnvios.js`
 - `backend/services/rhOnboardingEnvios.js`
 - `backend/services/storageService.js`
 - `backend/services/whatsappService.js`
