@@ -18,6 +18,8 @@ const {
 const {
   TIPOS_PARA_BUSCAR, TIPOS_IDENTIFICACAO, classificar, aplicarTeto, cortarDemografia,
 } = require('../utils/censoGrafico');
+const { montarPotencial, resumoPotencial } = require('../utils/censoPotencial');
+const { podeExportar } = require('../utils/podeExportar');
 const { fetchAllRows } = require('../utils/pagination');
 const { requireCron } = require('../utils/cronAuth');
 const { acharMembroGuardado } = require('../services/membroMatch');
@@ -1591,6 +1593,84 @@ router.post('/relatorio', authorizeModule('censo', 4), async (req, res) => {
     if (e2) throw e2;
 
     res.json({ relatorio: salvo, respostas_na_base: naBase || 0, desatualizado: false, novas_desde: 0 });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// ── POTENCIAL · as listas acionáveis (21/09/2026) ──────────────────────────
+//
+// Pedido do Matheus: *"queria analises potenciais... quantas criancas temos
+// potencial de convidar para ir pro kids... tem pessoas que sao convertidas mas
+// que nao sao batizadas, e aí queria uma lista dessas pessoas para que [a
+// coordenadora] entre em contato com cada uma."*
+//
+// ⚠️⚠️ SÃO DUAS ROTAS E DOIS NÍVEIS, e isso não é excesso de zelo — é medição.
+// 34 CARGOS têm censo nível >= 2, e entre eles estão **"Membro" e "Voluntário"**
+// (medido em 21/09). Uma lista nominal em nível 2 entregaria nome, telefone e
+// CONVICÇÃO RELIGIOSA (LGPD art. 5º II — dado sensível) ao cargo mais baixo do
+// sistema. Então: o RESUMO (só contagens) é nível 2, e a lista NOMINAL é nível 4.
+// Decisão do Matheus depois de ver a medição.
+//
+// ⚠️ Ler `cen_resposta.payload` e NÃO `cen_resposta_item`: o payload traz as 29
+// respostas da pessoa numa linha só — 1.356 linhas / 1,18 MB, duas páginas do
+// `fetchAllRows`. Por item seriam ~12 mil linhas para a mesma informação, e aí o
+// cap de 1000 do PostgREST vira problema de arquitetura em vez de paginação.
+function consultaPotencial(pesquisaId) {
+  return () => supabase
+    .from('cen_resposta')
+    .select('id, membro_id, payload')
+    .eq('pesquisa_id', pesquisaId)
+    .not('concluida_em', 'is', null)
+    .not('payload', 'is', null)
+    // ⚠️ `range()` sem `order()` é NÃO-DETERMINÍSTICO entre páginas: o Postgres
+    // não garante a mesma ordem em dois SELECTs, então linha pode sumir ou vir
+    // duplicada na virada da página.
+    .order('id');
+}
+
+// Quantas linhas DEVERIAM ter vindo — o `fetchAllRows` degrada devolvendo o
+// acumulado quando dá erro no meio, e sem isto o truncamento é silencioso.
+// É o mesmo cinto que a aba Perfil ganhou depois de servir 12 de 40 perguntas
+// sem avisar ninguém.
+async function baseDoPotencial(pesquisaId) {
+  const [linhas, { count }] = await Promise.all([
+    fetchAllRows(consultaPotencial(pesquisaId)),
+    supabase.from('cen_resposta').select('id', { count: 'exact', head: true })
+      .eq('pesquisa_id', pesquisaId)
+      .not('concluida_em', 'is', null)
+      .not('payload', 'is', null),
+  ]);
+  const esperado = count || 0;
+  return { linhas, esperado, truncado: esperado > 0 && linhas.length < esperado };
+}
+
+// Nível 2 · SÓ NÚMEROS. Nenhum nome, nenhum telefone.
+router.get('/potencial/resumo', authorizeModule('censo', 2), async (req, res) => {
+  try {
+    const pesquisaId = req.query.pesquisa_id;
+    if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
+    const { linhas, esperado, truncado } = await baseDoPotencial(pesquisaId);
+    res.json({ ...resumoPotencial(linhas), base: linhas.length, esperado, truncado });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Nível 4 · a lista NOMINAL, com o contato de cada pessoa.
+router.get('/potencial', authorizeModule('censo', 4), async (req, res) => {
+  try {
+    const pesquisaId = req.query.pesquisa_id;
+    if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
+    const { linhas, esperado, truncado } = await baseDoPotencial(pesquisaId);
+    // ⚠️ `pode_exportar` viaja na resposta porque o CSV é gerado no cliente. A
+    // flag existe na matriz de permissões e HOJE não é aplicada em lugar nenhum
+    // da API — de 34 cargos com nível >= 2 no censo, só "Dev" a tem. Sem mandá-la,
+    // o botão de exportar apareceria para quem a matriz diz que não pode.
+    res.json({
+      ...montarPotencial(linhas),
+      base: linhas.length,
+      esperado,
+      truncado,
+      pode_exportar: podeExportar(req.user, 'censo'),
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
