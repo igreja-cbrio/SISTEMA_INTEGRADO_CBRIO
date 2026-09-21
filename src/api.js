@@ -2409,6 +2409,10 @@ export const totemKids = {
       const s = q.toString();
       return get(`/totem-kids/decisoes/registro${s ? `?${s}` : ''}`);
     },
+    // "Essa criança já aceitou a Jesus?" (21/09/2026) · TRÊS estados no retorno:
+    // `com_decisao` · `sem_decisao` (a criança existe e não tem registro) · e
+    // não achar nada. Colapsar os dois primeiros é afirmar que não houve.
+    buscar: (q) => get(`/totem-kids/decisoes/buscar?q=${encodeURIComponent(q || '')}`),
     candidatos: (id) => get(`/totem-kids/decisoes/fila/${id}/candidatos`),
     resolver: (id, body) => patch(`/totem-kids/decisoes/fila/${id}`, body),
   },

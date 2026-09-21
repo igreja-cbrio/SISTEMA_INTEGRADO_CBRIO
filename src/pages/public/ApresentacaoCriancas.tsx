@@ -127,6 +127,10 @@ type Crianca = {
   // só existe na tela. `fotoPreview` é objectURL — revogado ao trocar/remover.
   fotoPath?: string | null; fotoPreview?: string | null;
   fotoEnviando?: boolean; fotoErro?: string | null;
+  // ⚠️ AVISO, não bloqueio: a foto em pé sobe do mesmo jeito. Texto que pede
+  // e não confere é pedido que ninguém segue; recusar a foto da família por
+  // causa do enquadramento seria pior que a tarja preta.
+  fotoEmPe?: boolean;
 };
 
 export default function ApresentacaoCriancas() {
@@ -178,11 +182,23 @@ export default function ApresentacaoCriancas() {
   // pessoas desistem. O que viaja no envio é só o CAMINHO devolvido aqui.
   // ⚠️ Falha de foto NUNCA derruba a inscrição — vira recado no campo e a
   // família segue sem foto.
+  // ⚠️ Mede a orientação SÓ pra avisar. Nunca bloqueia, nunca gira o arquivo, e
+  // falhar aqui (imagem que o navegador não decodifica) devolve `false` — na
+  // dúvida, não acusa a família de ter mandado foto errada.
+  const ehFotoEmPe = (file: File) => new Promise<boolean>((resolve) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img.naturalHeight > img.naturalWidth); };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve(false); };
+    img.src = url;
+  });
+
   const escolherFoto = async (i: number, file: File | null | undefined) => {
     if (!file) return;
     const preview = URL.createObjectURL(file);
+    const emPe = await ehFotoEmPe(file);
     setCriancas(cs => cs.map((c, idx) => (idx === i
-      ? { ...c, fotoPreview: preview, fotoPath: null, fotoErro: null, fotoEnviando: true }
+      ? { ...c, fotoPreview: preview, fotoPath: null, fotoErro: null, fotoEnviando: true, fotoEmPe: emPe }
       : c)));
     try {
       const r: any = await apresentacaoCriancasPublico.enviarFoto(file);
@@ -199,7 +215,7 @@ export default function ApresentacaoCriancas() {
   const removerFoto = (i: number) => setCriancas(cs => cs.map((c, idx) => {
     if (idx !== i) return c;
     if (c.fotoPreview) URL.revokeObjectURL(c.fotoPreview);
-    return { ...c, fotoPreview: null, fotoPath: null, fotoEnviando: false, fotoErro: null };
+    return { ...c, fotoPreview: null, fotoPath: null, fotoEnviando: false, fotoErro: null, fotoEmPe: false };
   }));
 
   const addCrianca = () => setCriancas(cs => [...cs, { nome: '', nascimento: '', sexo: '' }]);
@@ -520,6 +536,14 @@ export default function ApresentacaoCriancas() {
                     <div style={{ fontSize: 11, color: 'var(--cbrio-text3)', marginBottom: 8, lineHeight: 1.45 }}>
                       Se você enviar uma foto, ela será <strong>exibida no telão durante o culto</strong> da apresentação. JPG, PNG ou WEBP, até 8MB.
                     </div>
+                    {/* ⚠️ O telão é DEITADO. Foto em pé aparece com tarjas pretas
+                        dos dois lados e o rosto pequeno — por isso o pedido vem
+                        ANTES de escolher o arquivo, e com o porquê junto: aviso
+                        sem motivo é aviso que ninguém segue. */}
+                    <div style={{ fontSize: 11, color: 'var(--cbrio-text2)', marginBottom: 8, lineHeight: 1.45, background: 'var(--cbrio-input-bg)', border: '1px solid var(--cbrio-border)', borderRadius: 8, padding: '8px 10px' }}>
+                      📸 <strong>Tire a foto deitada</strong> (com o celular na horizontal). O telão é deitado:
+                      foto em pé aparece pequena e com tarjas pretas dos lados.
+                    </div>
                     {c.fotoPreview ? (
                       <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
                         <img src={c.fotoPreview} alt="" style={{ width: 52, height: 52, objectFit: 'cover', borderRadius: 8, border: '1px solid var(--cbrio-border)' }} />
@@ -538,6 +562,15 @@ export default function ApresentacaoCriancas() {
                         onChange={(e) => escolherFoto(i, e.target.files && e.target.files[0])}
                         style={{ fontSize: 12, color: 'var(--cbrio-text3)' }}
                       />
+                    )}
+                    {/* ⚠️ ÂMBAR, não vermelho: a foto foi aceita e vai subir. É
+                        recado, não recusa — vermelho faria a família achar que
+                        precisa resolver algo pra inscrição valer. */}
+                    {c.fotoEmPe && !c.fotoErro && (
+                      <div style={{ fontSize: 11, color: '#b45309', marginTop: 6, lineHeight: 1.45 }}>
+                        Essa foto está <strong>em pé</strong>. Ela vai ser usada assim mesmo, mas no telão
+                        aparece menor e com tarjas pretas dos lados. Se puder, mande uma deitada.
+                      </div>
                     )}
                     {c.fotoErro && (
                       <div style={{ fontSize: 11, color: '#ef4444', marginTop: 6 }}>{c.fotoErro}</div>

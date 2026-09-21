@@ -21,6 +21,7 @@ const multer = require('multer');
 const XLSX = require('xlsx');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { resolverJanelaPeriodo, rotuloJanela } = require('../utils/janelaPeriodo');
+const { tokensDaBusca, montarResultado } = require('../utils/buscaCriancaDecisao');
 const { resumirCadastros, serieDiaria, limitesUtc, diaBRT, temMarcaDeImport } = require('../utils/cadastrosKids');
 const { supabase } = require('../utils/supabase');
 const { safeEqual, isAuthorizedCron } = require('../utils/cronAuth');
@@ -5231,6 +5232,63 @@ router.get('/decisoes/registro', authorizeModule('kids', 1), async (req, res) =>
   } catch (e) {
     console.error('[totemKids/decisoes/registro]', e.message);
     res.status(500).json({ error: 'Erro ao carregar o registro de decisões', detalhe: e.message });
+  }
+});
+
+// GET /api/totem-kids/decisoes/buscar?q= · "essa criança já aceitou a Jesus?"
+//
+// ⚠️⚠️ A tela passa a AFIRMAR algo sobre uma criança, então são TRÊS estados e
+// colapsá-los é o bug: `com_decisao` · `sem_decisao` (a criança EXISTE e não tem
+// registro) · e não achar nada. "Não achei" e "achei e não tem" levam a ações
+// opostas — procurar outra grafia × registrar a decisão.
+//
+// ⚠️ NÃO usa `vw_kids_decisoes_resumo_crianca`: aquela view filtra `ativo = true`
+// e esconderia criança que saiu do ministério mas ACEITOU — o falso negativo que
+// mais importa aqui. A busca vê inativa também e DECLARA que é.
+//
+// ⚠️ Nível 1 (leitura), o mesmo do resto da tela. Devolve nome e nascimento de
+// MENOR: é dado do módulo Kids, que já é gateado — não acrescenta superfície.
+router.get('/decisoes/buscar', authorizeModule('kids', 1), async (req, res) => {
+  try {
+    const tokens = tokensDaBusca(req.query.q);
+    // ⚠️ Busca vazia devolve lista vazia COM aviso, nunca a base inteira: são
+    // 4.423 fichas, e despejar isso não é busca, é despejo.
+    if (!tokens.length) {
+      return res.json({ termo: String(req.query.q || ''), itens: [], total: 0, truncado: false, aviso: 'digite ao menos 2 letras' });
+    }
+
+    const vistos = new Map();
+    for (const t of tokens) {
+      const { data, error } = await supabase.from('kids_criancas')
+        .select('id, nome, nome_norm, ativo, visitante, data_nascimento, data_conversao')
+        .ilike('nome_norm', `%${t}%`)
+        .is('deleted_at', null)
+        .limit(80);
+      // ⚠️ Erro PROPAGA: lista vazia aqui viraria "essa criança não existe", que
+      // é afirmação sobre gente a partir de uma consulta que falhou.
+      if (error) throw error;
+      (data || []).forEach((k) => vistos.set(k.id, k));
+    }
+
+    const ids = [...vistos.keys()];
+    let decisoes = [];
+    if (ids.length) {
+      // ⚠️ `.in()` em lotes de 200 (cap da URL do PostgREST · lei da casa).
+      for (let i = 0; i < ids.length; i += 200) {
+        const { data, error } = await supabase.from('cultos_decisoes_pessoas')
+          .select('kids_crianca_id, decidiu_em, registrado_em, cultos(nome)')
+          .eq('tipo_decisao', 'kids')
+          .is('deleted_at', null)
+          .in('kids_crianca_id', ids.slice(i, i + 200));
+        if (error) throw error;
+        decisoes = decisoes.concat((data || []).map((d) => ({ ...d, culto_nome: d?.cultos?.nome || null })));
+      }
+    }
+
+    res.json(montarResultado({ criancas: [...vistos.values()], decisoes, termo: req.query.q }));
+  } catch (e) {
+    console.error('[totemKids/decisoes/buscar]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar criança', detalhe: e.message });
   }
 });
 
