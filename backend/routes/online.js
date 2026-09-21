@@ -5,6 +5,7 @@ const { supabase } = require('../utils/supabase');
 const { syncCanal } = require('../services/youtubeCollector');
 const yt = require('../services/youtubeAnalytics');
 const collectors = require('../services/onlineCollectors');
+const { semanaAnteriorBRT, somarViews } = require('../utils/semanaOnline');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const { isAuthorizedCron } = require('../utils/cronAuth');
@@ -33,8 +34,28 @@ router.get('/cron/live-monitor', autorizaCron, async (_req, res) => {
   catch (e) { console.error('[live-monitor]', e.message); res.status(500).json({ error: e.message }); }
 });
 router.get('/cron/ds-collect', autorizaCron, async (_req, res) => {
-  try { res.json(await collectors.dsCollector()); }
-  catch (e) { console.error('[ds-collect]', e.message); res.status(500).json({ error: e.message }); }
+  try {
+    const ds = await collectors.dsCollector();
+    // ⚠️ Carona: o `vercel.json` está no TETO de crons do plano, então a coleta
+    // de views/dia pega carona aqui em vez de ganhar slot próprio.
+    // ⚠️ BLOCO PROTEGIDO: falhar aqui não pode derrubar o DS, que é o trabalho
+    // principal deste cron.
+    let views = null;
+    try {
+      views = await collectors.viewsDiaCollector({ dias: 5 });
+    } catch (e) {
+      console.error('[ds-collect/views-dia]', e.message);
+      views = { ok: false, erro: e.message.slice(0, 200) };
+    }
+    res.json({ ...ds, views_dia: views });
+  } catch (e) { console.error('[ds-collect]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Backfill manual das views por dia (a Analytics devolve o histórico numa
+// chamada só — é assim que o card nasce com semanas de comparação prontas).
+router.get('/cron/views-dia-collect', autorizaCron, async (req, res) => {
+  try { res.json(await collectors.viewsDiaCollector({ dias: Number(req.query.dias) || 5 })); }
+  catch (e) { console.error('[views-dia-collect]', e.message); res.status(500).json({ error: e.message }); }
 });
 router.get('/cron/ddus-collect', autorizaCron, async (_req, res) => {
   try { res.json(await collectors.ddusCollector()); }
@@ -371,6 +392,46 @@ router.get('/dashboard', async (_req, res) => {
       }
     }
 
+    // 5. Views da SEMANA ANTERIOR (seg→dom, BRT)
+    // ⚠️⚠️ BLOCO ISOLADO QUE NUNCA LANÇA: este handler descarta o `error` das
+    // consultas (`const { data } = await ...`) e qualquer exceção aqui
+    // derrubaria a tela INTEIRA do Online com 500.
+    // ⚠️ Erro NUNCA vira 0 nem card ausente — vira `erro` declarado, e a tela
+    // pinta âmbar com o motivo. "Ninguém assistiu" e "a consulta falhou"
+    // levam a decisões opostas.
+    let semana = null;
+    try {
+      const janela = semanaAnteriorBRT();
+      const anterior = semanaAnteriorBRT(Date.parse(`${janela.inicio}T12:00:00Z`));
+
+      const { data: linhas, error: errV } = await supabase
+        .from('online_canal_views_dia')
+        .select('data, views, watch_minutos')
+        .gte('data', anterior.inicio)
+        .lte('data', janela.fim);
+      if (errV) throw new Error(errV.message);
+
+      const atualSem = somarViews(linhas, janela.inicio, janela.fim);
+      const antSem = somarViews(linhas, anterior.inicio, anterior.fim);
+
+      semana = {
+        ...janela,
+        ...atualSem,
+        fonte: 'YouTube Analytics · views do canal',
+        // ⚠️ Comparação em número ABSOLUTO, sem %: feriado, evento especial e
+        // semana com 4 ou 5 cultos movem o número sem dizer nada sobre
+        // desempenho — medido, a oscilação semana a semana chega a +74%.
+        anterior: antSem.views === null ? null : {
+          rotulo: anterior.rotulo,
+          views: antSem.views,
+          dias_com_dado: antSem.dias_com_dado,
+        },
+      };
+    } catch (e) {
+      console.error('[online/dashboard/semana]', e.message);
+      semana = { erro: 'Não foi possível carregar as views da semana.', detalhe: e.message.slice(0, 160) };
+    }
+
     res.json({
       canal: atual,
       delta,
@@ -379,6 +440,7 @@ router.get('/dashboard', async (_req, res) => {
       top_all_time: topAllTime || [],
       series: series || [],
       matriz_online: matrizOnline,
+      semana,
     });
   } catch (e) {
     console.error('[online/dashboard]', e.message);

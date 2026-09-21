@@ -15535,6 +15535,178 @@ tem 8, 10, 12, 13 ou 16 scripts. Em **27/08/2026 são 20**. **Contar no
 `.github/workflows/deploy-vercel.yml`, nunca decorar** — cada número que este
 arquivo já registrou envelheceu, este inclusive.
 
+
+## ⚠️⚠️ LEI · entrada manual só vale em `dado_tipo` SEM ramo nativo (2026-09-21 · migration `20260921120000`)
+
+Pedido do Matheus sobre o módulo Online: card de views da semana anterior ·
+auditar se os KPIs estão sendo alimentados · e *"o online faz diversos
+atendimentos e esse kpi precisa ser alimentado, porem eles fazem de forma
+externa ao sistema, entao preciso de uma forma manual para alimentar esse
+kpi"*.
+
+**A auditoria achou algo pior que os vazios que ele apontou.**
+
+### ⚠️⚠️ A LEI, e ela já custou 84 lançamentos
+
+`_kpi_agregar_dado` é uma cadeia de `ELSIF p_dado_tipo = '…'` terminada por um
+**fallback** que agrega de `dados_brutos` (filtrando por área e período). Mas
+vários ramos nativos terminam assim:
+
+```sql
+SELECT count(*) INTO v_resultado FROM public.cui_acompanhamentos ...;
+RETURN v_resultado;          -- ← INCONDICIONAL
+```
+
+`count(*)` **nunca é NULL**, então o `RETURN` sempre dispara e **o fallback é
+inalcançável**. Ligar `entrada_manual = true` num tipo assim faz a equipe
+lançar, a tela dizer "salvo", e o KPI **não se mover — sem erro, sem log**.
+
+⚠️⚠️ **E isso NÃO é hipótese: `solicitacoes_servir_recebidas` tinha 47
+lançamentos manuais e `_alocadas` 37.** São **84 números que alguém da equipe
+digitou e o sistema nunca leu** (o KPI lê `vol_inscricoes`). O custo não é só o
+KPI errado — é a equipe alimentando um campo que não alimenta nada e concluindo
+que o sistema não funciona.
+
+⇒ **A entrada manual entra em `dado_tipo` NOVO**, que não aparece em nenhum
+`ELSIF`: `atend_capelania_recebidas` · `atend_capelania_atendidas` ·
+`atend_aconselh_recebidas` · `atend_aconselh_atendidas`. Os 10 KPIs de
+capelania/aconselhamento foram repontados para eles (seguro: os 5 de capelania
+tinham **0 valores calculados**).
+
+⚠️ A migration carrega **duas guardas em SQL que ABORTAM**: uma se algum tipo
+novo ganhar ramo nativo depois, outra (invariante final) se **qualquer** tipo
+ativo for manual e tiver ramo nativo ao mesmo tempo. `src/test/entradaManualKpi.test.ts`
+(15 casos, no gate) é o espelho estático disso.
+
+### ⚠️⚠️ O problema caro estava nos KPIs que TÊM VALOR, não nos vazios
+
+`voluntarios_checkin` **não tinha filtro de área nenhum** na função. Prova:
+
+| KPI | área | 2026-09 |
+|---|---|---|
+| AMI-15 | ami | **30,43** |
+| BRG-14 | bridge | **30,43** |
+| KIDS-14 | kids | **30,43** |
+| ONL-17 | online | **30,43** |
+| SED-10 | sede | **30,43** |
+
+É o percentual de check-in da **igreja inteira**, publicado 5 vezes com rótulo
+de área. Os números REAIS do mês: Online **29,17%** (24 escalados / 7 check-in)
+· Kids **37,27%**. Nenhum é 30,43.
+
+⚠️ **KPI com valor errado é pior que KPI vazio**: o vazio ninguém usa; este vai
+para a reunião. Consertado por **patch dinâmico** (`vol_teams.area` via
+`vol_schedules.team_id`), com guarda de âncora única e prova no catálogo.
+
+⚠️⚠️ **E `vol_teams.area` NÃO são as áreas do KPI**: tem Cuidados, Integração,
+KIDS, Louvor, Marketing, Online, Produção, Voluntariado. **Só KIDS e Online
+casam** — ami/bridge/sede passariam a devolver NULL para sempre, então os 3
+foram **desativados** com o motivo escrito. Melhor KPI ausente que KPI errado.
+
+### ⚠️ ONL-20 e a família "% de voluntarios que pararam de servir"
+
+A fórmula é `voluntarios_recuperados / voluntarios_inativos_3m` = taxa de
+**RECUPERAÇÃO**, não de saída — e com `menor_melhor` + meta 5 o farol pedia que
+recuperar voluntário fosse **raro** (mesma família do churn com meta 90 de
+24/08). Os dois lados leem `mem_voluntarios.ate`, **NULL em 635 de 635**: não
+existe fluxo de baixa, então nunca houve base.
+
+⇒ Os 5 foram **desativados**, não renomeados.
+⚠️ **Consertar só o `sentido_meta` seria o pior caminho**: faria um número que
+mede outra coisa acender farol — pior que o vazio, porque passaria a ser lido.
+⚠️ **Derivar "inativo = sem escala há 90 dias" foi considerado e RECUSADO**:
+"a igreja desligou esta pessoa" e "não apareceu há 90 dias" são fatos
+diferentes, e colapsá-los em `ate` apaga a distinção para sempre. Medir
+ausência é KPI NOVO com nome próprio — decisão de gente.
+
+⚠️ **A régua de renomear**: só é seguro quando a FÓRMULA sempre foi aquela (aí
+o rótulo estava errado e a série continua válida — foi o caso de ONL-19, que
+dizia "check-in" medindo alocação de solicitação de servir, e de ONL-02/ONL-06,
+os dois "% de crescimento"). Quando a fórmula muda, o certo é desativar e criar
+id novo.
+
+### ⚠️⚠️ O atalho rápido do /dados-brutos estava VAZIO para todas as áreas
+
+Achado de carona: os **10 ids** de `QUICK_LOG_POR_AREA` eram **todos**
+`entrada_manual = false`, e o quick log filtra `entrada_manual !== false`. Ou
+seja, o lançamento rápido não mostrava nada, em área nenhuma, sem dizer por quê.
+Repontado para os tipos que de fato aceitam lançamento.
+⚠️ Antes de acrescentar id ali: conferir que é `entrada_manual = true` **E** que
+não tem ramo nativo.
+
+### ⚠️⚠️ O card de views: subtrair snapshot ERRA 45% na semana que ele abriria
+
+`online_canal_snapshot.view_count` é o **acumulado** do canal, e o YouTube o
+**revisa para baixo** ao depurar views. Medido em 126 dias: **9 dias com queda**
+· maior **−7.197** · total depurado **−28.568**.
+
+A semana 14–20/09 — a primeira que o card mostraria — tem **−5.377 no dia 16**:
+a subtração daria **6.642** contra **~12.019** reais. Card que erra na primeira
+semana em que é aberto não volta a ser lido.
+
+⇒ Fonte certa: **YouTube Analytics API** (`metrics=views&dimensions=day`), que é
+o número do Studio. Tabela `online_canal_views_dia` + `viewsDiaCollector`, com
+**UPSERT dos últimos dias de propósito** (o YouTube ainda ajusta D-1 e D-2 — é o
+upsert que deixa o número se corrigir sozinho).
+
+⚠️ **Sem cron novo** — carona no `/cron/ds-collect`, em **bloco protegido**
+(falhar ali não pode derrubar o DS, que é o trabalho principal daquele cron). O
+`vercel.json` está no teto.
+
+⚠️ **Semana SEG→DOM em BRT** (`backend/utils/semanaOnline.js`, no gate):
+`isoWeek.js` decide tudo em UTC, então usá-lo direto faria a semana virar às
+**21h de domingo** — bem na faixa do culto de domingo à noite. QUAL semana se
+decide com `hojeBRT`; `isoWeekRange` só gera datas.
+⚠️ **NÃO criar uma terceira definição de semana** neste sistema (já há duas:
+frequência seg→dom e financeira quarta→terça).
+
+⚠️ **O que o card DECLARA, e nada disso é enfeite**: a janela com as DATAS · a
+FONTE (o gestor confere contra o Studio) · a convenção seg→dom · a **cobertura**
+(dia sem coleta some da soma sem avisar, e aí ninguém distingue queda de
+audiência de cron que falhou) · a **consolidação** (na segunda o número ainda
+sobe). E `views: null` **nunca vira 0** — "não coletamos" e "ninguém assistiu"
+levam a decisões opostas.
+
+⚠️ **Comparação com a semana retrasada em número ABSOLUTO, sem %**: feriado,
+evento especial e semana com 4 ou 5 cultos movem o número sem dizer nada sobre
+desempenho (oscilação medida: **+74%**).
+
+### Verificação
+
+`tsc -b` sem cache · `npm run build` · `npm test` · **os 29 scripts** do gate ·
+`lint:hooks`. **10 mutantes RODADOS e mortos** (5 na régua da semana, 5 no guard
+da migration).
+⚠️ **Um deles SOBREVIVEU na primeira rodada e o teste é que estava fraco**: a
+checagem de `origem_tabela` casava numa janela de 700 chars e pegava o `NULL` do
+tipo SEGUINTE. Régua: **ao testar item de uma lista, recortar a entrada exata** —
+janela de N caracteres alcança o vizinho e valida o errado.
+⚠️ **O laço do gate quebrou de novo pela armadilha de 31/08**: `for s in $(grep
+-o "npm run test:x")` divide em 3 palavras e roda 87 "scripts" inexistentes.
+**Falha idêntica em todos é assinatura de laço quebrado, não de teste vermelho.**
+
+### ⏳ PENDENTE DE GENTE (não é código)
+
+1. ⚠️ **Aplicar a migration** — sem ela o `voluntarios_checkin` segue publicando
+   o número da igreja como se fosse da área, e os tipos manuais não existem.
+2. **Rodar o backfill de views**: `GET /api/online/cron/views-dia-collect?dias=130`
+   com o `CRON_SECRET` — a Analytics devolve o histórico numa chamada só, então
+   o card nasce com semanas de comparação prontas. Sem isso ele mostra "Sem dado"
+   até o primeiro `ds-collect`.
+3. **A equipe do Online lançar os atendimentos** em `/dados-brutos` — é o que
+   faz ONL-01 e ONL-05 saírem do vazio. ⚠️ **Usar a data do ATENDIMENTO**, nunca
+   a do lançamento (é o defeito do `npsKpiSync` de 18/08: carimbar com a data
+   errada colapsa a série).
+4. **Decidir de quem é a rotina de dar baixa em voluntário** — sem isso nenhum
+   KPI de saída pode existir, nas 5 áreas.
+5. **Preencher a área das equipes de voluntariado** (`vol_teams.area`) se a casa
+   quiser check-in por área em ami/bridge/sede.
+
+⚠️ **Resíduos declarados, NÃO corrigidos aqui**: `frequencia_next` e
+`solicitacoes_*` seguem sem filtro de área na função (hoje mascarados por
+`cui_acompanhamentos` vazia — bomba armada, não estrago em curso) · ONL-16 é
+`soma_periodo` de `voluntarios_ativos`, que devolve CONTAGEM com nome de
+porcentagem · `soma_periodo` continua ignorando o `p_periodo_referencia` (já
+registrado em 18/08; mexer move valores de períodos publicados).
 ## Online · visao do canal YouTube (somente leitura)
 
 Modulo `/online` mostra desempenho do canal YouTube CBRio com
