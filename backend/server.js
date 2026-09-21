@@ -259,6 +259,13 @@ app.use('/api/public/visitante', require('./routes/publicVisitante'));
 // barrinha travada no domingo do lançamento é o pior momento possível pra ela
 // falhar. Limiter próprio generoso em routes/publicCampanha.js.
 app.use('/api/public/campanhas', require('./routes/publicCampanha'));
+// ⚠️⚠️ FICHA DA CONTRATADA montada ANTES do publicLimiter estrito, pelo mesmo
+// motivo das outras: são ~15 campos, a pessoa salva mais de uma vez, e vários
+// prestadores saem pelo MESMO IP do escritório. Sob 30/15min por IP o
+// formulário morreria por volta da 4ª pessoa — e o custo de falhar aqui é a
+// chave PIX de um fornecedor não entrar. Limiter próprio e generoso vive em
+// routes/publicRhFichaContratada.js.
+app.use('/api/public/rh-ficha-contratada', require('./routes/publicRhFichaContratada'));
 app.use('/api/public', publicLimiter);
 
 app.use('/api/public/rh-onboarding', require('./routes/publicRhOnboarding'));

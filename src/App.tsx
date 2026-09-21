@@ -346,6 +346,7 @@ const Grupos = lazyWithRetry(() => import('./pages/ministerial/Grupos'));
 const GruposSupervisao = lazyWithRetry(() => import('./pages/ministerial/GruposSupervisao'));
 const CadastroMembresia = lazyWithRetry(() => import('./pages/public/CadastroMembresia'));
 const OnboardingColaborador = lazyWithRetry(() => import('./pages/public/OnboardingColaborador'));
+const FichaContratada = lazyWithRetry(() => import('./pages/public/FichaContratada'));
 const InscricaoBatismo = lazyWithRetry(() => import('./pages/public/InscricaoBatismo'));
 const BatismoAcesso = lazyWithRetry(() => import('./pages/public/BatismoAcesso'));
 const ApresentacaoCriancasPublica = lazyWithRetry(() => import('./pages/public/ApresentacaoCriancas'));
@@ -671,6 +672,8 @@ function AppRoutes() {
       {/* Rotas publicas */}
       <Route path="/cadastro-membresia" element={<Suspense fallback={<Loading />}><CadastroMembresia /></Suspense>} />
       <Route path="/onboarding/:token" element={<Suspense fallback={<Loading />}><OnboardingColaborador /></Suspense>} />
+      {/* Ficha da CONTRATADA (Anexo II) · porta pública própria, só PJ. */}
+      <Route path="/ficha-contratada/:token" element={<Suspense fallback={<Loading />}><FichaContratada /></Suspense>} />
       <Route path="/inscricao-batismo" element={<Suspense fallback={<Loading />}><InscricaoBatismo /></Suspense>} />
       {/* Acesso às fotos do batismo pelo QR da etiqueta do quiosque · token = credencial · sem login */}
       <Route path="/batismo/acesso" element={<Suspense fallback={<Loading />}><BatismoAcesso /></Suspense>} />

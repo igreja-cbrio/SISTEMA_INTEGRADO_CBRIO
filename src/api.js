@@ -1985,6 +1985,7 @@ export const rh = {
     concluirAdmissao: (id) => post(`/rh/funcionarios/${id}/concluir-admissao`),
     setGestor: (id, gestorId) => put(`/rh/funcionarios/${id}/gestor`, { gestor_id: gestorId || null }),
     onboardingLink: (id, regenerar = false) => post(`/rh/funcionarios/${id}/onboarding-link`, { regenerar }),
+    fichaContratadaLink: (id, regenerar = false) => post(`/rh/funcionarios/${id}/ficha-contratada-link`, { regenerar }),
     uploadFoto: (id, file) => {
       const fd = new FormData();
       fd.append('foto', file);
@@ -2047,6 +2048,9 @@ export const rh = {
   },
   // Admissão agora é um status do colaborador (em_admissao) — ver rh.funcionarios
   // (create com status 'em_admissao', update de admissao_dados, concluirAdmissao).
+  fichaContratada: {
+    pendentes: () => get('/rh/ficha-contratada/pendentes'),
+  },
   onboarding: {
     pendentes: () => get('/rh/onboarding/pendentes'),
     preview: () => post('/rh/onboarding/preview', {}),
@@ -4749,6 +4753,13 @@ export const apresentacoes = {
 export const onboardingPublico = {
   get: (token) => get(`/public/rh-onboarding/${encodeURIComponent(token)}`),
   salvar: (token, dados) => post(`/public/rh-onboarding/${encodeURIComponent(token)}`, dados),
+};
+
+// Ficha da CONTRATADA (Anexo II) · porta pública PRÓPRIA, separada do
+// onboarding: o público é disjunto (só PJ) e este link carrega dado bancário.
+export const fichaContratadaPublica = {
+  get: (token) => get(`/public/rh-ficha-contratada/${encodeURIComponent(token)}`),
+  salvar: (token, dados) => post(`/public/rh-ficha-contratada/${encodeURIComponent(token)}`, dados),
 };
 
 
