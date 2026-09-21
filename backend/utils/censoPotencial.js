@@ -30,8 +30,14 @@
 // As faixas são STRINGS LITERAIS do questionário. Um caractere diferente devolve
 // zero em silêncio, então o teste ancora nos números medidos em produção.
 const FAIXAS_KIDS = Object.freeze(['6 meses a 2 anos', '3 a 6 anos', '7 a 9 anos', '10 a 12 anos']);
-const FAIXA_AMI = '13 a 17 anos';
-const FAIXA_BRIDGE = '18 a 25 anos';
+// ⚠️⚠️ BRIDGE É 13-17 E AMI É 18-25. Eu tinha invertido, por DEDUZIR da régua
+// de faixa etária da casa (adolescente 13-17 → "deve ser o AMI") em vez de
+// perguntar. O Matheus corrigiu em 21/09/2026 olhando a tela: *"vc inverteu kids
+// e bridge. bridge e de 13 a 17 e AMI e de 18 a 25 anos."* Faixa etária de
+// ministério é NOME DA CASA, não dedução — a régua de `fn_faixa_etaria` descreve
+// idade, não a quem cada ministério atende.
+const FAIXA_BRIDGE = '13 a 17 anos';
+const FAIXA_AMI = '18 a 25 anos';
 
 // ⚠️ Espelha a régua da casa (decisão do Matheus 19/08/2026, em `fn_faixa_etaria`
 // e `src/lib/faixaEtaria.ts`): criança <13 · adolescente 13-17 · jovem 18-25.
@@ -71,6 +77,11 @@ function classificar(payload) {
     kids,
     ami: temFilhos && faixas.includes(FAIXA_AMI),
     bridge: temFilhos && faixas.includes(FAIXA_BRIDGE),
+    // ⚠️ `=== 'Não'` e não `!== 'Sim'`: quem não respondeu (pergunta que entrou
+    // depois, ou rascunho) NÃO entra numa lista de contato. Ausência de resposta
+    // não é "não fez" — é "não sabemos", e ligar para quem já fez queima quem liga.
+    nao_fez_next: String(payload?.fez_next || '') === 'Não',
+    nao_serve: String(payload?.serve_ministerio || '') === 'Não',
     // ⚠️ "Ainda em decisão" NÃO entra: a pessoa não declarou conversão, e
     // abordá-la como quem já decidiu é afirmar por ela o que ela não disse.
     convertido: String(payload?.entregou_vida || '') === 'Sim'
@@ -102,8 +113,8 @@ function contatoDe(payload) {
  * @param {Array<{id: string, membro_id: string|null, payload: object}>} linhas
  * @returns {{kids_nao, kids_parcial, ami, bridge, convertidos, totais, familias_distintas}}
  */
-function montarPotencial(linhas) {
-  const listas = { kids_nao: [], kids_parcial: [], ami: [], bridge: [], convertidos: [] };
+function montarPotencial(linhas, formados) {
+  const listas = { kids_nao: [], kids_parcial: [], ami: [], bridge: [], convertidos: [], nao_fez_next: [], nao_serve: [] };
   const vistos = new Set();
 
   for (const l of Array.isArray(linhas) ? linhas : []) {
@@ -116,6 +127,13 @@ function montarPotencial(linhas) {
       ...contatoDe(p),
       filhos_quantos: Number.isFinite(Number(p.filhos_quantos)) ? Number(p.filhos_quantos) : null,
       faixas: faixasDe(p),
+      // ⚠️⚠️ SELO, NUNCA FILTRO. Medido em 21/09: 22 pessoas responderam "não fiz
+      // o Next" e CONSTAM como formadas em `vw_next_formado_pessoa` — mas 250
+      // responderam "sim" SEM constar. Ou seja, "consta" prova que fez; "não
+      // consta" NÃO prova que não fez. Usar como filtro produziria uma lista
+      // errada com cara de validada; como selo, avisa quem vai ligar.
+      consta_formado_next: formados instanceof Set && l.membro_id
+        ? formados.has(l.membro_id) : false,
     };
 
     if (c.kids === 'nao') listas.kids_nao.push(pessoa);
@@ -123,8 +141,10 @@ function montarPotencial(linhas) {
     if (c.ami) listas.ami.push(pessoa);
     if (c.bridge) listas.bridge.push(pessoa);
     if (c.convertido) listas.convertidos.push(pessoa);
+    if (c.nao_fez_next) listas.nao_fez_next.push(pessoa);
+    if (c.nao_serve) listas.nao_serve.push(pessoa);
 
-    if (c.kids || c.ami || c.bridge || c.convertido) vistos.add(l.id);
+    if (c.kids || c.ami || c.bridge || c.convertido || c.nao_fez_next || c.nao_serve) vistos.add(l.id);
   }
 
   return {
@@ -135,6 +155,8 @@ function montarPotencial(linhas) {
       ami: listas.ami.length,
       bridge: listas.bridge.length,
       convertidos: listas.convertidos.length,
+      nao_fez_next: listas.nao_fez_next.length,
+      nao_serve: listas.nao_serve.length,
     },
     // ⚠️ A soma das listas NÃO é o número de gente: 21% está em mais de uma
     // (medido: 790 de soma para 624 pessoas). Sem isto, a mesma família recebe

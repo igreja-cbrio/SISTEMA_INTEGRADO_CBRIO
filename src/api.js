@@ -391,6 +391,12 @@ export const censo = {
   // carrega nome, telefone e convicção religiosa (dado sensível na LGPD).
   potencialResumo: (pesquisaId) => get(`/censo/potencial/resumo?pesquisa_id=${pesquisaId}`),
   potencial: (pesquisaId) => get(`/censo/potencial?pesquisa_id=${pesquisaId}`),
+  // Encaminha alguém da lista para a fila de cuidado DO CENSO (`cen_cuidado`).
+  // ⚠️ Não é a `cui_batismo_next_fila`: aquela exige FK para `cui_convertidos`,
+  // onde só 18 dos 178 existem — e criar os outros lá derrubaria dois KPIs de
+  // Cuidados que contam por `data_culto` sem filtrar origem.
+  potencialParaCuidado: (respostaId, tipo = 'conversa', observacao) =>
+    post('/censo/potencial/cuidado', { resposta_id: respostaId, tipo, observacao }),
   // ⚠️ 600s pelo MESMO motivo da leitura logo abaixo — e aqui a régua já existia
   // sete linhas adiante quando eu escrevi esta sem timeout. O relatório roda
   // Opus 5 sobre o perfil inteiro e passa de 30s; a tela dizia "Tempo esgotado"

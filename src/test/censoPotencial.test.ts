@@ -64,9 +64,16 @@ describe('⚠️⚠️ payload sem `filhos_faixas` não pode derrubar a rota', (
 });
 
 describe('AMI e Bridge saem SÓ da faixa — não há pergunta de frequência', () => {
-  it('filho de 13 a 17 é AMI; de 18 a 25 é Bridge', () => {
-    expect(classificar(pai({ filhos_faixas: [FAIXA_AMI] })).ami).toBe(true);
-    expect(classificar(pai({ filhos_faixas: [FAIXA_BRIDGE] })).bridge).toBe(true);
+  // ⚠️⚠️ BRIDGE É 13-17 E AMI É 18-25. Eu tinha invertido, deduzindo da régua de
+  // faixa etária da casa ("adolescente 13-17, logo AMI") em vez de perguntar. O
+  // Matheus corrigiu olhando a tela em 21/09/2026. Faixa de ministério é nome da
+  // casa, não dedução — este teste existe para a inversão não voltar.
+  it('⚠️ 13 a 17 é BRIDGE; 18 a 25 é AMI', () => {
+    expect(FAIXA_BRIDGE).toBe('13 a 17 anos');
+    expect(FAIXA_AMI).toBe('18 a 25 anos');
+    expect(classificar(pai({ filhos_faixas: ['13 a 17 anos'] })).bridge).toBe(true);
+    expect(classificar(pai({ filhos_faixas: ['13 a 17 anos'] })).ami).toBe(false);
+    expect(classificar(pai({ filhos_faixas: ['18 a 25 anos'] })).ami).toBe(true);
   });
 
   it('a mesma pessoa pode estar nas duas', () => {
@@ -87,6 +94,28 @@ describe('Convertidos não batizados', () => {
 
   it('já batizado não entra', () => {
     expect(classificar(pai({ entregou_vida: 'Sim', batizado: 'Sim' })).convertido).toBe(false);
+  });
+});
+
+// Pedido do Matheus (21/09): *"quero mais dois potencial, que sao as pessoas que
+// nao fizeram next e pssoas que nao servem"*. Medido: 809 e 859 de 1.356.
+describe('Ainda não fez o Next · ainda não serve', () => {
+  it('quem respondeu "Não" entra', () => {
+    const c = classificar(pai({ fez_next: 'Não', serve_ministerio: 'Não' }));
+    expect(c.nao_fez_next && c.nao_serve).toBe(true);
+  });
+
+  it('quem respondeu "Sim" não entra', () => {
+    const c = classificar(pai({ fez_next: 'Sim', serve_ministerio: 'Sim' }));
+    expect(c.nao_fez_next || c.nao_serve).toBe(false);
+  });
+
+  it('⚠️ quem NÃO RESPONDEU não entra — ausência não é "não fez"', () => {
+    const p = pai(); delete (p as Record<string, unknown>).fez_next;
+    expect(
+      classificar(p).nao_fez_next,
+      'ligar para quem já fez, por causa de campo vazio, queima quem liga',
+    ).toBe(false);
   });
 });
 
@@ -174,5 +203,53 @@ describe('⚠️⚠️ podeExportar respeita a matriz de permissões', () => {
   it('⚠️ flag de OUTRO módulo não libera o censo', () => {
     const u = { granular: { modulePerms: { financeiro: { pode_exportar: true } } } };
     expect(podeExportar(u, 'censo')).toBe(false);
+  });
+});
+
+// ⚠️⚠️ PARA ONDE O BOTÃO "Cuidado" MANDA — e por que não é a outra fila.
+//
+// A escolha natural seria `cui_batismo_next_fila`, que já existe e já tem
+// status, responsável e rascunho de mensagem. Ela foi REJEITADA por medição
+// (21/09/2026):
+//
+//  1. `convertido_id` é FK para `cui_convertidos` e **só 18 dos 178 convertidos
+//     do censo existem lá** — os outros 160 teriam que ser CRIADOS.
+//  2. `cui_convertidos` alimenta `cuidados.convertidos_pos_culto` e
+//     `cuidados.reuniao_aceita_pct`, que contam por `data_culto` e **não filtram
+//     origem nenhuma**. 160 linhas de gente que não foi atendida após culto e
+//     não tem encontro marcado derrubariam os dois percentuais de uma vez.
+//  3. E aquela fila tem **167 linhas, 100% pendentes desde 25/06** — ninguém a
+//     trabalha. Somar 160 ali seria empilhar em cima de uma fila morta.
+//
+// ⇒ `cen_cuidado`: fila do próprio censo, ligada à `resposta_id`, com a aba
+// Cuidado já lendo. Este teste existe para que a troca não seja desfeita por
+// alguém que veja "já existe uma fila de batismo" e ache que é reuso.
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
+describe('⚠️⚠️ o encaminhamento vai para a fila do CENSO, não para a de batismo', () => {
+  const rota = readFileSync(join(__dirname, '..', '..', 'backend/routes/censo.js'), 'utf8');
+  const trecho = rota.slice(rota.indexOf("router.post('/potencial/cuidado'"));
+
+  it('insere em `cen_cuidado`', () => {
+    expect(trecho).toMatch(/from\('cen_cuidado'\)[\s\S]{0,120}insert/);
+  });
+
+  it('⚠️ NÃO toca em cui_convertidos nem na fila de batismo', () => {
+    expect(trecho, 'criar em cui_convertidos derruba 2 KPIs de Cuidados').not.toContain('cui_convertidos');
+    expect(trecho).not.toContain('cui_batismo_next_fila');
+  });
+
+  it('⚠️ deduplica: `cen_cuidado` não tem UNIQUE, dois cliques criariam duas linhas', () => {
+    expect(trecho).toMatch(/\.in\('status', \['aberto', 'em_contato'\]\)/);
+    expect(trecho, 'já estar na fila não é erro — responde ok com ja_estava').toMatch(/ja_estava: true/);
+  });
+
+  it('⚠️ o tipo é validado contra o CHECK da tabela', () => {
+    expect(trecho).toMatch(/\['familiar', 'aconselhamento', 'oracao', 'conversa'\]/);
+  });
+
+  it('exige nível 4 — o mesmo da lista nominal', () => {
+    expect(trecho).toMatch(/authorizeModule\('censo', 4\)/);
   });
 });
