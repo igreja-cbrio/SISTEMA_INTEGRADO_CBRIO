@@ -385,6 +385,12 @@ export const censo = {
   perfil: (pesquisaId) => get(`/censo/perfil?pesquisa_id=${pesquisaId}`),
   perfilMapa: (pesquisaId) => get(`/censo/perfil/mapa?pesquisa_id=${pesquisaId}`),
   relatorio: (pesquisaId) => get(`/censo/relatorio?pesquisa_id=${pesquisaId}`),
+  // Potencial · as listas acionáveis. ⚠️ SÃO DUAS CHAMADAS E DOIS NÍVEIS: o
+  // resumo é nível 2 e traz só contagens; a lista NOMINAL é nível 4, porque 34
+  // cargos têm nível 2 no censo — entre eles "Membro" e "Voluntário" — e a lista
+  // carrega nome, telefone e convicção religiosa (dado sensível na LGPD).
+  potencialResumo: (pesquisaId) => get(`/censo/potencial/resumo?pesquisa_id=${pesquisaId}`),
+  potencial: (pesquisaId) => get(`/censo/potencial?pesquisa_id=${pesquisaId}`),
   // ⚠️ 600s pelo MESMO motivo da leitura logo abaixo — e aqui a régua já existia
   // sete linhas adiante quando eu escrevi esta sem timeout. O relatório roda
   // Opus 5 sobre o perfil inteiro e passa de 30s; a tela dizia "Tempo esgotado"
