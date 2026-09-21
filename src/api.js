@@ -2056,6 +2056,9 @@ export const rh = {
   // (create com status 'em_admissao', update de admissao_dados, concluirAdmissao).
   fichaContratada: {
     pendentes: () => get('/rh/ficha-contratada/pendentes'),
+    // ⚠️ `seco` mostra quem entraria SEM enviar nada — prévia antes de falar
+    // com prestador externo.
+    cobrar: (seco = false) => post(`/rh/ficha-contratada/cobrar${seco ? '?seco=1' : ''}`, { seco }),
   },
   onboarding: {
     pendentes: () => get('/rh/onboarding/pendentes'),
