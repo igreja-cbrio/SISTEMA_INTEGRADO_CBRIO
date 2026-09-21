@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-432 arquivos.
+435 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -109,6 +109,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/publicMembresia.js` | rota backend | — | `/api/public/membresia` |
 | `backend/routes/publicNext.js` | rota backend | — | `/api/public/next` |
 | `backend/routes/publicNps.js` | rota backend | — | `/api/public/nps` |
+| `backend/routes/publicRhFichaContratada.js` | rota backend | — | `/api/public/rh-ficha-contratada` |
 | `backend/routes/publicRhOnboarding.js` | rota backend | — | `/api/public/rh-onboarding` |
 | `backend/routes/publicVisitante.js` | rota backend | — | `/api/public/visitante` |
 | `backend/routes/publicVolEmail.js` | rota backend | — | `/api/public/vol-email` |
@@ -227,6 +228,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/eventoCheckinToken.js` | régua pura | — | `src/test/checkinAutoatendimento.test.ts` |
 | `backend/utils/exclusaoInscricaoLote.js` | régua pura | — | `src/test/exclusaoInscricaoLote.test.ts` |
 | `backend/utils/falhaInfra.js` | régua pura | — | `src/test/falhaInfra.test.ts` |
+| `backend/utils/fichaContratada.js` | régua pura | — | `src/test/fichaContratada.test.ts` |
 | `backend/utils/fotoApresentacao.js` | régua pura | — | `src/test/fotoApresentacao.test.ts` |
 | `backend/utils/fotoVoluntario.js` | régua pura | — | `src/test/fotoVoluntario.test.ts` |
 | `backend/utils/freioBot.js` | régua pura | — | `src/test/freioBot.test.ts` |
@@ -418,6 +420,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/public/EventoCheckin` | tela ERP | — | `/ec/:token` |
 | `src/pages/public/EventoExterno` | tela ERP | — | `/evento/:slug` |
 | `src/pages/public/FamiliaConvite` | tela ERP | — | `/f/a/:codigo` |
+| `src/pages/public/FichaContratada` | tela ERP | — | `/ficha-contratada/:token` |
 | `src/pages/public/GrupoAprovarPedido` | tela ERP | — | `/g/a/:token` |
 | `src/pages/public/GrupoConfiraLista` | tela ERP | — | `/g/c/:token` |
 | `src/pages/public/GrupoFrequenciaMes` | tela ERP | — | `/g/f/:token` |

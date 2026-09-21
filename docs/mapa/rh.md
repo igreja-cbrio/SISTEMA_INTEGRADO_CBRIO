@@ -14,7 +14,7 @@
 - `backend/routes/painelRh.js`
 - `backend/routes/rh.js`
 Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
-<details><summary>Endpoints (98)</summary>
+<details><summary>Endpoints (100)</summary>
 - `DELETE /api/events/:id`
 - `DELETE /api/events/attachments/:attachId`
 - `DELETE /api/events/risks/:riskId`
@@ -51,6 +51,7 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 - `GET /api/rh/dashboard/series`
 - `GET /api/rh/extras`
 - `GET /api/rh/ferias`
+- `GET /api/rh/ficha-contratada/pendentes`
 - `GET /api/rh/folha/nao-vinculados`
 - `GET /api/rh/funcionarios`
 - `GET /api/rh/funcionarios/:id`
@@ -96,6 +97,7 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 - `POST /api/rh/funcionarios/:id/desligar`
 - `POST /api/rh/funcionarios/:id/documentos`
 - `POST /api/rh/funcionarios/:id/ferias`
+- `POST /api/rh/funcionarios/:id/ficha-contratada-link`
 - `POST /api/rh/funcionarios/:id/foto`
 - `POST /api/rh/funcionarios/:id/onboarding-link`
 - `POST /api/rh/funcionarios/:id/reativar`
@@ -118,6 +120,8 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 **Réguas puras (backend/utils)**
 
 - `backend/utils/cronAuth.js`
+- `backend/utils/fichaContratada.js`
+- `backend/utils/linkInscricaoApp.js`
 - `backend/utils/sanitize.js`
 - `backend/utils/semFalhar.js`
 - `backend/utils/supabase.js`

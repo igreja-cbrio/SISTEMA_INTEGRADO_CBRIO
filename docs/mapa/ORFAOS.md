@@ -20,12 +20,13 @@ nenhum módulo reivindica são exatamente os candidatos a esse buraco.
 guard (públicas, totens, `/perfil`). Significa que ninguém decidiu — vale
 conferir.
 
-## Telas sem ModuleGuard (79)
+## Telas sem ModuleGuard (80)
 
 | rota | arquivo | pública? |
 |---|---|---|
 | `/cadastro-membresia` | `src/pages/public/CadastroMembresia` | sim |
 | `/onboarding/:token` | `src/pages/public/OnboardingColaborador` | sim |
+| `/ficha-contratada/:token` | `src/pages/public/FichaContratada` | sim |
 | `/inscricao-batismo` | `src/pages/public/InscricaoBatismo` | sim |
 | `/batismo/acesso` | `src/pages/public/BatismoAcesso` | sim |
 | `/apresentacao-criancas` | `src/pages/public/ApresentacaoCriancas` | sim |
@@ -104,7 +105,7 @@ conferir.
 | `/admin/grupos/temporadas` | `src/pages/admin/TemporadasGrupos` | sim |
 | `/suporte` | `src/pages/public/Suporte` | sim |
 
-## Arquivos de rota que nenhum módulo reivindica (74)
+## Arquivos de rota que nenhum módulo reivindica (75)
 
 - `backend/routes/agentTasks.js`
 - `backend/routes/agenteBatismoNext.js`
@@ -158,6 +159,7 @@ conferir.
 - `backend/routes/publicMembresia.js`
 - `backend/routes/publicNext.js`
 - `backend/routes/publicNps.js`
+- `backend/routes/publicRhFichaContratada.js`
 - `backend/routes/publicRhOnboarding.js`
 - `backend/routes/publicVisitante.js`
 - `backend/routes/publicVolEmail.js`
