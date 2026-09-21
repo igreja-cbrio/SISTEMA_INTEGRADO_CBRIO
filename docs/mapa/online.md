@@ -16,7 +16,7 @@
 ## Backend
 - `backend/routes/online.js`
 Guard: `authorizeModule('online', 3)`
-<details><summary>Endpoints (39)</summary>
+<details><summary>Endpoints (40)</summary>
 - `GET /api/online/aceitacoes`
 - `GET /api/online/cron/backfill-cultos`
 - `GET /api/online/cron/catch-up`
@@ -30,6 +30,7 @@ Guard: `authorizeModule('online', 3)`
 - `GET /api/online/cron/sync`
 - `GET /api/online/cron/trafego-collect`
 - `GET /api/online/cron/verificar`
+- `GET /api/online/cron/views-dia-collect`
 - `GET /api/online/cultos-metricas`
 - `GET /api/online/dashboard`
 - `GET /api/online/debug/analytics-test`
@@ -63,6 +64,7 @@ Guard: `authorizeModule('online', 3)`
 - `backend/utils/cronAuth.js`
 - `backend/utils/decisaoToken.js`
 - `backend/utils/linkInscricaoApp.js`
+- `backend/utils/semanaOnline.js`
 - `backend/utils/supabase.js`
 
 **Serviços**
@@ -79,6 +81,7 @@ Guard: `authorizeModule('online', 3)`
 - `cultura_mensal`
 - `kpi_indicadores_taticos`
 - `online_canal_snapshot`
+- `online_canal_views_dia`
 - `online_engajamento`
 - `online_oauth_tokens`
 - `online_video_retencao_curva`
