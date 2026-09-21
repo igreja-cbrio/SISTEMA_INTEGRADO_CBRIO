@@ -649,6 +649,52 @@ async function debugAnalyticsCall(videoId, startDate, endDate) {
   };
 }
 
+
+/**
+ * Views do canal POR DIA — a fonte do card "views da semana".
+ *
+ * ⚠️⚠️ POR QUE NÃO SUBTRAIR DOIS `online_canal_snapshot`:
+ * `view_count` é o ACUMULADO do canal, e o YouTube o REVISA PARA BAIXO quando
+ * depura views. Medido em produção (21/09/2026), em 126 dias de snapshot:
+ * **9 dias com queda**, a maior de -7.197, total depurado -28.568.
+ *
+ * A semana 14–20/09 — a primeira que o card mostraria — tem uma queda de
+ * -5.377 no dia 16. Por subtração ela daria **6.642**; as views reais foram
+ * ~12.019. **Erro de ~45% PARA MENOS**, e o gestor confere no Studio.
+ * Card que erra na primeira semana em que é aberto não volta a ser lido.
+ *
+ * ⚠️ Esta métrica é do CANAL INTEIRO (todos os vídeos, inclusive antigos) —
+ * é o número do Studio. Não confundir com:
+ *   · soma de `online_videos.view_count` dos vídeos publicados na semana
+ *     (é "views totais ATÉ HOJE" daqueles vídeos — janela errada, e cresce
+ *     sozinha a cada sync);
+ *   · `online_ds` + `online_ddus` (é views dos CULTOS, outro recorte).
+ */
+async function fetchChannelViewsPorDia(channelId, startDate, endDate) {
+  const { token, channel_id } = await getValidAccessToken(channelId);
+  const params = new URLSearchParams({
+    ids: `channel==${channel_id}`,
+    startDate,
+    endDate,
+    metrics: 'views,estimatedMinutesWatched',
+    dimensions: 'day',
+    sort: 'day',
+  });
+  const res = await fetch(`${ANALYTICS}/reports?${params}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const t = await res.text();
+    throw new Error(`Analytics views/dia falhou: ${res.status} ${t.slice(0, 200)}`);
+  }
+  const data = await res.json();
+  // data.rows = [['2026-09-14', views, watchMinutes], ...]
+  return (data.rows || []).map((row) => ({
+    dia: row[0],
+    views: row[1] || 0,
+    watch_minutos: row[2] || 0,
+  }));
+}
 module.exports = {
   SCOPES,
   getAuthUrl,
@@ -668,6 +714,7 @@ module.exports = {
   fetchVideoRetentionCurve,
   fetchVideoViewsBySubStatus,
   fetchChannelEngagement,
+  fetchChannelViewsPorDia,
   listAuthorizedChannels,
   debugAnalyticsCall,
 };

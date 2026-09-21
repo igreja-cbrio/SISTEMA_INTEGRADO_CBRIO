@@ -98,6 +98,25 @@ interface DashboardData {
   top_all_time: Video[];
   series: Serie[];
   matriz_online: Record<string, MatrizCell[]>;
+  // ⚠️ Opcional de propósito: o backend monta este bloco isolado e ele pode
+  // vir como `{ erro }` sem derrubar o resto da tela.
+  semana?: SemanaViews | null;
+}
+
+/** Views da semana anterior (seg→dom, BRT) · ver CardSemanaViews. */
+interface SemanaViews {
+  erro?: string;
+  detalhe?: string;
+  rotulo?: string;
+  inicio?: string;
+  fim?: string;
+  fonte?: string;
+  consolidando?: boolean;
+  // ⚠️ `null` = não coletado. NUNCA confundir com 0 views.
+  views?: number | null;
+  watch_minutos?: number | null;
+  dias_com_dado?: number;
+  anterior?: { rotulo: string; views: number; dias_com_dado: number } | null;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -129,6 +148,116 @@ function StatCard({ icon: Icon, label, value, delta, accentClass }: {
         <div className="text-sm text-muted-foreground mt-1">{label}</div>
         {delta !== undefined && (
           <div className="text-[10px] text-muted-foreground/70 mt-2 uppercase tracking-wide">vs 30 dias atrás</div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Card "views da semana anterior".
+//
+// ⚠️⚠️ Tudo que este card DECLARA é obrigatório, não enfeite:
+//  · a JANELA com as datas — "semana anterior" sozinho não se confere;
+//  · a FONTE — o gestor confere contra o YouTube Studio, e precisa saber que é
+//    views do CANAL (não dos cultos, não dos vídeos publicados na semana);
+//  · a CONVENÇÃO seg→dom — o financeiro usa quarta→terça e alguém vai perguntar;
+//  · a COBERTURA — dia sem coleta some da soma SEM AVISO, e aí ninguém
+//    distingue "a audiência caiu" de "o cron falhou";
+//  · a CONSOLIDAÇÃO — o YouTube ainda ajusta D-1 e D-2, então na segunda o
+//    número sobe. Número que muda em silêncio depois de publicado queima a
+//    confiança no card.
+//
+// ⚠️ Comparação com a semana retrasada em número ABSOLUTO, sem %: feriado,
+// evento especial e semana com 4 ou 5 cultos movem o número sem dizer nada
+// sobre desempenho (a oscilação medida chega a +74%).
+// ════════════════════════════════════════════════════════════════════════════
+function CardSemanaViews({ semana }: { semana?: SemanaViews | null }) {
+  if (!semana) return null;
+
+  // ⚠️ Erro NUNCA vira 0 nem card ausente.
+  if (semana.erro) {
+    return (
+      <Card className="border-amber-500/40 bg-amber-500/5">
+        <CardContent className="p-5">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-semibold text-amber-800 dark:text-amber-300">Views da semana indisponíveis</div>
+              <div className="text-sm text-muted-foreground mt-1">{semana.erro}</div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const semDado = semana.views === null || semana.views === undefined;
+  const parcial = !semDado && semana.dias_com_dado > 0 && semana.dias_com_dado < 7;
+  const diffAnterior = (!semDado && semana.anterior && semana.anterior.views !== null)
+    ? semana.views - semana.anterior.views
+    : null;
+
+  return (
+    <Card className="overflow-hidden relative">
+      <div className="absolute inset-0 opacity-50 bg-gradient-to-br from-violet-500/15 to-indigo-500/5" />
+      <CardContent className="p-5 relative">
+        <div className="flex items-start justify-between mb-3">
+          <div className="rounded-xl p-2.5 bg-white/80 dark:bg-black/30 backdrop-blur shadow-sm">
+            <Eye className="h-5 w-5" style={{ color: 'var(--cbrio-primary, #00B39D)' }} />
+          </div>
+          {diffAnterior !== null && diffAnterior !== 0 && (
+            <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
+              diffAnterior > 0
+                ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400'
+                : 'bg-gray-500/15 text-muted-foreground'
+            }`}>
+              {diffAnterior > 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+              {formatDelta(diffAnterior)}
+            </div>
+          )}
+        </div>
+
+        {semDado ? (
+          // ⚠️ "sem dado" ≠ "0 views". Escrever 0 aqui seria afirmar que
+          // ninguém assistiu numa semana que talvez nem tenha sido coletada.
+          <>
+            <div className="text-2xl font-bold leading-tight text-muted-foreground">Sem dado</div>
+            <div className="text-sm text-muted-foreground mt-1">
+              Views da semana · {semana.rotulo}
+            </div>
+            <div className="text-xs text-amber-700 dark:text-amber-400 mt-2">
+              Nenhum dia desta semana foi coletado ainda.
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="text-3xl font-bold leading-tight">{formatNumber(semana.views)}</div>
+            <div className="text-sm text-muted-foreground mt-1">
+              Views da semana · {semana.rotulo}
+            </div>
+          </>
+        )}
+
+        <div className="text-[10px] text-muted-foreground/70 mt-2 uppercase tracking-wide">
+          {semana.fonte || 'YouTube Analytics'} · segunda a domingo
+        </div>
+
+        {/* As três ressalvas, cada uma com significado próprio */}
+        {parcial && (
+          <div className="text-xs text-amber-700 dark:text-amber-400 mt-2">
+            ⚠ {semana.dias_com_dado} de 7 dias coletados — o total está incompleto.
+          </div>
+        )}
+        {!semDado && semana.consolidando && (
+          <div className="text-xs text-muted-foreground mt-2">
+            Ainda consolidando: o YouTube revisa os últimos dias, então este número ainda pode subir.
+          </div>
+        )}
+        {!semDado && semana.anterior && (
+          <div className="text-xs text-muted-foreground mt-2">
+            Semana anterior ({semana.anterior.rotulo}): {formatNumber(semana.anterior.views)} views
+          </div>
         )}
       </CardContent>
     </Card>
@@ -819,12 +948,15 @@ export default function Online() {
         </Card>
       )}
 
-      {/* Stats do canal */}
+      {/* Stats do canal · a pergunta "como foi a semana" pertence ao mesmo
+          bloco de "como está o canal", então o card da semana entra na MESMA
+          fileira em vez de ganhar seção própria. */}
       {canal && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
           <StatCard icon={Users}       label="Inscritos"            value={formatNumber(canal.subscriber_count)} delta={data?.delta?.subscriber} accentClass="from-red-500/15 to-rose-500/5" />
           <StatCard icon={Eye}         label="Views totais"         value={formatNumber(canal.view_count)}        delta={data?.delta?.view}        accentClass="from-blue-500/15 to-cyan-500/5" />
           <StatCard icon={PlayCircle}  label="Vídeos publicados"    value={formatNumber(canal.video_count)}       delta={data?.delta?.video}       accentClass="from-emerald-500/15 to-teal-500/5" />
+          <CardSemanaViews semana={data?.semana} />
         </div>
       )}
 
