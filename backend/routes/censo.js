@@ -1660,17 +1660,95 @@ router.get('/potencial', authorizeModule('censo', 4), async (req, res) => {
     const pesquisaId = req.query.pesquisa_id;
     if (!pesquisaId) return res.status(400).json({ error: 'pesquisa_id é obrigatório' });
     const { linhas, esperado, truncado } = await baseDoPotencial(pesquisaId);
+    // ⚠️⚠️ Quem CONSTA como formado no Next — para marcar quem respondeu "não
+    // fiz" e o sistema discorda (22 pessoas, medido em 21/09). É SELO e não
+    // filtro: 250 responderam "sim" sem constar na view, então "não consta" não
+    // prova nada. `vw_next_formado_pessoa` é a fonte única do "fez o Next" —
+    // nunca `next_matriculas.status`.
+    const formados = new Set();
+    try {
+      const fs = await fetchAllRows(() => supabase
+        .from('vw_next_formado_pessoa').select('membro_id').not('membro_id', 'is', null).order('membro_id'));
+      for (const f of fs) formados.add(f.membro_id);
+    } catch { /* best-effort: sem o selo a lista ainda serve */ }
+
     // ⚠️ `pode_exportar` viaja na resposta porque o CSV é gerado no cliente. A
     // flag existe na matriz de permissões e HOJE não é aplicada em lugar nenhum
     // da API — de 34 cargos com nível >= 2 no censo, só "Dev" a tem. Sem mandá-la,
     // o botão de exportar apareceria para quem a matriz diz que não pode.
     res.json({
-      ...montarPotencial(linhas),
+      ...montarPotencial(linhas, formados),
       base: linhas.length,
       esperado,
       truncado,
       pode_exportar: podeExportar(req.user, 'censo'),
     });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+
+// Encaminhar alguém da lista de Potencial para a FILA DE CUIDADO do censo.
+//
+// Pedido do Matheus (21/09/2026), depois de ver a lista pronta: *"pode fazer o
+// botao de mandar pra fila"*.
+//
+// ⚠️⚠️ VAI PARA `cen_cuidado` E NÃO PARA `cui_batismo_next_fila`, e a troca é
+// MEDIDA, não preferência. A fila de batismo exige `convertido_id` com FK para
+// `cui_convertidos` — e dos 178 convertidos do censo **só 18 existem lá**.
+// Criar os outros 160 ali teria um custo que ninguém pediu: `cui_convertidos`
+// alimenta os KPIs `cuidados.convertidos_pos_culto` e `cuidados.reuniao_aceita_pct`,
+// que contam POR `data_culto` e **não filtram origem nenhuma** (nem o campo
+// `tags`, que existe e nunca foi usado). 160 linhas novas derrubariam os dois
+// percentuais de uma vez, porque gente do censo não foi "atendida após o culto"
+// nem tem "encontro marcado". Conserto seria mexer no coletor de outro módulo.
+//
+// `cen_cuidado` é a fila DO PRÓPRIO CENSO: já existe, já tem os 4 status, já
+// tem a aba Cuidado lendo, e liga na `resposta_id` — que é exatamente a prova
+// de onde a pessoa veio.
+//
+// ⚠️ Nível 4 e NÃO `guardaCuidado`: quem já vê o nome e o telefone na lista pode
+// encaminhar. Exigir a guarda deixaria o botão visível para as 3 pessoas de
+// `cen_acesso_sensivel` — que já leem a fila direto e não precisam dele.
+// ENCAMINHAR para a fila e TRABALHAR a fila são atos diferentes.
+router.post('/potencial/cuidado', authorizeModule('censo', 4), async (req, res) => {
+  try {
+    const respostaId = String(req.body?.resposta_id || '').trim();
+    const tipo = String(req.body?.tipo || 'conversa').trim();
+    if (!respostaId) return res.status(400).json({ error: 'resposta_id é obrigatório' });
+    // Espelha o CHECK da tabela — mandar valor fora da lista devolveria um erro
+    // cru do Postgres na cara de quem clicou.
+    if (!['familiar', 'aconselhamento', 'oracao', 'conversa'].includes(tipo)) {
+      return res.status(400).json({ error: 'Tipo inválido' });
+    }
+
+    const { data: r, error: eR } = await supabase
+      .from('cen_resposta').select('id, pesquisa_id, membro_id')
+      .eq('id', respostaId).is('deleted_at', null).maybeSingle();
+    if (eR) return res.status(400).json({ error: eR.message });
+    if (!r) return res.status(404).json({ error: 'Resposta não encontrada' });
+
+    // ⚠️⚠️ `cen_cuidado` NÃO TEM UNIQUE. Sem esta checagem, dois cliques (ou
+    // duas pessoas trabalhando a mesma lista) criam duas linhas para a mesma
+    // pessoa, e a coordenadora liga duas vezes. Só conta o que está EM ABERTO:
+    // quem já foi atendido e voltou a aparecer na lista pode ser encaminhado de
+    // novo — é caso novo, não duplicata.
+    const { data: jaTem } = await supabase
+      .from('cen_cuidado').select('id, status')
+      .eq('resposta_id', respostaId).eq('tipo', tipo)
+      .in('status', ['aberto', 'em_contato'])
+      .maybeSingle();
+    if (jaTem) return res.status(200).json({ ok: true, ja_estava: true, id: jaTem.id });
+
+    const { data, error } = await supabase.from('cen_cuidado').insert({
+      pesquisa_id: r.pesquisa_id,
+      resposta_id: r.id,
+      membro_id: r.membro_id || null,
+      tipo,
+      status: 'aberto',
+      observacao: limpar(req.body?.observacao) || null,
+    }).select('id').maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ok: true, ja_estava: false, id: data?.id || null });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

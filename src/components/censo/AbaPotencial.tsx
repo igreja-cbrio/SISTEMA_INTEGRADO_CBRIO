@@ -22,6 +22,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
   Loader2, Target, Download, MessageCircle, AlertTriangle, Search, Lock, Baby, Users, Droplets,
+  HeartHandshake, Check, GraduationCap, HandHeart,
 } from 'lucide-react';
 import EmptyState from '@/components/EmptyState';
 import { hrefWhatsapp } from '@/lib/conversas';
@@ -33,10 +34,11 @@ type Pessoa = {
   resposta_id: string; membro_id: string | null;
   nome: string | null; telefone: string | null; email: string | null;
   whatsapp: 'autorizou' | 'recusou' | 'nao_perguntado';
-  filhos_quantos: number | null; faixas: string[];
+  filhos_quantos: number | null; faixas: string[]; consta_formado_next?: boolean;
 };
 type Dados = {
   kids_nao?: Pessoa[]; kids_parcial?: Pessoa[]; ami?: Pessoa[]; bridge?: Pessoa[]; convertidos?: Pessoa[];
+  nao_fez_next?: Pessoa[]; nao_serve?: Pessoa[];
   totais: Record<string, number>; familias_distintas: number;
   base: number; esperado: number; truncado: boolean; pode_exportar?: boolean;
 };
@@ -54,22 +56,35 @@ const SECOES = [
     sub: 'Já leva algum filho ao CBKids, mas não todos. A conversa aqui é outra.',
   },
   {
-    id: 'ami', titulo: 'Potencial AMI', icone: Users,
+    id: 'bridge', titulo: 'Potencial Bridge', icone: Users,
     sub: 'Tem filho de 13 a 17 anos.',
     // ⚠️ A ressalva é da FONTE, não da tela: o censo pergunta se os filhos
     // frequentam o CBKids e NÃO pergunta de AMI nem de Bridge. Declarar isso é
     // o que impede a lista ser lida como "estes não frequentam".
-    ressalva: 'O censo não pergunta se eles já frequentam o AMI — esta lista inclui quem já está lá.',
+    ressalva: 'O censo não pergunta se eles já frequentam o Bridge — esta lista inclui quem já está lá.',
   },
   {
-    id: 'bridge', titulo: 'Potencial Bridge', icone: Users,
+    id: 'ami', titulo: 'Potencial AMI', icone: Users,
     sub: 'Tem filho de 18 a 25 anos.',
-    ressalva: 'O censo não pergunta se eles já frequentam o Bridge — esta lista inclui quem já está lá.',
+    ressalva: 'O censo não pergunta se eles já frequentam o AMI — esta lista inclui quem já está lá.',
   },
   {
     id: 'convertidos', titulo: 'Convertidos não batizados', icone: Droplets,
     sub: 'Entregou a vida a Jesus e respondeu que ainda não foi batizado.',
     ressalva: 'É o que a pessoa declarou no censo. Quem foi batizado em outra igreja pode aparecer aqui.',
+  },
+  {
+    id: 'nao_fez_next', titulo: 'Ainda não fizeram o Next', icone: GraduationCap,
+    sub: 'Respondeu que ainda não fez o Next.',
+    // ⚠️ A ressalva carrega o número REAL da discordância, não uma vaga. 22
+    // pessoas desta lista constam como formadas no sistema, e elas aparecem
+    // marcadas linha a linha.
+    ressalva: 'É o que a pessoa declarou. Quem o sistema registra como formado aparece marcado — confira antes de ligar.',
+  },
+  {
+    id: 'nao_serve', titulo: 'Ainda não servem', icone: HandHeart,
+    sub: 'Respondeu que ainda não serve na CBRio.',
+    ressalva: 'É o que a pessoa declarou no censo, não o que a escala registra.',
   },
 ] as const;
 
@@ -85,6 +100,11 @@ export default function AbaPotencial({ pesquisaId, nivel }: { pesquisaId: string
   const [carregando, setCarregando] = useState(true);
   const [busca, setBusca] = useState('');
   const [aberta, setAberta] = useState<string | null>('kids_nao');
+  // ⚠️ Marca só o que ESTA sessão encaminhou. O servidor é quem sabe de verdade
+  // (e responde `ja_estava` quando alguém já mandou), mas recarregar a lista
+  // inteira a cada clique tiraria a pessoa do lugar onde ela estava lendo.
+  const [naFila, setNaFila] = useState<Record<string, boolean>>({});
+  const [enviando, setEnviando] = useState<string | null>(null);
 
   // ⚠️ Nível 4 pede a lista; nível 2 pede só o resumo. Pedir a lista sem ter
   // nível levaria 403 e a tela mostraria erro vermelho para uma pessoa que está
@@ -122,6 +142,19 @@ export default function AbaPotencial({ pesquisaId, nivel }: { pesquisaId: string
       `censo_${secaoId}`,
     );
     toast.success(`${lista.length} linha(s) · ${titulo}`);
+  }
+
+  async function mandarParaCuidado(p: Pessoa, motivo: string) {
+    setEnviando(p.resposta_id);
+    try {
+      const r = await censo.potencialParaCuidado(p.resposta_id, 'conversa', motivo);
+      setNaFila((m) => ({ ...m, [p.resposta_id]: true }));
+      // ⚠️ `ja_estava` NÃO é erro: é alguém (ou você mesmo) já ter encaminhado.
+      // Mostrar vermelho aqui faria a pessoa tentar de novo e achar que quebrou.
+      toast.success(r?.ja_estava ? `${p.nome || 'Pessoa'} já estava na fila` : `${p.nome || 'Pessoa'} foi para a fila de cuidado`);
+    } catch (e: unknown) {
+      toast.error(e instanceof Error ? e.message : 'Não foi possível encaminhar');
+    } finally { setEnviando(null); }
   }
 
   if (!pesquisaId) {
@@ -249,6 +282,11 @@ export default function AbaPotencial({ pesquisaId, nivel }: { pesquisaId: string
                               {p.faixas?.length ? ` · ${p.faixas.join(', ')}` : ''}
                             </p>
                           </div>
+                          {p.consta_formado_next && (
+                            <Badge variant="outline" className="text-xs text-amber-700 dark:text-amber-500">
+                              consta como formado no Next
+                            </Badge>
+                          )}
                           {p.whatsapp === 'recusou' && (
                             <Badge variant="outline" className="text-xs">
                               pediu para não receber WhatsApp — ligue
@@ -266,6 +304,20 @@ export default function AbaPotencial({ pesquisaId, nivel }: { pesquisaId: string
                               </a>
                             </Button>
                           )}
+                          {/* ⚠️ Vai para `cen_cuidado`, a fila DO CENSO — não
+                              para a fila de batismo, que exige FK em
+                              `cui_convertidos` (só 18 dos 178 existem lá) e
+                              cujos KPIs contam por data de culto. */}
+                          <Button size="sm" variant="ghost"
+                            disabled={enviando === p.resposta_id || naFila[p.resposta_id]}
+                            onClick={() => mandarParaCuidado(p, `Veio da lista "${s.titulo}" do censo.`)}>
+                            {enviando === p.resposta_id
+                              ? <Loader2 className="size-4 mr-1.5 animate-spin" />
+                              : naFila[p.resposta_id]
+                                ? <Check className="size-4 mr-1.5" />
+                                : <HeartHandshake className="size-4 mr-1.5" />}
+                            {naFila[p.resposta_id] ? 'na fila' : 'Cuidado'}
+                          </Button>
                         </div>
                       );
                     })}
