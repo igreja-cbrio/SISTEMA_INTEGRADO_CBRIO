@@ -11,7 +11,7 @@
 // Já aconteceu duas vezes neste repositório (divisorMandala 24/08,
 // promptDiagnostico 31/08).
 import { describe, it, expect } from 'vitest';
-const { semanaAnteriorBRT, somarViews, DIAS_CONSOLIDACAO } = require('../../backend/utils/semanaOnline');
+const { semanaAnteriorBRT, somarViews, compararSemanas, DIAS_CONSOLIDACAO } = require('../../backend/utils/semanaOnline');
 
 function comFuso<T>(tz: string, fn: () => T): T {
   const antes = process.env.TZ;
@@ -138,5 +138,58 @@ describe('⚠️⚠️ somarViews · ausência NUNCA vira zero', () => {
   it('aceita data com timestamp (o PostgREST pode devolver assim)', () => {
     const r = somarViews([{ data: '2026-09-15T00:00:00+00:00', views: 50 }], '2026-09-14', '2026-09-20');
     expect(r.views).toBe(50);
+  });
+});
+
+describe('⚠️⚠️ compararSemanas · só semana COMPLETA vira percentual', () => {
+  it('o caso REAL de 21/09: 5 dias contra 7 NÃO vira -55%', () => {
+    // Medido em produção: a semana 14–20/09 tinha 5 de 7 dias (6.151) e a
+    // retrasada 7 de 7 (13.613). O percentual ingênuo daria -55% — e a "queda"
+    // seria inteiramente inventada pela Analytics, que ainda não tinha
+    // entregado sábado e domingo, os dias de maior audiência.
+    const r = compararSemanas({ views: 6151, dias_com_dado: 5 }, { views: 13613, dias_com_dado: 7 });
+    expect(r.pode).toBe(false);
+    expect(r.motivo).toBe('semana_incompleta');
+    expect(r.percentual).toBeUndefined();
+  });
+
+  it('com as duas completas, devolve percentual e absoluto', () => {
+    const r = compararSemanas({ views: 13613, dias_com_dado: 7 }, { views: 7820, dias_com_dado: 7 });
+    expect(r.pode).toBe(true);
+    expect(r.absoluto).toBe(5793);
+    expect(r.percentual).toBe(74.1);
+  });
+
+  it('queda real entre semanas completas é reportada', () => {
+    const r = compararSemanas({ views: 800, dias_com_dado: 7 }, { views: 1000, dias_com_dado: 7 });
+    expect(r.pode).toBe(true);
+    expect(r.percentual).toBe(-20);
+  });
+
+  it('⚠️ semana ANTERIOR incompleta também bloqueia', () => {
+    const r = compararSemanas({ views: 1000, dias_com_dado: 7 }, { views: 500, dias_com_dado: 4 });
+    expect(r.pode).toBe(false);
+    expect(r.motivo).toBe('anterior_incompleta');
+  });
+
+  it('⚠️⚠️ base ZERO não vira +∞ nem +100%', () => {
+    // Não há base para percentual; inventar um faria o card afirmar um
+    // crescimento que ninguém consegue conferir.
+    const r = compararSemanas({ views: 100, dias_com_dado: 7 }, { views: 0, dias_com_dado: 7 });
+    expect(r.pode).toBe(false);
+    expect(r.motivo).toBe('base_zero');
+    expect(r.absoluto).toBe(100);
+  });
+
+  it('⚠️ sem dado nenhum não compara', () => {
+    expect(compararSemanas({ views: null, dias_com_dado: 0 }, { views: 100, dias_com_dado: 7 }).pode).toBe(false);
+    expect(compararSemanas(null as any, null as any).pode).toBe(false);
+  });
+
+  it('semana completa com zero views compara normalmente', () => {
+    // 0 é DADO (7 dias coletados, ninguém assistiu) — diferente de não coletado.
+    const r = compararSemanas({ views: 0, dias_com_dado: 7 }, { views: 500, dias_com_dado: 7 });
+    expect(r.pode).toBe(true);
+    expect(r.percentual).toBe(-100);
   });
 });

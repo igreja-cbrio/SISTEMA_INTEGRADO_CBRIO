@@ -111,4 +111,45 @@ function somarViews(linhas, inicio, fim) {
   };
 }
 
-module.exports = { DIAS_CONSOLIDACAO, hojeBRT, semanaAnteriorBRT, somarViews };
+/**
+ * Variação entre duas semanas.
+ *
+ * ⚠️⚠️ SÓ COMPARA SEMANA COMPLETA CONTRA SEMANA COMPLETA. É a trava central
+ * desta função, e o dado de 21/09/2026 mostra por quê: a semana passada tinha
+ * **5 de 7 dias** coletados (6.151) e a retrasada **7 de 7** (13.613) — o
+ * percentual ingênuo daria **-55%**, e a queda seria inteiramente inventada
+ * pela Analytics do YouTube, que fecha o dia com alguns dias de atraso e ainda
+ * não tinha entregado sábado e domingo, os de maior audiência.
+ *
+ * Um card que anuncia "-55%" numa semana que na verdade cresceu não volta a
+ * ser lido. Sem as duas completas, devolve o MOTIVO em vez do número.
+ *
+ * ⚠️ A variação vem com `absoluto` ao lado de propósito: feriado, evento
+ * especial e semana com 4 ou 5 cultos movem o percentual sem dizer nada sobre
+ * desempenho (oscilação medida entre semanas completas: +74%).
+ */
+function compararSemanas(atual, anterior) {
+  const completa = (s) => s && s.views != null && s.dias_com_dado === 7;
+
+  if (!completa(atual)) {
+    return { pode: false, motivo: 'semana_incompleta', dias_com_dado: atual?.dias_com_dado ?? 0 };
+  }
+  if (!completa(anterior)) {
+    return { pode: false, motivo: 'anterior_incompleta', dias_com_dado: anterior?.dias_com_dado ?? 0 };
+  }
+  // ⚠️ Semana anterior ZERADA não vira "+∞" nem "+100%": não há base para
+  // percentual, e inventar um faria o card afirmar um crescimento que ninguém
+  // pode conferir.
+  if (anterior.views === 0) {
+    return { pode: false, motivo: 'base_zero', absoluto: atual.views };
+  }
+
+  const absoluto = atual.views - anterior.views;
+  return {
+    pode: true,
+    absoluto,
+    percentual: Number(((absoluto / anterior.views) * 100).toFixed(1)),
+  };
+}
+
+module.exports = { DIAS_CONSOLIDACAO, hojeBRT, semanaAnteriorBRT, somarViews, compararSemanas };

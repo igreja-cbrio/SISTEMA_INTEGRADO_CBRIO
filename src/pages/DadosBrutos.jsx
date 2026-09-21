@@ -53,7 +53,11 @@ const QUICK_LOG_POR_AREA = {
   sede:   ['atend_capelania_recebidas', 'atend_capelania_atendidas', 'atend_aconselh_recebidas', 'atend_aconselh_atendidas'],
   // O Online atende fora do sistema (pedido do Matheus em 21/09) e também
   // acompanha os números do YouTube que nenhum coletor traz.
-  online: ['atend_capelania_recebidas', 'atend_capelania_atendidas', 'atend_aconselh_recebidas', 'atend_aconselh_atendidas', 'youtube_comentarios_relevantes', 'youtube_comentarios_total'],
+  // ⚠️ O Online atende fora do sistema (21/09) e ainda precisa declarar grupos
+  // e generosidade: o automático de grupos conta sempre o número de HOJE (não
+  // sabe responder "quantos havia em março") e a base nominal de contribuições
+  // parou em junho. Ver a migration 20260921190000.
+  online: ['atend_capelania_recebidas', 'atend_capelania_atendidas', 'atend_aconselh_recebidas', 'atend_aconselh_atendidas', 'grupos_ativos_declarado', 'doacoes_valor_declarado'],
   cba:    ['atend_capelania_recebidas', 'atend_capelania_atendidas', 'atend_aconselh_recebidas', 'atend_aconselh_atendidas'],
 };
 
@@ -87,6 +91,13 @@ const TIPO_VISUAL = {
   atend_capelania_atendidas: { Icon: HandHelping, cor: '#06B6D4', label: 'Capelania · atendidos' },
   atend_aconselh_recebidas:  { Icon: HandHelping, cor: '#06B6D4', label: 'Aconselhamento · pedidos' },
   atend_aconselh_atendidas:  { Icon: HandHelping, cor: '#06B6D4', label: 'Aconselhamento · atendidos' },
+  // Declarados: o automático existe mas não responde a pergunta (grupos é
+  // retrato de hoje) ou a fonte parou (contribuições, desde junho).
+  grupos_ativos_declarado:        { Icon: Users,     cor: '#EC4899', label: 'Grupos ativos (declarado)' },
+  lideres_treinamento_declarado:  { Icon: Users,     cor: '#EC4899', label: 'Líderes em treinamento (declarado)' },
+  doacoes_valor_declarado:        { Icon: HandCoins, cor: '#F59E0B', label: 'Arrecadado (declarado)' },
+  doadores_count_declarado:       { Icon: HandCoins, cor: '#F59E0B', label: 'Doadores (declarado)' },
+  doadores_recorrentes_declarado: { Icon: HandCoins, cor: '#F59E0B', label: 'Doadores recorrentes (declarado)' },
   nps_geral:               { Icon: Smile,         cor: '#06B6D4', label: 'NPS geral' },
   nps_next:                { Icon: Smile,         cor: '#06B6D4', label: 'NPS Next' },
   nps_lideres:             { Icon: Smile,         cor: '#06B6D4', label: 'NPS líderes' },
