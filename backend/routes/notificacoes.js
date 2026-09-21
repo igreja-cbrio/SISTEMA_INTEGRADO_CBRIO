@@ -17,7 +17,24 @@ router.get('/cron', async (req, res) => {
   }
   try {
     const total = await gerarTodasNotificacoes();
-    res.json({ success: true, geradas: total });
+
+    // ⚠️⚠️ CARONA: a escada de lembretes da ficha da CONTRATADA roda aqui, sem
+    // slot próprio — a Vercel está com 47 crons, no teto do plano.
+    //
+    // ⚠️ BLOCO PROTEGIDO, e isso não é zelo genérico: falhar a cobrança NÃO
+    // pode derrubar o gerador de notificações, que é o trabalho principal desta
+    // execução e alimenta o sino de todo mundo. O resultado vai na resposta
+    // para o incidente aparecer, em vez de sumir num catch mudo.
+    let fichaContratada = null;
+    try {
+      const { cobrancaDiariaFichaContratada } = require('./rh');
+      fichaContratada = await cobrancaDiariaFichaContratada();
+    } catch (err) {
+      console.error('[Cron] cobrança da ficha da contratada:', err.message);
+      fichaContratada = { erro: err.message };
+    }
+
+    res.json({ success: true, geradas: total, ficha_contratada: fichaContratada });
   } catch (e) {
     console.error('[Cron] Erro:', e.message);
     res.status(500).json({ error: e.message });

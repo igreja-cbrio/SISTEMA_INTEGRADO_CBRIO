@@ -8,6 +8,7 @@ const { ehContratada, estadoFicha, bloqueioFolha } = require('../utils/fichaCont
 // apontar pro domínio da Vercel — e já houve link de `localhost` entregue a uma
 // líder por WhatsApp. Este link vai pro WhatsApp de prestador externo.
 const { basePublica } = require('../utils/linkInscricaoApp');
+const rhFichaEnvios = require('../services/rhFichaEnvios');
 // ⚠️ 30 dias: o link carrega dado bancário e o `onboarding_token` irmão, que
 // NÃO expira, deixou 33 tokens de agosto vivos até hoje. Renovar é 1 clique.
 const DIAS_VALIDADE_FICHA = 30;
@@ -1327,6 +1328,35 @@ router.get('/ficha-contratada/pendentes', authorizeModule('rh', 2), async (req, 
   }
 });
 
+// POST /api/rh/ficha-contratada/cobrar — dispara a rodada de cobrança.
+//
+// ⚠️ Nível 4: é comunicação em massa com prestador externo, e a lição do censo
+// (04/08) é que falar com N pessoas pelo canal institucional é decisão de outro
+// peso que editar cadastro. `?seco=1` mostra quem entraria SEM enviar nada.
+router.post('/ficha-contratada/cobrar', authorizeModule('rh', 4), async (req, res) => {
+  try {
+    const seco = req.query.seco === '1' || req.body?.seco === true;
+    const r = await rhFichaEnvios.dispararCobranca({ seco });
+    // ⚠️ Canal ausente responde 503, NUNCA 200 com zero envio: caixa verde
+    // dizendo "disparado" sem ninguém receber foi o incidente do censo.
+    if (r.erro) return res.status(503).json(r);
+    res.json(r);
+  } catch (e) {
+    console.error('[RH] ficha-contratada/cobrar:', e.message);
+    res.status(500).json({ error: 'Erro ao disparar a cobrança.' });
+  }
+});
+
+// POST /api/rh/ficha-contratada/cobrar (CRON) — a escada de lembretes.
+//
+// ⚠️⚠️ SEM SLOT NOVO: a Vercel está com 47 crons, no teto do plano. Este disparo
+// pega CARONA no cron diário de notificações (`/api/notificacoes/cron`, 0 9 * * *)
+// e roda em BLOCO PROTEGIDO lá — falhar aqui não pode derrubar o gerador de
+// notificações, que é o trabalho principal daquela execução.
+async function cobrancaDiaria() {
+  return rhFichaEnvios.dispararCobranca({});
+}
+
 // POST /api/rh/funcionarios/:id/onboarding-link — gera (ou reusa) o link público
 // do formulário de dados pessoais pra mandar pro colaborador preencher. O RH só
 // cuida de salário/cargo; os dados pessoais vêm do próprio colaborador.
@@ -2484,3 +2514,5 @@ router.post('/avaliacoes/iniciar-ciclo', async (req, res) => {
 });
 
 module.exports = router;
+// ⚠️ Exportado para o cron de notificações chamar de carona (sem slot novo).
+module.exports.cobrancaDiariaFichaContratada = cobrancaDiaria;
