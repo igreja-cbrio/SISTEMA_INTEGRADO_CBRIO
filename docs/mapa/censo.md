@@ -12,7 +12,7 @@
 ## Backend
 - `backend/routes/censo.js`
 Guard: `authorizeModule('censo', 1 | 2 | 4 | 5)`
-<details><summary>Endpoints (24)</summary>
+<details><summary>Endpoints (26)</summary>
 - `DELETE /api/censo/pesquisas/:id`
 - `DELETE /api/censo/respostas/:id`
 - `GET /api/censo/aux`
@@ -26,6 +26,8 @@ Guard: `authorizeModule('censo', 1 | 2 | 4 | 5)`
 - `GET /api/censo/perfil/mapa`
 - `GET /api/censo/pesquisas`
 - `GET /api/censo/pesquisas/:id`
+- `GET /api/censo/potencial`
+- `GET /api/censo/potencial/resumo`
 - `GET /api/censo/relatorio`
 - `GET /api/censo/respostas`
 - `GET /api/censo/respostas/:id`
@@ -44,9 +46,11 @@ Guard: `authorizeModule('censo', 1 | 2 | 4 | 5)`
 - `backend/utils/censoCampoCadastro.js`
 - `backend/utils/censoGrafico.js`
 - `backend/utils/censoPerguntas.js`
+- `backend/utils/censoPotencial.js`
 - `backend/utils/censoRelatorioDados.js`
 - `backend/utils/cronAuth.js`
 - `backend/utils/pagination.js`
+- `backend/utils/podeExportar.js`
 - `backend/utils/supabase.js`
 
 **Serviços**

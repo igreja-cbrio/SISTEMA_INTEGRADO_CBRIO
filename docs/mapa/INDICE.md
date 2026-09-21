@@ -74,7 +74,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **181** arquivos, **165** com teste.
+`backend/utils/` tem **183** arquivos, **167** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -120,6 +120,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/censoGrafico.js` | `src/test/censoGrafico.test.ts` |
 | `backend/utils/censoIaFiltro.js` | `src/test/censoIaSemPerguntaAberta.test.ts` `src/test/censoIaSemPii.test.ts` |
 | `backend/utils/censoPerguntas.js` | `src/test/censoConsentimento.test.ts` `src/test/censoFormEspelho.test.ts` `src/test/censoPerguntas.test.ts` `src/test/censoQuestionario2026.test.ts` |
+| `backend/utils/censoPotencial.js` | `src/test/censoPotencial.test.ts` |
 | `backend/utils/censoPrefill.js` | `src/test/censoPrefill.test.ts` `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/censoRelatorioDados.js` | `src/test/censoRelatorioDados.test.ts` `src/test/censoRelatorioMaterial.test.ts` |
 | `backend/utils/censoRespostaToken.js` | `src/test/censoRespostaToken.test.ts` |
@@ -214,6 +215,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/periodoDoacoes.js` | `src/test/periodoDoacoes.test.ts` |
 | `backend/utils/periodoYtd.js` | `src/test/periodoYtd.test.ts` |
 | `backend/utils/pessoaDiretaCampos.js` | `src/test/grupoPessoaDireta.test.ts` |
+| `backend/utils/podeExportar.js` | `src/test/censoPotencial.test.ts` |
 | `backend/utils/portaFluxos.js` | — |
 | `backend/utils/primeiroContatoRegua.js` | `src/test/primeiroContatoRegua.test.ts` |
 | `backend/utils/prontidaoCadastro.js` | `src/test/cadastroPessoaCompleto.test.ts` `src/test/prontidaoCadastro.test.ts` |

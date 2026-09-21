@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-435 arquivos.
+437 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -184,6 +184,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/censoGrafico.js` | régua pura | — | `src/test/censoGrafico.test.ts` |
 | `backend/utils/censoIaFiltro.js` | régua pura | — | `src/test/censoIaSemPerguntaAberta.test.ts` |
 | `backend/utils/censoPerguntas.js` | régua pura | — | `src/test/censoConsentimento.test.ts` |
+| `backend/utils/censoPotencial.js` | régua pura | — | `src/test/censoPotencial.test.ts` |
 | `backend/utils/censoPrefill.js` | régua pura | — | `src/test/censoPrefill.test.ts` |
 | `backend/utils/censoRelatorioDados.js` | régua pura | — | `src/test/censoRelatorioDados.test.ts` |
 | `backend/utils/censoRespostaToken.js` | régua pura | — | `src/test/censoRespostaToken.test.ts` |
@@ -278,6 +279,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/periodoDoacoes.js` | régua pura | — | `src/test/periodoDoacoes.test.ts` |
 | `backend/utils/periodoYtd.js` | régua pura | — | `src/test/periodoYtd.test.ts` |
 | `backend/utils/pessoaDiretaCampos.js` | régua pura | — | `src/test/grupoPessoaDireta.test.ts` |
+| `backend/utils/podeExportar.js` | régua pura | — | `src/test/censoPotencial.test.ts` |
 | `backend/utils/portaFluxos.js` | régua pura | — | `SEM TESTE` |
 | `backend/utils/primeiroContatoRegua.js` | régua pura | — | `src/test/primeiroContatoRegua.test.ts` |
 | `backend/utils/prontidaoCadastro.js` | régua pura | — | `src/test/cadastroPessoaCompleto.test.ts` |
