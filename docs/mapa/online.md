@@ -16,7 +16,7 @@
 ## Backend
 - `backend/routes/online.js`
 Guard: `authorizeModule('online', 3)`
-<details><summary>Endpoints (40)</summary>
+<details><summary>Endpoints (41)</summary>
 - `GET /api/online/aceitacoes`
 - `GET /api/online/cron/backfill-cultos`
 - `GET /api/online/cron/catch-up`
@@ -54,6 +54,7 @@ Guard: `authorizeModule('online', 3)`
 - `POST /api/online/coletar/sub-status`
 - `POST /api/online/coletar/subs`
 - `POST /api/online/coletar/trafego`
+- `POST /api/online/coletar/views-dia`
 - `POST /api/online/comunidade-mensal`
 - `POST /api/online/oauth/disconnect`
 - `POST /api/online/sync`

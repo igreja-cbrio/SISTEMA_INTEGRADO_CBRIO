@@ -200,7 +200,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/cpf.js` | régua pura | — | `src/test/censoFormEspelho.test.ts` |
 | `backend/utils/cpfResponsavel.js` | régua pura | — | `src/test/cpfResponsavel.test.ts` |
 | `backend/utils/criancaApresentacao.js` | régua pura | — | `src/test/cultoApresentacao.test.ts` |
-| `backend/utils/cronAuth.js` | régua pura | — | `src/test/portasPublicasPii.test.ts` |
+| `backend/utils/cronAuth.js` | régua pura | — | `src/test/cronSecretHeader.test.ts` |
 | `backend/utils/cultoJanela.js` | régua pura | — | `src/test/cultoJanela.test.ts` |
 | `backend/utils/cultoToken.js` | régua pura | — | `src/test/checkinAutoatendimento.test.ts` |
 | `backend/utils/cursorLote.js` | régua pura | — | `src/test/cursorLote.test.ts` |

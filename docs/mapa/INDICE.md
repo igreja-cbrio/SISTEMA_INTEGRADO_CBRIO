@@ -136,7 +136,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/cpf.js` | `src/test/censoFormEspelho.test.ts` `src/test/cpfResponsavel.test.ts` |
 | `backend/utils/cpfResponsavel.js` | `src/test/cpfResponsavel.test.ts` |
 | `backend/utils/criancaApresentacao.js` | `src/test/cultoApresentacao.test.ts` |
-| `backend/utils/cronAuth.js` | `src/test/portasPublicasPii.test.ts` |
+| `backend/utils/cronAuth.js` | `src/test/cronSecretHeader.test.ts` `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/cultoJanela.js` | `src/test/cultoJanela.test.ts` |
 | `backend/utils/cultoToken.js` | `src/test/checkinAutoatendimento.test.ts` `src/test/cultoToken.test.ts` `src/test/decisaoToken.test.ts` |
 | `backend/utils/cursorLote.js` | `src/test/cursorLote.test.ts` |
