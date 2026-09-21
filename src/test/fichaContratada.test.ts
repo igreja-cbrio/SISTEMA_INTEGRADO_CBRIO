@@ -117,6 +117,21 @@ describe('normalizarFicha', () => {
 });
 
 describe('semSegredos · o que NUNCA sai numa resposta pública', () => {
+  it('⚠️⚠️ IP e user-agent do aceite NÃO saem — o link é encaminhável', () => {
+    // Achado no teste ponta a ponta contra produção: eles voltavam no GET, e
+    // quem recebesse o link repassado via o IP de quem preencheu. É lastro de
+    // auditoria, não informação de tela.
+    const fora: any = semSegredos({
+      ...OK, aceite_em: '2026-09-21T12:00:00Z', aceite_texto: 'Declaro...',
+      aceite_ip: '189.113.142.122', aceite_user_agent: 'Mozilla/5.0',
+    });
+    expect(fora).not.toHaveProperty('aceite_ip');
+    expect(fora).not.toHaveProperty('aceite_user_agent');
+    // ⚠️ mas o que a pessoa precisa saber FICA
+    expect(fora.aceite_em).toBeTruthy();
+    expect(fora.aceite_texto).toBeTruthy();
+  });
+
   it('⚠️⚠️ banco, conta, PIX e CPF do representante não saem', () => {
     // O link vai por WhatsApp e é encaminhável. Devolver o que já está gravado
     // — o padrão da porta irmã — transforma link repassado em ficha bancária.

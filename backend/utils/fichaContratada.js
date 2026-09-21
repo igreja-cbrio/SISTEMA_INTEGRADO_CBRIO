@@ -187,7 +187,16 @@ function normalizarFicha(ficha) {
  * banco/conta/PIX ao payload transforma um link repassado na ficha bancária
  * completa do prestador. Estes campos são **write-only pela porta pública**.
  */
-const NUNCA_NO_PUBLICO = ['banco', 'agencia', 'conta', 'conta_tipo', 'pix_chave', 'pix_tipo', 'rep_cpf', 'conta_titular'];
+const NUNCA_NO_PUBLICO = [
+  'banco', 'agencia', 'conta', 'conta_tipo', 'pix_chave', 'pix_tipo', 'rep_cpf', 'conta_titular',
+  // ⚠️ IP e user-agent de quem assinou são LASTRO de auditoria, não informação
+  // para a tela. Achado no teste ponta a ponta contra produção (21/09): eles
+  // voltavam no GET, então quem recebesse o link ENCAMINHADO via o IP de quem
+  // preencheu — dado pessoal (LGPD art. 5º, I) exposto a terceiro, sem servir
+  // para nada. `aceite_em` e `aceite_texto` FICAM: a pessoa precisa saber que
+  // já aceitou e o que leu.
+  'aceite_ip', 'aceite_user_agent',
+];
 
 /** Remove do objeto tudo que não pode sair numa resposta pública. */
 function semSegredos(ficha) {
