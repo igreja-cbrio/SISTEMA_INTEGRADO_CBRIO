@@ -74,7 +74,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **187** arquivos, **171** com teste.
+`backend/utils/` tem **188** arquivos, **172** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -94,7 +94,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/apresentacaoHistorico.js` | `src/test/apresentacaoHistorico.test.ts` |
 | `backend/utils/apresentacaoHorario.js` | `src/test/apresentacaoHorario.test.ts` |
 | `backend/utils/assuntoGrupoConversa.js` | `src/test/assuntoGrupoConversa.test.ts` |
-| `backend/utils/atividadeVoluntario.js` | `src/test/atividadeVoluntario.test.ts` |
+| `backend/utils/atividadeVoluntario.js` | `src/test/agenteVolInativoIdErrado.test.ts` `src/test/atividadeVoluntario.test.ts` |
 | `backend/utils/authUsers.js` | `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/avaliacaoAnonimato.js` | `src/test/avaliacaoAnonimato.test.ts` |
 | `backend/utils/avisoAgregado.js` | `src/test/avisoAgregado.test.ts` |
@@ -199,6 +199,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/marketingSolicitante.js` | `src/test/marketingSolicitante.test.ts` |
 | `backend/utils/membrosPagina.js` | `src/test/membrosPagina.test.ts` |
 | `backend/utils/mlAvisoEntrega.js` | `src/test/mlAvisoEntrega.test.ts` |
+| `backend/utils/modeloIa.js` | `src/test/modeloIa.test.ts` |
 | `backend/utils/moduloDaAreaEvento.js` | `src/test/moduloDaAreaEvento.test.ts` |
 | `backend/utils/motivoFalha.js` | `src/test/motivoFalha.test.ts` |
 | `backend/utils/nextGestaoApp.js` | `src/test/nextGestaoApp.test.ts` |
