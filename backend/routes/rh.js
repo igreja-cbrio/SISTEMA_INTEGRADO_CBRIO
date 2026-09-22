@@ -339,6 +339,15 @@ router.get('/funcionarios/:id', async (req, res) => {
     ]);
 
     await preencherFotoDoPerfil(func);
+
+    // ⚠️⚠️ O estado da ficha da CONTRATADA vai PRONTO para a tela. A régua é a
+    // mesma do painel de pendentes e do bloqueio de pagamento — recalcular no
+    // front daria uma segunda resposta para "a ficha está completa?", e as duas
+    // divergiriam no primeiro campo novo.
+    // ⚠️ Calculado sobre a linha JÁ REDIGIDA: quem não pode ver o bloco
+    // confidencial recebe `preenchida:false`, que é honesto do ponto de vista
+    // dele — ele realmente não tem como saber.
+    func.ficha_estado = estadoFicha(func);
     res.json({
       ...ocultarConfidenciaisRh(req, func), // varredura 2026-09: RHP-03 — ficha devolvia cpf/salário/benefícios pra nível <4 (o front só pintava "•••")
       documentos: await assinarDocumentosRh(docs.data || []), // varredura 2026-09: RHP-01 caminho no bucket privado precisa virar URL assinada de 1h na leitura
@@ -373,9 +382,20 @@ function _docsNoTexto(s) {
 // ("caju lider pj+", NF com "CNPJ + razão"), muitas vezes SEM o nome.
 function _termosFuncionario(f) {
   const ad = f.admissao_dados || {};
+  // ⚠️⚠️ LEITURA DUPLA, e a ORDEM importa: a ficha da CONTRATADA (`ficha_contratada`,
+  // preenchida pelo próprio prestador) vem ANTES de `admissao_dados` (digitado
+  // pelo RH na admissão). Quem declara o próprio CNPJ é a empresa.
+  //
+  // Sem isto, a ficha nova seria gravada e a conciliação continuaria cega — que
+  // é justamente o consumidor que esta feature veio consertar: com `pj_cnpj`
+  // nulo em 31 de 32 PJ, o match cai em NOME com `includes` frouxo.
+  //
+  // ⚠️ `admissao_dados` FICA como fallback: o histórico está lá, e tirá-lo
+  // quebraria a conciliação de quem foi cadastrado antes da ficha existir.
+  const fc = f.ficha_contratada || {};
   const cpf = String(f.cpf || '').replace(/\D/g, '');
-  const cnpj = String(ad.pj_cnpj || '').replace(/\D/g, '');
-  const razao = _normFolha(ad.pj_razao_social);
+  const cnpj = String(fc.cnpj || ad.pj_cnpj || '').replace(/\D/g, '');
+  const razao = _normFolha(fc.razao_social || ad.pj_razao_social);
   const norm = _normFolha(f.nome);
   return {
     id: f.id,
@@ -410,7 +430,7 @@ function mesCorrenteBRT() {
 async function funcionariosSemPagamentoNoMes(mes) {
   const { data: funcs } = await supabase
     .from('rh_funcionarios')
-    .select('id, nome, cpf, admissao_dados')
+    .select('id, nome, cpf, admissao_dados, ficha_contratada')
     .eq('status', 'ativo')
     .is('deleted_at', null);
   const alvos = (funcs || []).map(_termosFuncionario);
@@ -482,7 +502,7 @@ router.get('/funcionarios/:id/pagamentos', async (req, res) => {
   try {
     if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão para ver pagamentos (exige RH nível ≥ 4).' });
 
-    let fq = supabase.from('rh_funcionarios').select('id, nome, salario, tipo_contrato, status, cpf, admissao_dados').eq('id', req.params.id);
+    let fq = supabase.from('rh_funcionarios').select('id, nome, salario, tipo_contrato, status, cpf, admissao_dados, ficha_contratada').eq('id', req.params.id);
     fq = applyAccessFilter(fq, req, 'rh', { areaColumn: 'area', ownerColumn: 'email', ownerEmail: true });
     const { data: func, error: fErr } = await fq.maybeSingle();
     if (fErr || !func) return res.status(404).json({ error: 'Funcionário não encontrado' });
@@ -584,7 +604,7 @@ router.post('/folha/auto-vincular', async (req, res) => {
     const planoIds = await planoPessoalIds();
     if (!planoIds.length) return res.json({ vinculados: 0, analisados: 0 });
 
-    const { data: funcs } = await supabase.from('rh_funcionarios').select('id, nome, cpf, admissao_dados').is('deleted_at', null);
+    const { data: funcs } = await supabase.from('rh_funcionarios').select('id, nome, cpf, admissao_dados, ficha_contratada').is('deleted_at', null);
     const alvos = (funcs || [])
       .map(_termosFuncionario)
       .filter(a => a.norm || a.razao || a.cpf || a.cnpj);
