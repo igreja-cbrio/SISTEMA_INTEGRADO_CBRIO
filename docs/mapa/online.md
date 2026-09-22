@@ -16,8 +16,9 @@
 ## Backend
 - `backend/routes/online.js`
 Guard: `authorizeModule('online', 3)`
-<details><summary>Endpoints (41)</summary>
+<details><summary>Endpoints (42)</summary>
 - `GET /api/online/aceitacoes`
+- `GET /api/online/canal-serie`
 - `GET /api/online/cron/backfill-cultos`
 - `GET /api/online/cron/catch-up`
 - `GET /api/online/cron/ddus-collect`
@@ -62,6 +63,7 @@ Guard: `authorizeModule('online', 3)`
 
 **Réguas puras (backend/utils)**
 
+- `backend/utils/canalSerie.js`
 - `backend/utils/cronAuth.js`
 - `backend/utils/decisaoToken.js`
 - `backend/utils/linkInscricaoApp.js`

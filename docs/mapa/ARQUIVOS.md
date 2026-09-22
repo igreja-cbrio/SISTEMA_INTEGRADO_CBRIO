@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-442 arquivos.
+443 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -178,6 +178,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/campoKey.js` | régua pura | — | `src/test/campoKey.test.ts` |
 | `backend/utils/camposCondicionais.js` | régua pura | — | `src/test/camposCondicionais.test.ts` |
 | `backend/utils/camposContato.js` | régua pura | — | `src/test/paginacaoExtrato.test.ts` |
+| `backend/utils/canalSerie.js` | régua pura | — | `src/test/canalSerie.test.ts` |
 | `backend/utils/capacidadeCulto.js` | régua pura | — | `src/test/capacidadeCulto.test.ts` |
 | `backend/utils/censoCampoCadastro.js` | régua pura | — | `src/test/censoCampoCadastro.test.ts` |
 | `backend/utils/censoConsentimento.js` | régua pura | — | `src/test/censoConsentimento.test.ts` |
