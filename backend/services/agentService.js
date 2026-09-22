@@ -1,4 +1,5 @@
 const { supabase } = require('../utils/supabase');
+const { modeloProvado } = require('../utils/modeloIa');
 
 // Preços por milhão de tokens (USD)
 const PRICING = {
@@ -170,10 +171,17 @@ class AgentService {
     });
   }
 
-  /** Atalho para Sonnet (análise profunda) */
+  /**
+   * Atalho para análise profunda.
+   *
+   * ⚠️ Era `claude-sonnet-4-20250514`, que a Anthropic descontinuou — em
+   * 22/09/2026 ele devolvia `not_found_error` e derrubou o assistente. Este
+   * ponto faz UMA chamada, sem laço de retry, então aponta para o modelo
+   * PROVADO em produção. Ver backend/utils/modeloIa.js.
+   */
   async callSonnet(system, userMessage, role = 'analysis') {
     return this.call({
-      model: 'claude-sonnet-4-20250514',
+      model: process.env.AGENTE_AI_MODEL || modeloProvado(),
       system,
       messages: [{ role: 'user', content: userMessage }],
       role,
