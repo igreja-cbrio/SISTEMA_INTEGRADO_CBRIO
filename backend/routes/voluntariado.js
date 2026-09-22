@@ -2575,18 +2575,31 @@ router.post('/check-ins', async (req, res) => {
     const nomeDigitado = (volunteer_name || '').trim().slice(0, 120) || null;
 
     // Hora real do check-in (preserva o horário de check-ins feitos OFFLINE no
-    // totem, que só chegam aqui na sincronização posterior). Aceita só uma data
-    // válida, não futura (tolera 5 min de skew) e dos últimos 7 dias; senão usa
-    // o default now() do banco.
+    // totem, que só chegam aqui na sincronização posterior).
+    //
+    // ⚠️⚠️ A JANELA ERA DE 7 DIAS E O DESCARTE ERA SILENCIOSO — data mais antiga
+    // caía no `now()` do banco SEM avisar ninguém. Pedido do Matheus (22/09/2026)
+    // depois do relato da Renata: *"a ariel deve conseguir fazer o checkin
+    // retroativo"*, porque os voluntários do Online servem mas não passam pelo
+    // check-in do lanche, e o mês anterior precisa ser corrigido. Com 7 dias, ela
+    // lançaria o mês inteiro e **tudo cairia no dia de hoje**, inflando setembro
+    // e deixando agosto vazio — o oposto do conserto, e sem erro na tela.
+    //
+    // ⚠️ O descarte continua sendo FALLBACK e não 400, porque o totem offline
+    // manda datas antigas e derrubá-lo seria trocar um silêncio por uma quebra.
+    // O que muda é que a resposta passa a DIZER que a data foi ignorada
+    // (`data_ajustada`), então quem lança na mão descobre em vez de supor.
+    const JANELA_RETROATIVA_MS = 60 * 24 * 60 * 60 * 1000;
     let checkedInAt = null;
+    let dataAjustada = false;
     if (checked_in_at) {
       const t = new Date(checked_in_at);
       const ms = t.getTime();
-      if (!Number.isNaN(ms)) {
-        const now = Date.now();
-        if (ms <= now + 5 * 60 * 1000 && ms >= now - 7 * 24 * 60 * 60 * 1000) {
-          checkedInAt = t.toISOString();
-        }
+      const now = Date.now();
+      if (!Number.isNaN(ms) && ms <= now + 5 * 60 * 1000 && ms >= now - JANELA_RETROATIVA_MS) {
+        checkedInAt = t.toISOString();
+      } else {
+        dataAjustada = true;
       }
     }
 
@@ -2797,6 +2810,11 @@ router.post('/check-ins', async (req, res) => {
       volunteer_name: volProfileName || nomeDigitado || null,
       needs_cpf: needsCpf,
       missing_fields: faltando,
+      // ⚠️ A data pedida foi descartada (fora da janela retroativa de 60 dias ou
+      // no futuro) e valeu o `now()` do banco. Quem lança na mão precisa SABER —
+      // era exatamente este silêncio que faria o mês anterior inteiro cair no dia
+      // de hoje sem nenhum erro na tela.
+      data_ajustada: dataAjustada,
     });
   } catch (e) { res.status(500).json({ error: 'Erro ao registrar check-in' }); }
 });
