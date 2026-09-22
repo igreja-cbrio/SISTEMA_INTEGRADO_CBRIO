@@ -21,6 +21,7 @@
 const router = require('express').Router();
 const rateLimit = require('express-rate-limit');
 const { supabase } = require('../utils/supabase');
+const { notificar } = require('../services/notificar');
 const {
   validarFicha, normalizarFicha, semSegredos, ehContratada, estadoFicha,
 } = require('../utils/fichaContratada');
@@ -136,6 +137,43 @@ router.post('/:token', limiter, async (req, res) => {
       .eq('id', f.id);
 
     if (error) return res.status(400).json({ error: error.message });
+
+    // ⚠️⚠️ AVISA QUEM CUIDA DO RH. Sem isto a ficha era preenchida e NINGUÉM
+    // ficava sabendo — foi exatamente o que aconteceu no primeiro
+    // preenchimento real (22/09): o dado entrou no banco e ficou invisível.
+    // É a mesma classe do "Fale Conosco" que chegava numa tela que não o
+    // listava.
+    //
+    // ⚠️ Quem recebe vem de `notificacao_regras` do módulo `rh`, NUNCA de uma
+    // lista de nomes aqui (lei do projeto: o dono do fluxo muda sem PR). Sem
+    // regra configurada, o `notificar` cai no fallback de admin/diretor.
+    //
+    // ⚠️ AWAITED: o aviso é o único caminho pelo qual alguém descobre que a
+    // ficha chegou. Em serverless o container CONGELA no `res.json()` e
+    // descarta trabalho pendente — fire-and-forget aqui é o aviso que some.
+    const estadoAgora = estadoFicha({ tipo_contrato: f.tipo_contrato, ficha_contratada: ficha });
+    try {
+      await notificar({
+        modulo: 'rh',
+        tipo: 'ficha_contratada_preenchida',
+        titulo: `Ficha da contratada · ${f.nome}`,
+        mensagem: estadoAgora.completa
+          ? `${f.nome} enviou a ficha cadastral completa${aceitou ? ' e assinou a declaração' : ''}.`
+          // ⚠️ Incompleta é DECLARADO com o que falta: "preencheu" e "preencheu
+          // tudo" levam a ações diferentes de quem libera o pagamento.
+          : `${f.nome} enviou a ficha, mas falta: ${estadoAgora.faltando.join(', ')}.`,
+        link: '/rh',
+        severidade: estadoAgora.completa ? 'info' : 'alerta',
+        // ⚠️ Dedup por (pessoa, DIA): a pessoa pode salvar 3 vezes corrigindo
+        // um campo, e três avisos do mesmo fato enterram o sino.
+        chaveDedup: `ficha_contratada:${f.id}:${new Date().toISOString().slice(0, 10)}`,
+      });
+    } catch (e) {
+      // ⚠️ Falha do aviso NÃO desfaz o que a pessoa acabou de enviar: a ficha
+      // está gravada, e derrubar a resposta faria ela preencher tudo de novo.
+      console.error('[public ficha-contratada] aviso ao RH falhou:', e.message);
+    }
+
     res.json({ ok: true, aceite_registrado: !!aceitou });
   } catch (e) {
     if (e.consulta) {

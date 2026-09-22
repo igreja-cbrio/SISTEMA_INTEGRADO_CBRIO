@@ -3098,6 +3098,14 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
   }
 
   if (!data || !open) return null;
+  // ⚠️⚠️ O estado vem PRONTO do servidor (`ficha_estado`), não é recalculado
+  // aqui. Duas respostas para "a ficha está completa?" divergiriam no primeiro
+  // campo novo — e a tela diria uma coisa enquanto o painel de pendentes e o
+  // bloqueio de pagamento dizem outra.
+  // ⚠️ E a régua é CommonJS no backend: importá-la no bundle do front puxaria a
+  // árvore inteira do servidor para o navegador.
+  const fichaPj = data.ficha_estado || { aplicavel: false, preenchida: false, completa: false, aceita: false, faltando: [] };
+  const fc = data.ficha_contratada || {};
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex' }}>
       {/* Overlay */}
@@ -3133,6 +3141,70 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
           </div>
         </div>
         <div style={{ padding: '24px 28px' }}>
+      {/* ⚠️⚠️ FICHA DA CONTRATADA (Anexo II) · preenchida pelo próprio prestador.
+          Sem este bloco o dado era gravado e ficava INVISÍVEL — foi o que
+          aconteceu no primeiro preenchimento real (22/09): a pessoa enviou e a
+          ficha do colaborador não mostrava nada. É a mesma classe do avatar que
+          o app gravava e o ERP não lia.
+          ⚠️ Aparece em QUALQUER status (não só `em_admissao`, como o bloco de
+          admissão abaixo): quem já é ativo é justamente quem estava sem ter
+          onde preencher. */}
+      {!editMode && fichaPj.aplicavel && (
+        <div style={{ marginBottom: 20, padding: 16, borderRadius: 12, border: `1px solid ${fichaPj.completa ? C.primary + '40' : C.amber + '40'}`, background: (fichaPj.completa ? C.primary : C.amber) + '0d' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: fichaPj.completa ? C.primary : C.amber, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              🏢 Ficha da contratada
+            </div>
+            {/* ⚠️ Três estados, não dois: "não enviou", "enviou incompleta" e
+                "completa" pedem ações diferentes de quem libera o pagamento. */}
+            <span style={{ fontSize: 11, fontWeight: 600, color: fichaPj.completa ? C.primary : C.amber }}>
+              {!fichaPj.preenchida ? 'não enviada' : (fichaPj.completa ? (fichaPj.aceita ? 'completa e assinada' : 'completa') : 'incompleta')}
+            </span>
+          </div>
+
+          {!fichaPj.preenchida && (
+            <div style={{ fontSize: 12, color: C.text2, marginTop: 6 }}>
+              O prestador ainda não enviou os dados da empresa. Sem eles, o pagamento não deve ser liberado.
+            </div>
+          )}
+
+          {fichaPj.preenchida && (
+            <div style={{ fontSize: 12, color: C.text2, marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+              {fc.razao_social && <div style={{ gridColumn: '1 / -1' }}>Razão social: <b style={{ color: C.text }}>{fc.razao_social}</b></div>}
+              {fc.cnpj && <div>CNPJ: <b style={{ color: C.text }}>{fc.cnpj}</b></div>}
+              {fc.regime_tributario && <div>Regime: <b style={{ color: C.text }}>{fc.regime_tributario}</b></div>}
+              {fc.endereco_sede && <div style={{ gridColumn: '1 / -1' }}>Sede: <b style={{ color: C.text }}>{fc.endereco_sede}</b></div>}
+              {fc.rep_nome && <div style={{ gridColumn: '1 / -1' }}>Representante: <b style={{ color: C.text }}>{fc.rep_nome}</b></div>}
+              {fc.email_contratual && <div style={{ gridColumn: '1 / -1' }}>E-mail contratual: <b style={{ color: C.text }}>{fc.email_contratual}</b></div>}
+              {/* ⚠️ Dado bancário só aparece para quem pode ver confidencial —
+                  o backend já REDIGE o bloco inteiro abaixo do nível 4, então
+                  aqui ele simplesmente não vem. */}
+              {fc.pix_chave && <div style={{ gridColumn: '1 / -1' }}>PIX ({fc.pix_tipo}): <b style={{ color: C.text }}>{fc.pix_chave}</b></div>}
+              {fc.banco && <div>Banco: <b style={{ color: C.text }}>{fc.banco}</b>{fc.agencia ? ` · Ag ${fc.agencia}` : ''}{fc.conta ? ` · CC ${fc.conta}` : ''}</div>}
+              {fc.conta_titular && <div style={{ gridColumn: '1 / -1' }}>Titular: <b style={{ color: C.text }}>{fc.conta_titular}</b>{fc.titular_confere === false ? ' ⚠️ diferente da contratada' : ''}</div>}
+              {/* ⚠️ Titular diferente é DESTACADO: o Anexo II exige que coincida,
+                  e a pessoa declarou que não — quem paga precisa ver isso. */}
+              {fc.titular_confere === false && fc.titular_motivo && (
+                <div style={{ gridColumn: '1 / -1', color: C.amber }}>Motivo: {fc.titular_motivo}</div>
+              )}
+            </div>
+          )}
+
+          {fichaPj.preenchida && !fichaPj.completa && (
+            <div style={{ fontSize: 12, color: C.amber, marginTop: 8 }}>
+              Falta preencher: {fichaPj.faltando.join(', ')}.
+            </div>
+          )}
+
+          {fichaPj.aceita && fc.aceite_em && (
+            <div style={{ fontSize: 11, color: C.text3, marginTop: 8 }}>
+              Declaração aceita em {fmtDate(String(fc.aceite_em).slice(0, 10))}
+              {fc.aceite_nome_digitado ? ` por ${fc.aceite_nome_digitado}` : ''}.
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Admissão · onboarding em andamento (tudo que tinha no módulo de admissão) */}
       {data.status === 'em_admissao' && !editMode && (
         <div style={{ marginBottom: 20, padding: 16, borderRadius: 12, border: '1px solid #8b5cf640', background: '#8b5cf60d' }}>

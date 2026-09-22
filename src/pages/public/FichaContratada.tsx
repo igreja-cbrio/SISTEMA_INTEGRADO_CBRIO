@@ -68,6 +68,39 @@ function mascaraCelular(v: string) {
 
 type Estado = 'carregando' | 'form' | 'invalido' | 'pronto';
 
+/**
+ * Animação da confirmação: o anel se desenha, o cheque é traçado depois, e o
+ * texto sobe em cascata. ⚠️ Em CSS puro — sem biblioteca de animação, que para
+ * UMA tela seria quilobytes no bundle de uma página que abre em 4G de celular.
+ *
+ * ⚠️⚠️ `prefers-reduced-motion` vai direto ao ESTADO FINAL (não "sem animação e
+ * invisível"): quem pede menos movimento precisa ver a confirmação, não uma
+ * tela em branco. É o erro clássico de esconder o conteúdo no `from` de uma
+ * animação que nunca roda.
+ */
+const ANIMACAO_SUCESSO = `
+@keyframes fcAnel   { to { stroke-dashoffset: 0; } }
+@keyframes fcCheck  { to { stroke-dashoffset: 0; } }
+@keyframes fcHalo   { 0% { opacity:.55; transform: scale(.72);} 70%{opacity:0;} 100% { opacity: 0; transform: scale(1.5);} }
+@keyframes fcSobe   { from { opacity: 0; transform: translateY(10px);} to { opacity: 1; transform: none; } }
+@keyframes fcPop    { 0% { transform: scale(.8);} 60% { transform: scale(1.06);} 100% { transform: scale(1);} }
+
+.fc-selo  { display:inline-block; animation: fcPop .5s cubic-bezier(.2,.8,.3,1) both; }
+.fc-halo  { transform-origin: 60px 60px; animation: fcHalo 1.5s ease-out .5s both; }
+.fc-anel  { stroke-dasharray: 327; stroke-dashoffset: 327; animation: fcAnel .8s cubic-bezier(.65,0,.35,1) .05s both; }
+.fc-check { stroke-dasharray: 70;  stroke-dashoffset: 70;  animation: fcCheck .42s cubic-bezier(.65,0,.35,1) .72s both; }
+.fc-t1    { animation: fcSobe .5s ease-out .95s both; }
+.fc-t2    { animation: fcSobe .5s ease-out 1.1s both; }
+.fc-t3    { animation: fcSobe .5s ease-out 1.28s both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fc-selo, .fc-halo, .fc-anel, .fc-check, .fc-t1, .fc-t2, .fc-t3 { animation: none; }
+  .fc-anel, .fc-check { stroke-dashoffset: 0; }
+  .fc-halo { opacity: 0; }
+  .fc-t1, .fc-t2, .fc-t3 { opacity: 1; transform: none; }
+}
+`;
+
 // ⚠️⚠️ `st` e `Campo` vivem no MÓDULO, nunca dentro do componente.
 //
 // Definir um componente DENTRO de outro cria uma função NOVA a cada render — o
@@ -246,12 +279,35 @@ export default function FichaContratada() {
 
   if (estado === 'pronto') {
     return (
-      <div style={st.page}>
-        <div style={st.card}>
-          <h1 style={st.h1}>Ficha enviada ✅</h1>
-          <p style={st.sub}>
-            Recebemos os dados da sua empresa. Se precisar corrigir alguma coisa, é só abrir
-            este mesmo link de novo.
+      <div style={{ ...st.page, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100vh' }}>
+        {/* ⚠️ `prefers-reduced-motion` desliga o movimento e vai direto ao
+            estado final — animação não pode ser barreira para quem tem
+            sensibilidade vestibular. */}
+        <style>{ANIMACAO_SUCESSO}</style>
+        <div style={{ ...st.card, textAlign: 'center', padding: '48px 28px', maxWidth: 460 }}>
+          <div className="fc-selo">
+            <svg viewBox="0 0 120 120" width="112" height="112" role="img" aria-label="Ficha enviada">
+              {/* halo que expande e some */}
+              <circle className="fc-halo" cx="60" cy="60" r="52" fill="none" stroke={PRIMARY} strokeWidth="2" />
+              {/* o anel se desenha */}
+              <circle
+                className="fc-anel" cx="60" cy="60" r="52" fill="none"
+                stroke={PRIMARY} strokeWidth="4" strokeLinecap="round"
+                transform="rotate(-90 60 60)"
+              />
+              {/* e o cheque é traçado depois */}
+              <path
+                className="fc-check" d="M38 62 L54 77 L84 45" fill="none"
+                stroke={PRIMARY} strokeWidth="7" strokeLinecap="round" strokeLinejoin="round"
+              />
+            </svg>
+          </div>
+          <h1 className="fc-t1" style={{ ...st.h1, fontSize: 26, marginTop: 20 }}>Ficha enviada</h1>
+          <p className="fc-t2" style={{ ...st.sub, margin: '10px auto 0', maxWidth: 360 }}>
+            Recebemos os dados da sua empresa. O RH já foi avisado.
+          </p>
+          <p className="fc-t3" style={{ ...st.sub, fontSize: 13, margin: '18px auto 0', maxWidth: 360, opacity: .75 }}>
+            Precisa corrigir alguma coisa? É só abrir este mesmo link de novo.
           </p>
         </div>
       </div>
