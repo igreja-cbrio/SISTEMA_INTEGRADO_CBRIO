@@ -15858,6 +15858,92 @@ FLUXO — somar estoque mês a mês contaria o mesmo grupo várias vezes.
 `soma_periodo` de `voluntarios_ativos`, que devolve CONTAGEM com nome de
 porcentagem · `soma_periodo` continua ignorando o `p_periodo_referencia` (já
 registrado em 18/08; mexer move valores de períodos publicados).
+## ⚠️⚠️ ONLINE · o gráfico do canal, e por que o SNAPSHOT não serve de série (2026-09-22 · SEM migration)
+
+Pedido do Matheus: *"gostaria que vc implementesse esse layout na pagina do
+online"* (dashboard com série temporal + rosca de tráfego). O `/online` mostrava
+só números do DIA — "views totais" e "inscritos", que são **acumulados de anos**
+e não dizem se o canal está subindo ou caindo. Não havia **nenhuma série
+temporal do canal** na tela.
+
+### ⚠️⚠️ A MEDIÇÃO QUE DECIDIU A FONTE — e derruba a escolha óbvia
+
+O caminho natural seria derivar "views do dia" subtraindo dois
+`online_canal_snapshot`. Medido em 22/09/2026, nos últimos 90 dias:
+
+| coluna | o que a medição mostrou |
+|---|---|
+| `subscriber_count` | **6 valores distintos em 90 dias** (26.700 → 27.200, em degraus de 100) — o YouTube **ARREDONDA** a contagem pública |
+| `view_count` | **CAIU em 25 dos 90 dias** — o YouTube revisa o acumulado para baixo ao depurar |
+
+⇒ A sparkline de inscritos seria uma **escada**, e a série de views teria **25
+dias negativos**. A fonte é **`online_canal_views_dia`** (a Analytics por DIA, a
+mesma do card da semana de 21/09), que tem `views` e `watch_minutos`.
+
+⚠️ **Régua que passa disto**: acumulado de terceiro **não vira série por
+subtração** sem antes conferir se ele é monotônico. Aqui ele não é — e o efeito
+seria um gráfico com cara de medição desenhando dias que não existiram.
+
+### ⚠️⚠️ A ROSCA DE TRÁFEGO É 71% DO CANAL, NÃO O CANAL
+
+`online_video_trafico` é consultado **por VÍDEO** (`filters: video==`), então o
+que existe é a fatia dos vídeos COM coleta. Medido em 22/09, janela de 28 dias:
+
+| | |
+|---|---|
+| série do canal | **43.522 views** |
+| soma do tráfego | **30.855 views em 23 vídeos** (71%) |
+
+**A tela DECLARA a base** ("30.855 views em 23 vídeo(s) com coleta — não é o
+canal inteiro"). Sem isso, alguém soma as fatias, compara com o card ao lado e
+conclui que **sumiu view**.
+
+### As leis da régua (`backend/utils/canalSerie.js` · pura, no gate via `npm test`)
+
+- ⚠️⚠️ **`normalizarPeriodo` é FAIL-SAFE**: `Number('abc')` é NaN e NaN em
+  aritmética de data vira `"NaN-NaN-NaN"`, que o PostgREST recusa — **o endpoint
+  inteiro viraria 500 por causa de um query param torto**. É a lição de
+  `resolverJanelaPeriodo` (02/09), que já custou uma tela nascendo quebrada.
+- ⚠️ **Dia em BRT**: às 23h do Rio o dia UTC já virou, e a janela começaria
+  adiantada.
+- ⚠️⚠️ **Dia sem coleta NÃO vira ponto zero** e a linha fica com **buraco**
+  (`connectNulls={false}`): reta por cima faria **falha de cron parecer
+  audiência estável**. Medido: 26 de 28 dias coletados, último em **19/09** — a
+  Analytics fecha o dia com 2-3 dias de atraso, e a tela diz isso.
+- ⚠️ **Total NULL sem coleta, nunca 0** — "não coletamos" e "ninguém assistiu"
+  levam a decisões opostas.
+- ⚠️ **Minutos → horas na RÉGUA**, não na tela: duas telas dividindo por 60 por
+  conta própria divergem no primeiro arredondamento.
+- ⚠️⚠️ **A CAUDA do tráfego vira uma fatia declarada, nunca some** — a soma tem
+  que fechar 100% (lei do corte de bairro do censo, 16/09).
+- ⚠️ **Fonte desconhecida do YouTube NÃO é descartada**: vira o próprio código
+  (`FONTE_NOVA_DO_YT`), que é feio e verdadeiro. O YouTube acrescenta tipo novo
+  sem avisar, e descartar faria a soma não fechar **em silêncio**.
+
+### ⚠️ Endpoint PRÓPRIO, e os dois blocos falham sozinhos
+
+`GET /api/online/canal-serie?dias=7|28|90` é **separado do `/dashboard`**:
+pendurar nele faria a tela inteira recarregar a cada troca de período e
+**recontar as 8 consultas do dashboard à toa**. Série e tráfego têm `try`
+próprio com `avisos[]` — tráfego indisponível **não apaga o gráfico**, que é a
+peça principal, e erro nunca vira lista vazia.
+
+⚠️ O tráfego filtra por **`periodo_fim`**, não `periodo_inicio`: a coleta cobre a
+vida do vídeo, e filtrar pelo início **excluiria vídeo antigo que segue
+recebendo view** no período.
+
+**9 mutantes RODADOS e mortos**: ponto zero em dia sem coleta → 1 vermelho ·
+total 0 em vez de NULL → 3 · período fail-open → 1 · hoje em UTC → 1 · cauda
+descartada → 2 · fonte desconhecida descartada → 1 · minutos não virando horas →
+1 · janela um dia a mais → 1 · base de vídeos não declarada → 2.
+
+⏳ **O que o layout pedido tinha e NÃO foi implementado, por falta de DADO** (e
+não vai ser preenchido com mock): **receita** (o canal não é monetizado no nosso
+banco), **dispositivos** (`online_video_trafico` guarda fonte, não device) e
+**"ao vivo agora"** (existe o `live-monitor`, mas ele grava pico no culto, não
+um estado consultável de "está no ar"). Card que mostra número inventado é pior
+que card ausente.
+
 ## Online · visao do canal YouTube (somente leitura)
 
 Modulo `/online` mostra desempenho do canal YouTube CBRio com
