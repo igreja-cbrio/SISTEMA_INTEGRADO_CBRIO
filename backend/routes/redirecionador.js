@@ -8,9 +8,13 @@
 //
 //  Decisões que vêm disso:
 //
-//   · UMA consulta ao banco antes do redirect. Nada mais. A contagem de acesso
-//     acontece DEPOIS de a resposta já ter saído — quem escaneou não espera por
-//     estatística.
+//   · DUAS idas ao banco antes do redirect: achar o destino e registrar o
+//     escaneamento. ⚠️ A segunda foi fire-and-forget DEPOIS da resposta até
+//     22/09/2026, com o argumento de que "quem escaneou não espera por
+//     estatística" — e a medição mostrou 12% de perda sob concorrência, pior
+//     justamente no cartaz mais movimentado. Hoje é awaited COM TETO, que
+//     mantém a promessa: se o banco demorar, perde-se a linha, nunca a pessoa.
+//     Ver `backend/utils/registroAcesso.js` para os números.
 //   · Cache curto na borda (30s). O culto inteiro escaneia o mesmo QR nos mesmos
 //     dois minutos; sem cache, são 2.500 idas ao banco pela mesma linha. Curto
 //     porque o destino pode mudar a qualquer momento e meia hora de cache
@@ -25,6 +29,7 @@
 const express = require('express');
 const router = express.Router();
 const { supabase } = require('../utils/supabase');
+const { esperarRegistro } = require('../utils/registroAcesso');
 
 /** 'celular' | 'computador' | 'outro'. Deriva do user-agent e joga o resto
  *  fora: para saber qual cartaz funciona basta isso, e o UA cru é rastro. */
@@ -90,18 +95,37 @@ router.get('/:slug', async (req, res) => {
       ));
     }
 
-    // 302 + cache curto na borda. `private` não: queremos que a CDN sirva o
-    // culto inteiro sem tocar no banco.
+    // ⚠️⚠️ A CONTAGEM VEM ANTES DO REDIRECT, e isso MUDOU em 22/09/2026.
+    //
+    // Era fire-and-forget depois de `res.redirect()`, apoiado na ideia de que
+    // "quem escaneou não espera por estatística". A ideia estava certa; o
+    // efeito, não. Medido em produção com 50 escaneamentos SIMULTÂNEOS:
+    // **44 gravados, 12% perdidos** — porque o container congela ao responder
+    // e o insert pendente morre junto.
+    //
+    // E a perda é DIRECIONAL: só acontece sob concorrência, ou seja o cartaz
+    // do templo (todo mundo escaneando no mesmo minuto) perde mais que o de
+    // um corredor de passagem. Quando a contagem passa a ser a medição de uma
+    // campanha — comparar o QR do templo com o da feirinha —, esse viés é o
+    // produto inteiro, não um detalhe de telemetria.
+    //
+    // ⚠️ O teto de `esperarRegistro` é o que mantém a promessa original: se o
+    // banco demorar, a pessoa segue viagem e a estatística é que se perde.
+    // Custo medido: o `/r/` responde em ~300 ms e o insert soma ~100 ms.
+    //
+    // ⚠️ O `s-maxage=30` NÃO foi tocado: na mesma medição, 50 de 50 voltaram
+    // `x-vercel-cache: MISS` — a borda não estava agregando nada, e mexer ali
+    // trocaria um problema medido por uma suposição.
+    await esperarRegistro(
+      supabase.from('link_curto_acesso').insert({
+        link_id: data.id,
+        aparelho: aparelhoDe(req.get('user-agent')),
+        origem: origemDe(req.get('referer')),
+      }),
+    );
+
     res.set('Cache-Control', 'public, max-age=0, s-maxage=30');
     res.redirect(302, data.destino);
-
-    // Contagem depois do redirect: a resposta já foi. Se falhar, perdemos uma
-    // linha de estatística — nunca um escaneamento.
-    supabase.from('link_curto_acesso').insert({
-      link_id: data.id,
-      aparelho: aparelhoDe(req.get('user-agent')),
-      origem: origemDe(req.get('referer')),
-    }).then(() => {}, () => {});
   } catch {
     // Banco fora do ar não pode virar tela branca para quem escaneou.
     res.status(503).type('html').send(pagina(
