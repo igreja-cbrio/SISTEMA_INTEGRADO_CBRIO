@@ -88,6 +88,7 @@ Guard: `authorizeModule('online', 3)`
 - `online_video_retencao_curva`
 - `online_video_trafico`
 - `online_videos`
+- `vol_service_types`
 - `vw_culto_stats`
 - `vw_kpi_trajetoria_atual`
 - `vw_online_oauth_status`
