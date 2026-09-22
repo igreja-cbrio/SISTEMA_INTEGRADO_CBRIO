@@ -3047,6 +3047,106 @@ consumidor**.
   somente-leitura (é o inventário das 9 portas; a exclusão vive no módulo dono do
   evento).
 
+## ⚠️⚠️ QR POR LOCAL · o contador perdia 12% e enviesava CONTRA o cartaz cheio (2026-09-22 · SEM migration)
+
+Pedido do Matheus: campanha de voluntariado em outubro com QR no **templo** e
+na **feirinha** (hall), os dois levando à MESMA inscrição, para comparar de
+onde veio o escaneamento. Quem olha o número é a Ariel (que já tem **nível 4**
+em `links`, então cria e lê sozinha).
+
+### ⚠️⚠️ O MECANISMO JÁ EXISTIA INTEIRO — e estava vazio
+
+| peça | estado em 22/09 |
+|---|---|
+| N links curtos para o MESMO destino | permitido (só `slug` é unique) · **nunca usado**: 11 links, 11 destinos |
+| `link_curto.onde` ("onde este QR está fisicamente") | existe desde 08/08 · **vazio em 11 de 11** |
+| registro de escaneamento (`link_curto_acesso`) | 94 acessos |
+| `vw_link_curto_stats` (acessos · 7d · 30d · último) | pronto, e a tela já exibe |
+| cartaz 1920×1080 com o título em 82px | pronto (`QrLinkDialog`) |
+
+⇒ **Nenhuma tela nova foi construída.** A resposta de "qual QR foi mais
+escaneado" é a lista de `/links`, que ordena por `criado_em desc` e mostra
+`onde` + acessos por linha.
+
+⚠️ **`normalizarDestino` PRESERVA a query string** (`new URL(v).toString()`),
+e o redirect repassa o destino literal — provado em produção:
+`/r/<slug>` → `Location: /inscricao-voluntariado?qr=vol-templo`. Por isso os
+dois links nascem com `?qr=<slug>` no destino: **inerte hoje** (o formulário
+não lê param nenhum), mas **gravado no cartaz impresso** — medir INSCRIÇÃO
+depois não vai exigir reimprimir nada.
+
+### ⚠️⚠️ O DEFEITO: 12% de perda, e ela é DIRECIONAL
+
+O insert era fire-and-forget **depois** do `res.redirect()`, e em serverless o
+container congela ao responder. Medido contra produção — ⚠️ **sequencial não
+mostra o problema** (5 de 5 passam):
+
+```
+25 simultâneos   →  13 gravados na hora
++25 simultâneos  →  44 no total   ← parte dos "perdidos" da 1ª rodada chegou
+                                    atrasada, no container reaproveitado
+estado final     →  44 de 50 = 12% perdidos, estável após 65s
+```
+
+⚠️⚠️ **A perda só acontece sob CONCORRÊNCIA**, então o cartaz do templo (todo
+mundo escaneando no mesmo minuto no fim do culto) perde proporcionalmente MAIS
+que o de um corredor de passagem. O erro empurra exatamente contra o local
+movimentado — na única comparação que a campanha existe para fazer.
+
+⇒ **`backend/utils/registroAcesso.js`** (`esperarRegistro`, no gate): o insert
+virou **awaited, ANTES do redirect, com TETO de 1200ms**.
+⚠️ O teto é o que preserva a promessa original do arquivo ("quem escaneou não
+espera por estatística"): banco lento faz a pessoa seguir viagem e perde-se a
+LINHA, nunca a pessoa. Custo medido: `/r/` responde em ~300ms, o insert soma
+~100ms.
+
+- ⚠️ **`{ error }` do supabase-js**: ele NÃO rejeita em erro de banco. Tratar só
+  o `catch` contaria como `gravado` um insert que o Postgres recusou.
+- ⚠️ **Teto inválido cai no default**: `setTimeout(fn, NaN)` dispara na hora, o
+  await viraria no-op e os 12% voltariam calados.
+- ⚠️ `clearTimeout` no `finally` — timer pendurado mantém o event loop vivo.
+- Guarda estática impede voltar ao `.then(()=>{},()=>{})` ou ir para depois do
+  redirect.
+
+### ⚠️ O ALARME QUE A MEDIÇÃO DESMENTIU
+
+Suspeitei do **`s-maxage=30`** da borda (o comentário do código diz que ele
+existe para "a CDN servir o culto inteiro sem tocar no banco"). **Não agrega
+nada**: 50 de 50 voltaram `x-vercel-cache: MISS`, inclusive as 25 simultâneas.
+**O cache NÃO foi tocado** — mexer ali trocaria um problema medido por uma
+suposição.
+
+### ⚠️ O que o número consegue e NÃO consegue dizer
+
+- **Escaneamento tem n**: 300-800 no mês ÷ 2 locais. **Inscrição não teria**:
+  o volume real é jun 2 · jul 19 · ago 25 · set 10, e ÷ 5 locais daria ~12 por
+  local, onde "templo 15 × hall 9" é indistinguível de sorteio. Foi por isso
+  que a escolha foi **2 locais, e escaneamento** (decisão do Matheus).
+- ⚠️⚠️ **Mede EXPOSIÇÃO, não eficácia**: o templo tem ~1.700 pessoas sentadas,
+  a feirinha tem quem passa. O templo vence quase por definição. O achado
+  acionável aqui é o **zero** ("a feirinha teve 6 no mês"), não o ranking.
+- O link `voluntariado` que já existia (8 acessos) **NÃO vai em cartaz** — é o
+  grupo de CONTROLE (quem chegou sem passar por QR).
+
+### ⚠️ Lição de MÉTODO: o mutante sobreviveu porque o TESTE media a coisa errada
+
+O mutante que apaga o `clearTimeout` passou nos 13 testes. Não era teste fraco
+por descuido: o caso cronometrava `Date.now()`, e **o `await` retorna quando a
+corrida resolve, com ou sem timer pendurado**. O tempo não observa essa guarda
+— **`vi.getTimerCount()` observa**. Teste corrigido, mutante morto.
+⇒ **Régua: antes de aceitar "o mutante sobreviveu", perguntar se o teste tem
+como OBSERVAR o efeito da guarda.**
+
+### ⚠️ NÃO usar o módulo Campanhas para isto
+
+`camp_*` é de **arrecadação**: `meta_centavos` NOT NULL CHECK > 0 e o **dígito
+de centavo captura crédito REAL do extrato bancário**. Pôr voluntariado ali
+exige inventar meta em reais, e ocupar um dígito faria a campanha puxar dinheiro
+de verdade. **Zero** noção de local/origem/clique e **zero** ligação com
+`vol_inscricoes` (a única menção é `segmento='voluntarios'` num disparo, que lê
+`vol_profiles` para saber PARA QUEM mandar mensagem — o inverso de medir quem
+entra). Cronograma e disparo, se precisar, já existem em **Comunicação → Envios**.
+
 ## ⚠️ GTM · container de página entra pelo COMPONENTE, nunca no index.html (2026-08-18 · SEM migration)
 
 Pedido do Gustavo (GTM): instalar o container `GTM-PQHGF574` na página de
