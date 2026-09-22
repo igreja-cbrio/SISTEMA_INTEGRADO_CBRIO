@@ -68,6 +68,48 @@ function mascaraCelular(v: string) {
 
 type Estado = 'carregando' | 'form' | 'invalido' | 'pronto';
 
+// ⚠️⚠️ `st` e `Campo` vivem no MÓDULO, nunca dentro do componente.
+//
+// Definir um componente DENTRO de outro cria uma função NOVA a cada render — o
+// React trata como um tipo diferente, desmonta a subárvore e monta outra. O
+// efeito visível é o input PERDER O FOCO a cada tecla: a pessoa digita uma
+// letra e tem que clicar no campo de novo.
+//
+// Foi exatamente o que aconteceu aqui (relatado em 22/09, com prestador real
+// tentando preencher). O objeto de estilos sai junto porque recriá-lo a cada
+// render também é desperdício, e mantê-lo fora é o que permite o `Campo` ser
+// definido aqui em cima.
+const st = {
+  page: { minHeight: '100vh', background: BG, color: '#E6F2F1', padding: '24px 16px', fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif' },
+  card: { maxWidth: 680, margin: '0 auto', background: '#102B33', borderRadius: 16, padding: 24, boxShadow: '0 8px 32px rgba(0,0,0,.35)' },
+  h1: { fontSize: 22, margin: '0 0 4px', fontWeight: 700 },
+  sub: { fontSize: 14, color: '#9FC2BF', margin: '0 0 20px', lineHeight: 1.5 },
+  secao: { fontSize: 13, textTransform: 'uppercase' as const, letterSpacing: .6, color: PRIMARY, fontWeight: 700, margin: '24px 0 10px' },
+  label: { display: 'block', fontSize: 13, color: '#B9D6D3', marginBottom: 5 },
+  input: { width: '100%', padding: '11px 12px', borderRadius: 9, border: '1px solid #24454E', background: '#0B1F26', color: '#E6F2F1', fontSize: 15, boxSizing: 'border-box' as const },
+  erro: { color: '#FF8B8B', fontSize: 12, marginTop: 4 },
+  campo: { marginBottom: 14 },
+  linha: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 },
+  botao: { width: '100%', padding: '14px 16px', borderRadius: 10, border: 'none', background: PRIMARY, color: '#04222A', fontSize: 16, fontWeight: 700, cursor: 'pointer', marginTop: 20 },
+  aviso: { background: 'rgba(255,193,7,.12)', border: '1px solid rgba(255,193,7,.35)', color: '#FFD98A', padding: 12, borderRadius: 9, fontSize: 13, lineHeight: 1.5, margin: '16px 0' },
+  declaracao: { background: '#0B1F26', border: '1px solid #24454E', borderRadius: 9, padding: 14, fontSize: 13, lineHeight: 1.6, color: '#C9E0DE' },
+};
+
+/** Rótulo + campo + erro. ⚠️ Recebe o erro por PROP — nada de closure do pai. */
+function Campo({ id, label, erro, children }: {
+  id: string; label: string; erro?: string; children: React.ReactNode;
+}) {
+  return (
+    <div style={st.campo}>
+      <label style={st.label} htmlFor={id}>{label}</label>
+      {children}
+      {erro && <div style={st.erro}>{erro}</div>}
+    </div>
+  );
+}
+
+
+
 export default function FichaContratada() {
   const { token } = useParams<{ token: string }>();
   const [estado, setEstado] = useState<Estado>('carregando');
@@ -184,31 +226,6 @@ export default function FichaContratada() {
     }
   }
 
-  const st = {
-    page: { minHeight: '100vh', background: BG, color: '#E6F2F1', padding: '24px 16px', fontFamily: 'system-ui, -apple-system, Segoe UI, Roboto, sans-serif' },
-    card: { maxWidth: 680, margin: '0 auto', background: '#102B33', borderRadius: 16, padding: 24, boxShadow: '0 8px 32px rgba(0,0,0,.35)' },
-    h1: { fontSize: 22, margin: '0 0 4px', fontWeight: 700 },
-    sub: { fontSize: 14, color: '#9FC2BF', margin: '0 0 20px', lineHeight: 1.5 },
-    secao: { fontSize: 13, textTransform: 'uppercase' as const, letterSpacing: .6, color: PRIMARY, fontWeight: 700, margin: '24px 0 10px' },
-    label: { display: 'block', fontSize: 13, color: '#B9D6D3', marginBottom: 5 },
-    input: { width: '100%', padding: '11px 12px', borderRadius: 9, border: '1px solid #24454E', background: '#0B1F26', color: '#E6F2F1', fontSize: 15, boxSizing: 'border-box' as const },
-    erro: { color: '#FF8B8B', fontSize: 12, marginTop: 4 },
-    campo: { marginBottom: 14 },
-    linha: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 },
-    botao: { width: '100%', padding: '14px 16px', borderRadius: 10, border: 'none', background: PRIMARY, color: '#04222A', fontSize: 16, fontWeight: 700, cursor: 'pointer', marginTop: 20 },
-    aviso: { background: 'rgba(255,193,7,.12)', border: '1px solid rgba(255,193,7,.35)', color: '#FFD98A', padding: 12, borderRadius: 9, fontSize: 13, lineHeight: 1.5, margin: '16px 0' },
-    declaracao: { background: '#0B1F26', border: '1px solid #24454E', borderRadius: 9, padding: 14, fontSize: 13, lineHeight: 1.6, color: '#C9E0DE' },
-  };
-
-  function Campo({ id, label, children }: { id: string; label: string; children: React.ReactNode }) {
-    return (
-      <div style={st.campo}>
-        <label style={st.label} htmlFor={id}>{label}</label>
-        {children}
-        {erros[id] && <div style={st.erro}>{erros[id]}</div>}
-      </div>
-    );
-  }
 
   if (estado === 'carregando') {
     return <div style={st.page}><div style={st.card}>Carregando…</div></div>;
@@ -252,69 +269,69 @@ export default function FichaContratada() {
         </p>
 
         <div style={st.secao}>1. A empresa</div>
-        <Campo id="razao_social" label="Razão social *">
+        <Campo id="razao_social" erro={erros.razao_social} label="Razão social *">
           <input id="razao_social" style={st.input} value={razaoSocial} onChange={(e) => setRazaoSocial(e.target.value)} />
         </Campo>
-        <Campo id="nome_fantasia" label="Nome fantasia">
+        <Campo id="nome_fantasia" erro={erros.nome_fantasia} label="Nome fantasia">
           <input id="nome_fantasia" style={st.input} value={nomeFantasia} onChange={(e) => setNomeFantasia(e.target.value)} />
         </Campo>
         <div style={st.linha}>
-          <Campo id="cnpj" label="CNPJ *">
+          <Campo id="cnpj" erro={erros.cnpj} label="CNPJ *">
             <input id="cnpj" style={st.input} inputMode="numeric" value={cnpj} onChange={(e) => setCnpj(mascaraCnpj(e.target.value))} />
           </Campo>
-          <Campo id="regime_tributario" label="Regime tributário *">
+          <Campo id="regime_tributario" erro={erros.regime_tributario} label="Regime tributário *">
             <select id="regime_tributario" style={st.input} value={regime} onChange={(e) => setRegime(e.target.value)}>
               <option value="">Selecione…</option>
               {REGIMES.map((r) => <option key={r.v} value={r.v}>{r.label}</option>)}
             </select>
           </Campo>
         </div>
-        <Campo id="inscricao_municipal" label="Inscrição municipal (se houver)">
+        <Campo id="inscricao_municipal" erro={erros.inscricao_municipal} label="Inscrição municipal (se houver)">
           <input id="inscricao_municipal" style={st.input} value={inscricaoMunicipal} onChange={(e) => setInscricaoMunicipal(e.target.value)} />
         </Campo>
-        <Campo id="endereco_sede" label="Endereço completo da sede *">
+        <Campo id="endereco_sede" erro={erros.endereco_sede} label="Endereço completo da sede *">
           <input id="endereco_sede" style={st.input} placeholder="Rua, número, complemento, bairro, cidade/UF e CEP" value={enderecoSede} onChange={(e) => setEnderecoSede(e.target.value)} />
         </Campo>
-        <Campo id="telefone_sede" label="Telefone da empresa">
+        <Campo id="telefone_sede" erro={erros.telefone_sede} label="Telefone da empresa">
           <input id="telefone_sede" style={st.input} inputMode="numeric" value={telefoneSede} onChange={(e) => setTelefoneSede(mascaraCelular(e.target.value))} />
         </Campo>
 
         <div style={st.secao}>2. Representante legal</div>
-        <Campo id="rep_nome" label="Nome completo *">
+        <Campo id="rep_nome" erro={erros.rep_nome} label="Nome completo *">
           <input id="rep_nome" style={st.input} value={repNome} onChange={(e) => setRepNome(e.target.value)} />
         </Campo>
-        <Campo id="rep_cpf" label="CPF *">
+        <Campo id="rep_cpf" erro={erros.rep_cpf} label="CPF *">
           <input id="rep_cpf" style={st.input} inputMode="numeric" value={repCpf} onChange={(e) => setRepCpf(mascaraCpf(e.target.value))} />
         </Campo>
-        <Campo id="rep_endereco" label="Endereço">
+        <Campo id="rep_endereco" erro={erros.rep_endereco} label="Endereço">
           <input id="rep_endereco" style={st.input} value={repEndereco} onChange={(e) => setRepEndereco(e.target.value)} />
         </Campo>
 
         <div style={st.secao}>3. Contato para o contrato</div>
-        <Campo id="email_contratual" label="E-mail principal *">
+        <Campo id="email_contratual" erro={erros.email_contratual} label="E-mail principal *">
           <input id="email_contratual" style={st.input} type="email" value={emailContratual} onChange={(e) => setEmailContratual(e.target.value)} />
         </Campo>
-        <Campo id="whatsapp_contratual" label="WhatsApp">
+        <Campo id="whatsapp_contratual" erro={erros.whatsapp_contratual} label="WhatsApp">
           <input id="whatsapp_contratual" style={st.input} inputMode="numeric" value={whatsappContratual} onChange={(e) => setWhatsappContratual(mascaraCelular(e.target.value))} />
         </Campo>
 
         <div style={st.secao}>4. Dados para pagamento</div>
         <div style={st.linha}>
-          <Campo id="pix_tipo" label="Tipo da chave PIX *">
+          <Campo id="pix_tipo" erro={erros.pix_tipo} label="Tipo da chave PIX *">
             <select id="pix_tipo" style={st.input} value={pixTipo} onChange={(e) => setPixTipo(e.target.value)}>
               <option value="">Selecione…</option>
               {TIPOS_PIX.map((t) => <option key={t.v} value={t.v}>{t.label}</option>)}
             </select>
           </Campo>
-          <Campo id="pix_chave" label="Chave PIX *">
+          <Campo id="pix_chave" erro={erros.pix_chave} label="Chave PIX *">
             <input id="pix_chave" style={st.input} value={pixChave} onChange={(e) => setPixChave(e.target.value)} />
           </Campo>
         </div>
         <div style={st.linha}>
-          <Campo id="banco" label="Banco">
+          <Campo id="banco" erro={erros.banco} label="Banco">
             <input id="banco" style={st.input} value={banco} onChange={(e) => setBanco(e.target.value)} />
           </Campo>
-          <Campo id="conta_tipo" label="Tipo de conta">
+          <Campo id="conta_tipo" erro={erros.conta_tipo} label="Tipo de conta">
             <select id="conta_tipo" style={st.input} value={contaTipo} onChange={(e) => setContaTipo(e.target.value)}>
               <option value="">Selecione…</option>
               <option value="corrente">Corrente</option>
@@ -323,17 +340,17 @@ export default function FichaContratada() {
           </Campo>
         </div>
         <div style={st.linha}>
-          <Campo id="agencia" label="Agência">
+          <Campo id="agencia" erro={erros.agencia} label="Agência">
             <input id="agencia" style={st.input} value={agencia} onChange={(e) => setAgencia(e.target.value)} />
           </Campo>
-          <Campo id="conta" label="Conta">
+          <Campo id="conta" erro={erros.conta} label="Conta">
             <input id="conta" style={st.input} value={conta} onChange={(e) => setConta(e.target.value)} />
           </Campo>
         </div>
-        <Campo id="conta_titular" label="Titular da conta *">
+        <Campo id="conta_titular" erro={erros.conta_titular} label="Titular da conta *">
           <input id="conta_titular" style={st.input} value={contaTitular} onChange={(e) => setContaTitular(e.target.value)} />
         </Campo>
-        <Campo id="titular_confere" label="O titular da conta é a própria empresa contratada? *">
+        <Campo id="titular_confere" erro={erros.titular_confere} label="O titular da conta é a própria empresa contratada? *">
           <select
             id="titular_confere"
             style={st.input}
@@ -346,7 +363,7 @@ export default function FichaContratada() {
           </select>
         </Campo>
         {titularConfere === false && (
-          <Campo id="titular_motivo" label="Explique brevemente *">
+          <Campo id="titular_motivo" erro={erros.titular_motivo} label="Explique brevemente *">
             <input id="titular_motivo" style={st.input} placeholder="Ex.: MEI recebendo na conta pessoa física" value={titularMotivo} onChange={(e) => setTitularMotivo(e.target.value)} />
           </Campo>
         )}
@@ -360,7 +377,7 @@ export default function FichaContratada() {
           </label>
         </div>
         {aceite && (
-          <Campo id="aceite_nome" label="Digite seu nome completo para confirmar">
+          <Campo id="aceite_nome" erro={erros.aceite_nome} label="Digite seu nome completo para confirmar">
             <input id="aceite_nome" style={st.input} value={aceiteNome} onChange={(e) => setAceiteNome(e.target.value)} />
           </Campo>
         )}
