@@ -62,6 +62,19 @@ const MAX_COBRANCAS = 1 + ESCADA_DIAS.length; // 1ª via + 2 lembretes
 function canaisDe(func, { temTemplateWhatsapp = false } = {}) {
   const f = func || {};
   const canais = [];
+
+  // ⚠️⚠️ NOTIFICAÇÃO NO SISTEMA primeiro. Medido em 22/09: **28 dos 32 PJ têm
+  // conta ativa** — o prestador entra no ERP e o aviso está lá, com o link.
+  //
+  // Ela não aumenta o ALCANCE (29 por e-mail × 29 por algum canal), aumenta a
+  // chance de ser VISTA: no disparo irmão só 15 de 30 leram a mensagem, e entre
+  // quem leu 60% preencheu contra 33% entre quem não leu. O gargalo medido é a
+  // mensagem não chegar aos olhos, não o formulário.
+  //
+  // ⚠️ `profile_id` é resolvido por quem LÊ o banco (o serviço), nunca aqui —
+  // esta régua é pura.
+  if (f.profile_id) canais.push('sistema');
+
   const email = String(f.email || '').trim();
   // ⚠️ Relay do "Entrar com Apple" é caixa técnica que a pessoa não lê — mandar
   // ali a marcaria como cobrada sem ela nunca ter visto (lei do censo, 04/08).
