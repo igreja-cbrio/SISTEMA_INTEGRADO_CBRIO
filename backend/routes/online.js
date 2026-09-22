@@ -5,7 +5,7 @@ const { supabase } = require('../utils/supabase');
 const { syncCanal } = require('../services/youtubeCollector');
 const yt = require('../services/youtubeAnalytics');
 const collectors = require('../services/onlineCollectors');
-const { semanaAnteriorBRT, somarViews } = require('../utils/semanaOnline');
+const { semanaAnteriorBRT, somarViews, compararSemanas } = require('../utils/semanaOnline');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const { isAuthorizedCron } = require('../utils/cronAuth');
@@ -433,9 +433,65 @@ router.get('/dashboard', async (_req, res) => {
       const atualSem = somarViews(linhas, janela.inicio, janela.fim);
       const antSem = somarViews(linhas, anterior.inicio, anterior.fim);
 
+      // ⚠️ O detalhamento por CULTO é um RECORTE, não a decomposição do total.
+      // `online_ds`/`online_ddus` são views DAQUELE VÍDEO; o total do card é do
+      // CANAL INTEIRO (vídeos antigos, shorts, cortes). Medido em 21/09: os 5
+      // cultos da semana somam 4.638 contra ~12 mil do canal. A tela DIZ isso —
+      // sem a frase, quem soma os cultos conclui que o card está errado.
+      let cultos = [];
+      try {
+        const { data: cs, error: errC } = await supabase
+          .from('cultos')
+          .select('id, data, hora, online_ds, online_ddus, online_pico, youtube_video_id, service_type_id')
+          .gte('data', janela.inicio)
+          .lte('data', janela.fim)
+          .order('data')
+          .order('hora');
+        if (errC) throw new Error(errC.message);
+
+        const tipos = {};
+        const ids = [...new Set((cs || []).map((c) => c.service_type_id).filter(Boolean))];
+        if (ids.length) {
+          const { data: ts } = await supabase
+            .from('vol_service_types').select('id, name').in('id', ids);
+          for (const t of ts || []) tipos[t.id] = t.name;
+        }
+
+        cultos = (cs || []).map((c) => ({
+          id: c.id,
+          data: c.data,
+          hora: typeof c.hora === 'string' ? c.hora.slice(0, 5) : null,
+          nome: tipos[c.service_type_id] || 'Culto',
+          // ⚠️ `null` ≠ 0: DS só existe em D+1 e DDUS em D+7. Zero aqui diria
+          // que ninguém assistiu, quando ainda nem foi coletado.
+          ds: c.online_ds,
+          ddus: c.online_ddus,
+          pico: c.online_pico,
+          // Culto sem vídeo vinculado nunca vai ter DS — é trabalho de gente,
+          // e a tela declara em vez de mostrar traço sem explicação.
+          sem_video: !c.youtube_video_id,
+        }));
+      } catch (e) {
+        console.error('[online/dashboard/semana/cultos]', e.message);
+        cultos = null;   // ⚠️ null = não deu para ler ≠ [] = não houve culto
+      }
+
+      // Os dias da semana, para o detalhamento. ⚠️ Dia que a Analytics ainda
+      // não fechou simplesmente NÃO vem — e é por isso que `dias_com_dado`
+      // existe: quem vê 5 linhas precisa saber que faltam 2.
+      const diasDaSemana = (linhas || [])
+        .filter((l) => {
+          const d = typeof l?.data === 'string' ? l.data.slice(0, 10) : null;
+          return d && d >= janela.inicio && d <= janela.fim;
+        })
+        .map((l) => ({ data: String(l.data).slice(0, 10), views: l.views, watch_minutos: l.watch_minutos }))
+        .sort((a, b) => (a.data < b.data ? -1 : 1));
+
       semana = {
         ...janela,
         ...atualSem,
+        dias_detalhe: diasDaSemana,
+        cultos,
         fonte: 'YouTube Analytics · views do canal',
         // ⚠️ Comparação em número ABSOLUTO, sem %: feriado, evento especial e
         // semana com 4 ou 5 cultos movem o número sem dizer nada sobre
@@ -445,6 +501,10 @@ router.get('/dashboard', async (_req, res) => {
           views: antSem.views,
           dias_com_dado: antSem.dias_com_dado,
         },
+        // ⚠️ A régua decide se o % PODE ser mostrado — a tela só exibe. Com a
+        // semana incompleta ela devolve o motivo, nunca um percentual que a
+        // coleta parcial inventou (5 dias vs 7 daria -55% hoje).
+        comparacao: compararSemanas(atualSem, antSem),
       };
     } catch (e) {
       console.error('[online/dashboard/semana]', e.message);

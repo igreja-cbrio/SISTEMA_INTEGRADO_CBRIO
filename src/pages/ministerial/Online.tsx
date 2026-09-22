@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
   Users, Eye, ThumbsUp, MessageSquare, TrendingUp, TrendingDown, ExternalLink,
   Youtube, Loader2, RefreshCw, PlayCircle, Info, Cross, HeartHandshake,
@@ -103,8 +104,17 @@ interface DashboardData {
   semana?: SemanaViews | null;
 }
 
+interface DiaViews { data: string; views: number; watch_minutos?: number | null }
+interface CultoSemana {
+  id: string; data: string; hora: string | null; nome: string;
+  ds: number | null; ddus: number | null; pico: number | null; sem_video: boolean;
+}
+
 /** Views da semana anterior (seg→dom, BRT) · ver CardSemanaViews. */
 interface SemanaViews {
+  dias_detalhe?: DiaViews[];
+  // ⚠️ `null` = a consulta falhou; `[]` = não houve culto. Estados diferentes.
+  cultos?: CultoSemana[] | null;
   erro?: string;
   detalhe?: string;
   rotulo?: string;
@@ -117,6 +127,11 @@ interface SemanaViews {
   watch_minutos?: number | null;
   dias_com_dado?: number;
   anterior?: { rotulo: string; views: number; dias_com_dado: number } | null;
+  // ⚠️ `pode: false` traz o MOTIVO — a tela nunca calcula % por conta própria.
+  comparacao?: {
+    pode: boolean; motivo?: string; absoluto?: number;
+    percentual?: number; dias_com_dado?: number;
+  } | null;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -171,8 +186,190 @@ function StatCard({ icon: Icon, label, value, delta, accentClass }: {
 // ⚠️ Comparação com a semana retrasada em número ABSOLUTO, sem %: feriado,
 // evento especial e semana com 4 ou 5 cultos movem o número sem dizer nada
 // sobre desempenho (a oscilação medida chega a +74%).
+
+// Detalhamento da semana · abre ao clicar no card.
+//
+// ⚠️⚠️ AS DUAS TABELAS NÃO SE SOMAM, e a tela DIZ isso em voz alta:
+// as views do CANAL incluem vídeo antigo, shorts e cortes; `online_ds`/`ddus`
+// são as views DAQUELE vídeo de culto. Medido em 21/09/2026: os 5 cultos da
+// semana somam 4.638 contra ~12 mil do canal. Sem a frase, quem soma a coluna
+// dos cultos conclui que o card está errado — e para de confiar nos dois.
+function DetalheSemana({ semana, aberto, onClose }: {
+  semana: SemanaViews; aberto: boolean; onClose: () => void;
+}) {
+  const dias = semana.dias_detalhe || [];
+  const cultos = semana.cultos;
+  const faltam = 7 - (semana.dias_com_dado || 0);
+  const cmp = semana.comparacao;
+
+  const nomeDia = (iso: string) => {
+    // ⚠️ Fatiar a string: `new Date('2026-09-14')` é meia-noite UTC e no Rio
+    // vira dia 13 — o rótulo mostraria o dia errado.
+    const [a, m, d] = iso.split('-').map(Number);
+    const semanas = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+    const dow = new Date(Date.UTC(a, m - 1, d)).getUTCDay();
+    return `${semanas[dow]} ${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}`;
+  };
+
+  return (
+    <Dialog open={aberto} onOpenChange={(o) => !o && onClose()}>
+      {/* Padrão da casa para modal alto: flex-col sem overflow no container,
+          corpo com flex-1 + overflow-y-auto + min-h-0. */}
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Views da semana · {semana.rotulo}</DialogTitle>
+          <DialogDescription>
+            {semana.fonte || 'YouTube Analytics'} · segunda a domingo
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-5">
+          {/* ── Views do canal, por dia ── */}
+          <div>
+            <div className="flex items-baseline justify-between mb-2">
+              <h4 className="text-sm font-semibold">Views do canal, por dia</h4>
+              <span className="text-2xl font-bold">
+                {semana.views != null ? formatNumber(semana.views) : '—'}
+              </span>
+            </div>
+
+            {/* Comparação com a semana retrasada */}
+            {semana.anterior && (
+              <div className="mb-2 text-sm">
+                <span className="text-muted-foreground">
+                  Semana anterior ({semana.anterior.rotulo}): {formatNumber(semana.anterior.views)}
+                </span>
+                {cmp?.pode && cmp.percentual != null ? (
+                  <span className={`ml-2 font-semibold ${
+                    cmp.percentual > 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'
+                  }`}>
+                    {cmp.percentual > 0 ? '+' : ''}{cmp.percentual}%
+                    {cmp.absoluto != null && (
+                      <span className="font-normal text-muted-foreground ml-1">
+                        ({cmp.absoluto > 0 ? '+' : ''}{formatNumber(cmp.absoluto)} views)
+                      </span>
+                    )}
+                  </span>
+                ) : (
+                  // ⚠️⚠️ Motivo na frente, nunca um % inventado pela coleta
+                  // parcial: hoje seriam 5 dias contra 7, e o número diria
+                  // -55% de queda que não existiu.
+                  <span className="ml-2 text-amber-700 dark:text-amber-400">
+                    {cmp?.motivo === 'base_zero'
+                      ? 'sem base para percentual (semana anterior zerada)'
+                      : 'variação só com as duas semanas completas'}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {faltam > 0 && (
+              // ⚠️ Não basta dizer "5 de 7": o gestor precisa saber QUE dias
+              // faltam e POR QUE — a Analytics do YouTube fecha o dia com
+              // alguns dias de atraso, e o que falta na segunda-feira é
+              // justamente sábado e domingo, os de maior audiência.
+              <div className="mb-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10 rounded-md px-2.5 py-2">
+                ⚠ {semana.dias_com_dado} de 7 dias coletados — faltam {faltam}.
+                O YouTube fecha os dados de um dia alguns dias depois, então os
+                últimos dias da semana (inclusive o domingo) entram atrasados.
+                O total acima vai <strong>subir</strong>.
+              </div>
+            )}
+
+            {dias.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Nenhum dia coletado. Use o botão <strong>“Views por dia (130d)”</strong> no
+                cartão do YouTube, acima.
+              </p>
+            ) : (
+              <div className="rounded-lg border divide-y">
+                {dias.map((d) => (
+                  <div key={d.data} className="flex items-center justify-between px-3 py-2 text-sm">
+                    <span className="text-muted-foreground">{nomeDia(d.data)}</span>
+                    <span className="font-semibold tabular-nums">{formatNumber(d.views)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Cultos da semana ── */}
+          <div>
+            <h4 className="text-sm font-semibold mb-1">Cultos da semana</h4>
+            {/* ⚠️⚠️ A frase que impede a conclusão errada. */}
+            <p className="text-xs text-muted-foreground mb-2">
+              Views de cada <strong>transmissão de culto</strong>. Não é a divisão do número
+              acima: o total do canal inclui vídeos antigos, cortes e shorts, então a soma
+              dos cultos é sempre <strong>menor</strong>.
+            </p>
+
+            {cultos === null ? (
+              // Erro não vira lista vazia.
+              <p className="text-sm text-amber-700 dark:text-amber-400">
+                Não foi possível carregar os cultos desta semana.
+              </p>
+            ) : (cultos || []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhum culto nesta semana.</p>
+            ) : (
+              <div className="rounded-lg border overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 text-xs text-muted-foreground">
+                    <tr>
+                      <th className="text-left font-medium px-3 py-2">Culto</th>
+                      <th className="text-right font-medium px-3 py-2" title="Views no dia seguinte ao culto">D+1</th>
+                      <th className="text-right font-medium px-3 py-2" title="Views acumuladas na semana seguinte">D+7</th>
+                      <th className="text-right font-medium px-3 py-2" title="Pico de pessoas assistindo ao mesmo tempo">Pico</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {(cultos || []).map((c) => (
+                      <tr key={c.id}>
+                        <td className="px-3 py-2">
+                          <div className="font-medium">{c.nome}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {nomeDia(c.data)}{c.hora ? ` · ${c.hora}` : ''}
+                            {/* Culto sem vídeo vinculado NUNCA vai ter DS — é
+                                trabalho de gente, e a tela nomeia em vez de
+                                deixar três traços sem explicação. */}
+                            {c.sem_video && (
+                              <span className="ml-1.5 text-amber-700 dark:text-amber-400">
+                                · sem transmissão vinculada
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        {/* ⚠️ `null` vira "—", nunca 0: D+1 só existe no dia
+                            seguinte e D+7 uma semana depois. Zero diria que
+                            ninguém assistiu. */}
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {c.ds != null ? formatNumber(c.ds) : <span className="text-muted-foreground">—</span>}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {c.ddus != null ? formatNumber(c.ddus) : <span className="text-muted-foreground">—</span>}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {c.pico != null ? formatNumber(c.pico) : <span className="text-muted-foreground">—</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground mt-1.5">
+              D+7 aparece uma semana depois do culto — por isso os cultos recentes mostram “—”.
+            </p>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
 // ════════════════════════════════════════════════════════════════════════════
 function CardSemanaViews({ semana }: { semana?: SemanaViews | null }) {
+  const [detalhe, setDetalhe] = useState(false);
+  // ⚠️ O hook fica ANTES do early return: `if (!semana) return null` acima de
+  // um useState quebraria a ordem dos hooks entre renders.
   if (!semana) return null;
 
   // ⚠️ Erro NUNCA vira 0 nem card ausente.
@@ -193,13 +390,26 @@ function CardSemanaViews({ semana }: { semana?: SemanaViews | null }) {
   }
 
   const semDado = semana.views === null || semana.views === undefined;
-  const parcial = !semDado && semana.dias_com_dado > 0 && semana.dias_com_dado < 7;
-  const diffAnterior = (!semDado && semana.anterior && semana.anterior.views !== null)
-    ? semana.views - semana.anterior.views
-    : null;
+  const parcial = !semDado && (semana.dias_com_dado ?? 0) > 0 && (semana.dias_com_dado ?? 0) < 7;
+  // ⚠️⚠️ Quem decide se o % pode aparecer é o SERVIDOR (`compararSemanas`).
+  // Calcular aqui reintroduziria o número falso: com a semana em 5 de 7 dias,
+  // a conta ingênua daria -55% de "queda" que a coleta parcial inventou.
+  const cmp = semana.comparacao;
+  const diffAnterior = cmp?.pode ? (cmp.absoluto ?? null) : null;
+
+  // ⚠️ Só é clicável quando HÁ o que detalhar — card que abre um diálogo vazio
+  // ensina a não clicar.
+  const temDetalhe = !semDado || (semana.cultos || []).length > 0;
 
   return (
-    <Card className="overflow-hidden relative">
+    <>
+    <Card
+      className={`overflow-hidden relative ${temDetalhe ? 'cursor-pointer hover:shadow-lg transition-shadow' : ''}`}
+      onClick={temDetalhe ? () => setDetalhe(true) : undefined}
+      role={temDetalhe ? 'button' : undefined}
+      tabIndex={temDetalhe ? 0 : undefined}
+      onKeyDown={temDetalhe ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetalhe(true); } } : undefined}
+    >
       <div className="absolute inset-0 opacity-50 bg-gradient-to-br from-violet-500/15 to-indigo-500/5" />
       <CardContent className="p-5 relative">
         <div className="flex items-start justify-between mb-3">
@@ -213,7 +423,9 @@ function CardSemanaViews({ semana }: { semana?: SemanaViews | null }) {
                 : 'bg-gray-500/15 text-muted-foreground'
             }`}>
               {diffAnterior > 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
-              {formatDelta(diffAnterior)}
+              {cmp?.percentual != null
+                ? `${cmp.percentual > 0 ? '+' : ''}${cmp.percentual}%`
+                : formatDelta(diffAnterior)}
             </div>
           )}
         </div>
@@ -257,10 +469,33 @@ function CardSemanaViews({ semana }: { semana?: SemanaViews | null }) {
         {!semDado && semana.anterior && (
           <div className="text-xs text-muted-foreground mt-2">
             Semana anterior ({semana.anterior.rotulo}): {formatNumber(semana.anterior.views)} views
+            {cmp?.pode && cmp.absoluto != null && (
+              <> · {cmp.absoluto > 0 ? '+' : ''}{formatNumber(cmp.absoluto)}</>
+            )}
+            {/* ⚠️ Sem as duas semanas completas, DIZ que não dá para comparar
+                em vez de publicar uma variação que a coleta parcial inventou. */}
+            {cmp && !cmp.pode && cmp.motivo !== 'base_zero' && (
+              <div className="text-amber-700 dark:text-amber-400 mt-1">
+                Comparação só quando as duas semanas estiverem completas.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ⚠️ Afordância ESCRITA: um card clicável sem rótulo é um card que
+            ninguém descobre (a lição do ícone cinza de 18px no box de agenda
+            dos grupos, 18/08). */}
+        {temDetalhe && (
+          <div className="text-xs font-medium mt-2" style={{ color: 'var(--cbrio-primary, #00B39D)' }}>
+            Ver detalhamento →
           </div>
         )}
       </CardContent>
     </Card>
+    {temDetalhe && (
+      <DetalheSemana semana={semana} aberto={detalhe} onClose={() => setDetalhe(false)} />
+    )}
+    </>
   );
 }
 

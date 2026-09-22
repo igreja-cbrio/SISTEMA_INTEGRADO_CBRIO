@@ -15693,6 +15693,48 @@ janela de N caracteres alcança o vizinho e valida o errado.
 -o "npm run test:x")` divide em 3 palavras e roda 87 "scripts" inexistentes.
 **Falha idêntica em todos é assinatura de laço quebrado, não de teste vermelho.**
 
+### ⚠️⚠️ 2ª leva (mesmo dia) · "por que o crescimento de grupos não é alimentado?"
+
+Pergunta do Matheus vendo o painel. **A causa não era falta de alimentação — é
+incapacidade estrutural**, e a medição mostra em uma linha:
+
+```
+grupos_ativos · online · setembro/2026 → 22
+grupos_ativos · online · março/2026    → 22    ← O MESMO NÚMERO
+```
+
+O ramo de `grupos_ativos` conta `WHERE ativo = true` **sem nenhum filtro de
+período**: devolve o número de HOJE para qualquer data pedida. Como ONL-08 é
+`delta_pct`, ele compara **hoje com hoje** e dá **0% para sempre**. Idem ONL-09
+(`lideres_treinados`, que filtra `saiu_em IS NULL` — o estado de hoje).
+
+⚠️ **E o histórico que a pergunta supõe NÃO EXISTE**: os 22 grupos online têm
+`created_at` entre 19/06 e 22/07 e são todos da temporada T2-2026 — 19/06 é a
+assinatura de carga em massa, não a data real de cada grupo. Não há ciclo
+anterior no banco para comparar.
+
+⚠️⚠️ **ONL-06 FICA COMO ESTÁ, e isso é o cuidado principal**: `frequencia_grupos`
+**filtra por área** e devolveu **47** para o Online, com 23,68% de crescimento
+REAL. Criar um tipo manual ao lado dele daria **duas verdades sobre o mesmo
+número** — é o erro que a migration evita, não o que ela comete. Há mutante.
+
+**Generosidade** (ONL-22/23/24) tinha **dois defeitos somados**: publicava o
+mesmo valor nas 5 áreas (consequência da decisão de 14/08 de não segmentar
+doação por área) **e** a fonte parou — `mem_contribuicoes` tem **1 linha desde
+julho e ZERO em setembro**. O **−99,7%** que o painel mostrava não era queda de
+doação; era a base nominal parada desde junho.
+
+⇒ Migration `20260921190000`: 5 tipos `*_declarado` (mesma lei — **sem ramo
+nativo**) e os KPIs de grupos + a generosidade **do Online** repontados.
+⚠️ **As outras áreas NÃO foram tocadas**: o pedido foi do Online, e repontar
+criaria digitação mensal para equipes que não pediram. ⚠️⚠️ **Mas o resíduo dos
+GRUPOS é real e está declarado na migration**: o defeito de `grupos_ativos` é
+ESTRUTURAL, então **AMI-10, BRG-09, SED-05, AMI-08, BRG-07 e SED-03 continuam
+devolvendo 0% por construção**. Estender é tirar o `lower(area) = 'online'` de
+dois UPDATEs — e é decisão de quem vai digitar.
+⚠️ `agregacao = 'last'` nos de ESTOQUE (quantos grupos existem) e `'sum'` nos de
+FLUXO — somar estoque mês a mês contaria o mesmo grupo várias vezes.
+
 ### ⏳ PENDENTE DE GENTE (não é código)
 
 1. ⚠️ **Aplicar a migration** — sem ela o `voluntarios_checkin` segue publicando

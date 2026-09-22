@@ -193,6 +193,52 @@ describe('⚠️⚠️ a tela para de oferecer lançamento que o sistema ignora'
   });
 });
 
+describe('⚠️⚠️ leva 2 · grupos e generosidade também em tipo SEM ramo nativo', () => {
+  const ARQ2 = '20260921190000_online_entrada_manual_grupos_generosidade.sql';
+  const corpo2 = semComentarios(readFileSync(resolve(dirMigrations, ARQ2), 'utf8'));
+  const DECLARADOS = [
+    'grupos_ativos_declarado', 'lideres_treinamento_declarado',
+    'doacoes_valor_declarado', 'doadores_count_declarado', 'doadores_recorrentes_declarado',
+  ];
+
+  it('os 5 tipos declarados são criados como manuais', () => {
+    for (const t of DECLARADOS) {
+      expect(corpo2, `${t} não é criado`).toContain(`'${t}'`);
+    }
+    expect(corpo2).toMatch(/INSERT INTO public\.tipos_dado_bruto/);
+  });
+
+  it('⚠️ a guarda de ramo nativo cobre os 5', () => {
+    const i = corpo2.indexOf('FOREACH v_id IN ARRAY');
+    expect(i).toBeGreaterThan(-1);
+    const guarda = corpo2.slice(i, i + 900);
+    for (const t of DECLARADOS) expect(guarda, `${t} fora da guarda`).toContain(t);
+    expect(guarda).toContain('RAISE EXCEPTION');
+  });
+
+  it('⚠️⚠️ ONL-06 (frequencia_grupos) NÃO é repontado — ele funciona', () => {
+    // Medido: `frequencia_grupos` FILTRA por área e devolveu 47 para o Online,
+    // com 23,68% de crescimento real. Criar um manual ao lado daria DUAS
+    // verdades sobre o mesmo número.
+    expect(corpo2).not.toMatch(/'\{dado_tipo\}', '"frequencia_grupos_declarado"'/);
+    expect(corpo2).not.toContain('frequencia_grupos_declarado');
+  });
+
+  it('⚠️ generosidade é repontada SÓ no Online', () => {
+    // As outras 4 áreas não pediram, e repontá-las criaria digitação para
+    // equipes que não estão nessa conversa.
+    const i = corpo2.indexOf('doacoes_valor_declarado');
+    expect(i).toBeGreaterThan(-1);
+    const bloco = corpo2.slice(corpo2.indexOf("formula_config->>'dado_tipo' = 'doacoes_valor'"));
+    expect(bloco.slice(0, 200)).toContain("lower(area) = 'online'");
+  });
+
+  it('⚠️ a invariante final também roda nesta migration', () => {
+    expect(corpo2).toContain('$inv$');
+    expect(corpo2).toMatch(/ABORTADO: tipos manuais com ramo nativo/);
+  });
+});
+
 describe('⚠️ higiene do conjunto de migrations', () => {
   it('o arquivo existe e o timestamp não colide', () => {
     const iguais = readdirSync(dirMigrations).filter((f) => f.startsWith('20260921120000'));
