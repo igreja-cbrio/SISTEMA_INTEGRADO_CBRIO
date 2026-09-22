@@ -6,6 +6,7 @@ const { syncCanal } = require('../services/youtubeCollector');
 const yt = require('../services/youtubeAnalytics');
 const collectors = require('../services/onlineCollectors');
 const { semanaAnteriorBRT, somarViews, compararSemanas } = require('../utils/semanaOnline');
+const canalSerie = require('../utils/canalSerie');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const { isAuthorizedCron } = require('../utils/cronAuth');
@@ -327,6 +328,66 @@ router.get('/engajamento', async (_req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// GET /api/online/canal-serie?dias=7|28|90
+// ---------------------------------------------------------------------------
+// A série diária do canal (views + horas assistidas) e de onde vêm as views.
+// Alimenta o gráfico do canal e a rosca de tráfego do /online — os dois blocos
+// que a tela NÃO tinha: até 22/09/2026 o módulo não exibia nenhuma série
+// temporal do canal, só números do dia.
+//
+// ⚠️ Endpoint PRÓPRIO, separado do /dashboard, porque o período é filtrável:
+// pendurar no dashboard faria a tela inteira recarregar a cada troca de 7/28/90
+// e recontar as 8 consultas dele à toa.
+//
+// ⚠️ Os dois blocos falham SOZINHOS (`avisos[]`): tráfego indisponível não pode
+// apagar o gráfico, que é a peça principal. Erro nunca vira lista vazia.
+// ---------------------------------------------------------------------------
+router.get('/canal-serie', async (req, res) => {
+  const janela = canalSerie.janelaDoPeriodo(req.query?.dias);
+  const avisos = [];
+  let serie = null;
+  let trafego = null;
+
+  try {
+    const { data, error } = await supabase
+      .from('online_canal_views_dia')
+      .select('data, views, watch_minutos')
+      .gte('data', janela.inicio)
+      .lte('data', janela.fim)
+      .order('data', { ascending: true });
+    if (error) throw error;
+    serie = canalSerie.montarSerie(data, janela);
+  } catch (e) {
+    console.error('[online/canal-serie]', e.message);
+    avisos.push('Não foi possível carregar a série do canal.');
+  }
+
+  try {
+    // ⚠️ Filtra por `periodo_fim` (quando a coleta olhou), não por
+    // `periodo_inicio`: a coleta de tráfego cobre a vida do vídeo, e filtrar
+    // pelo início excluiria vídeo antigo que segue recebendo view no período.
+    const { data, error } = await supabase
+      .from('online_video_trafico')
+      .select('video_id, fonte, views')
+      .gte('periodo_fim', janela.inicio)
+      .limit(4000);
+    if (error) throw error;
+    trafego = canalSerie.agregarTrafego(data);
+  } catch (e) {
+    console.error('[online/canal-serie/trafego]', e.message);
+    avisos.push('Não foi possível carregar as fontes de tráfego.');
+  }
+
+  res.json({
+    ...janela,
+    periodos: canalSerie.PERIODOS,
+    serie,
+    trafego,
+    fonte: 'YouTube Analytics',
+    avisos,
+  });
 });
 
 // GET /api/online/dashboard

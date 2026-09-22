@@ -19,6 +19,7 @@ import { OnlineDebugPanel } from '@/components/online/OnlineDebugPanel';
 import JornadaConvertidos from '@/components/JornadaConvertidos';
 import QrCultosApelo from '@/components/online/QrCultosApelo';
 import CadastroMembresiaOnline from '@/components/online/CadastroMembresiaOnline';
+import CanalSerieCard from '@/components/online/CanalSerieCard';
 
 const VALOR_META: Record<string, { label: string; cor: string; corClara: string; icon: any }> = {
   seguir:        { label: 'Seguir a Jesus',          cor: '#8B5CF6', corClara: 'from-violet-500/15 to-violet-500/5', icon: Cross },
@@ -1221,6 +1222,12 @@ export default function Online() {
           <CardSemanaViews semana={data?.semana} />
         </div>
       )}
+
+      {/* O gráfico do canal (views/horas por dia) + de onde vêm as views.
+          ⚠️ Fica logo DEPOIS dos números do dia de propósito: os cards acima
+          são acumulados de anos (views totais, inscritos) e não dizem se o
+          canal está subindo — quem responde isso é a série. */}
+      <CanalSerieCard />
 
       {/* Engajamento de conteúdo do canal (YouTube Analytics).
           Estrutura pronta pra receber da API do YouTube · mostra 0 até a 1ª coleta. */}

@@ -4636,6 +4636,10 @@ export const online = {
   comunidadeMensal: (mes, valor) => post('/online/comunidade-mensal', { mes, valor }),
   dashboard: () => get('/online/dashboard'),
   engajamento: () => get('/online/engajamento'),
+  // Série diária do canal + fontes de tráfego, com período filtrável (7/28/90).
+  // ⚠️ Query própria, separada do dashboard: trocar o período não pode
+  // recarregar a tela inteira.
+  canalSerie: (dias) => get(`/online/canal-serie?dias=${dias}`),
   cultosMetricas: (limit) => get('/online/cultos-metricas' + (limit ? '?limit=' + limit : '')),
   series: (order) => get('/online/series' + (order ? '?order=' + order : '')),
   serie: (id) => get('/online/series/' + id),
