@@ -27,7 +27,25 @@ describe('diaBRT · o dia é o da IGREJA', () => {
   });
 });
 
-describe('canaisDe · e-mail é o canal PRIMÁRIO', () => {
+describe('canaisDe · notificação no sistema + e-mail', () => {
+  it('⚠️⚠️ quem tem CONTA recebe pela notificação do sistema', () => {
+    // Medido em 22/09: 28 dos 32 PJ têm conta ativa. Não aumenta o alcance
+    // (29 × 29), aumenta a chance de ser VISTO — o gargalo medido é a mensagem
+    // não chegar aos olhos, não o formulário.
+    expect(canaisDe({ profile_id: 'p1', email: 'a@b.com' })).toEqual(['sistema', 'email']);
+  });
+
+  it('⚠️ sem conta, só e-mail — e sem e-mail, só a conta', () => {
+    expect(canaisDe({ email: 'a@b.com' })).toEqual(['email']);
+    expect(canaisDe({ profile_id: 'p1' })).toEqual(['sistema']);
+  });
+
+  it('⚠️ sem conta e sem e-mail NÃO há canal (não é "não respondeu")', () => {
+    expect(canaisDe({})).toEqual([]);
+  });
+});
+
+describe('canaisDe · e-mail', () => {
   it('e-mail entra mesmo sem template de WhatsApp', () => {
     // O disparo irmão é WhatsApp-only e 40 de 46 têm e-mail — era o alcance
     // que estava sendo jogado fora.

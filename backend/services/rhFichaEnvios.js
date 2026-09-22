@@ -12,6 +12,7 @@
 // lembretes tem teto.
 const { supabase } = require('../utils/supabase');
 const { enviarEmail, isConfigured } = require('./email');
+const { notificar } = require('./notificar');
 const { basePublica } = require('../utils/linkInscricaoApp');
 const { estadoFicha, ehContratada } = require('../utils/fichaContratada');
 const { montarRodada, diaBRT } = require('../utils/fichaCobranca');
@@ -35,7 +36,33 @@ async function listarCandidatos() {
   if (error) return { erro: error.message };
   // ⚠️ O filtro de PJ é da régua (`ehContratada`), não um `.eq` aqui: a coluna
   // é texto livre e editável pelo PUT, e a régua é fail-closed para tipo novo.
-  return { candidatos: (data || []).filter((f) => ehContratada(f.tipo_contrato)) };
+  const candidatos = (data || []).filter((f) => ehContratada(f.tipo_contrato));
+
+  // ⚠️⚠️ Resolve a CONTA de cada um — é ela que habilita o canal `sistema`.
+  // Medido em 22/09: 28 dos 32 PJ têm conta ativa.
+  //
+  // ⚠️ Casa por E-MAIL em minúsculas, o mesmo critério de
+  // `current_user_funcionario_id()`. É sinal fraco no geral (família
+  // compartilha caixa), mas aqui o alvo é uma CONTA DE TRABALHO e o efeito é
+  // um aviso — não vínculo de identidade nem acesso a dado.
+  //
+  // ⚠️ Falha ao resolver as contas NÃO derruba a rodada: degrada para e-mail
+  // só, que é o comportamento de antes. Perder o aviso inteiro por causa do
+  // canal novo seria trocar um problema por outro maior.
+  const emails = [...new Set(candidatos.map((f) => String(f.email || '').trim().toLowerCase()).filter(Boolean))];
+  const porEmail = new Map();
+  for (let i = 0; i < emails.length; i += 200) { // ⚠️ lotes ≤200: `.in()` grande estoura a URL
+    const { data: ps, error: e2 } = await supabase
+      .from('profiles').select('id, email, active').in('email', emails.slice(i, i + 200));
+    if (e2) { console.warn('[ficha cobranca] não resolvi contas:', e2.message); break; }
+    for (const p of (ps || [])) {
+      if (p.active !== false) porEmail.set(String(p.email || '').toLowerCase(), p.id);
+    }
+  }
+  for (const f of candidatos) {
+    f.profile_id = porEmail.get(String(f.email || '').trim().toLowerCase()) || null;
+  }
+  return { candidatos };
 }
 
 /**
@@ -118,7 +145,10 @@ async function dispararCobranca({ seco = false, agora = new Date() } = {}) {
     agora, temTemplateWhatsapp, teto: TETO_RODADA, estadoDe: estadoFicha,
   });
 
-  const canalOk = isConfigured();
+  // ⚠️ Com o canal `sistema` disponível, e-mail fora do ar deixou de ser
+  // bloqueio total — mas se NENHUM dos dois alcança ninguém, a rodada recusa.
+  const alguemPeloSistema = rodada.enviar.some((e) => e.canais.includes('sistema'));
+  const canalOk = isConfigured() || alguemPeloSistema;
   if (!canalOk) {
     // ⚠️ Sem canal configurado NÃO é sucesso com zero envio: a caixa verde
     // dizendo "rodada disparada" com ninguém recebendo foi o incidente do
@@ -152,21 +182,54 @@ async function dispararCobranca({ seco = false, agora = new Date() } = {}) {
     if (link.erro) { falhas.push({ nome: func.nome, motivo: 'link: ' + link.erro }); continue; }
 
     const estado = estadoFicha(func);
-    const res = await enviarEmail({
-      to: func.email,
-      subject: assunto(item.rodada),
-      html: corpo({ nome: func.nome, url: link.url, rodada: item.rodada, faltando: estado.faltando }),
-    });
+    const saiu = [];
 
-    if (!res || res.ok === false) {
-      falhas.push({ nome: func.nome, motivo: (res && res.error) || 'falha no envio' });
-      continue; // ⚠️ NÃO carimba: a pessoa volta na próxima rodada.
+    // ⚠️ NOTIFICAÇÃO NO SISTEMA — vai primeiro porque é grátis, imediata e não
+    // depende de canal externo nenhum.
+    if (item.canais.includes('sistema') && func.profile_id) {
+      try {
+        await notificar({
+          modulo: 'rh',
+          tipo: 'ficha_contratada_pendente',
+          titulo: item.rodada === 1 ? 'Preencha a ficha da sua empresa' : 'Lembrete · ficha da sua empresa',
+          mensagem: estado.faltando.length && estado.preenchida
+            ? `Falta preencher: ${estado.faltando.join(', ')}.`
+            : 'Precisamos dos dados da sua empresa para o contrato e os pagamentos.',
+          link: `/ficha-contratada/${link.url.split('/').pop()}`,
+          severidade: 'alerta',
+          // ⚠️⚠️ `targetIds` mira A PESSOA, não a regra do módulo: este aviso é
+          // PARA o prestador preencher. Deixar cair em `notificacao_regras`
+          // mandaria a cobrança para quem cuida do RH — exatamente ao contrário.
+          targetIds: [func.profile_id],
+          chaveDedup: `ficha_pendente:${func.id}:r${item.rodada}`,
+        });
+        saiu.push('sistema');
+      } catch (e) {
+        console.warn('[ficha cobranca] notificação falhou:', func.nome, e.message);
+      }
     }
+
+    if (item.canais.includes('email')) {
+      const res = await enviarEmail({
+        to: func.email,
+        subject: assunto(item.rodada),
+        html: corpo({ nome: func.nome, url: link.url, rodada: item.rodada, faltando: estado.faltando }),
+      });
+      if (res && res.ok !== false) saiu.push('email');
+      else falhas.push({ nome: func.nome, motivo: (res && res.error) || 'falha no e-mail' });
+    }
+
+    // ⚠️⚠️ Só carimba se ALGUM canal entregou. Se nada saiu, a pessoa NÃO é
+    // marcada como cobrada e volta na próxima rodada — é o defeito do disparo
+    // irmão invertido (lá o carimbo vem antes de saber se enviou).
+    if (!saiu.length) continue;
 
     const cobrancas = Array.isArray(func.ficha_contratada_cobrancas) ? func.ficha_contratada_cobrancas : [];
     const { error } = await supabase.from('rh_funcionarios').update({
       ficha_contratada_cobrancas: [...cobrancas, {
-        em: new Date().toISOString(), canal: 'email', rodada: item.rodada, dia: diaBRT(agora),
+        // ⚠️ Registra os canais que REALMENTE entregaram, não os pretendidos:
+        // é isso que responde depois "por onde essa pessoa foi avisada?".
+        em: new Date().toISOString(), canais: saiu, rodada: item.rodada, dia: diaBRT(agora),
       }],
       ficha_contratada_enviado_em: new Date().toISOString(),
     }).eq('id', func.id);
