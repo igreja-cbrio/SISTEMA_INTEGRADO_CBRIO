@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { feriadosPorData } from '../../lib/feriadosBrasil';
 import { events } from '../../api';
 import { C, cardStyle, hint, MESES_LONGOS, fmtBRL } from './comum';
@@ -29,20 +30,21 @@ export default function CalendarioAno({ ano, itens = [] }) {
 
   // Cor do feriado vem da mesma regra de cores do módulo de Eventos
   // (event_categories · categoria "Feriado"), pra não ter duas cores
-  // diferentes pra feriado nacional entre as telas. Sem sucesso na busca,
-  // mantém o tom local como fallback.
-  const [corFeriado, setCorFeriado] = useState(C.red);
-  useEffect(() => {
-    let vivo = true;
-    events.categories()
-      .then((cats) => {
-        if (!vivo) return;
-        const cat = (cats || []).find((c) => (c.name || '').trim().toLowerCase() === 'feriado');
-        if (cat?.color) setCorFeriado(cat.color);
-      })
-      .catch(() => {});
-    return () => { vivo = false; };
-  }, []);
+  // diferentes pra feriado nacional entre as telas. Cacheada por SESSÃO
+  // (react-query, mesmo padrão do QueryClient em App.tsx) — sem isso a
+  // busca reiniciava a cada vez que a aba era remontada e o feriado
+  // piscava vermelho→amarelo toda vez que a pessoa voltava pra ela; agora
+  // só pisca (ou nem isso) na primeira vez da sessão. Sem sucesso na
+  // busca, mantém o tom local como fallback.
+  const { data: categoriasEventos } = useQuery({
+    queryKey: ['event-categories'],
+    queryFn: () => events.categories(),
+    staleTime: 5 * 60_000,
+  });
+  const corFeriado = useMemo(() => {
+    const cat = (categoriasEventos || []).find((c) => (c.name || '').trim().toLowerCase() === 'feriado');
+    return cat?.color || C.red;
+  }, [categoriasEventos]);
 
   // Índices: dia exato (precisão 'dia') e faixa do mês (precisão 'mes')
   const { porDia, porMes } = useMemo(() => {
