@@ -2180,6 +2180,10 @@ export const painelArea = {
   registrarNps: (area, body) => post(`/painel-area/${encodeURIComponent(area)}/nps`, body),
   // Aba Pessoas (AMI/Bridge) · quem declarou frequentar a área, com faixa etária
   pessoas: (area) => get(`/painel-area/${encodeURIComponent(area)}/pessoas`),
+  // A ficha do KPI: de onde sai o número, desde quando mede, com que
+  // periodicidade. ⚠️ Nível 1, o mesmo do painel — quem vê o número tem direito
+  // de saber de onde ele vem.
+  procedenciaKpi: (kpiId) => get(`/painel-area/kpi/${encodeURIComponent(kpiId)}/procedencia`),
   // Detalhe da pessoa (sem contribuições)
   pessoa: (area, id) => get(`/painel-area/${encodeURIComponent(area)}/pessoas/${id}`),
 };
