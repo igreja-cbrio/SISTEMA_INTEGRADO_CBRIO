@@ -14,6 +14,7 @@ const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { montarProcedencia } = require('../utils/kpiProcedencia');
+const { montarSerie } = require('../utils/kpiSerie');
 
 router.use(authenticate);
 
@@ -109,11 +110,47 @@ router.get('/kpi/:id/procedencia', authorizeModule('painel-area', 1), async (req
     ]);
 
     const periodos = (linhas || []).map((l) => l.periodo_referencia).filter(Boolean);
-    res.json(montarProcedencia(kpi, {
+    const ficha = montarProcedencia(kpi, {
       primeiro_periodo: periodos[0] || null,
       ultimo_periodo: periodos[periodos.length - 1] || null,
       total_periodos: count || periodos.length,
-    }));
+    });
+
+    // ⚠️⚠️ A TABELA MÊS A MÊS — pedido do Matheus em 23/09/2026: *"queria que
+    // mostrasse essa tabela tbm: mês | escalas | com check-in | %"*.
+    //
+    // ⚠️ As partes NÃO estão gravadas. `kpi_valores_calculados` guarda só o
+    // valor final; o `detalhes` é `{"tipo":"soma_periodo","valor":...}`, sem
+    // numerador nem denominador. Por isso a série é RECALCULADA da fonte por
+    // `kpi_serie_partes`, que repete o recorte de `_kpi_agregar_dado`.
+    //
+    // ⚠️ E é daí que sai o aviso mais útil da ficha: o valor AO VIVO pode não
+    // ser o do card. Medido em 23/09 no ONL-17 — agosto gravado 24,14%, ao vivo
+    // 60,66%, porque a Ariel lançou check-in retroativo depois da apuração das
+    // 07:01. Sem marcar isso, a tabela contradiz o card e ninguém sabe por quê.
+    //
+    // ⚠️ Best-effort: série que falha NÃO derruba a ficha (e `.catch()` numa
+    // cadeia do PostgREST é TypeError — por isso o try/catch em volta do await).
+    let serie = { tem_partes: false, linhas: [], divergencias: 0 };
+    try {
+      const [partes, gravados] = await Promise.all([
+        supabase.rpc('kpi_serie_partes', { p_kpi_id: kpi.id, p_n: 12 }),
+        manual
+          ? supabase.from('kpi_registros').select('periodo_referencia, valor_realizado')
+              .eq('indicador_id', kpi.id).not('valor_realizado', 'is', null)
+              .order('periodo_referencia', { ascending: false }).limit(12)
+          : supabase.from('kpi_valores_calculados').select('periodo_referencia, valor_calculado')
+              .eq('kpi_id', kpi.id).not('valor_calculado', 'is', null)
+              .order('periodo_referencia', { ascending: false }).limit(12),
+      ]);
+      const linhasGravadas = (gravados.data || []).map((g) => ({
+        periodo_referencia: g.periodo_referencia,
+        valor_calculado: manual ? g.valor_realizado : g.valor_calculado,
+      }));
+      serie = montarSerie(partes.data || [], linhasGravadas);
+    } catch { /* série é extra; a ficha vale sem ela */ }
+
+    res.json({ ...ficha, serie });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

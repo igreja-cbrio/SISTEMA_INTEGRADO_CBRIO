@@ -12,7 +12,7 @@
 import { useEffect, useState } from 'react';
 import { painelArea } from '../../api';
 import { Badge } from '@/components/ui/badge';
-import { Loader2, X, Database, CalendarClock, Target, AlertTriangle, Info } from 'lucide-react';
+import { Loader2, X, Database, CalendarClock, Target, AlertTriangle, Info, Table2 } from 'lucide-react';
 
 type Procedencia = {
   kpi_id: string; indicador: string | null; area: string | null;
@@ -22,7 +22,15 @@ type Procedencia = {
   dado_tipo: string | null; fonte: string | null; conta: string | null;
   ressalva: string | null; sem_implementacao: boolean;
   desde: string | null; ate: string | null; periodos_medidos: number; nunca_mediu: boolean;
+  rotulo_partes: { numerador: string; denominador: string } | null;
+  serie?: Serie;
 };
+
+type LinhaSerie = {
+  periodo: string; numerador: number | null; denominador: number | null;
+  valor: number | null; valor_gravado: number | null; divergente: boolean;
+};
+type Serie = { tem_partes: boolean; linhas: LinhaSerie[]; divergencias: number };
 
 export default function FichaKpi({ kpiId, onClose }: { kpiId: string; onClose: () => void }) {
   const [d, setD] = useState<Procedencia | null>(null);
@@ -100,6 +108,15 @@ export default function FichaKpi({ kpiId, onClose }: { kpiId: string; onClose: (
               {d.quando && <p className="text-xs text-muted-foreground mt-1">Apurado {d.quando}.</p>}
             </Secao>
 
+            {/* ⚠️⚠️ A TABELA MÊS A MÊS — pedido do Matheus (23/09/2026): ver o
+                número INTEIRO, não só o resultado. "37,7%" não diz nada; "23 de
+                61 escalas" diz tudo. */}
+            {d.serie && d.serie.linhas.length > 0 && (
+              <Secao icone={Table2} titulo="Mês a mês">
+                <TabelaSerie serie={d.serie} rotulos={d.rotulo_partes} />
+              </Secao>
+            )}
+
             {d.meta !== null && d.meta !== undefined && (
               <Secao icone={Target} titulo="Meta">
                 {String(d.meta)}
@@ -125,6 +142,68 @@ export default function FichaKpi({ kpiId, onClose }: { kpiId: string; onClose: (
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+// ⚠️⚠️ A tabela mostra o valor RECALCULADO AGORA, e marca onde o card ficou
+// para trás. Medido em 23/09/2026 no ONL-17: agosto está gravado como 24,14% e
+// ao vivo é 60,66% (37 de 61), porque a Ariel lançou check-in retroativo DEPOIS
+// da apuração das 07:01. Sem essa marca, a tabela contradiz o card na cara da
+// pessoa e ninguém sabe qual dos dois acreditar.
+function TabelaSerie({ serie, rotulos }: {
+  serie: Serie; rotulos: { numerador: string; denominador: string } | null;
+}) {
+  const comPartes = serie.tem_partes && !!rotulos;
+  return (
+    <div>
+      {/* Tabela rola sozinha — a página nunca rola de lado. */}
+      <div className="overflow-x-auto -mx-1 px-1">
+        <table className="w-full text-xs tabular-nums">
+          <thead>
+            <tr className="text-muted-foreground border-b border-border">
+              <th className="text-left font-medium py-1 pr-2">mês</th>
+              {comPartes && <th className="text-right font-medium py-1 px-2">{rotulos!.denominador}</th>}
+              {comPartes && <th className="text-right font-medium py-1 px-2">{rotulos!.numerador}</th>}
+              <th className="text-right font-medium py-1 pl-2">%</th>
+            </tr>
+          </thead>
+          <tbody>
+            {serie.linhas.map((l) => (
+              <tr key={l.periodo} className="border-b border-border/40 last:border-0">
+                <td className="py-1 pr-2">{l.periodo}</td>
+                {comPartes && <td className="text-right py-1 px-2">{l.denominador ?? '—'}</td>}
+                {comPartes && <td className="text-right py-1 px-2">{l.numerador ?? '—'}</td>}
+                <td className="text-right py-1 pl-2 font-medium">
+                  {l.valor === null ? '—' : `${l.valor.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`}
+                  {l.divergente && (
+                    <span
+                      className="ml-1 text-amber-600"
+                      title={`O card mostra ${l.valor_gravado?.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% — a última apuração automática é anterior a estes lançamentos.`}
+                    >*</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
+      {/* ⚠️ O aviso só aparece quando há divergência de verdade. Aviso que
+          aparece sempre é aviso que ninguém lê. */}
+      {serie.divergencias > 0 && (
+        <p className="text-[11px] text-amber-700 dark:text-amber-500 mt-2 leading-snug">
+          <strong>*</strong> {serie.divergencias === 1 ? 'Este mês foi recalculado agora' : `${serie.divergencias} meses foram recalculados agora`} e
+          {' '}não bate com o card: a última apuração automática é anterior a lançamentos
+          feitos depois (check-in retroativo, por exemplo). O card acerta sozinho na
+          próxima apuração.
+        </p>
+      )}
+      {!comPartes && (
+        <p className="text-[11px] text-muted-foreground mt-2">
+          Histórico apurado. Este tipo de dado ainda não abre o número em partes.
+        </p>
+      )}
     </div>
   );
 }

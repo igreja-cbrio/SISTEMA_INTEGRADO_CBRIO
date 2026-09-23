@@ -106,3 +106,19 @@ describe('⚠️ o catálogo descreve fonte E significado', () => {
     }
   });
 });
+
+// ⚠️ Os rótulos da tabela mês a mês vivem no catálogo, colados na fonte — não
+// na tela. Rótulo longe da definição envelhece sozinho: a fonte muda e a coluna
+// continua dizendo "escalas" sobre outra coisa.
+describe('rótulos da tabela mês a mês', () => {
+  it('o ramo que sabe abrir o número em partes traz os rótulos', () => {
+    expect(montarProcedencia(ONL17, {}).rotulo_partes)
+      .toEqual({ denominador: 'escalas', numerador: 'com check-in' });
+  });
+
+  it('ramo sem partes não inventa rótulo', () => {
+    const f = montarProcedencia(
+      { ...ONL17, id: 'X-1', formula_config: { dado_tipo: 'batismos' } }, {});
+    expect(f.rotulo_partes).toBeNull();
+  });
+});
