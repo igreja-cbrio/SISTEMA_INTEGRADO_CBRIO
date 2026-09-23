@@ -73,7 +73,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **192** arquivos, **176** com teste.
+`backend/utils/` tem **193** arquivos, **177** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -137,6 +137,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/cotaMeta.js` | `src/test/cotaMeta.test.ts` |
 | `backend/utils/cpf.js` | `src/test/censoFormEspelho.test.ts` `src/test/cpfResponsavel.test.ts` |
 | `backend/utils/cpfResponsavel.js` | `src/test/cpfResponsavel.test.ts` |
+| `backend/utils/crescimentoDs.js` | `src/test/crescimentoDs.test.ts` |
 | `backend/utils/criancaApresentacao.js` | `src/test/cultoApresentacao.test.ts` |
 | `backend/utils/cronAuth.js` | `src/test/cronSecretHeader.test.ts` `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/cultoJanela.js` | `src/test/cultoJanela.test.ts` |

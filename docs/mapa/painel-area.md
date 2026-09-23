@@ -27,6 +27,10 @@ Guard: `authorizeModule('painel-area', 1 | 3)`
 - `backend/utils/kpiSerie.js`
 - `backend/utils/supabase.js`
 
+**Serviços**
+
+- `backend/services/kpiAutoCollector.js`
+
 **Tabelas que estas rotas tocam**
 
 - `dados_brutos`
