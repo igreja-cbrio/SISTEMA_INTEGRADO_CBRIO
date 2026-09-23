@@ -12,10 +12,40 @@
 -- Ordem: catálogo/permissões → whitelist de soft-delete → funções → tabelas.
 -- Idempotente (IF EXISTS em tudo).
 
--- ── 1. Catálogo do módulo + matriz de permissões ──────────────────────────
-DELETE FROM public.cargo_modulo_permissao
- WHERE modulo_id IN (SELECT id FROM public.modulos WHERE slug = 'propostas');
-DELETE FROM public.modulos WHERE slug = 'propostas';
+-- ── 1. Catálogo do módulo + TODAS as tabelas que apontam pra ele ──────────
+-- ⚠️ 1ª tentativa (23/09) falhou com 23503: além de `cargo_modulo_permissao`
+-- (34 linhas, por cargo), `permissoes_modulo` (por USUÁRIO) tinha 1 linha —
+-- a permissão dev temporária da conta pessoal do Marcos (03/09/2026) — e em
+-- produção a FK está SEM cascade, ao contrário do que a migration de origem
+-- declara. Em vez de listar tabela por tabela, varre `pg_constraint`: toda FK
+-- que referencia `public.modulos` tem suas linhas do módulo apagadas antes.
+DO $$
+DECLARE
+  v_id  int;
+  r     record;
+  v_n   bigint;
+BEGIN
+  SELECT id INTO v_id FROM public.modulos WHERE slug = 'propostas';
+  IF v_id IS NULL THEN
+    RAISE NOTICE 'modulo propostas ja nao existe em modulos - nada a fazer';
+    RETURN;
+  END IF;
+
+  FOR r IN
+    SELECT c.conrelid::regclass AS tabela, a.attname AS coluna
+      FROM pg_constraint c
+      JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY (c.conkey)
+     WHERE c.contype = 'f'
+       AND c.confrelid = 'public.modulos'::regclass
+  LOOP
+    EXECUTE format('DELETE FROM %s WHERE %I = $1', r.tabela, r.coluna) USING v_id;
+    GET DIAGNOSTICS v_n = ROW_COUNT;
+    RAISE NOTICE '% . % : % linha(s) do modulo % apagadas', r.tabela, r.coluna, v_n, v_id;
+  END LOOP;
+
+  DELETE FROM public.modulos WHERE id = v_id;
+  RAISE NOTICE 'modulos: linha % (propostas) apagada', v_id;
+END $$;
 
 -- ── 2. Tira `prop_proposta` da whitelist do app_soft_delete ───────────────
 -- A whitelist é o CORPO da função `app_soft_deletable_tables()` (ver
