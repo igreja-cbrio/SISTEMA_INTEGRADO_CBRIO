@@ -4602,6 +4602,10 @@ export const online = {
   // ⚠️ Query própria, separada do dashboard: trocar o período não pode
   // recarregar a tela inteira.
   canalSerie: (dias) => get(`/online/canal-serie?dias=${dias}`),
+  // ⚠️ Exige `membresia` OU `financeiro` nível 2 (régua do dinheiro, não a do
+  // canal): o módulo `online` é alcançável por 31 cargos, inclusive Membro e
+  // Voluntário. 403 aqui é esperado para quem só tem `online`.
+  arrecadacao: (ano) => get(`/online/arrecadacao${ano ? `?ano=${ano}` : ''}`),
   cultosMetricas: (limit) => get('/online/cultos-metricas' + (limit ? '?limit=' + limit : '')),
   series: (order) => get('/online/series' + (order ? '?order=' + order : '')),
   serie: (id) => get('/online/series/' + id),

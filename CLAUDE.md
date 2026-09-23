@@ -16035,6 +16035,171 @@ banco), **dispositivos** (`online_video_trafico` guarda fonte, não device) e
 um estado consultável de "está no ar"). Card que mostra número inventado é pior
 que card ausente.
 
+## ⚠️⚠️ ONLINE · a arrecadação, e as 4 coisas que o dado desmentiu (2026-09-23 · migration `20260923120000`)
+
+Pedido do Matheus: *"quero uma aba para mostrar as analises da arrecadacao do
+online. a nossa arrecadacao do online, e toda arrecadacao que entra pro
+santander (...) arrecadacao semanal apenas do online, arrecadacao mensal,
+variacao de uma semana pra outra, variacao de um mes para o outro (...) quero
+poder comparar com o ano anterior tbm."* + planilha `Pix_Online_2026_Resumo_Mensal.xlsx`
+do sistema contábil como reforço.
+
+### ⚠️⚠️ 1 · "TODA arrecadação que entra no Santander" está FACTUALMENTE ERRADO
+
+Medido em 23/09, na própria conta, desde 2025:
+
+| o que a conta também recebe | valor |
+|---|---|
+| **"Dinheiro" com classe `transferencia`** (entre contas próprias) | **R$ 2.114.763** |
+| **cartão de crédito + débito** = repasse da maquininha do culto **PRESENCIAL** | R$ 471.291 |
+| **1 linha** de "Crédito em Conta" `extraordinaria` — câmbio / Eagle Brook Church | R$ 1.041.067 |
+| 162 linhas de "Crédito em Conta" `ordinaria` = rendimento de aplicação | R$ 33,75 |
+
+⇒ Somar literalmente o que ele pediu **dobraria o total e seria dupla contagem
+pura**. **A planilha do contábil exclui tudo isso — ela é o critério revelado; a
+frase era a intenção mal formulada.**
+
+### ⚠️⚠️ 2 · A conta Santander é 11% do Pix da igreja — e a premissa NÃO é derivável
+
+| conta | Pix/TED/Transf. 2026 | lançamentos |
+|---|---|---|
+| **Itaú** 3200/01111-6 | **R$ 7.789.249** | 18.202 |
+| Santander 3957 | R$ 963.520 | 2.875 |
+
+No Itaú o Pix é **Dízimos em Geral R$ 5,58 mi** — 6× o Santander. Não existe
+campo em `fin_contas`, view ou comentário que ligue a conta ao canal online.
+⇒ **O Matheus CONFIRMOU em 23/09** que a chave Pix do culto online aponta para o
+Santander e o Itaú é o presencial. A premissa fica registrada no `COMMENT` de
+`fn_online_conta_id()` **com a data da decisão**, porque o dado sozinho não a
+sustenta.
+
+### ⚠️⚠️ 3 · A semana é QUARTA→TERÇA, e o motivo é o D+1
+
+Dia da semana dos 2.546 créditos de 2026: **segunda 1.349 (53%)** · quarta 565 ·
+terça 235 · sexta 208 · quinta 189 · **sábado 0 · domingo 0**.
+
+**Nenhuma doação é creditada no fim de semana** — a oferta do culto de domingo
+liquida na segunda. Na semana `fin_semana_qua_ter` o domingo 20/09 e a segunda
+21/09 caem na **MESMA** semana (conferido na função); na seg→dom o dinheiro do
+domingo cai na semana **SEGUINTE**.
+
+⚠️ O pedido dizia "a mesma lógica do dashboard semanal" — mas o dashboard tem
+**DUAS** semanas, e a de dinheiro é qua→ter (lei de 08/07, que reverteu a
+unificação de 01/06 por dar número diferente do fechamento). Decisão do Matheus
+em 23/09, com o número na mão.
+
+⚠️⚠️ **E a planilha NÃO tem a data da doação**: `Data da Contribuição` é
+**idêntica a `Data do Crédito` em 2.546 de 2.546**. A data real não existe em
+lugar nenhum, nem no contábil. Por isso a tela DIZ que não sabe quanto cada
+culto arrecadou.
+
+### ⚠️⚠️ 4 · A variação semanal é o calendário de ~10 pessoas
+
+**Top 10 doadores = 39,8% do total** · top 50 = 76,1% · 583 doadores ·
+ticket **médio R$ 351 contra mediano R$ 100** · lançamentos ≥ R$ 5.000 = 24,3%
+do valor. Uma doação avulsa de R$ 5 mil move a semana em ~20%.
+
+⇒ A concentração fica **colada na variação** na tela, e a mediana vem na frente
+da média. Sem isso, "a semana caiu 59%" se lê como queda de generosidade.
+
+### A trava principal · `backend/utils/arrecadacaoOnline.js` (régua PURA, no gate)
+
+⚠️⚠️ **A importação do balanço é SEMANAL e 53% do dinheiro cai na segunda** ⇒ a
+janela corrente está **SEMPRE parcial**. Medido no próprio dia: a semana em
+curso tinha **R$ 90** contra R$ 17.664 da anterior — a variação ingênua seria
+**−99,5%, TODA semana**.
+
+`periodoFechado` exige **DUAS** condições, por motivos diferentes:
+- `fim <= hoje` — a semana que ainda corre não acabou;
+- `fim <= corte` — ela pode ter acabado e **o balanço dela não ter sido
+  importado**. O `corte` é a data máxima do dado **na conta**, derivada do banco
+  — nunca constante, que envelheceria no primeiro atraso de import.
+
+⚠️ **Fail-safe**: sem corte conhecido, NÃO assume fechado.
+⚠️ **A variação só existe com os DOIS lados fechados** — anterior parcial
+(import atrasado no meio) é a mesma armadilha ao contrário.
+⚠️ **Base zero devolve `null`**, nunca 0 nem `Infinity`.
+
+⚠️⚠️ **`'2026-09' <= '2026-09-23'` é TRUE por prefixo de string** — sem expandir
+o mês para o último dia dele, **o mês CORRENTE apareceria como fechado**, o
+contrário do que a régua existe para impedir. Foi o teste que pegou.
+⚠️ `ultimoDiaDoPeriodo` usa `Date.UTC`: é aritmética de calendário, e o fuso
+local joga a virada para o mês errado (só observável num fuso à frente de UTC —
+o caso força `Asia/Tokyo`).
+
+### ⚠️ O recorte NÃO usa lista de planos de conta, de propósito
+
+A planilha do contábil filtra 5 planos escritos à mão, e **dois já têm morte
+marcada**: `Dizimo Domingo 10:00` (o culto das 10:00 foi ENCERRADO no corte de
+24/08/2026) e `Campanha 2025` (a campanha do Kids abriu em 06/09 e nasce com
+outro nome). Plano fora da lista **sumiria em silêncio** e o número pareceria
+queda de doação — é a lei do bairro se repetindo.
+
+⇒ O critério é **exclusão declarada**: receita viva (o WHERE canônico das
+`vw_fin_semana_*`, as **4** condições, incluindo o anti dupla contagem OFX) +
+**forma eletrônica**, com a cauda do que ficou de fora publicada e a **soma
+fechando**. Plano novo ENTRA e aparece na composição.
+⚠️ **Consequência declarada**: o total fica ~8% acima da planilha
+(R$ 961.364 × R$ 888.884 em 2026), porque inclui Bazar, Retiro AMI e Outras
+Contribuições.
+
+⚠️ **`forma_pagamento` é TEXT LIVRE sem CHECK**, e os valores reais são `'Pix'`,
+`'TED'`, `'Transferência'` (com acento e maiúscula), mais `'Transferencia'` sem
+acento no histórico e **11 linhas NULAS**. Um `in ('pix','ted')` cru devolve
+**ZERO** — e zero se lê como "a arrecadação caiu".
+
+### ⚠️⚠️ O GUARD é o do DINHEIRO, não o do canal
+
+O módulo `online` é alcançável por **31 cargos com nível ≥ 1 — incluindo
+"Membro" e "Voluntário"** (medido em 23/09), e desde o conserto de 02/09 o gate
+da tela é o próprio módulo. Publicar R$ ali contradiz a lei que o módulo irmão
+já aplica (`painelArea.js:767`: *"líder de área não vê doação"*).
+
+⇒ O endpoint usa **`podeVerFinanceiroDePessoa`** (`membresia` OU `financeiro`
+nível 2) — a MESMA régua que decide se o dízimo de uma pessoa sai pela rede. E
+o guard fica **no endpoint**, porque `backend/routes/online.js` não tem nenhum
+`authorizeModule`: sem ele, qualquer pessoa logada (o auth é compartilhado com o
+app de membros) alcançaria a URL.
+
+⚠️⚠️ **Passam 11 cargos** (Dev, Dir Estrat, Coord Estratégico, Coord Financ,
+Assist Financ, Dir RH + os de membresia 3). **A Coord Online NÃO passa** — quem
+opera o módulo não vê a arrecadação dele. É decisão do Matheus; ampliar é 1
+linha, e **ampliar é reversível, vazar não**.
+⚠️ O card se esconde inteiro no 403 — card vazio faria parecer que a igreja não
+arrecadou nada.
+
+### ⚠️ A agregação é RPC, não leitura
+
+`fn_online_arrecadacao(inicio, fim) → jsonb` devolve série semanal, mensal,
+composição, concentração, cauda e o corte numa viagem só. **`fin_transacoes` tem
+22.618 linhas nesta conta e o PostgREST corta em 1.000 em silêncio** — agregar
+no cliente devolveria ~12% do valor de 2022 sem erro nenhum. E a semana
+financeira é função SQL: espelho em JS é o que derrubou a unificação de 01/06.
+
+### ⚠️ O nº de SEGUNDAS entra na comparação anual
+
+Com 53% do valor caindo na segunda, **um mês com 5 segundas tem ~11% a mais que
+um com 4, sem nada ter mudado** — e o calendário muda de ano para ano. A RPC
+devolve `dias_segunda` por mês e a tabela marca ⚠ quando o calendário difere do
+ano anterior.
+
+### ⚠️ A "queda" de 2024 NÃO é dado incompleto (correção de um alarme meu)
+
+Reportei que 2024 (−65% contra 2023) parecia import faltando. **Errado**: os 12
+meses têm dado, sem buraco, média de R$ 39 mil/mês e mediana estável em R$ 100.
+A série longa conta uma história real — 2022 era o pico pós-pandemia (cultos
+online), 2023-24 a volta ao presencial, 2025-26 a retomada (~R$ 100 mil/mês).
+
+### ⏳ Pendente de GENTE
+
+1. **Aplicar a migration `20260923120000`** — sem ela o endpoint responde 500.
+2. **Conferir 9 lançamentos com o financeiro**: o banco tem 9 linhas que a
+   planilha não tem (R$ 8.107 de R$ 888.884 · 0,9%), **idênticas em todo campo
+   observável** às incluídas e com `updated_at` posterior à criação
+   (reclassificação). 5 dos 9 meses batem **ao centavo**. Não é o sistema que
+   está errado — a planilha é que saiu incompleta.
+3. **Decidir se a Coord Online vê o valor** (hoje não vê).
+
 ## Online · visao do canal YouTube (somente leitura)
 
 Modulo `/online` mostra desempenho do canal YouTube CBRio com

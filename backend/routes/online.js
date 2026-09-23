@@ -7,6 +7,11 @@ const yt = require('../services/youtubeAnalytics');
 const collectors = require('../services/onlineCollectors');
 const { semanaAnteriorBRT, somarViews, compararSemanas } = require('../utils/semanaOnline');
 const canalSerie = require('../utils/canalSerie');
+const arrec = require('../utils/arrecadacaoOnline');
+// ⚠️ A MESMA régua que decide se dízimo de uma pessoa sai pela rede
+// (utils/dadosSensiveisPessoa): `membresia` OU `financeiro` nível 2. Aqui é
+// dinheiro da igreja inteira — a régua não pode ser mais frouxa que aquela.
+const { podeVerFinanceiroDePessoa } = require('../utils/dadosSensiveisPessoa');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const { isAuthorizedCron } = require('../utils/cronAuth');
@@ -386,6 +391,108 @@ router.get('/canal-serie', async (req, res) => {
     serie,
     trafego,
     fonte: 'YouTube Analytics',
+    avisos,
+  });
+});
+
+// GET /api/online/arrecadacao?ano=AAAA
+// ---------------------------------------------------------------------------
+// Arrecadação do canal online: série semanal (QUA→TER), mensal, variação e
+// comparação com o ano anterior.
+//
+// ⚠️⚠️ GUARD PRÓPRIO, e é o ponto mais importante deste endpoint. O módulo
+// `online` é alcançável por **31 cargos com nível ≥ 1 — inclusive "Membro" e
+// "Voluntário"** (medido em 23/09/2026), e desde o conserto de 02/09 o gate da
+// tela é o próprio módulo. Publicar R$ ali contradiz a lei que o módulo irmão
+// já aplica: `painelArea.js` recusa contribuições porque "líder de área não vê
+// doação". Então quem decide aqui é a régua do DINHEIRO, não a do canal.
+// ⚠️ E o guard fica no ENDPOINT, não só na tela: `backend/routes/online.js`
+// não tem nenhum `authorizeModule`, então qualquer pessoa logada (o auth é
+// compartilhado com o app de membros) alcançaria a URL.
+//
+// ⚠️ A agregação é RPC (`fn_online_arrecadacao`): `fin_transacoes` tem 22.618
+// linhas nesta conta e o PostgREST corta em 1.000 **em silêncio**.
+// ---------------------------------------------------------------------------
+router.get('/arrecadacao', async (req, res) => {
+  if (!podeVerFinanceiroDePessoa(req.user)) {
+    return res.status(403).json({
+      error: 'Sem permissão para ver valores de arrecadação.',
+      reason: 'financeiro_requerido',
+    });
+  }
+
+  const hoje = arrec.hojeBRT();
+  const anoHoje = Number(hoje.slice(0, 4));
+  const anoPedido = Number(req.query?.ano);
+  // ⚠️ FAIL-SAFE: ano torto cai no corrente, nunca vira "NaN-01-01" — o
+  // PostgREST recusaria a data e o endpoint viraria 500 por um query param.
+  const ano = Number.isInteger(anoPedido) && anoPedido >= 2022 && anoPedido <= anoHoje
+    ? anoPedido
+    : anoHoje;
+
+  const inicio = `${ano}-01-01`;
+  // ⚠️ Ano corrente termina HOJE, não em 31/12: ir até o fim do ano encheria a
+  // série de meses vazios e deflacionaria qualquer média.
+  const fim = ano === anoHoje ? hoje : `${ano}-12-31`;
+
+  const avisos = [];
+  let dados = null;
+  let anterior = null;
+
+  try {
+    const { data, error } = await supabase.rpc('fn_online_arrecadacao', {
+      p_inicio: inicio, p_fim: fim,
+    });
+    if (error) throw error;
+    dados = data;
+  } catch (e) {
+    console.error('[online/arrecadacao]', e.message);
+    // ⚠️ Erro NUNCA vira zero: "não conseguimos ler" e "não entrou dinheiro"
+    // levam a decisões opostas.
+    return res.status(500).json({
+      error: 'Não foi possível carregar a arrecadação.',
+      detalhe: e.message,
+    });
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('fn_online_arrecadacao', {
+      p_inicio: `${ano - 1}-01-01`, p_fim: `${ano - 1}-12-31`,
+    });
+    if (error) throw error;
+    anterior = data;
+  } catch (e) {
+    console.error('[online/arrecadacao/anoAnterior]', e.message);
+    // ⚠️ Falhar no ano anterior NÃO derruba o ano corrente, que é a peça
+    // principal — a comparação some e é declarada.
+    avisos.push('Não foi possível carregar o ano anterior para comparação.');
+  }
+
+  const corte = dados?.corte || null;
+  const semanas = arrec.anotarSerie(dados?.semanas, { hoje, corte });
+  const meses = arrec.compararComAnoAnterior(
+    arrec.anotarSerie(dados?.meses, { hoje, corte, campoFim: 'mes' }),
+    anterior?.meses,
+  );
+
+  res.json({
+    ano,
+    anos: Array.from({ length: anoHoje - 2022 + 1 }, (_, i) => 2022 + i),
+    inicio, fim, corte,
+    total: dados?.total ?? null,
+    lancamentos: dados?.lancamentos ?? null,
+    ticket_mediano: dados?.ticket_mediano ?? null,
+    ticket_medio: dados?.ticket_medio ?? null,
+    semanas,
+    meses,
+    semana_atual: arrec.ultimoFechado(semanas),
+    composicao: dados?.composicao || [],
+    concentracao: dados?.concentracao || null,
+    conferencia: arrec.conferencia(dados?.total, dados?.fora_do_recorte),
+    fora_do_recorte: dados?.fora_do_recorte || [],
+    ano_anterior: anterior
+      ? { ano: ano - 1, total: anterior.total, lancamentos: anterior.lancamentos }
+      : null,
     avisos,
   });
 });
