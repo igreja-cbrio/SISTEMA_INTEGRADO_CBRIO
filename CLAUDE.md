@@ -16248,6 +16248,78 @@ auto-merge junta texto, não prova que o resultado compila nem que as duas telas
 continuam montadas. Foi `grep -c "<Componente"` que provou os três.
 
 
+## ⚠️ ONLINE · a tela virou 5 ABAS, e a do dinheiro só EXISTE com nível 4 (2026-09-23 · SEM migration)
+
+Pedido do Matheus: *"gostaria que dentro do online tivesse uma aba do financeiro
+(apenas o financeiro do online), pois o scroll ta ficando muito longo"*.
+
+**Medido antes: 14 blocos empilhados num scroll único** (1.428 linhas), e o
+único `Tabs` da tela era interno ao card de top vídeos. Uma aba só de financeiro
+tiraria **1 de 14** — não resolve o motivo declarado. Por isso a tela ganhou
+abas de topo, com **Financeiro como aba própria**, que é o pedido literal.
+
+| aba | blocos |
+|---|---|
+| **Pessoas** (padrão) | QR do apelo · cadastro de membresia · novos convertidos 90d |
+| **Canal** | OAuth · sem-dados · stats + semana · série do canal · engajamento |
+| **Conteúdo** | top vídeos · maiores hits · séries · performance por culto |
+| **Financeiro** | arrecadação |
+| **Indicadores** | matriz Valor×Online (+ ficha de KPI) · diagnóstico · debug |
+
+⚠️ **Pessoas é a 1ª aba de propósito**: o comentário do bloco no código já dizia
+*"gente antes de número"*, e ele era o primeiro do scroll. Agrupar não pode
+reescrever a ordem de leitura que a tela já declarava.
+
+### ⚠️⚠️ A aba do dinheiro só pode EXISTIR para quem o servidor deixaria ver
+
+`ArrecadacaoOnlineCard` **se esconde sozinho no 403** (`return null`). Sem gate
+na própria ABA, ela apareceria para os 31 cargos que alcançam `online` e ficaria
+**vazia** — o mesmo erro que o card existe para evitar ("card vazio faria parecer
+que a igreja não arrecadou nada").
+
+⚠️⚠️ **E a régua NÃO pode ser `canAccessModule`**: ela libera admin/diretor por
+`profiles.role`, e a lei do dinheiro (23/09) é explícita em **não ter bypass de
+role nem piso de cargo**. Um diretor com `online` nível 1 veria a aba e levaria
+403 — a aba vazia pela porta dos fundos. A tela lê
+`modulePerms?.online?.leitura >= 4` direto, espelhando
+`podeVerArrecadacaoOnline`, e o teste do gate **casa o nível contra o
+`NIVEL_VE_DINHEIRO` do backend**: mudou lá, quebra aqui.
+
+- ⚠️ **`typeof nivel === 'number'`**, nunca truthy: a string `'5'` não é nível.
+- ⚠️ **Deny explícito do módulo vence**, como no `authorizeModule`.
+- ⚠️ **Quem chega por `?tab=financeiro` sem o nível é devolvido para a 1ª aba** —
+  sem isso a tela fica em branco, sem dizer por quê.
+
+### ⚠️ Ganho de carona: aba inativa NÃO consulta
+
+`TabsContent` do Radix **desmonta** o conteúdo inativo, então `CanalSerieCard`,
+`ArrecadacaoOnlineCard`, `CultoYouTubePanel` e `JornadaConvertidos` só fazem
+fetch quando a aba abre. Os dois primeiros usam react-query, então voltar à aba
+lê do cache. ⚠️ O `Tabs` aninhado de "Por views / Por engajamento" tem `Root`
+próprio e não colide com o de topo.
+
+### ⚠️ A aba vive na URL, e o catálogo é FECHADO
+
+`?tab=` (padrão da casa — Censo, Comunicação, Marketing). `ABAS_ONLINE` é lista
+fechada: valor fora dela cai na 1ª aba em vez de deixar a tela branca. **Aba
+nova entra no catálogo E no `TabsList`** — no catálogo sem gatilho, o deep-link
+aceita um valor que não tem como ser alcançado pela barra (tem teste).
+
+### ⚠️ Método
+
+O reagrupamento foi feito **fatiando por marcador de texto, sem reindentar** —
+o diff fica como linhas movidas, legível na revisão, e o interior de nenhum
+bloco foi tocado. ⚠️ O que o typecheck **não** pega é bloco perdido no recorte:
+quem provou foi `grep -o "<Componente" | uniq -c` exigindo **1 de cada um dos
+10**. ⚠️ E o **build** é o verificador de JSX desbalanceado em `.tsx`, não o
+`tsc` (lição de 17/08).
+
+Guarda: `src/test/onlineAbaFinanceiro.test.ts` (12 casos · no `npm test`).
+**9 mutantes RODADOS e mortos**: `canAccessModule` de volta → 4 vermelhos ·
+nível 4→1 → 2 · aba sempre visível → 1 · nível truthy → 1 · deny ignorado → 1 ·
+`?tab=` sem validar → 1 · preso na aba sem nível → 1 · aba sem gatilho → 1 ·
+card fora da aba → 2.
+
 ## Online · visao do canal YouTube (somente leitura)
 
 Modulo `/online` mostra desempenho do canal YouTube CBRio com

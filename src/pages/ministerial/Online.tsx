@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { online } from '@/api';
 import { Card, CardContent } from '@/components/ui/card';
@@ -9,7 +9,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import {
   Users, Eye, ThumbsUp, MessageSquare, TrendingUp, TrendingDown, ExternalLink,
   Youtube, Loader2, RefreshCw, PlayCircle, Info, Cross, HeartHandshake,
-  Clock, HandHelping, Sparkles, AlertCircle, Target, ChevronDown, Zap, Link2, Unlink, CheckCircle2,
+  Clock, HandHelping, Sparkles, AlertCircle, Target, ChevronDown, Zap, Link2, Unlink, CheckCircle2, Wallet,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from 'sonner';
@@ -1029,9 +1029,45 @@ function ComunidadeOnlineCard() {
   );
 }
 
+// ⚠️ Lista FECHADA: `?tab=` fora dela cai na primeira aba em vez de deixar a
+// tela em branco. Aba nova entra aqui E no TabsList — senão o deep-link
+// aceita um valor que não tem gatilho.
+const ABAS_ONLINE = ['pessoas', 'canal', 'conteudo', 'financeiro', 'indicadores'] as const;
+
 export default function Online() {
-  const { getAccessLevel, isAdmin } = useAuth();
+  const { getAccessLevel, isAdmin, modulePerms, modulosBloqueados } = useAuth();
   const podeEditarOnline = isAdmin || (getAccessLevel?.(['online']) ?? 0) >= 3;
+
+  // ⚠️⚠️ ESPELHO de `podeVerArrecadacaoOnline` (backend/utils/arrecadacaoOnline.js):
+  // nível 4 em `online`, SEM bypass de role e SEM piso de cargo. NÃO usar
+  // `canAccessModule` aqui — ela libera admin/diretor por `profiles.role`, e um
+  // diretor com `online` nível 1 veria a aba e levaria 403 do servidor, que é
+  // exatamente a aba vazia que este gate existe para impedir.
+  const podeVerArrecadacao = useMemo(() => {
+    if ((modulosBloqueados || []).includes('online')) return false;
+    const nivel = modulePerms?.online?.leitura;
+    return typeof nivel === 'number' && nivel >= 4;
+  }, [modulePerms, modulosBloqueados]);
+
+  // ⚠️ A aba vive na URL para recarregar/compartilhar não jogar a pessoa em
+  // outra aba (padrão da casa — Censo, Comunicação, Marketing).
+  const [abaAtiva, setAbaAtiva] = useState<string>(() => {
+    const t = new URL(window.location.href).searchParams.get('tab');
+    return ABAS_ONLINE.includes(t as any) ? (t as string) : 'pessoas';
+  });
+  const trocarAba = useCallback((v: string) => {
+    setAbaAtiva(v);
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', v);
+    window.history.replaceState({}, '', url.toString());
+  }, []);
+
+  // ⚠️ Perder o nível 4 (ou chegar pela URL com ?tab=financeiro sem ter) não
+  // pode deixar a pessoa numa aba que não existe na barra — a tela ficaria em
+  // branco sem dizer por quê.
+  useEffect(() => {
+    if (abaAtiva === 'financeiro' && !podeVerArrecadacao) setAbaAtiva('pessoas');
+  }, [abaAtiva, podeVerArrecadacao]);
 
   // ⚠️ Este `queryClient` faltava, e "Recoletar tudo" estava quebrado por isso.
   // Existia um `useQueryClient()` neste MESMO arquivo, mas dentro de
@@ -1181,6 +1217,27 @@ export default function Online() {
         </div>
       </div>
 
+      {/* ⚠⚠ ABAS: a tela tinha 14 blocos num scroll só (pedido do Matheus em
+          23/09: "o scroll ta ficando muito longo"). O agrupamento preserva a
+          ordem de leitura que os comentários de cada bloco já declaravam —
+          "gente antes de número" continua valendo, então Pessoas é a 1ª aba.
+          ⚠ Aba inativa é DESMONTADA pelo Radix, então cada card só consulta
+          quando a aba abre — ganho, não efeito colateral. */}
+      <Tabs value={abaAtiva} onValueChange={trocarAba}>
+        <TabsList className="flex flex-wrap h-auto">
+          <TabsTrigger value="pessoas" className="gap-1.5"><HeartHandshake className="h-3.5 w-3.5" />Pessoas</TabsTrigger>
+          <TabsTrigger value="canal" className="gap-1.5"><Youtube className="h-3.5 w-3.5" />Canal</TabsTrigger>
+          <TabsTrigger value="conteudo" className="gap-1.5"><PlayCircle className="h-3.5 w-3.5" />Conteúdo</TabsTrigger>
+          {/* ⚠⚠ A aba do dinheiro só EXISTE para quem o servidor deixaria ver.
+              O card já se esconde sozinho no 403, mas uma ABA vazia faria parecer
+              que a igreja não arrecadou nada — o mesmo erro que o card evita. */}
+          {podeVerArrecadacao && (
+            <TabsTrigger value="financeiro" className="gap-1.5"><Wallet className="h-3.5 w-3.5" />Financeiro</TabsTrigger>
+          )}
+          <TabsTrigger value="indicadores" className="gap-1.5"><Target className="h-3.5 w-3.5" />Indicadores</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="pessoas" className="mt-0 space-y-6">
       {/* ⚠️ Bloco das ACEITAÇÕES ONLINE, logo abaixo do topo: é o trabalho
           PASTORAL do time do Online (falar com quem decidiu em até 3 dias), e
           fica antes das métricas do canal de propósito — gente antes de número.
@@ -1204,7 +1261,9 @@ export default function Online() {
           <JornadaConvertidos area="online" />
         </CardContent>
       </Card>
+        </TabsContent>
 
+        <TabsContent value="canal" className="mt-0 space-y-6">
       <OAuthStatusCard />
 
       {/* Estado vazio - card menor e amigavel */}
@@ -1243,13 +1302,6 @@ export default function Online() {
           canal está subindo — quem responde isso é a série. */}
       <CanalSerieCard />
 
-      {/* Arrecadação do canal online.
-          ⚠️ O card se esconde sozinho para quem não tem nível 4 em `online` —
-          a coordenação do CANAL (decisão do Matheus em 23/09). O módulo é
-          alcançável por 31 cargos, inclusive Membro e Voluntário, e a lei do
-          módulo irmão (painelArea) é que líder de área não vê doação. */}
-      <ArrecadacaoOnlineCard />
-
       {/* Engajamento de conteúdo do canal (YouTube Analytics).
           Estrutura pronta pra receber da API do YouTube · mostra 0 até a 1ª coleta. */}
       <Card className="overflow-hidden">
@@ -1271,7 +1323,9 @@ export default function Online() {
           <StatCard icon={Zap}          label="Cliques em séries no YouTube (alvo ≥15%)"     value={`${eng?.cliques_series ?? 0}%`}    accentClass="from-amber-500/15 to-yellow-500/5" />
         </CardContent>
       </Card>
+        </TabsContent>
 
+        <TabsContent value="conteudo" className="mt-0 space-y-6">
       {/* Top vídeos */}
       {((data?.top_views_mes?.length || 0) > 0 || (data?.top_engajamento_mes?.length || 0) > 0) && (
         <Card className="overflow-hidden">
@@ -1364,6 +1418,20 @@ export default function Online() {
         </Card>
       )}
 
+      {/* Performance por Culto · novas metricas YT (PRs #524, #525, #527, #530, #531) */}
+      <CultoYouTubePanel />
+        </TabsContent>
+
+        <TabsContent value="financeiro" className="mt-0 space-y-6">
+      {/* Arrecadação do canal online.
+          ⚠️ O card se esconde sozinho para quem não tem nível 4 em `online` —
+          a coordenação do CANAL (decisão do Matheus em 23/09). O módulo é
+          alcançável por 31 cargos, inclusive Membro e Voluntário, e a lei do
+          módulo irmão (painelArea) é que líder de área não vê doação. */}
+      <ArrecadacaoOnlineCard />
+        </TabsContent>
+
+        <TabsContent value="indicadores" className="mt-0 space-y-6">
       {/* Matriz Online · KPIs por valor */}
       {matrizKeys.length > 0 && (
         <Card className="overflow-hidden">
@@ -1403,12 +1471,12 @@ export default function Online() {
         </Card>
       )}
 
-      {/* Performance por Culto · novas metricas YT (PRs #524, #525, #527, #530, #531) */}
-      <CultoYouTubePanel />
-
       {/* Diagnóstico · so admin · pra investigar zeros nas metricas */}
       <ComunidadeOnlineCard />
       {isAdmin && <OnlineDebugPanel />}
+        </TabsContent>
+
+      </Tabs>
 
       {/* Footer info */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 text-xs text-muted-foreground pt-2 border-t border-border">
