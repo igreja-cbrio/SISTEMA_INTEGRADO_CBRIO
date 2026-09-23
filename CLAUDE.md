@@ -21,6 +21,44 @@ decisões/time-lapse do sistema). Regras de manutenção:
   vivo (lição `cui_atendimentos`: achado de auditoria baseado em arquivo de
   migration que nunca foi aplicado em prod).
 
+## ⚠️⚠️ DEVOCIONAL · o APP lê e grava DIRETO em 7 tabelas — grants + RLS (2026-09-23 · migration `20260923180000`)
+
+A casa nova do Devocional no app (Bíblia · Planos · Comentários · Anotações ·
+Leituras · Aplicativo-CBRio #164/#165) foi construída pelo **Codex** em 02/09 e
+**as 5 tabelas dela nasceram fora do git**: `devocional_inscricoes`,
+`devocional_mural`, `devocional_registros_pessoais`, `devocional_leituras_biblia`,
+`devocional_leituras_planos` (+ colunas novas em `devocional_planos`:
+`slug`/`continuo`/`inscricao_habilitada`/`destaque` · e em `devocional_itens`:
+`edicao_*`/`ordem_no_ciclo`/`autor` · + RPCs `listar_devocional_mural(int)` e
+`resumo_meus_planos_devocionais()`). **Nenhuma migration em repo nenhum.**
+
+Em 23/09, logado como membro, o Marcos recebeu **`42501 permission denied for
+table devocional_planos`** (idem `devocional_leituras_biblia` e
+`devocional_registros_pessoais`). **42501 é GRANT de tabela, não RLS**: o aperto
+do papel `authenticated` da auditoria de 06/09 (aplicado fora do git) revogou o
+acesso, e as tabelas novas nunca tiveram grant. A migration `20260923180000` é a
+**primeira vez que o schema de ACESSO delas entra no repo** (o DDL das tabelas em
+si segue só no banco — ⏳ dumpar).
+
+- **GRANT só do que o app usa** (tabela a tabela, comentado no cabeçalho da
+  migration) · `anon` sem nada · RLS por membro via `current_user_membro_id()`
+  (molde de `20260521270000`) · planos/itens **só leitura** pra logado — o ERP
+  escreve pelo backend com `service_role` (sai a policy `FOR ALL USING(true)` de
+  maio).
+- ⚠️ **O check-in do app grava em `devocional_leituras_planos` E em
+  `mem_devocionais`** (upsert ⇒ precisa de UPDATE) — o KPI do valor Investir
+  continua vindo de `mem_devocionais`.
+- ⚠️ A RPC `listar_devocional_mural` monta `autor_nome` de `mem_membros`, que é
+  fechada pra membro comum: se ela **não** for `SECURITY DEFINER`, o feed de
+  Comentários sai sem nome. Conferência no fim do arquivo da migration.
+- ⚠️ **Conteúdo parado em 04/09**: último `devocional_itens` de qualquer plano é
+  04/09/2026 (Quarta com Deus, edição "1 Crônicas"); planos semanais todos
+  `ativo=false`. Sem item do dia toda porta de plano diz "ainda não foi
+  publicado" — é conteúdo (Cuidados → planos), não bug.
+- Régua que fica: **tabela que o APP lê direto precisa de GRANT explícito pra
+  `authenticated` + RLS própria, em migration** — a auditoria que aperta o papel
+  não sabe o que o app lê se não estiver no repo.
+
 ## 📍 ANTES DE INVESTIGAR "onde mora X", LEIA O MAPA (2026-08-20)
 
 Pedido do Matheus: *"queria que já tivesse um contexto definido de cada módulo,
