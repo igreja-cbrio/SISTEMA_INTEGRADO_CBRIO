@@ -16148,25 +16148,49 @@ Contribuições.
 acento no histórico e **11 linhas NULAS**. Um `in ('pix','ted')` cru devolve
 **ZERO** — e zero se lê como "a arrecadação caiu".
 
-### ⚠️⚠️ O GUARD é o do DINHEIRO, não o do canal
+### ⚠️⚠️ QUEM VÊ O DINHEIRO é a coordenação do CANAL · nível 4 em `online`
 
-O módulo `online` é alcançável por **31 cargos com nível ≥ 1 — incluindo
-"Membro" e "Voluntário"** (medido em 23/09), e desde o conserto de 02/09 o gate
-da tela é o próprio módulo. Publicar R$ ali contradiz a lei que o módulo irmão
-já aplica (`painelArea.js:767`: *"líder de área não vê doação"*).
+Decisão do Matheus (23/09): *"apenas a renata pode ver o dinheiro no modulo do
+online"*.
 
-⇒ O endpoint usa **`podeVerFinanceiroDePessoa`** (`membresia` OU `financeiro`
-nível 2) — a MESMA régua que decide se o dízimo de uma pessoa sai pela rede. E
-o guard fica **no endpoint**, porque `backend/routes/online.js` não tem nenhum
-`authorizeModule`: sem ele, qualquer pessoa logada (o auth é compartilhado com o
-app de membros) alcançaria a URL.
+⚠️⚠️ **Mas a LEI de 05/08 proíbe nomear pessoa como dona de fluxo no código** —
+o que o código guarda é o PAPEL, e quem o ocupa vive no BANCO. ⇒ o critério é
+**`modulePerms.online.leitura >= 4`** (`podeVerArrecadacaoOnline`, régua pura no
+gate). Medido em 23/09: a Renata é `Coord Onl` **com a ÁREA Online**, e o
+`AREA_MODULO_BOOST['online']` já a eleva a **nível 5** — ela passa sem nenhuma
+mudança de cadastro. Trocar quem vê é mexer em `/admin/permissoes`, não aqui.
 
-⚠️⚠️ **Passam 11 cargos** (Dev, Dir Estrat, Coord Estratégico, Coord Financ,
-Assist Financ, Dir RH + os de membresia 3). **A Coord Online NÃO passa** — quem
-opera o módulo não vê a arrecadação dele. É decisão do Matheus; ampliar é 1
-linha, e **ampliar é reversível, vazar não**.
+⚠️⚠️ **O "APENAS" é literal, e é o que separa esta régua do gate financeiro
+padrão**: quem cuida do dinheiro da igreja (`financeiro` ≥ 2) **NÃO vê este
+card** — o lugar dele é o módulo Financeiro. Sem isso a arrecadação apareceria
+para **11 cargos** (Coord Financ, Assist Financ, Dir RH, os de membresia 3…).
+
+⚠️⚠️ **SEM bypass de `role` e SEM piso de cargo**, de propósito — é a lei de
+`dadosSensiveisPessoa`: `getEffectiveLevel` tem `cargoNivelLeitura` como PISO, e
+um cargo com nível base alto passaria **sem ter o módulo**. Piso serve para
+decidir quanto detalhe mostrar numa tela já aberta; é errado para decidir se
+dinheiro sai pela rede. Na prática Dev e Dir Estrat já têm `online` = 5.
+⚠️ **Deny explícito por usuário vence o nível** (mesma ordem do `authorizeModule`).
+
+⚠️ Passam hoje: **Renata** (Coord Onl · boost da área) · **Pedro Paulo Menezes**
+(Dir Criat, tem a área Online no cadastro) · Dev · Dir Estrat. Tirar o Pedro
+Paulo é tirar a área dele — decisão de cadastro, não de código.
+
+⚠️ O guard fica **no endpoint**, porque `backend/routes/online.js` não tem
+nenhum `authorizeModule`: sem ele, qualquer pessoa logada (o auth é
+compartilhado com o app de membros) alcançaria a URL.
 ⚠️ O card se esconde inteiro no 403 — card vazio faria parecer que a igreja não
 arrecadou nada.
+
+### ⚠️ A FONTE é só o BALANÇO importado
+
+Decisão do Matheus (23/09): *"por enquanto, vms usar apenas oq vem do
+balanco"*. A leitura é **exclusivamente `fin_transacoes`** — nunca
+`fin_lancamentos_brutos` (são duas camadas do MESMO dinheiro: abril tem
+R$ 1,58 mi no bruto contra R$ 102 mil no balanço) e nunca `pag_cobrancas`
+(LEI Nº 6 — foi somar duas camadas que criou a dupla contagem de ~R$ 1,5 mi).
+⚠️ Corolário: o número **anda no ritmo da importação semanal**, e é por isso
+que o `corte` existe e o período em curso não entra em comparação.
 
 ### ⚠️ A agregação é RPC, não leitura
 
@@ -16198,7 +16222,8 @@ online), 2023-24 a volta ao presencial, 2025-26 a retomada (~R$ 100 mil/mês).
    observável** às incluídas e com `updated_at` posterior à criação
    (reclassificação). 5 dos 9 meses batem **ao centavo**. Não é o sistema que
    está errado — a planilha é que saiu incompleta.
-3. **Decidir se a Coord Online vê o valor** (hoje não vê).
+3. ✅ **Resolvido em 23/09**: quem vê o valor é a coordenação do canal
+   (nível 4 em `online`). O financeiro vê no módulo Financeiro.
 
 ## Online · visao do canal YouTube (somente leitura)
 

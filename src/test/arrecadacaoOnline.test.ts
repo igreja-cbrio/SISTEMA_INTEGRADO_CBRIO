@@ -10,6 +10,7 @@ import { describe, it, expect } from 'vitest';
 const {
   hojeBRT, periodoFechado, variacao, anotarSerie, ultimoFechado,
   mesDoAnoAnterior, compararComAnoAnterior, conferencia, ultimoDiaDoPeriodo,
+  podeVerArrecadacaoOnline, NIVEL_VE_DINHEIRO,
 } = require('../../backend/utils/arrecadacaoOnline');
 
 function comFuso<T>(tz: string, fn: () => T): T {
@@ -19,6 +20,70 @@ function comFuso<T>(tz: string, fn: () => T): T {
     if (antes === undefined) delete process.env.TZ; else process.env.TZ = antes;
   }
 }
+
+describe('podeVerArrecadacaoOnline · quem vê o DINHEIRO no módulo Online', () => {
+  // ⚠️⚠️ Decisão do Matheus (23/09/2026): "apenas a renata pode ver o dinheiro
+  // no modulo do online". A LEI do projeto proíbe nomear pessoa no código —
+  // então o critério é o PAPEL (nível 4 em `online`), e quem o ocupa vive no
+  // banco. Medido no mesmo dia: a Renata é `Coord Onl` com a ÁREA Online, e o
+  // AREA_MODULO_BOOST já a eleva a nível 5.
+  const comNivel = (n: number | undefined, extra: any = {}) => ({
+    role: 'assistente',
+    granular: { modulePerms: n === undefined ? {} : { online: { leitura: n } }, ...extra },
+  });
+
+  it('a coordenação do canal (nível 5 pelo boost da área) VÊ', () => {
+    expect(podeVerArrecadacaoOnline(comNivel(5))).toBe(true);
+    expect(podeVerArrecadacaoOnline(comNivel(4))).toBe(true);
+  });
+
+  it('⚠️⚠️ os 31 cargos que só ABREM o módulo NÃO veem', () => {
+    // "Membro" e "Voluntário" têm `online` nível 1 e alcançam a tela.
+    expect(podeVerArrecadacaoOnline(comNivel(1))).toBe(false);
+    expect(podeVerArrecadacaoOnline(comNivel(3))).toBe(false);
+    expect(podeVerArrecadacaoOnline(comNivel(0))).toBe(false);
+  });
+
+  it('⚠️⚠️ quem cuida do DINHEIRO da igreja não vê AQUI — o lugar é o Financeiro', () => {
+    // O "apenas" é literal: `financeiro` nível 4 sem `online` não passa. Sem
+    // esta linha a arrecadação apareceria para 11 cargos.
+    const coordFinanceiro = {
+      role: 'assistente',
+      granular: { modulePerms: { financeiro: { leitura: 4 }, membresia: { leitura: 3 } } },
+    };
+    expect(podeVerArrecadacaoOnline(coordFinanceiro as any)).toBe(false);
+  });
+
+  it('⚠️⚠️ SEM bypass de role: admin/diretor não entram por serem admin', () => {
+    // É a lei de dadosSensiveisPessoa — piso de cargo e role servem para
+    // decidir quanto detalhe mostrar, não se dinheiro sai pela rede. Quem
+    // precisa entra pela matriz. (Na prática Dev e Dir Estrat já têm online=5.)
+    expect(podeVerArrecadacaoOnline({ role: 'admin', granular: { modulePerms: {} } } as any)).toBe(false);
+    expect(podeVerArrecadacaoOnline({ role: 'diretor', granular: { modulePerms: {} } } as any)).toBe(false);
+    expect(podeVerArrecadacaoOnline({ role: 'admin', granular: { modulePerms: { online: { leitura: 5 } } } } as any)).toBe(true);
+  });
+
+  it('⚠️ deny explícito por usuário VENCE o nível', () => {
+    const negado = {
+      role: 'assistente',
+      granular: { modulePerms: { online: { leitura: 5 } }, modulosBloqueados: ['online'] },
+    };
+    expect(podeVerArrecadacaoOnline(negado as any)).toBe(false);
+  });
+
+  it('⚠️ FAIL-CLOSED: sem user, sem granular, nível não-numérico', () => {
+    expect(podeVerArrecadacaoOnline(null as any)).toBe(false);
+    expect(podeVerArrecadacaoOnline({} as any)).toBe(false);
+    expect(podeVerArrecadacaoOnline(comNivel(undefined))).toBe(false);
+    expect(podeVerArrecadacaoOnline({
+      granular: { modulePerms: { online: { leitura: '5' } } },
+    } as any)).toBe(false);
+  });
+
+  it('o nível exigido é 4', () => {
+    expect(NIVEL_VE_DINHEIRO).toBe(4);
+  });
+});
 
 describe('hojeBRT', () => {
   it('⚠️ 23h no Rio ainda é hoje — em UTC já seria amanhã', () => {

@@ -1231,10 +1231,10 @@ export default function Online() {
       <CanalSerieCard />
 
       {/* Arrecadação do canal online.
-          ⚠️ O card se esconde sozinho para quem não passa na régua do dinheiro
-          (`membresia` OU `financeiro` nível 2) — o módulo `online` é alcançável
-          por 31 cargos, inclusive Membro e Voluntário, e a lei do módulo irmão
-          (painelArea) é que líder de área não vê doação. */}
+          ⚠️ O card se esconde sozinho para quem não tem nível 4 em `online` —
+          a coordenação do CANAL (decisão do Matheus em 23/09). O módulo é
+          alcançável por 31 cargos, inclusive Membro e Voluntário, e a lei do
+          módulo irmão (painelArea) é que líder de área não vê doação. */}
       <ArrecadacaoOnlineCard />
 
       {/* Engajamento de conteúdo do canal (YouTube Analytics).

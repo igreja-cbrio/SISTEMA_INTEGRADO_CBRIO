@@ -8,10 +8,6 @@ const collectors = require('../services/onlineCollectors');
 const { semanaAnteriorBRT, somarViews, compararSemanas } = require('../utils/semanaOnline');
 const canalSerie = require('../utils/canalSerie');
 const arrec = require('../utils/arrecadacaoOnline');
-// ⚠️ A MESMA régua que decide se dízimo de uma pessoa sai pela rede
-// (utils/dadosSensiveisPessoa): `membresia` OU `financeiro` nível 2. Aqui é
-// dinheiro da igreja inteira — a régua não pode ser mais frouxa que aquela.
-const { podeVerFinanceiroDePessoa } = require('../utils/dadosSensiveisPessoa');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const { isAuthorizedCron } = require('../utils/cronAuth');
@@ -405,7 +401,10 @@ router.get('/canal-serie', async (req, res) => {
 // "Voluntário"** (medido em 23/09/2026), e desde o conserto de 02/09 o gate da
 // tela é o próprio módulo. Publicar R$ ali contradiz a lei que o módulo irmão
 // já aplica: `painelArea.js` recusa contribuições porque "líder de área não vê
-// doação". Então quem decide aqui é a régua do DINHEIRO, não a do canal.
+// doação".
+// ⚠️⚠️ Decisão do Matheus (23/09): quem vê o dinheiro AQUI é a coordenação do
+// CANAL — nível 4 em `online` (`podeVerArrecadacaoOnline`). Quem cuida do
+// dinheiro da igreja vê no módulo Financeiro, não nesta tela.
 // ⚠️ E o guard fica no ENDPOINT, não só na tela: `backend/routes/online.js`
 // não tem nenhum `authorizeModule`, então qualquer pessoa logada (o auth é
 // compartilhado com o app de membros) alcançaria a URL.
@@ -414,10 +413,10 @@ router.get('/canal-serie', async (req, res) => {
 // linhas nesta conta e o PostgREST corta em 1.000 **em silêncio**.
 // ---------------------------------------------------------------------------
 router.get('/arrecadacao', async (req, res) => {
-  if (!podeVerFinanceiroDePessoa(req.user)) {
+  if (!arrec.podeVerArrecadacaoOnline(req.user)) {
     return res.status(403).json({
       error: 'Sem permissão para ver valores de arrecadação.',
-      reason: 'financeiro_requerido',
+      reason: 'arrecadacao_online_requerido',
     });
   }
 

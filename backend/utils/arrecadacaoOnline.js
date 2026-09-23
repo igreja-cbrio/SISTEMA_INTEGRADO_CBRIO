@@ -18,6 +18,47 @@
 //  `semanaOnline.compararSemanas`, que já carregam a mesma lição no módulo.
 // ════════════════════════════════════════════════════════════════════════════
 
+// ════════════════════════════════════════════════════════════════════════════
+//  QUEM VÊ O DINHEIRO NO MÓDULO ONLINE
+//
+//  Decisão do Matheus (23/09/2026): *"apenas a renata pode ver o dinheiro no
+//  modulo do online"*.
+//
+//  ⚠️⚠️ MAS A LEI DO PROJETO PROÍBE NOMEAR PESSOA COMO DONA DE FLUXO (05/08):
+//  o que o código guarda é o PAPEL; quem o ocupa vive no BANCO e muda sem PR.
+//  Um e-mail chumbado aqui viraria mentira no dia em que a coordenação do
+//  canal trocar — e ninguém procuraria a causa num arquivo de régua.
+//
+//  ⇒ O critério é **nível alto no MÓDULO `online`**. Medido em 23/09: a Renata
+//  é `Coord Onl` com a ÁREA Online, e `AREA_MODULO_BOOST['online']` já a eleva
+//  a nível 5 — ela passa sem nenhuma mudança de cadastro. Trocar quem vê é
+//  mexer na matriz de `/admin/permissoes`, não aqui.
+//
+//  ⚠️⚠️ O "APENAS" É LITERAL, e é o que torna esta régua diferente do gate
+//  financeiro padrão: quem cuida do dinheiro da igreja (`financeiro` nível 2+)
+//  **deixou de ver este card**, porque o lugar dele é o módulo Financeiro. Sem
+//  isso a arrecadação apareceria para 11 cargos.
+//
+//  ⚠️⚠️ SEM bypass de `role` e SEM piso de cargo, de propósito. É a mesma lei
+//  de `dadosSensiveisPessoa`: `getEffectiveLevel` tem `cargoNivelLeitura` como
+//  PISO, então um cargo com nível base alto passaria **sem ter o módulo** — o
+//  que serve para decidir quanto detalhe mostrar numa tela já aberta, e é
+//  errado para decidir se dinheiro sai pela rede.
+//  ⚠️ Quem precisar entrar, entra pela matriz — não por role.
+// ════════════════════════════════════════════════════════════════════════════
+
+/** Nível no módulo `online` que libera valores em reais. */
+const NIVEL_VE_DINHEIRO = 4;
+
+function podeVerArrecadacaoOnline(user) {
+  if (!user) return false;
+  // Deny explícito por usuário vence tudo (mesma ordem do `authorizeModule`).
+  const bloqueados = user.granular?.modulosBloqueados || [];
+  if (bloqueados.includes('online')) return false;
+  const nivel = user.granular?.modulePerms?.online?.leitura;
+  return typeof nivel === 'number' && nivel >= NIVEL_VE_DINHEIRO;
+}
+
 /**
  * Dia de HOJE em BRT.
  * ⚠️ `toISOString()` sobre o agora dá o dia UTC, e das 21h do Rio em diante ele
@@ -205,6 +246,8 @@ function conferencia(total, foraDoRecorte) {
 }
 
 module.exports = {
+  NIVEL_VE_DINHEIRO,
+  podeVerArrecadacaoOnline,
   hojeBRT,
   ultimoDiaDoPeriodo,
   periodoFechado,

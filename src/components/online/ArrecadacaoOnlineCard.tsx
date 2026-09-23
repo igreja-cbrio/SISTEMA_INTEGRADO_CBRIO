@@ -104,7 +104,7 @@ export default function ArrecadacaoOnlineCard() {
   // valores. O card some inteiro — mostrar um card vazio faria parecer que a
   // igreja não arrecadou nada.
   const semPermissao = (error as any)?.status === 403
-    || (error as any)?.corpo?.reason === 'financeiro_requerido';
+    || (error as any)?.corpo?.reason === 'arrecadacao_online_requerido';
   if (semPermissao) return null;
 
   const semanas = data?.semanas || [];
