@@ -171,6 +171,48 @@ describe('proposta sem quórum (teste 2 do spec)', () => {
   });
 });
 
+// ── "Esta proposta" no gráfico do Pastor · propostos usa apontamento e
+// recorrência (2026-09-23 · bug real: o custo de uma proposta pendente
+// nunca aparecia no gráfico da tela de decisão) ─────────────────────────
+describe('orcamentoDoPastor.propostos reflete apontamento e recorrência', () => {
+  it('proposta pendente recorrente (mensal) distribui o anualizado/12 em TODOS os meses, não só no mês de início', () => {
+    const p = prop({ custo: 1200, recorrencia: 'mensal', data_inicio: '2027-06-01' });
+    const orc = orcamentoDoPastor({
+      propostas: [p],
+      avaliacoesPorProposta: { [p.id]: quatroAvaliacoes(4) },
+      decisoesPorProposta: {},
+      quorum: QUORUM,
+      caixaLivre: new Array(12).fill(0),
+    });
+    expect(orc.pendentes).toHaveLength(1);
+    // 1200 * 12 (mensal → anualizado) / 12 = 1200 em cada um dos 12 meses.
+    orc.propostos.forEach((v: number) => expect(v).toBe(1200));
+  });
+
+  it('apontamento do Pastor no custo/recorrência atualiza "propostos" em tempo real', () => {
+    const p = prop({ custo: 1000, recorrencia: 'unica', data_inicio: '2027-08-15' });
+    const orcAntes = orcamentoDoPastor({
+      propostas: [p],
+      avaliacoesPorProposta: { [p.id]: quatroAvaliacoes(4) },
+      decisoesPorProposta: {},
+      quorum: QUORUM,
+      caixaLivre: new Array(12).fill(0),
+    });
+    expect(orcAntes.propostos[7]).toBe(1000); // agosto, índice 7
+
+    const pApontado = { ...p, custo_apontado: 500 };
+    const orcDepois = orcamentoDoPastor({
+      propostas: [pApontado],
+      avaliacoesPorProposta: { [p.id]: quatroAvaliacoes(4) },
+      decisoesPorProposta: {},
+      quorum: QUORUM,
+      caixaLivre: new Array(12).fill(0),
+    });
+    expect(orcDepois.propostos[7]).toBe(500);
+    expect(orcDepois.propostos.reduce((s: number, v: number) => s + v, 0)).toBe(500);
+  });
+});
+
 // ── Teste 3 · desempate em cascata ───────────────────────────────────────
 describe('ranking e desempate (teste 3 do spec)', () => {
   it('soma igual → decide o primeiro critério divergente na ordem do formulário', () => {

@@ -549,6 +549,15 @@ function caixaLivreMensal(valores) {
  * Visão orçamentária do Pastor: por mês, caixa livre × custo dos
  * aprovados no calendário × custo dos propostos com quórum e sem
  * decisão × saldo projetado. Proposta sem quórum NÃO conta (teste 2).
+ *
+ * `soma` usa `distribuirCustoPorMes(..., { usarApontamento: true })` — a
+ * MESMA régua de `custoMensalAprovadas` — e não o `rateioMensal` cru: (1)
+ * proposta recorrente (semanal/mensal/...) precisa do custo ANUALIZADO/12
+ * em vez de cair inteiro no mês de `data_inicio` (rateioMensal só sabe
+ * distribuir única/personalizada); (2) o apontamento de custo/recorrência/
+ * data do Pastor (2026-09-18) precisa refletir aqui — sem isso "Esta
+ * proposta" no gráfico da tela de decisão ficava sempre nos valores
+ * originais, nunca no que o Pastor acabou de apontar.
  */
 function orcamentoDoPastor({ propostas, avaliacoesPorProposta, decisoesPorProposta, quorum, caixaLivre, suposicoes = SUPOSICOES }) {
   const vivas = (propostas || []).filter((p) => !p.deleted_at);
@@ -561,7 +570,9 @@ function orcamentoDoPastor({ propostas, avaliacoesPorProposta, decisoesPorPropos
   const soma = (lista) => {
     const total = new Array(12).fill(0);
     lista.forEach((p) => {
-      rateioMensal(p).forEach((v, i) => { total[i] = Math.round((total[i] + v) * 100) / 100; });
+      distribuirCustoPorMes(p, { usarApontamento: true }).forEach((v, i) => {
+        total[i] = Math.round((total[i] + v) * 100) / 100;
+      });
     });
     return total;
   };
