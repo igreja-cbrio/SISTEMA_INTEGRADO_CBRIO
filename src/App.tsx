@@ -418,7 +418,6 @@ const EventoCheckin = lazyWithRetry(() => import('./pages/public/EventoCheckin')
 // virada pro /inscricoes (SPEC-04 · 2026-07-28); arquivos ficam no repo até
 // 1 ciclo sem divergência (rollback = restaurar as 2 rotas).
 const Inscricoes = lazyWithRetry(() => import('./pages/Inscricoes'));
-const Propostas = lazyWithRetry(() => import('./pages/Propostas'));
 const Campanhas = lazyWithRetry(() => import('./pages/Campanhas'));
 const CampanhaPublica = lazyWithRetry(() => import('./pages/public/CampanhaPublica'));
 const InscricaoEventoDetalhe = lazyWithRetry(() => import('./pages/InscricaoEventoDetalhe'));
@@ -737,7 +736,7 @@ function AppRoutes() {
           ⚠️ NÃO usar `/c/:slug`: `/c/:token` (linha acima) é o link assinado do
           voluntário para lançar decisões no culto, e dois padrões idênticos fazem
           o PRIMEIRO vencer — a barrinha abriria a tela de decisões. É a mesma
-          armadilha do `/:id` que engoliu `/avaliar` e `/mural` nas Propostas. */}
+          armadilha do `/:id` que engoliu `/avaliar` e `/mural` no antigo módulo Propostas (removido em 23/09/2026). */}
       <Route path="/campanha/:slug" element={<Suspense fallback={<Loading />}><CampanhaPublica /></Suspense>} />
       {/* Retirada do Kids · QR aberto pelo link do WhatsApp · público, sem PII */}
       <Route path="/kids/retirada/:codigo" element={<Suspense fallback={<Loading />}><KidsRetirada /></Suspense>} />
@@ -867,7 +866,6 @@ function AppRoutes() {
         <Route path="/eventos-externos" element={<Navigate to="/inscricoes" replace />} />
         <Route path="/eventos-externos/:id" element={<Navigate to="/inscricoes" replace />} />
         <Route path="/inscricoes" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={1}><Suspense fallback={<Loading />}><Inscricoes /></Suspense></ModuleGuard>} />
-        <Route path="/propostas" element={<ModuleGuard moduleSlug="propostas" nivelMinimo={1}><Suspense fallback={<Loading />}><Propostas /></Suspense></ModuleGuard>} />
         <Route path="/campanhas" element={<ModuleGuard moduleSlug="campanhas" nivelMinimo={1}><Suspense fallback={<Loading />}><Campanhas /></Suspense></ModuleGuard>} />
         <Route path="/inscricoes/evento/:id" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={1}><Suspense fallback={<Loading />}><InscricaoEventoDetalhe /></Suspense></ModuleGuard>} />
         {/* Check-in do evento (SPEC-06) · nível 2 = operar check-in (SPEC-08) */}
