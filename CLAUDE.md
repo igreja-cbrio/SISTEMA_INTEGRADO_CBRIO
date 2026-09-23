@@ -62,6 +62,32 @@ pra eliminar. Para forçar o estado de agora: `/mapa` (skill) ou o comando acima
 ⚠️ **`src/pages/atlas/atlas.html` NÃO é fonte.** É uma TELA do sistema (`/atlas`),
 escrita à mão e desatualizada. Não citar como referência.
 
+## 🗑️ MÓDULO PROPOSTAS REMOVIDO (2026-09-23 · migration `20260923120000`)
+
+Decisão do Marcos: *"remova o módulo de propostas do sistema, acabe com ele"*. Era
+o ciclo anual de propostas de projetos/eventos/rotinas (spec Yago, 2026-07-30,
+`/propostas`, `prop_*`). **Medido antes de apagar (23/09, service_role): 0
+propostas, 0 avaliações, 0 deliberações, 0 anexos** — só sobrava 1 ciclo, 1
+diretor de área e 5 parâmetros de teste. Nunca foi usado de verdade; o sucessor
+é o **Planejamento Anual** (`plan_*`, 2026-08), que não compartilha tabela nem
+função com ele e segue intacto.
+
+- **Saiu do código:** `src/pages/Propostas.tsx` · `backend/routes/propostas.js` ·
+  rota `/propostas` e lazy import no `App.tsx` · item do menu no `AppShell.jsx`
+  · `export const propostas` do `src/api.js` · mount `/api/propostas` no
+  `server.js` · entrada `'propostas'` do `ROUTE_MODULE_MAP` (`auth.js`).
+- **Sai do banco (migration):** linha de `modulos` (id 80) + 34 linhas de
+  `cargo_modulo_permissao` · `prop_proposta` sai da whitelist do
+  `app_soft_delete` (a função é recriada sem ela) · `fn_prop_transicionar`,
+  `fn_prop_derivados` e o trigger · as 16 tabelas `prop_*` com CASCADE.
+- ⚠️ As 5 migrations `2026073*_propostas_*` e `20260805000000_propostas_fluxo_
+  simplificado` ficam no repo como histórico; a `20260817180000` (whitelist)
+  cita `prop_proposta` mas é idempotente e não recria nada.
+- A seção *"Propostas · `/:id` engolia `/avaliar` e `/mural`"* mais abaixo é
+  histórica: a lição (guarda de UUID no `/:id`) continua valendo pros outros
+  módulos; o arquivo que ela cita não existe mais.
+- `docs/mapa/propostas.md` some na regeneração do mapa (gerador lê o código).
+
 ## ⚠️ LEI · Contrato de porta — toda entrada de PESSOA no sistema (2026-07-17)
 
 Decisão do Marcos: dados de pessoa entram IGUAIS em todas as portas (Kids,
@@ -4748,7 +4774,7 @@ pelo construtor**. Um clique em Salvar teria orfanado as 113.
   `insc_eventos.campos->>'key'` com `jsonb_object_keys(inscricoes.dados)`; a cura
   é buscar a chave original em `ext_eventos`, nunca reescrever `dados`.
 
-## ⚠️ Propostas · `/:id` engolia `/avaliar` e `/mural` (2026-08-03 · SEM migration)
+## ⚠️ Propostas · `/:id` engolia `/avaliar` e `/mural` (2026-08-03 · SEM migration · ⚠️ módulo REMOVIDO em 2026-09-23, seção histórica)
 
 As abas **Avaliar** e **Mural da reunião** não abriam: `GET /:id` é declarado na
 linha ~248 de `routes/propostas.js` e as duas rotas LITERAIS vêm depois (~411 e

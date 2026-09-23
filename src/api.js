@@ -258,7 +258,6 @@ export const events = {
   setVisivelPainelRh: (id, visivel_painel_rh) => patch(`/events/${id}/visivel-painel-rh`, { visivel_painel_rh }),
 };
 
-// Módulo Propostas · ciclo anual (Fase 1A: configuração)
 // Campanhas de arrecadação · meta, dígito verificador, cronograma e disparos.
 // ⚠️ A soma do arrecadado vem SEMPRE do servidor (view `vw_camp_arrecadacao`) —
 // nenhuma tela recalcula dinheiro no cliente.
@@ -297,43 +296,6 @@ export const campanhas = {
     list: (id) => get(`/campanhas/${id}/agradecimentos`),
     rodar: () => post('/campanhas/agradecimentos/rodar', {}),
   },
-};
-
-export const propostas = {
-  config: {
-    ciclos: () => get('/propostas/config/ciclos'),
-    criarCiclo: (data) => post('/propostas/config/ciclos', data),
-    atualizarCiclo: (id, data) => put(`/propostas/config/ciclos/${id}`, data),
-    parametros: (cicloId) => get(`/propostas/config/ciclos/${cicloId}/parametros`),
-    salvarParametros: (cicloId, data) => put(`/propostas/config/ciclos/${cicloId}/parametros`, data),
-    areas: () => get('/propostas/config/areas'),
-    salvarArea: (areaId, data) => put(`/propostas/config/areas/${areaId}`, data),
-    aux: () => get('/propostas/config/aux'),
-    criterios: (cicloId) => get(`/propostas/config/ciclos/${cicloId}/criterios`),
-    criarCriterio: (cicloId, data) => post(`/propostas/config/ciclos/${cicloId}/criterios`, data),
-    atualizarCriterio: (id, data) => put(`/propostas/config/criterios/${id}`, data),
-    removerCriterio: (id) => del(`/propostas/config/criterios/${id}`),
-  },
-  aux: () => get('/propostas/aux'),
-  list: (params) => get('/propostas' + (params ? '?' + new URLSearchParams(params) : '')),
-  get: (id) => get(`/propostas/${id}`),
-  criar: (data) => post('/propostas', data),
-  atualizar: (id, data) => put(`/propostas/${id}`, data),
-  transicao: (id, acao, comentario) => post(`/propostas/${id}/transicao`, { acao, comentario }),
-  historico: (id) => get(`/propostas/${id}/historico`),
-  remover: (id) => del(`/propostas/${id}`),
-  uploadAnexo: (id, file) => { const fd = new FormData(); fd.append('file', file); return requestFile(`/propostas/${id}/anexos`, fd); },
-  removerAnexo: (anexoId) => del(`/propostas/anexos/${anexoId}`),
-  // Fase 2 · avaliação + mural
-  avaliarFila: (cicloId) => get('/propostas/avaliar' + (cicloId ? `?ciclo_id=${cicloId}` : '')),
-  avaliacao: (id) => get(`/propostas/${id}/avaliacao`),
-  salvarAvaliacao: (id, data) => post(`/propostas/${id}/avaliacao`, data),
-  mural: (cicloId) => get(`/propostas/mural?ciclo_id=${cicloId}`),
-  deliberar: (id, data) => post(`/propostas/${id}/deliberar`, data),
-  // Fase 3
-  posEvento: (id) => get(`/propostas/${id}/pos-evento`),
-  salvarPosEvento: (id, data) => post(`/propostas/${id}/pos-evento`, data),
-  consolidarCiclo: (cicloId) => post(`/propostas/config/ciclos/${cicloId}/consolidar`, {}),
 };
 
 // Módulo Censo · plataforma de pesquisas (censo demográfico, pulso, evento).

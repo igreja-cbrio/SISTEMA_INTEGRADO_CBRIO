@@ -145,7 +145,6 @@ app.use('/api/comunicacao', require('./routes/comunicacao')); // Módulo Comunic
 app.use('/api/revisoes', require('./routes/revisoes'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/projects', require('./routes/projects'));
-app.use('/api/propostas', require('./routes/propostas')); // Ciclo anual de propostas (projetos/eventos/rotinas)
 app.use('/api/campanhas', require('./routes/campanhas')); // Campanhas de arrecadação (dígito verificador, cronograma, disparos)
 app.use('/api/tasks', require('./routes/tasks'));  // Kanban de tarefas transversal (Projetos/Eventos) · guard por módulo dentro do router
 app.use('/api/expansion', require('./routes/expansion'));

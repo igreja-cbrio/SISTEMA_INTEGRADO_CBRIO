@@ -28,7 +28,6 @@ const ROUTE_MODULE_MAP = {
   'projects':     ['projetos'],
   'expansion':    ['expansao'],
   'solicitacoes': ['solicitacoes'],
-  'propostas':    ['propostas'],
   // Campanhas de arrecadação. ⚠️ Sem esta entrada, `authorizeModule('campanhas',
   // N)` recebe `undefined` e cai no nível PADRÃO DO CARGO — a matriz de
   // permissões deixa de valer em silêncio, nos dois sentidos (ninguém toma 403 e
