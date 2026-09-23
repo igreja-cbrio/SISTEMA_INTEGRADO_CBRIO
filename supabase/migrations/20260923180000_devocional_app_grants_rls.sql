@@ -38,6 +38,12 @@ REVOKE ALL ON TABLE
 FROM anon, public;
 
 GRANT SELECT ON TABLE public.devocional_planos, public.devocional_itens TO authenticated;
+-- ⚠️ devocional_itens carregava grant ANTIGO de tudo pra authenticated (inclusive
+-- TRUNCATE, que NÃO passa pela RLS) — conferido em 23/09 depois da 1ª aplicação.
+-- Conteúdo é só leitura pra logado; quem escreve é o backend (service_role).
+REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE
+  public.devocional_planos, public.devocional_itens
+FROM authenticated;
 GRANT SELECT, INSERT ON TABLE
   public.devocional_leituras_biblia, public.devocional_leituras_planos, public.devocional_inscricoes
 TO authenticated;
