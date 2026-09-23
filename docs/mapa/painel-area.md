@@ -24,6 +24,7 @@ Guard: `authorizeModule('painel-area', 1 | 3)`
 **Réguas puras (backend/utils)**
 
 - `backend/utils/kpiProcedencia.js`
+- `backend/utils/kpiSerie.js`
 - `backend/utils/supabase.js`
 
 **Tabelas que estas rotas tocam**
@@ -41,4 +42,8 @@ Guard: `authorizeModule('painel-area', 1 | 3)`
 - `tipos_dado_bruto`
 - `vw_culto_stats`
 - `vw_kpi_trajetoria_atual`
+
+**RPCs**
+
+- `kpi_serie_partes`
 
