@@ -12,22 +12,26 @@
 ## Backend
 - `backend/routes/painelArea.js`
 Guard: `authorizeModule('painel-area', 1 | 3)`
-<details><summary>Endpoints (5)</summary>
+<details><summary>Endpoints (6)</summary>
 - `GET /api/painel-area/:area`
 - `GET /api/painel-area/:area/pessoas`
 - `GET /api/painel-area/:area/pessoas/:id`
 - `GET /api/painel-area/:area/series`
+- `GET /api/painel-area/kpi/:id/procedencia`
 - `POST /api/painel-area/:area/nps`
 </details>
 
 **Réguas puras (backend/utils)**
 
+- `backend/utils/kpiProcedencia.js`
 - `backend/utils/supabase.js`
 
 **Tabelas que estas rotas tocam**
 
 - `dados_brutos`
 - `kpi_indicadores_taticos`
+- `kpi_registros`
+- `kpi_valores_calculados`
 - `mem_familias`
 - `mem_grupo_membros`
 - `mem_membros`
