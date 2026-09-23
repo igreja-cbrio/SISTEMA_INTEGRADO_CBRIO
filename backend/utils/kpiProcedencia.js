@@ -33,6 +33,10 @@ const CATALOGO = Object.freeze({
     // não presença. Voluntário que serviu e não passou pelo check-in conta como
     // ausente.
     ressalva: 'Mede o REGISTRO, não a presença: quem serviu e não passou pelo check-in entra como ausente. O crédito vai para o mês do CULTO, não do dia em que o check-in foi lançado.',
+    // ⚠️ Os rótulos da tabela mês a mês moram AQUI, colados na fonte, e não na
+    // tela. Rótulo longe da definição é rótulo que envelhece sozinho: a fonte
+    // muda, a coluna continua dizendo "escalas" sobre outra coisa.
+    partes: { denominador: 'escalas', numerador: 'com check-in' },
   },
   voluntarios_ativos: {
     fonte: 'mem_voluntarios',
@@ -112,6 +116,8 @@ function montarProcedencia(kpi, historico = {}) {
     fonte: entrada?.fonte || null,
     conta: entrada?.conta || null,
     ressalva: entrada?.ressalva || null,
+    // Só os `dado_tipo` cujo ramo sabe abrir o número em partes têm rótulo.
+    rotulo_partes: entrada?.partes || null,
     sem_implementacao: semImplementacao,
     // ⚠️ "desde quando" é o PRIMEIRO PERÍODO com valor, não a data de cadastro
     // do KPI — foi exatamente essa confusão (`desde` = cadastro lido como
