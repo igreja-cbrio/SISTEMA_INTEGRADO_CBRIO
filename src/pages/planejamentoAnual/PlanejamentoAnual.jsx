@@ -208,7 +208,7 @@ export default function PlanejamentoAnual() {
             <OrcamentoTab ciclo={ciclo} souFinanceiro={minhaDiretoria === 'financeiro'} />
           )}
           {aba === 3 && ehPastor && (
-            <PastorTab ciclo={ciclo} constantes={constantes} areas={areas} recarregarCiclo={() => carregarCiclo(ciclo.id)} />
+            <PastorTab ciclo={ciclo} constantes={constantes} areas={areas} locais={locais} recarregarCiclo={() => carregarCiclo(ciclo.id)} />
           )}
           {aba === 4 && ehDiretoriaOuSuper && (
             <InsightsTab ciclo={ciclo} areas={areas} />

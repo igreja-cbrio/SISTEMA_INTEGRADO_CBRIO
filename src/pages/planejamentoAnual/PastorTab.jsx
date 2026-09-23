@@ -5,8 +5,8 @@ import {
 } from 'recharts';
 import { planejamentoAnual as api, users as usersApi } from '../../api';
 import {
-  C, cardStyle, btn, input, hint, Badge, EstadoBadge, fmtBRL, fmtData, fmtQuando,
-  MESES, MESES_LONGOS, DIAS_SEMANA, RECORRENCIAS, thStyle, tdStyle, rotuloArea, rotuloDiretoria,
+  C, cardStyle, btn, input, label, hint, Badge, EstadoBadge, fmtBRL, fmtData, fmtQuando,
+  MESES, MESES_LONGOS, DIAS_SEMANA, RECORRENCIAS, NATUREZAS, thStyle, tdStyle, rotuloArea, rotuloDiretoria,
   evidenciaCriterio,
 } from './comum';
 import CalendarioAno from './CalendarioAno';
@@ -75,7 +75,7 @@ const subBtn = (ativo) => ({
 });
 
 // ─── Decisões (ranking + lote + detalhe) ─────────────────────────────────
-function Decisoes({ ciclo, constantes, recarregarCiclo, areas }) {
+function Decisoes({ ciclo, constantes, recarregarCiclo, areas, locais }) {
   const [ranking, setRanking] = useState(null);
   const [sel, setSel] = useState(new Set());
   const [aberta, setAberta] = useState(null);
@@ -109,7 +109,7 @@ function Decisoes({ ciclo, constantes, recarregarCiclo, areas }) {
   };
 
   if (aberta) {
-    return <DetalheProposta id={aberta} constantes={constantes} areas={areas} aoVoltar={async () => { setAberta(null); await carregar(); recarregarCiclo?.(); }} />;
+    return <DetalheProposta id={aberta} constantes={constantes} areas={areas} locais={locais} aoVoltar={async () => { setAberta(null); await carregar(); recarregarCiclo?.(); }} />;
   }
   if (!ranking) return <p style={{ fontSize: 13, color: C.t3 }}>Carregando…</p>;
 
@@ -176,7 +176,7 @@ function Decisoes({ ciclo, constantes, recarregarCiclo, areas }) {
 }
 
 // ─── Detalhe da proposta (critérios + apontamentos + decisão) ────────────
-function DetalheProposta({ id, constantes, aoVoltar, areas }) {
+function DetalheProposta({ id, constantes, aoVoltar, areas, locais }) {
   const [p, setP] = useState(null);
   const [pessoas, setPessoas] = useState([]);
   const [apAbertoCriterio, setApAbertoCriterio] = useState(null); // chave do critério com textarea aberta
@@ -212,6 +212,9 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
   if (!p) return <p style={{ fontSize: 13, color: C.t3 }}>Carregando…</p>;
   const quorumCompleto = Array.isArray(p.avaliacoes) && p.avaliacoes.length >= p.quorum;
   const avaliacoesParciais = Array.isArray(p.avaliacoes) ? p.avaliacoes : [];
+
+  const nomeLider = (idLider) => pessoas.find((u) => u.id === idLider)?.name || pessoas.find((u) => u.id === idLider)?.email || '—';
+  const nomeLocal = (idLocal) => (locais || []).find((l) => l.id === idLocal)?.nome || '—';
 
   const decidir = async (corpo) => {
     setSalvando(true);
@@ -265,6 +268,41 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
           <span style={{ fontSize: 12, color: C.t3 }}>{rotuloArea(p.area, areas)} · {p.custeio?.rotulo} · líquido {fmtBRL(p.liquido_exibicao)}</span>
         </div>
         <button style={btn('ghost')} onClick={aoVoltar}>Voltar ao ranking</button>
+      </div>
+
+      {/* ── Resumo da proposta — o mesmo card que a avaliação dos diretores
+           mostra (AvaliacaoTab.jsx), pro Pastor ver o que o proponente
+           preencheu sem precisar abrir outra tela. */}
+      <div style={{ display: 'grid', gap: 10, padding: 14, borderRadius: 12, border: `1px solid ${C.border}`, background: 'var(--panel, var(--cbrio-card))' }}>
+        <strong style={{ fontSize: 13, color: C.primary }}>Resumo da proposta</strong>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+          <div><span style={label}>Natureza</span><div style={{ fontSize: 13, color: C.text }}>{NATUREZAS.find((n) => n.valor === p.natureza)?.rotulo || p.natureza || '—'}</div></div>
+          <div><span style={label}>Área</span><div style={{ fontSize: 13, color: C.text }}>{rotuloArea(p.area, areas)}</div></div>
+          <div><span style={label}>Líder responsável</span><div style={{ fontSize: 13, color: C.text }}>{nomeLider(p.lider_id)}</div></div>
+          <div><span style={label}>Quando</span><div style={{ fontSize: 13, color: C.text }}>{fmtQuando(p)}</div></div>
+          <div>
+            <span style={label}>Recorrência</span>
+            <div style={{ fontSize: 13, color: C.text }}>
+              {RECORRENCIAS.find((r) => r.valor === p.recorrencia)?.rotulo || p.recorrencia || '—'}
+              {p.dia_semana != null && ` · ${DIAS_SEMANA[p.dia_semana] || ''}`}
+            </div>
+          </div>
+          <div>
+            <span style={label}>Horário</span>
+            <div style={{ fontSize: 13, color: C.text }}>
+              {p.hora_inicio ? String(p.hora_inicio).slice(0, 5) : '—'}
+              {p.hora_fim ? ` – ${String(p.hora_fim).slice(0, 5)}` : ''}
+            </div>
+          </div>
+          <div><span style={label}>Local</span><div style={{ fontSize: 13, color: C.text }}>{nomeLocal(p.local_id)}</div></div>
+          <div><span style={label}>Público-alvo</span><div style={{ fontSize: 13, color: C.text }}>{p.publico_alvo || '—'}</div></div>
+        </div>
+        {p.descricao && (
+          <div>
+            <span style={label}>Descrição</span>
+            <div style={{ fontSize: 13, color: C.text, whiteSpace: 'pre-wrap' }}>{p.descricao}</div>
+          </div>
+        )}
       </div>
 
       {/* ── B) Critérios (notas e argumentações por diretoria, lado a lado) ─
