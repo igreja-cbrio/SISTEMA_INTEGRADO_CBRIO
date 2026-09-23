@@ -226,10 +226,26 @@ router.post('/oauth/disconnect', authorize('admin', 'diretor'), async (_req, res
 });
 
 // Execucao manual de coletor (admin/diretor)
-router.post('/coletar/live', authorize('admin', 'diretor'), async (_req, res) => {
+// ⚠️⚠️ COLETA É OPERAÇÃO DO MÓDULO, NÃO PRIVILÉGIO DE CARGO.
+//
+// Pedido do Matheus (23/09/2026): *"a renata ta dizendo que nao tem permissao
+// para clicar nos botoes de coletar pico agr, preciso que ela tenha essa
+// permissao."*
+//
+// Estas rotas exigiam `authorize('admin', 'diretor')` — cargo, não módulo. A
+// Renata é `coordenador-online` (nível 3 de escrita), responsável da área: ela
+// vê a tela inteira e não podia apertar o botão que busca o próprio dado dela.
+// O padrão do módulo já existia logo abaixo (`/comunidade-mensal` usa
+// `authorizeModule('online', 3)`); estas ficaram para trás.
+//
+// ⚠️ O que NÃO muda: `/oauth/disconnect` e `/sync` seguem exigindo admin/diretor.
+// Coletar é ler do YouTube e gravar métrica — reversível, e o pior caso é gastar
+// cota da API. Desconectar derruba a credencial OAuth do canal para todo mundo,
+// e religar depende de quem tem acesso à conta Google.
+router.post('/coletar/live', authorizeModule('online', 3), async (_req, res) => {
   try { res.json(await collectors.liveMonitor()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/ds', authorize('admin', 'diretor'), async (_req, res) => {
+router.post('/coletar/ds', authorizeModule('online', 3), async (_req, res) => {
   try {
     // Vincula o vídeo aos cultos pendentes ANTES de coletar (o DS so age em culto
     // já vinculado · sem isso o botao volta 0 quando o vídeo não foi linkado ainda).
@@ -238,34 +254,34 @@ router.post('/coletar/ds', authorize('admin', 'diretor'), async (_req, res) => {
     res.json({ ...ds, backfill });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/ddus', authorize('admin', 'diretor'), async (_req, res) => {
+router.post('/coletar/ddus', authorizeModule('online', 3), async (_req, res) => {
   try {
     const backfill = await collectors.backfillCultoVideoIds().catch((e) => ({ erro: e.message }));
     const ddus = await collectors.ddusCollector();
     res.json({ ...ddus, backfill });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/subs', authorize('admin', 'diretor'), async (_req, res) => {
+router.post('/coletar/subs', authorizeModule('online', 3), async (_req, res) => {
   try { res.json(await collectors.subsCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/trafego', authorize('admin', 'diretor'), async (_req, res) => {
+router.post('/coletar/trafego', authorizeModule('online', 3), async (_req, res) => {
   try { res.json(await collectors.traficoCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/retencao-curva', authorize('admin', 'diretor'), async (_req, res) => {
+router.post('/coletar/retencao-curva', authorizeModule('online', 3), async (_req, res) => {
   try { res.json(await collectors.retencaoCurvaCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/sub-status', authorize('admin', 'diretor'), async (_req, res) => {
+router.post('/coletar/sub-status', authorizeModule('online', 3), async (_req, res) => {
   try { res.json(await collectors.subStatusCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/backfill-range', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/coletar/backfill-range', authorizeModule('online', 3), async (req, res) => {
   const { data_inicio, data_fim } = req.body || {};
   if (!data_inicio || !data_fim) return res.status(400).json({ error: 'data_inicio e data_fim obrigatórios' });
   try { res.json(await collectors.backfillRange(data_inicio, data_fim)); } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/backfill-cultos', authorize('admin', 'diretor'), async (_req, res) => {
+router.post('/coletar/backfill-cultos', authorizeModule('online', 3), async (_req, res) => {
   try { res.json(await collectors.backfillCultoVideoIds()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/catch-up', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/coletar/catch-up', authorizeModule('online', 3), async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 5, 20);
     res.json(await collectors.catchUpMetricas({ limit }));
@@ -287,11 +303,11 @@ router.post('/coletar/catch-up', authorize('admin', 'diretor'), async (req, res)
 //
 // ⚠️ O teto de 400 dias mora no coletor (`viewsDiaCollector`), não aqui — é
 // uma régua só, e a Analytics devolve o período inteiro numa chamada.
-router.post('/coletar/views-dia', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/coletar/views-dia', authorizeModule('online', 3), async (req, res) => {
   try { res.json(await collectors.viewsDiaCollector({ dias: Number(req.query.dias) || 5 })); }
   catch (e) { console.error('[coletar/views-dia]', e.message); res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/engajamento', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/coletar/engajamento', authorizeModule('online', 3), async (req, res) => {
   try {
     const ano = req.query.ano ? Number(req.query.ano) : undefined;
     res.json(await collectors.engajamentoCollector({ ano }));

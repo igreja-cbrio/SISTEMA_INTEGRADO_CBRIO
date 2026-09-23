@@ -74,7 +74,13 @@ describe('⚠️ existe caminho HUMANO para o disparo manual', () => {
     const i = online.indexOf("router.post('/coletar/views-dia'");
     expect(i, 'sem rota manual de views-dia').toBeGreaterThan(-1);
     const linha = online.slice(i, online.indexOf('\n', i));
-    expect(linha).toContain("authorize('admin', 'diretor')");
+    // ⚠️ Em 23/09/2026 o gate deixou de ser por CARGO e passou a ser por MÓDULO
+    // (`authorizeModule('online', 3)`) — pedido do Matheus: a Renata,
+    // `coordenador-online`, não conseguia apertar os botões de coleta da
+    // própria área. O que este teste protege NÃO é o cargo: é que o caminho
+    // humano seja gated por PERMISSÃO e não por segredo. Ambos servem; o que
+    // não serve é ficar sem gate. (Detalhes em `onlineColetaPermissao.test.ts`.)
+    expect(linha).toMatch(/authorize\(|authorizeModule\(/);
     // ⚠️ E NÃO pode usar o guard de cron: isso reintroduziria o segredo no
     // caminho de quem clica num botão.
     expect(linha).not.toContain('autorizaCron');

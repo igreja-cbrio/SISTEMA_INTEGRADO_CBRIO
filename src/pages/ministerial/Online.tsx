@@ -812,8 +812,9 @@ function OAuthStatusCardInner() {
       if (ult) {
         const ret = ult.retencao != null ? `${ult.retencao}%` : '—';
         const comp = ult.compartilhamento != null ? `${ult.compartilhamento}%` : '—';
-        const cli = ult.cliques_series != null ? `${ult.cliques_series}%` : '—';
-        toast.success(`Engajamento ${String(ult.mes).slice(0, 7)} · retenção ${ret} · compart. ${comp} · cliques ${cli}`);
+        // ⚠️ "cliques em séries" saiu do toast junto com o card (23/09/2026):
+        // não fazemos mais séries. A coleta continua gravando o campo.
+        toast.success(`Engajamento ${String(ult.mes).slice(0, 7)} · retenção ${ret} · compart. ${comp}`);
       } else {
         const err = (r?.resultados || []).find((x: any) => x.error);
         toast.message(err ? `Sem dados: ${err.error}` : `Coleta executada (${r?.coletados || 0} meses).`);
@@ -1317,10 +1318,20 @@ export default function Online() {
             </p>
           </div>
         </div>
-        <CardContent className="p-4 md:p-5 grid grid-cols-1 md:grid-cols-3 gap-3">
+        {/* ⚠️ "Cliques em séries" SAIU em 23/09/2026 — pedido do Matheus:
+            *"pode remover o card de cliques em series pois nao fazemos mais
+            series."* A igreja parou de organizar pregação em séries, então o
+            CTR de cartão de série media uma coisa que não existe mais e ficava
+            preso em 0%, parecendo fracasso. O único KPI que consumia a métrica
+            (`MKT-ONL-CTR`) já estava inativo.
+
+            ⚠️ A COLETA CONTINUA: `cliques_series_pct` segue sendo gravado por
+            `onlineCollectors.js`. Parar de MOSTRAR é reversível; parar de
+            COLETAR abriria um buraco no histórico que não dá para preencher
+            depois — o YouTube Analytics não devolve retroativo indefinidamente. */}
+        <CardContent className="p-4 md:p-5 grid grid-cols-1 md:grid-cols-2 gap-3">
           <StatCard icon={Eye}          label="Retenção média em vídeos (alvo ≥40%)"        value={`${eng?.retencao ?? 0}%`}          accentClass="from-blue-500/15 to-cyan-500/5" />
           <StatCard icon={ExternalLink} label="Taxa de compartilhamento (alvo ≥5%)"          value={`${eng?.compartilhamento ?? 0}%`}  accentClass="from-pink-500/15 to-rose-500/5" />
-          <StatCard icon={Zap}          label="Cliques em séries no YouTube (alvo ≥15%)"     value={`${eng?.cliques_series ?? 0}%`}    accentClass="from-amber-500/15 to-yellow-500/5" />
         </CardContent>
       </Card>
         </TabsContent>

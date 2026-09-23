@@ -15,6 +15,7 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { montarProcedencia } = require('../utils/kpiProcedencia');
 const { montarSerie } = require('../utils/kpiSerie');
+const { periodoAtual } = require('../services/kpiAutoCollector');
 
 router.use(authenticate);
 
@@ -84,7 +85,10 @@ router.get('/kpi/:id/procedencia', authorizeModule('painel-area', 1), async (req
   try {
     const { data: kpi, error } = await supabase
       .from('kpi_indicadores_taticos')
-      .select('id, indicador, area, periodicidade, tipo_calculo, formula_config, meta_valor, meta_valor_absoluto, sentido_meta, descricao, ativo')
+      // ⚠️ `fonte_auto` é OBRIGATÓRIO aqui: é o segundo motor de cálculo. Sem
+      // ele a ficha chamava de "preenchido à mão" os 49 KPIs ativos que são
+      // calculados pelo collector JS com `tipo_calculo = 'manual'`.
+      .select('id, indicador, area, periodicidade, tipo_calculo, fonte_auto, formula_config, meta_valor, meta_valor_absoluto, sentido_meta, descricao, ativo')
       .eq('id', req.params.id)
       .maybeSingle();
     if (error) return res.status(400).json({ error: error.message });
@@ -110,11 +114,24 @@ router.get('/kpi/:id/procedencia', authorizeModule('painel-area', 1), async (req
     ]);
 
     const periodos = (linhas || []).map((l) => l.periodo_referencia).filter(Boolean);
+    // ⚠️⚠️ A meta que a ficha mostra tem que ser a que o FAROL usa. O campo
+    // `meta_valor` é nominal; quem pinta o card é `meta_efetiva` da view,
+    // dividida em `meta_periodo`. Medido em 23/09: 10 de 167 KPIs ativos
+    // divergem — o ONL-11 tem nominal 30 e efetiva 106.022/ano (2.038,88 por
+    // semana). "Meta 30" ao lado de um card vermelho com 1.032 faz o indicador
+    // parecer quebrado quando quem estava errada era a ficha.
+    let trajetoria = null;
+    try {
+      const { data } = await supabase.from('vw_kpi_trajetoria_atual')
+        .select('meta_efetiva, meta_periodo').eq('kpi_id', kpi.id).maybeSingle();
+      trajetoria = data || null;
+    } catch { /* a ficha vale sem a meta efetiva */ }
+
     const ficha = montarProcedencia(kpi, {
       primeiro_periodo: periodos[0] || null,
       ultimo_periodo: periodos[periodos.length - 1] || null,
       total_periodos: count || periodos.length,
-    });
+    }, trajetoria);
 
     // ⚠️⚠️ A TABELA MÊS A MÊS — pedido do Matheus em 23/09/2026: *"queria que
     // mostrasse essa tabela tbm: mês | escalas | com check-in | %"*.
@@ -147,7 +164,12 @@ router.get('/kpi/:id/procedencia', authorizeModule('painel-area', 1), async (req
         periodo_referencia: g.periodo_referencia,
         valor_calculado: manual ? g.valor_realizado : g.valor_calculado,
       }));
-      serie = montarSerie(partes.data || [], linhasGravadas);
+      // ⚠️⚠️ O período CORRENTE corta o futuro. Medido em 23/09/2026 no ONL-11:
+      // havia 14 registros de W39 a W52 (semanas que ainda não aconteceram),
+      // todos com 0, de um backfill em 24/08 — e a ficha mostrava só eles,
+      // doze linhas de 0%. Zero de semana futura não é resultado, é ausência.
+      serie = montarSerie(partes.data || [], linhasGravadas,
+        periodoAtual(kpi.periodicidade || 'mensal'));
     } catch { /* série é extra; a ficha vale sem ela */ }
 
     res.json({ ...ficha, serie });

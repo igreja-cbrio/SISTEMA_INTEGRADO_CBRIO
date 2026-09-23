@@ -41,14 +41,27 @@ function numero(v) {
  * @param gravados  linhas de `kpi_valores_calculados` — [{periodo_referencia, valor_calculado}]
  * @returns { tem_partes, linhas, divergencias }
  */
-function montarSerie(partes, gravados) {
+function montarSerie(partes, gravados, periodoAtual = null) {
   const porPeriodo = new Map();
   for (const g of Array.isArray(gravados) ? gravados : []) {
     const p = g && g.periodo_referencia;
-    if (p) porPeriodo.set(String(p), numero(g.valor_calculado));
+    if (!p) continue;
+    // ⚠️⚠️ PERÍODO FUTURO NÃO ENTRA NA TABELA. Medido em 23/09/2026 no ONL-11:
+    // havia 14 registros de W39 a W52 — semanas que ainda não aconteceram —
+    // todos com valor 0, inseridos de uma vez num backfill em 24/08. A ficha
+    // pegava "os 12 mais recentes" e mostrava só esse lixo: doze linhas de 0%,
+    // nenhuma delas real. Zero de semana futura não é resultado, é ausência.
+    //
+    // ⚠️ Comparação de texto funciona porque todo formato de período do sistema
+    // (`YYYY-MM`, `YYYY-Wnn`, `YYYY-Qn`, `YYYY-Sn`, `YYYY`) é zero-padded, e aí
+    // a ordem alfabética É a ordem cronológica. Um formato sem padding
+    // quebraria isso em silêncio — por isso o teste cobre W09 × W10.
+    if (periodoAtual && String(p) > String(periodoAtual)) continue;
+    porPeriodo.set(String(p), numero(g.valor_calculado));
   }
 
-  const vivas = Array.isArray(partes) ? partes : [];
+  const vivas = (Array.isArray(partes) ? partes : [])
+    .filter((l) => !periodoAtual || String(l.periodo) <= String(periodoAtual));
 
   // ⚠️ Sem ramo de partes para este `dado_tipo`, a ficha ainda mostra o
   // histórico gravado — só sem as colunas de numerador/denominador. É menos,

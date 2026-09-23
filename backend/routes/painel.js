@@ -2034,7 +2034,10 @@ router.get('/monitoramento-okr', async (req, res) => {
         : ' · aguardando dados da API do YouTube';
       addM('eng_retencao', num(engajamento.retencao), '%', `retenção média em vídeos${sufEng}`);
       addM('eng_compartilhamento', num(engajamento.compartilhamento), '%', `compartilhamentos ÷ alcance${sufEng}`);
-      addM('eng_cliques_series', num(engajamento.cliques_series), '%', `CTR de séries de mensagens${sufEng}`);
+      // ⚠️ `eng_cliques_series` SAIU em 23/09/2026 — a igreja não organiza mais
+      // pregação em séries, então o CTR de cartão de série media algo que não
+      // existe e ficava em 0%. O KPI que consumia (`MKT-ONL-CTR`) já estava
+      // inativo. A COLETA continua: o campo segue gravado, só não é exibido.
     }
     // Nota Q12 (Gallup) · clima organizacional do staff (RH). Mostra "—" até o
     // RH lançar a 1ª nota; o detalhe traz o mês do lançamento.

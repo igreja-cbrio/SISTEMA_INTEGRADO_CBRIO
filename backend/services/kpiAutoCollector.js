@@ -9,6 +9,7 @@
 // ============================================================================
 
 const { supabase } = require('../utils/supabase');
+const { resultadoSemana } = require('../utils/crescimentoDs');
 
 // ── Helpers de período ──────────────────────────────────────────────────────
 
@@ -243,6 +244,35 @@ const COLLECTORS = {
     const cultos = (data || []).filter(c => (c.online_pico || 0) > 0);
     const total = cultos.reduce((s, c) => s + (c.online_pico || 0), 0);
     return { valor: total, observacao: `${cultos.length} culto(s) com transmissão` };
+  },
+
+  // ⚠️⚠️ ONL-11 pelo DS — pedido do Matheus (23/09/2026): *"esse aqui eu
+  // gostaria que fosse o valor do DS"*. O `cultos.online_freq` acima soma
+  // `online_pico` (espectadores SIMULTÂNEOS) e o card mostrava "1032" contra
+  // uma meta de "30", porque guardava audiência absoluta num indicador cujo
+  // nome promete percentual.
+  //
+  // ⚠️ A conta e a guarda moram em `utils/crescimentoDs.js`, não aqui: régua
+  // que decide algo dentro do serviço que lê o banco é régua que nenhum mutante
+  // alcança. Aqui só se busca o dado e se delega.
+  //
+  // ⚠️ `fim` é EXCLUSIVO (`periodoRange` devolve a segunda-feira seguinte), por
+  // isso a semana anterior é [inicio−7, inicio).
+  'cultos.online_ds_cresc': async ({ inicio, fim }) => {
+    const menos7 = (d) => {
+      const x = new Date(d + 'T12:00:00Z');
+      x.setUTCDate(x.getUTCDate() - 7);
+      return x.toISOString().slice(0, 10);
+    };
+    const [atual, anterior] = await Promise.all([
+      supabase.from('cultos').select('online_ds').gte('data', inicio).lt('data', fim),
+      supabase.from('cultos').select('online_ds').gte('data', menos7(inicio)).lt('data', inicio),
+    ]);
+    const r = resultadoSemana(atual.data || [], anterior.data || []);
+    // ⚠️ `null` faz o laço registrar `sem_dado` e NÃO gravar — que é o certo
+    // para a semana em curso, cujo DS só existe na manhã seguinte ao culto.
+    if (r.valor === null) return null;
+    return { valor: r.valor, observacao: r.observacao };
   },
 
   'cultos.online_conv': async ({ inicio, fim }) => {
