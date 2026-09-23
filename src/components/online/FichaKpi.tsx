@@ -23,6 +23,8 @@ type Procedencia = {
   ressalva: string | null; sem_implementacao: boolean;
   desde: string | null; ate: string | null; periodos_medidos: number; nunca_mediu: boolean;
   rotulo_partes: { numerador: string; denominador: string } | null;
+  fonte_auto: string | null; conta_generica: boolean;
+  meta_efetiva: number | null; meta_periodo: number | null; meta_divergente: boolean;
   serie?: Serie;
 };
 
@@ -119,7 +121,18 @@ export default function FichaKpi({ kpiId, onClose }: { kpiId: string; onClose: (
 
             {d.meta !== null && d.meta !== undefined && (
               <Secao icone={Target} titulo="Meta">
-                {String(d.meta)}
+                {/* ⚠️⚠️ Quando a meta efetiva diverge da nominal, quem manda é a
+                    efetiva — é ela que pinta o card. Mostrar só a nominal fazia
+                    o ONL-11 exibir "Meta 30" ao lado de um valor de 1.032. */}
+                {d.meta_divergente && d.meta_efetiva !== null ? (
+                  <>
+                    <strong>{fmt(d.meta_periodo)}</strong> por período
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Meta do ciclo: {fmt(d.meta_efetiva)} · dividida pelos períodos.
+                      O valor cadastrado no indicador ({String(d.meta)}) não é o que o farol usa.
+                    </p>
+                  </>
+                ) : String(d.meta)}
                 {d.sentido_meta === 'maior_melhor' && <span className="text-muted-foreground"> · quanto maior, melhor</span>}
                 {d.sentido_meta === 'menor_melhor' && <span className="text-muted-foreground"> · quanto menor, melhor</span>}
               </Secao>
@@ -151,6 +164,10 @@ export default function FichaKpi({ kpiId, onClose }: { kpiId: string; onClose: (
 // ao vivo é 60,66% (37 de 61), porque a Ariel lançou check-in retroativo DEPOIS
 // da apuração das 07:01. Sem essa marca, a tabela contradiz o card na cara da
 // pessoa e ninguém sabe qual dos dois acreditar.
+function fmt(n: number | null): string {
+  return n === null || n === undefined ? '—' : n.toLocaleString('pt-BR');
+}
+
 function TabelaSerie({ serie, rotulos }: {
   serie: Serie; rotulos: { numerador: string; denominador: string } | null;
 }) {
@@ -165,6 +182,10 @@ function TabelaSerie({ serie, rotulos }: {
               <th className="text-left font-medium py-1 pr-2">mês</th>
               {comPartes && <th className="text-right font-medium py-1 px-2">{rotulos!.denominador}</th>}
               {comPartes && <th className="text-right font-medium py-1 px-2">{rotulos!.numerador}</th>}
+              {/* ⚠️ cabeçalho e célula seguem a MESMA ordem (denominador, depois
+                  numerador) — no check-in isso é "escalas · com check-in", no DS
+                  é "semana anterior · DS da semana". Trocar um sem o outro
+                  inverteria a tabela em silêncio. */}
               <th className="text-right font-medium py-1 pl-2">%</th>
             </tr>
           </thead>
@@ -172,8 +193,8 @@ function TabelaSerie({ serie, rotulos }: {
             {serie.linhas.map((l) => (
               <tr key={l.periodo} className="border-b border-border/40 last:border-0">
                 <td className="py-1 pr-2">{l.periodo}</td>
-                {comPartes && <td className="text-right py-1 px-2">{l.denominador ?? '—'}</td>}
-                {comPartes && <td className="text-right py-1 px-2">{l.numerador ?? '—'}</td>}
+                {comPartes && <td className="text-right py-1 px-2">{fmt(l.denominador)}</td>}
+                {comPartes && <td className="text-right py-1 px-2">{fmt(l.numerador)}</td>}
                 <td className="text-right py-1 pl-2 font-medium">
                   {l.valor === null ? '—' : `${l.valor.toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%`}
                   {l.divergente && (

@@ -105,3 +105,54 @@ describe('entrada torta não derruba a ficha', () => {
     expect(s.linhas).toHaveLength(0);
   });
 });
+
+// ⚠️⚠️ PERÍODO FUTURO NÃO ENTRA NA TABELA.
+//
+// Medido em 23/09/2026 no ONL-11: havia 14 registros de 2026-W39 a 2026-W52 —
+// semanas que ainda não aconteceram — todos com valor 0, inseridos de uma vez
+// num backfill em 24/08. A ficha pegava "os 12 mais recentes" e mostrava só
+// esse lixo: doze linhas de 0%, nenhuma real. Zero de semana futura não é
+// resultado, é ausência.
+describe('⚠️⚠️ período futuro não entra na tabela', () => {
+  const gravados = [
+    { periodo_referencia: '2026-W37', valor_calculado: '1400' },
+    { periodo_referencia: '2026-W38', valor_calculado: '1032' },
+    { periodo_referencia: '2026-W39', valor_calculado: '0' },
+    { periodo_referencia: '2026-W52', valor_calculado: '0' },
+  ];
+
+  it('corta as semanas que ainda não aconteceram', () => {
+    const s = montarSerie([], gravados, '2026-W38');
+    expect(s.linhas.map((l: { periodo: string }) => l.periodo)).toEqual(['2026-W37', '2026-W38']);
+  });
+
+  it('o próprio período corrente FICA — ele já começou', () => {
+    const s = montarSerie([], gravados, '2026-W39');
+    expect(s.linhas.map((l: { periodo: string }) => l.periodo)).toContain('2026-W39');
+    expect(s.linhas.map((l: { periodo: string }) => l.periodo)).not.toContain('2026-W52');
+  });
+
+  it('corta também a série recalculada ao vivo', () => {
+    const s = montarSerie(
+      [{ periodo: '2026-08', numerador: 37, denominador: 61, valor: 60.66 },
+       { periodo: '2026-12', numerador: 0, denominador: 0, valor: null }],
+      [], '2026-09');
+    expect(s.linhas).toHaveLength(1);
+    expect(s.linhas[0].periodo).toBe('2026-08');
+  });
+
+  // ⚠️ A comparação é de TEXTO. Só funciona porque todo formato do sistema é
+  // zero-padded — W09 < W10 alfabeticamente. Sem padding, "W9" > "W10" e o
+  // corte inverteria em silêncio.
+  it('semana de um dígito não confunde a ordem (W09 < W10)', () => {
+    const s = montarSerie([], [
+      { periodo_referencia: '2026-W09', valor_calculado: '5' },
+      { periodo_referencia: '2026-W10', valor_calculado: '7' },
+    ], '2026-W09');
+    expect(s.linhas.map((l: { periodo: string }) => l.periodo)).toEqual(['2026-W09']);
+  });
+
+  it('sem período corrente informado, nada é cortado (compatível)', () => {
+    expect(montarSerie([], gravados).linhas).toHaveLength(4);
+  });
+});

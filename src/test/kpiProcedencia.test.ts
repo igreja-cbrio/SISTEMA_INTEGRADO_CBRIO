@@ -122,3 +122,120 @@ describe('rótulos da tabela mês a mês', () => {
     expect(f.rotulo_partes).toBeNull();
   });
 });
+
+// ⚠️⚠️ O SEGUNDO MOTOR — `fonte_auto`, e o erro que a ficha cometia.
+//
+// Há DOIS motores de cálculo e o `tipo_calculo` só conhece um. Um KPI pode ter
+// `tipo_calculo = 'manual'` E `fonte_auto` preenchido — e aí ele É calculado,
+// pelo collector JS. Medido em 23/09/2026: **49 KPIs ativos** nessa situação, e
+// a ficha dizia "preenchido à mão — o sistema não calcula" sobre todos eles.
+// Foi assim que o ONL-11 apareceu como manual sendo alimentado desde 2022.
+describe('⚠️⚠️ KPI com fonte_auto é calculado, mesmo marcado como manual', () => {
+  const ONL11 = {
+    id: 'ONL-11', indicador: '% crescimento da frequência em relação a semana anterior',
+    area: 'online', periodicidade: 'semanal', tipo_calculo: 'manual',
+    fonte_auto: 'cultos.online_ds_cresc',
+    formula_config: { dado_tipo: 'frequencia_online_ds' }, meta_valor: '30',
+  };
+
+  it('não chama de manual o que a rotina calcula', () => {
+    expect(montarProcedencia(ONL11, {}).automatico).toBe(true);
+  });
+
+  it('descreve a fonte do COLLECTOR, não o ramo SQL do dado_tipo', () => {
+    const f = montarProcedencia(ONL11, {});
+    expect(f.fonte).toContain('online_ds');
+    expect(f.conta).toContain('semana anterior');
+  });
+
+  // ⚠️ O collector VENCE o `dado_tipo`: quando os dois existem, quem escreve o
+  // valor é o motor JS. Descrever o ramo SQL apontaria para uma conta que não
+  // produziu o número.
+  it('o collector vence o dado_tipo quando os dois existem', () => {
+    const f = montarProcedencia({ ...ONL11, formula_config: { dado_tipo: 'voluntarios_checkin' } }, {});
+    expect(f.fonte).toContain('online_ds');
+    expect(f.fonte).not.toContain('vol_schedules');
+  });
+
+  // ⚠️ Sem catálogo do collector, diz o que sabe — que roda sozinho, e o nome
+  // da rotina. Não inventa tabela de origem.
+  it('collector sem catálogo é honesto, não inventa tabela', () => {
+    const f = montarProcedencia({ ...ONL11, fonte_auto: 'next.alguma_rotina' }, {});
+    expect(f.automatico).toBe(true);
+    expect(f.conta_generica).toBe(true);
+    expect(f.fonte).toContain('next.alguma_rotina');
+  });
+
+  // ⚠️ O alarme "não está sendo calculado" só vale para o motor SQL sem ramo.
+  // Com collector existe cálculo por definição — alarme ali seria falso.
+  it('não acusa "sem cálculo" quando há collector', () => {
+    expect(montarProcedencia({ ...ONL11, fonte_auto: 'next.alguma_rotina' }, {}).sem_implementacao).toBe(false);
+  });
+
+  // ⚠️⚠️ O CASO QUE UM MUTANTE SOBREVIVENTE REVELOU: `tipo_calculo` automático
+  // E `fonte_auto` preenchido ao mesmo tempo. Sem a guarda `!fonteAuto`, a
+  // ficha acusaria "não está sendo calculado" num KPI que o collector alimenta.
+  // Medido em 23/09/2026: **6 KPIs ativos** nessa combinação, todos com
+  // `dado_tipo` preenchido — ou seja, o alarme falso aconteceria de verdade.
+  it('collector + tipo_calculo automático não dispara alarme falso', () => {
+    const f = montarProcedencia({
+      id: 'X-2', tipo_calculo: 'soma_periodo', fonte_auto: 'next.alguma_rotina',
+      periodicidade: 'mensal', formula_config: { dado_tipo: 'dado_que_nao_tem_ramo' },
+    }, {});
+    expect(f.sem_implementacao).toBe(false);
+    expect(f.automatico).toBe(true);
+  });
+
+  it('o alarme do motor SQL continua valendo', () => {
+    const f = montarProcedencia({
+      id: 'ONL-18', tipo_calculo: 'soma_periodo', fonte_auto: null,
+      periodicidade: 'mensal', formula_config: { dado_tipo: 'voluntarios_treinamento' },
+    }, {});
+    expect(f.sem_implementacao).toBe(true);
+  });
+
+  it('a ressalva do DS explica por que a semana em curso fica vazia', () => {
+    expect(montarProcedencia(ONL11, {}).ressalva).toContain('SEM DADO');
+  });
+});
+
+// ⚠️⚠️ A META DA FICHA TEM QUE SER A QUE O FAROL USA.
+//
+// `meta_valor` é a meta NOMINAL; quem pinta o card é `meta_efetiva` da
+// `vw_kpi_trajetoria_atual`, dividida em `meta_periodo`. Medido em 23/09/2026
+// no ONL-11: nominal **30**, efetiva **106.022** no ano → **2.038,88 por
+// semana**, e o valor 1.032 é 50,6% dela. "Meta 30" ao lado de um card vermelho
+// com 1.032 faz o indicador parecer quebrado quando quem erra é a ficha.
+// Medido: **10 de 167** KPIs ativos nessa divergência.
+describe('⚠️⚠️ meta nominal × meta efetiva', () => {
+  const BASE = {
+    id: 'ONL-11', tipo_calculo: 'manual', fonte_auto: 'cultos.online_ds_cresc',
+    periodicidade: 'semanal', meta_valor: '30', formula_config: {},
+  };
+
+  it('avisa quando a meta do farol não é a cadastrada', () => {
+    const f = montarProcedencia(BASE, {}, { meta_efetiva: '106022', meta_periodo: '2038.88' });
+    expect(f.meta_divergente).toBe(true);
+    expect(f.meta_efetiva).toBe(106022);
+    expect(f.meta_periodo).toBe(2038.88);
+    expect(f.meta).toBe('30');
+  });
+
+  it('não avisa quando as duas batem', () => {
+    const f = montarProcedencia(BASE, {}, { meta_efetiva: '30', meta_periodo: '30' });
+    expect(f.meta_divergente).toBe(false);
+  });
+
+  it('sem trajetória, a ficha ainda mostra a meta cadastrada', () => {
+    const f = montarProcedencia(BASE, {});
+    expect(f.meta).toBe('30');
+    expect(f.meta_divergente).toBe(false);
+    expect(f.meta_efetiva).toBeNull();
+  });
+
+  // ⚠️ '30' (texto) e 30 (número) são a MESMA meta. Comparar sem converter
+  // marcaria divergência em todos os 167 KPIs e o aviso viraria ruído.
+  it('texto e número não contam como divergência', () => {
+    expect(montarProcedencia(BASE, {}, { meta_efetiva: 30, meta_periodo: 30 }).meta_divergente).toBe(false);
+  });
+});
