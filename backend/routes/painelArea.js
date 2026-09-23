@@ -13,6 +13,7 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { montarProcedencia } = require('../utils/kpiProcedencia');
 
 router.use(authenticate);
 
@@ -64,6 +65,57 @@ function filtrarCultosPorArea(cultos, area) {
   }
   return cultos;
 }
+
+// A FICHA de um KPI — "de onde sai esse número?"
+//
+// Pedido do Matheus (23/09/2026), depois de a Renata (responsável do Online)
+// perguntar do ONL-17: *"desde quando esse kpi ta medindo, qual a periodicidade
+// dele, de onde sai os dados que alimenta ele"*.
+//
+// ⚠️ Nível 1, o mesmo do painel: quem já vê o número tem direito de saber de
+// onde ele vem. Ficha atrás de um nível mais alto seria transparência que só o
+// gestor alcança — e quem tem a dúvida é quem opera.
+//
+// ⚠️ `desde` é o PRIMEIRO PERÍODO COM VALOR, e não a data de cadastro do KPI.
+// Confundir os dois foi o que fez o agente de voluntariado ler "158 dias de
+// cadastro" como "158 dias sem check-in" e acusar 42 pessoas que serviam.
+router.get('/kpi/:id/procedencia', authorizeModule('painel-area', 1), async (req, res) => {
+  try {
+    const { data: kpi, error } = await supabase
+      .from('kpi_indicadores_taticos')
+      .select('id, indicador, area, periodicidade, tipo_calculo, formula_config, meta_valor, meta_valor_absoluto, sentido_meta, descricao, ativo')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    if (!kpi) return res.status(404).json({ error: 'KPI não encontrado' });
+
+    // Onde o histórico mora depende de como o KPI é apurado: manual lê os
+    // registros de gente, automático lê os valores calculados. Ler o lugar
+    // errado devolveria "nunca mediu" para um KPI cheio de histórico.
+    const manual = String(kpi.tipo_calculo || '') === 'manual';
+    const [{ data: linhas }, { count }] = await Promise.all([
+      manual
+        ? supabase.from('kpi_registros').select('periodo_referencia')
+            .eq('indicador_id', kpi.id).not('valor_realizado', 'is', null)
+            .order('periodo_referencia')
+        : supabase.from('kpi_valores_calculados').select('periodo_referencia')
+            .eq('kpi_id', kpi.id).not('valor_calculado', 'is', null)
+            .order('periodo_referencia'),
+      manual
+        ? supabase.from('kpi_registros').select('id', { count: 'exact', head: true })
+            .eq('indicador_id', kpi.id).not('valor_realizado', 'is', null)
+        : supabase.from('kpi_valores_calculados').select('kpi_id', { count: 'exact', head: true })
+            .eq('kpi_id', kpi.id).not('valor_calculado', 'is', null),
+    ]);
+
+    const periodos = (linhas || []).map((l) => l.periodo_referencia).filter(Boolean);
+    res.json(montarProcedencia(kpi, {
+      primeiro_periodo: periodos[0] || null,
+      ultimo_periodo: periodos[periodos.length - 1] || null,
+      total_periodos: count || periodos.length,
+    }));
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
   try {
@@ -771,5 +823,7 @@ router.get('/:area/pessoas/:id', authorizeModule('painel-area', 1), async (req, 
     res.status(500).json({ error: 'Erro ao abrir pessoa' });
   }
 });
+
+
 
 module.exports = router;

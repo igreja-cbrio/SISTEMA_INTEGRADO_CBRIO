@@ -19,7 +19,8 @@ import { OnlineDebugPanel } from '@/components/online/OnlineDebugPanel';
 import JornadaConvertidos from '@/components/JornadaConvertidos';
 import QrCultosApelo from '@/components/online/QrCultosApelo';
 import CadastroMembresiaOnline from '@/components/online/CadastroMembresiaOnline';
-import CanalSerieCard from '@/components/online/CanalSerieCard';
+import CanalSerieCard from '@/components/online/CanalSerieCard';import FichaKpi from '@/components/online/FichaKpi';
+
 
 const VALOR_META: Record<string, { label: string; cor: string; corClara: string; icon: any }> = {
   seguir:        { label: 'Seguir a Jesus',          cor: '#8B5CF6', corClara: 'from-violet-500/15 to-violet-500/5', icon: Cross },
@@ -584,14 +585,25 @@ function SerieCard({ s }: { s: Serie }) {
   );
 }
 
+// ⚠️ O card virou BOTÃO: pedido do Matheus (23/09/2026) para a Renata parar de
+// perguntar "de onde sai esse número" — a ficha responde de onde vem, desde
+// quando mede e com que periodicidade. `type="button"` e `text-left` porque o
+// conteúdo é um card, não um rótulo centralizado de botão.
 function KpiCard({ kpi }: { kpi: MatrizCell }) {
   const status = kpi.status_trajetoria || 'sem_dado';
   const info = STATUS_INFO[status] || STATUS_INFO.sem_dado;
   const pct = kpi.percentual_meta;
   const pctClamped = pct !== null && pct !== undefined ? Math.max(0, Math.min(100, pct)) : null;
+  const [ficha, setFicha] = useState(false);
 
   return (
-    <div className="rounded-lg bg-card border border-border p-3 hover:border-primary/30 transition-colors">
+    <>
+    {ficha && <FichaKpi kpiId={kpi.kpi_id} onClose={() => setFicha(false)} />}
+    <button
+      type="button"
+      onClick={() => setFicha(true)}
+      title="Ver de onde sai este número"
+      className="w-full text-left rounded-lg bg-card border border-border p-3 hover:border-primary/30 transition-colors">
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="min-w-0 flex-1">
           <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{kpi.kpi_id}</div>
@@ -627,7 +639,8 @@ function KpiCard({ kpi }: { kpi: MatrizCell }) {
           </div>
         )}
       </div>
-    </div>
+    </button>
+    </>
   );
 }
 
