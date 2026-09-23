@@ -16216,7 +16216,13 @@ online), 2023-24 a volta ao presencial, 2025-26 a retomada (~R$ 100 mil/mês).
 
 ### ⏳ Pendente de GENTE
 
-1. **Aplicar a migration `20260923120000`** — sem ela o endpoint responde 500.
+1. ✅ **Migration `20260923120000` APLICADA em 23/09/2026** e conferida no
+   CATÁLOGO (não no `success: true`): as 3 funções existem, `anon` e
+   `authenticated` **sem execute**, só `service_role`. RPC exercitada em
+   produção: **R$ 961.364,04 · 2.873 lançamentos · 39 semanas · corte 23/09 ·
+   top 10 doadores = 38,4%** — e a semana 39 veio com **R$ 90** (1 lançamento),
+   que é exatamente o caso que a trava de período parcial existe para não
+   publicar como queda.
 2. **Conferir 9 lançamentos com o financeiro**: o banco tem 9 linhas que a
    planilha não tem (R$ 8.107 de R$ 888.884 · 0,9%), **idênticas em todo campo
    observável** às incluídas e com `updated_at` posterior à criação
