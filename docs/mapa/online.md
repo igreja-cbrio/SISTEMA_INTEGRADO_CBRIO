@@ -16,8 +16,9 @@
 ## Backend
 - `backend/routes/online.js`
 Guard: `authorizeModule('online', 3)`
-<details><summary>Endpoints (42)</summary>
+<details><summary>Endpoints (43)</summary>
 - `GET /api/online/aceitacoes`
+- `GET /api/online/arrecadacao`
 - `GET /api/online/canal-serie`
 - `GET /api/online/cron/backfill-cultos`
 - `GET /api/online/cron/catch-up`
@@ -63,6 +64,7 @@ Guard: `authorizeModule('online', 3)`
 
 **Réguas puras (backend/utils)**
 
+- `backend/utils/arrecadacaoOnline.js`
 - `backend/utils/canalSerie.js`
 - `backend/utils/cronAuth.js`
 - `backend/utils/decisaoToken.js`
@@ -95,6 +97,10 @@ Guard: `authorizeModule('online', 3)`
 - `vw_kpi_trajetoria_atual`
 - `vw_online_oauth_status`
 - `vw_online_series_kpi`
+
+**RPCs**
+
+- `fn_online_arrecadacao`
 
 **Namespace no front (src/api.js)**
 
