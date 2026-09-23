@@ -92,7 +92,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/appRateLimit.js` | `src/test/appRateLimit.test.ts` |
 | `backend/utils/apresentacaoHistorico.js` | `src/test/apresentacaoHistorico.test.ts` |
 | `backend/utils/apresentacaoHorario.js` | `src/test/apresentacaoHorario.test.ts` |
-| `backend/utils/arrecadacaoOnline.js` | `src/test/arrecadacaoOnline.test.ts` |
+| `backend/utils/arrecadacaoOnline.js` | `src/test/arrecadacaoOnline.test.ts` `src/test/onlineAbaFinanceiro.test.ts` |
 | `backend/utils/assuntoGrupoConversa.js` | `src/test/assuntoGrupoConversa.test.ts` |
 | `backend/utils/atividadeVoluntario.js` | `src/test/agenteVolInativoIdErrado.test.ts` `src/test/atividadeVoluntario.test.ts` |
 | `backend/utils/authUsers.js` | `src/test/portasPublicasPii.test.ts` |
