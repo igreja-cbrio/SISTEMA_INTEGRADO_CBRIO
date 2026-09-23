@@ -62,6 +62,33 @@ pra eliminar. Para forçar o estado de agora: `/mapa` (skill) ou o comando acima
 ⚠️ **`src/pages/atlas/atlas.html` NÃO é fonte.** É uma TELA do sistema (`/atlas`),
 escrita à mão e desatualizada. Não citar como referência.
 
+## ⚠️⚠️ ESCALA PELO APP · o ID acompanha o NOME (2026-09-23 · SEM migration)
+
+`POST`/`PATCH /api/app/voluntariado/escala` gravavam **só `team_name` e
+`position_name`**. Consequência medida em 23/09, nos dois lados da mesma tela:
+- quem era **escalado pelo app** nascia com `team_id`/`position_id` NULL e não
+  casava **vaga nenhuma** na web — `utils/volCobertura.montarCobertura` casa por
+  `(team_id, position_id)` e a pessoa caía em `sobrando`;
+- quem era **movido pelo app** ficava com o `team_id` do time de **onde saiu**: a
+  web (id) seguia mostrando a pessoa no time antigo; o app (nome) já mostrava no
+  novo. Duas fontes discordando em silêncio.
+
+Agora `resolverEquipeId(nome)` + `resolverPosicaoId(teamId, nome)` gravam os IDs
+junto com os nomes, e a resposta devolve `team_id`/`position_id`.
+- ⚠️⚠️ **Só equipe ATIVA resolve.** `"Vocal"`, `"Recepção"`, `"Baixo"`, `"Câmeras"`
+  existem como `vol_teams` **inativos** (lixo do import, 129 times · 13 ativos);
+  resolver por eles moveria a linha pra um time morto. Sem ativa ⇒ `team_id` NULL
+  e a leitura cai no nome, como antes.
+- ⚠️⚠️ **Mudança SÓ de função não re-resolve o time pelo nome gravado** — nas
+  ~1.000 linhas do Planning Center `team_name` **é a posição** ("Vocal") e o
+  `team_id` é o que diz Banda. A posição é resolvida contra o `team_id` atual.
+- Trocar de equipe **zera `position_id`** quando nenhuma função veio no corpo:
+  "Vocal" não existe na Integração.
+- Contexto: o app passou a montar a escala **por TIME** (carrossel · duas etapas
+  · vaga "faltam N"), lendo a `composicao` que este endpoint manda desde 25/08.
+  A régua de leitura mora no app (`lib/escalaTimes.ts`) e tolera as duas
+  gerações de dado: nome que é time vence; senão `team_id`; senão o próprio nome.
+
 ## 🗑️ MÓDULO PROPOSTAS REMOVIDO (2026-09-23 · migration `20260923120000`)
 
 Decisão do Marcos: *"remova o módulo de propostas do sistema, acabe com ele"*. Era

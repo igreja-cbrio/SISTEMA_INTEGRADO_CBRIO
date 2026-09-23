@@ -2160,6 +2160,29 @@ async function resolverPosicaoId(teamId, positionName) {
 }
 
 /**
+ * O `team_id` de uma equipe pelo NOME que o app manda.
+ *
+ * ⚠️⚠️ POR QUE EXISTE (23/09/2026): o app gravava e movia escala escrevendo SÓ
+ * `team_name`/`position_name`. Quem era escalado pelo app nascia com `team_id`
+ * NULL e não casava vaga nenhuma na web (`montarCobertura` casa por
+ * `(team_id, position_id)` → caía em "sobrando"); quem era MOVIDO pelo app
+ * ficava com o `team_id` do time de ONDE saiu, e a web continuava mostrando a
+ * pessoa lá. Os dois lados da mesma tela discordavam em silêncio.
+ * ⚠️ Nome repete entre equipes inativas do import (129 `vol_teams`, 13 ativas):
+ * só a ATIVA conta. Sem nenhuma, NULL — o nome continua gravado e a leitura
+ * (web e app) cai no nome, como hoje.
+ */
+async function resolverEquipeId(teamName) {
+  if (!teamName) return null;
+  // ⚠️ SÓ equipe ATIVA. Medido em 23/09: "Vocal", "Recepção", "Baixo",
+  // "Câmeras" existem como `vol_teams` INATIVOS (lixo do import) — resolver por
+  // eles moveria a linha pra um time morto. Sem ativa com esse nome ⇒ NULL.
+  const { data } = await supabase.from('vol_teams')
+    .select('id').eq('name', teamName).eq('is_active', true).limit(1);
+  return data?.[0]?.id || null;
+}
+
+/**
  * A escala existente está numa área que esta pessoa supervisiona?
  *
  * ⚠️ Vale para MOVER e REMOVER, não só para adicionar. Uma trava só no POST
@@ -2493,16 +2516,22 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
     dupQ = (team_name ? dupQ.eq('team_name', team_name) : dupQ.is('team_name', null));
     const { data: dup } = await dupQ.maybeSingle();
     if (dup) return res.status(409).json({ error: 'Essa pessoa já está nesta equipe do culto' });
+    // ⚠️ Os IDs vão junto com os nomes (23/09/2026): é por `(team_id,
+    // position_id)` que a web casa a pessoa com a VAGA. Só nome = "sobrando".
+    const teamId = await resolverEquipeId(team_name);
+    const positionId = await resolverPosicaoId(teamId, position_name);
     const { data, error } = await supabase.from('vol_schedules').insert({
       service_id,
       volunteer_id: vp.id,
       volunteer_name: vp.full_name,
       planning_center_person_id: vp.planning_center_id || null,
+      team_id: teamId,
       team_name: team_name || null,
+      position_id: positionId,
       position_name: position_name || null,
       confirmation_status: 'pending',
       source: 'manual',
-    }).select('id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status').single();
+    }).select('id, volunteer_id, volunteer_name, team_id, team_name, position_id, position_name, confirmation_status').single();
     if (error) throw error;
     res.status(201).json(data);
 
@@ -2548,7 +2577,7 @@ router.patch('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res
     if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
     const { team_name, position_name } = req.body || {};
     const { data: atual } = await supabase.from('vol_schedules')
-      .select('id, service_id, volunteer_id, team_name').eq('id', req.params.id).maybeSingle();
+      .select('id, service_id, volunteer_id, team_id, team_name').eq('id', req.params.id).maybeSingle();
     if (!atual) return res.status(404).json({ error: 'Escala não encontrada' });
     const novoTeam = team_name === undefined ? atual.team_name : (team_name || null);
     // Dedup: a pessoa já está na equipe destino deste culto?
@@ -2590,9 +2619,25 @@ router.patch('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res
     }
     const patch = { team_name: novoTeam };
     if (position_name !== undefined) patch.position_name = position_name || null;
+    // ⚠️⚠️ O ID acompanha o NOME (23/09/2026). Antes só o nome mudava e o
+    // `team_id` ficava apontando pro time de ONDE a pessoa saiu — a web (que
+    // casa por id) seguia mostrando-a lá, e o app (que lia o nome) já mostrava
+    // no destino. Quando a equipe muda, a posição antiga não existe no destino:
+    // `position_id` só é resolvido contra o time NOVO; sem função pedida, zera.
+    // ⚠️ Mudança SÓ de função NÃO re-resolve o time pelo nome gravado: nas linhas
+    // do Planning Center `team_name` é a POSIÇÃO ("Vocal") e há `vol_teams`
+    // inativos com esse nome — a linha sairia da Banda pra um time-lixo do import.
+    if (team_name !== undefined) {
+      const teamId = await resolverEquipeId(novoTeam);
+      patch.team_id = teamId;
+      if (position_name !== undefined) patch.position_id = await resolverPosicaoId(teamId, position_name || null);
+      else if (novoTeam !== atual.team_name) patch.position_id = null;
+    } else if (position_name !== undefined) {
+      patch.position_id = await resolverPosicaoId(atual.team_id, position_name || null);
+    }
     const { data, error } = await supabase.from('vol_schedules').update(patch)
       .eq('id', req.params.id)
-      .select('id, volunteer_id, volunteer_name, team_name, position_name, confirmation_status').single();
+      .select('id, volunteer_id, volunteer_name, team_id, team_name, position_id, position_name, confirmation_status').single();
     if (error) throw error;
     res.json(data);
   } catch (e) {
