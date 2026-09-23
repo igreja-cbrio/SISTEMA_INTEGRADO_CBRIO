@@ -16231,6 +16231,23 @@ online), 2023-24 a volta ao presencial, 2025-26 a retomada (~R$ 100 mil/mês).
 3. ✅ **Resolvido em 23/09**: quem vê o valor é a coordenação do canal
    (nível 4 em `online`). O financeiro vê no módulo Financeiro.
 
+### ⚠️ Duas sessões no MESMO módulo no mesmo dia (23/09)
+
+O PR da arrecadação e o PR #3010 (ficha de KPI no Online) foram escritos em
+paralelo, por sessões diferentes, e conflitaram no `Online.tsx` — os dois
+acrescentavam import e card na mesma tela. O merge resolveu unindo: `CanalSerieCard`,
+`ArrecadacaoOnlineCard` e `FichaKpi` coexistem, cada um montado uma vez.
+
+⚠️ **`mergeStateStatus: DIRTY` no `gh pr view` é conflito com a main, e ele
+IMPEDE o `qualidade` de rodar** — o CI fica parecendo "só o Vercel passou", que
+se lê como workflow quebrado. Antes de investigar o CI de um PR, conferir o
+`mergeStateStatus`.
+
+⚠️ **Gate revalidado INTEIRO depois do merge**, não só o que eu escrevi:
+auto-merge junta texto, não prova que o resultado compila nem que as duas telas
+continuam montadas. Foi `grep -c "<Componente"` que provou os três.
+
+
 ## Online · visao do canal YouTube (somente leitura)
 
 Modulo `/online` mostra desempenho do canal YouTube CBRio com
