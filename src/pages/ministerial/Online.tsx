@@ -19,8 +19,9 @@ import { OnlineDebugPanel } from '@/components/online/OnlineDebugPanel';
 import JornadaConvertidos from '@/components/JornadaConvertidos';
 import QrCultosApelo from '@/components/online/QrCultosApelo';
 import CadastroMembresiaOnline from '@/components/online/CadastroMembresiaOnline';
-import CanalSerieCard from '@/components/online/CanalSerieCard';import FichaKpi from '@/components/online/FichaKpi';
-
+import CanalSerieCard from '@/components/online/CanalSerieCard';
+import ArrecadacaoOnlineCard from '@/components/online/ArrecadacaoOnlineCard';
+import FichaKpi from '@/components/online/FichaKpi';
 
 const VALOR_META: Record<string, { label: string; cor: string; corClara: string; icon: any }> = {
   seguir:        { label: 'Seguir a Jesus',          cor: '#8B5CF6', corClara: 'from-violet-500/15 to-violet-500/5', icon: Cross },
@@ -1241,6 +1242,13 @@ export default function Online() {
           são acumulados de anos (views totais, inscritos) e não dizem se o
           canal está subindo — quem responde isso é a série. */}
       <CanalSerieCard />
+
+      {/* Arrecadação do canal online.
+          ⚠️ O card se esconde sozinho para quem não tem nível 4 em `online` —
+          a coordenação do CANAL (decisão do Matheus em 23/09). O módulo é
+          alcançável por 31 cargos, inclusive Membro e Voluntário, e a lei do
+          módulo irmão (painelArea) é que líder de área não vê doação. */}
+      <ArrecadacaoOnlineCard />
 
       {/* Engajamento de conteúdo do canal (YouTube Analytics).
           Estrutura pronta pra receber da API do YouTube · mostra 0 até a 1ª coleta. */}
