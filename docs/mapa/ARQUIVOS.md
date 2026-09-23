@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-443 arquivos.
+441 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -93,7 +93,6 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/processos.js` | rota backend | — | `/api/processos` |
 | `backend/routes/producao.js` | rota backend | producao | `/api/producao` |
 | `backend/routes/projects.js` | rota backend | projects | `/api/projects` |
-| `backend/routes/propostas.js` | rota backend | propostas | `/api/propostas` |
 | `backend/routes/publicApresentacao.js` | rota backend | — | `/api/public/apresentacao-criancas` |
 | `backend/routes/publicBatismo.js` | rota backend | — | `/api/public/batismo` |
 | `backend/routes/publicCampanha.js` | rota backend | — | `/api/public/campanhas` |
@@ -413,7 +412,6 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/Perfil` | tela ERP | — | `/perfil` |
 | `src/pages/planejamentoAnual/PlanejamentoAnual` | tela ERP | planejamento-anual | `/planejamento-anual` |
 | `src/pages/Projetos` | tela ERP | — | `/projetos` |
-| `src/pages/Propostas` | tela ERP | propostas | `/propostas` |
 | `src/pages/public/ApresentacaoCriancas` | tela ERP | — | `/apresentacao-criancas` |
 | `src/pages/public/BatismoAcesso` | tela ERP | — | `/batismo/acesso` |
 | `src/pages/public/CadastroMembresia` | tela ERP | — | `/cadastro-membresia` |
