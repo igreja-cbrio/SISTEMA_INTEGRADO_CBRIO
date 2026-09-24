@@ -47,11 +47,11 @@ function CardMensagem({ m, n, hoje }: { m: Mensagem; n: number; hoje: string }) 
         <span className="ns-msg-data">{dataLonga(m.data)}</span>
       </div>
       <h3 className="ns-msg-titulo">{m.titulo}</h3>
-      <p className="ns-msg-texto"><BookOpen size={16} /> {m.texto}</p>
+      {m.texto && <p className="ns-msg-texto"><BookOpen size={16} /> {m.texto}</p>}
       {m.pregador && <p className="ns-msg-pregador">{m.pregador}</p>}
+      {m.resumo && <p className="ns-msg-resumo">{m.resumo}</p>}
       {liberada ? (
         <>
-          {m.resumo && <p className="ns-msg-resumo">{m.resumo}</p>}
           {id && <Video id={id} titulo={m.titulo} />}
           {m.pdf && (
             <a className="ns-btn ns-btn-primary ns-btn-sm ns-msg-pdf" href={m.pdf} target="_blank" rel="noopener noreferrer" download>
