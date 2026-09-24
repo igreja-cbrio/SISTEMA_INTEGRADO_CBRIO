@@ -12,7 +12,7 @@ const { semCache } = require('../middleware/semCache');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
-const { equipeSupervisionada, filtrarPorSupervisao, supervisionaTudo, podeSupervisionar, subareasNaArea, soEditores, somenteLeitura, papelMaior, cultoNoEscopo } = require('../utils/supervisorArea');
+const { equipeSupervisionada, filtrarPorSupervisao, supervisionaTudo, podeSupervisionar, subareasNaArea, soEditores, somenteLeitura, papelMaior, cultoNoEscopo, gerenciaEstruturaDoTime, gerenciaAlgumaEstrutura } = require('../utils/supervisorArea');
 const { ordenarPorPreferencia } = require('../utils/preferenciaRodizio');
 const { normalizarEscolha } = require('../utils/elegibilidadeVol');
 const { ehDiaDoCulto } = require('../utils/janelaCulto');
@@ -754,7 +754,12 @@ router.get('/voluntariado/supervisor', authApp, async (req, res) => {
     // `somente_leitura`/`papel` (24/09): a tela esconde os botões de escrever
     // pra quem é só leitor. É cortesia — a trava é `supervisorAreasApp(req,
     // { escrita: true })` nas rotas de POST/PATCH/DELETE.
-    res.json({ supervisor: areas.length > 0, areas, somente_leitura: somenteLeitura(grants), papel: papelMaior(grants) });
+    res.json({
+      supervisor: areas.length > 0, areas, somente_leitura: somenteLeitura(grants), papel: papelMaior(grants),
+      // Gerencia a estrutura de algum time (Pessoas do Servir) — admin ou líder
+      // de time/área sem recorte. Leitor e supervisor de turno não.
+      gere_pessoas: gerenciaAlgumaEstrutura(grants),
+    });
   } catch (e) {
     console.error('[app] voluntariado/supervisor:', e.message);
     res.status(500).json({ error: 'Erro ao verificar supervisão' });
@@ -2622,13 +2627,26 @@ router.get('/voluntariado/voluntario/:id/detalhe', authApp, limiterNormal, async
 //   · tirar do time é `is_active = false`, nunca DELETE — desfaz com um toque.
 // ⚠️ Só `papelMaior === 'admin'` (papel admin OU geral sem recorte — Marcos e
 // Matheus). Líder de time não mexe em estrutura; isso é decisão do modelo.
-async function exigirAdminServir(req, res) {
-  const sup = await supervisorAreasApp(req);
-  if (sup.papel !== 'admin') {
-    res.status(403).json({ error: 'Só o admin do Servir gerencia pessoas e times.' });
+// Quem entra: admin, ou líder que gerencia a estrutura de ALGUM time
+// (`gerenciaAlgumaEstrutura`). O recorte por time é feito rota a rota com
+// `_gerenciaTime(sup, equipe)` — a mesma régua pura, testada, que decide o card.
+async function exigirGestorServir(req, res) {
+  const sup = await supervisorAreasApp(req, { escrita: true });
+  if (sup.papel !== 'admin' && !gerenciaAlgumaEstrutura(sup.grants)) {
+    res.status(403).json({ error: 'Só quem lidera um time gerencia as pessoas dele.' });
     return null;
   }
+  sup.admin = sup.papel === 'admin';
   return sup;
+}
+function _gerenciaTime(sup, equipe) {
+  return sup.admin || gerenciaEstruturaDoTime(sup.grants, equipe);
+}
+async function _timeDoVinculo(vinculoId) {
+  const { data: v } = await supabase.from('vol_team_members')
+    .select('id, team_id, volunteer_profile_id, team:vol_teams(id, name, area)').eq('id', vinculoId).maybeSingle();
+  if (!v) return null;
+  return { ...v, team: _um(v.team) };
 }
 const SEL_VINCULO = 'id, team_id, position_id, volunteer_profile_id, volunteer_name, is_active, service_type_ids, team:vol_teams(id, name, area, is_active), position:vol_positions(id, name)';
 function _um(x) { return Array.isArray(x) ? x[0] : x; }
@@ -2650,7 +2668,8 @@ async function _tiposAtivos() {
 // GET /app/voluntariado/admin/pessoas?q= — busca pelo nome (2+ letras), com os times de cada uma.
 router.get('/voluntariado/admin/pessoas', authApp, limiterNormal, async (req, res) => {
   try {
-    if (!(await exigirAdminServir(req, res))) return;
+    const sup = await exigirGestorServir(req, res);
+    if (!sup) return;
     const q = String(req.query.q || '').trim();
     if (q.length < 2) return res.json([]);
     const { data: perfis, error } = await supabase.from('vol_profiles')
@@ -2682,7 +2701,8 @@ router.get('/voluntariado/admin/pessoas', authApp, limiterNormal, async (req, re
 // opções pra vincular (times ativos com funções) e pra marcar cultos (tipos ativos).
 router.get('/voluntariado/admin/pessoas/:id', authApp, limiterNormal, async (req, res) => {
   try {
-    if (!(await exigirAdminServir(req, res))) return;
+    const sup = await exigirGestorServir(req, res);
+    if (!sup) return;
     const { data: vp } = await supabase.from('vol_profiles')
       .select('id, full_name, avatar_url, phone, rodizio_semana, arquivado').eq('id', req.params.id).maybeSingle();
     if (!vp) return res.status(404).json({ error: 'Pessoa não encontrada' });
@@ -2691,10 +2711,21 @@ router.get('/voluntariado/admin/pessoas/:id', authApp, limiterNormal, async (req
       supabase.from('vol_teams').select('id, name, area, positions:vol_positions(id, name, is_active, sort_order)').eq('is_active', true).order('name'),
       _tiposAtivos(),
     ]);
+    // LÍDER vê só os vínculos e os times que gerencia; o que ficou de fora é
+    // DECLARADO em `vinculos_fora` — sumir com time em silêncio pareceria
+    // "ela não serve em mais nada".
+    const timePorId = {}; for (const t of times || []) timePorId[t.id] = t;
+    const todosVinc = (vinc || []).map(_vinculoResp).filter((v) => v.team_id);
+    const vinculos = todosVinc.filter((v) => _gerenciaTime(sup, timePorId[v.team_id] || { id: v.team_id, area: v.team_area }));
+    const timesGeridos = (times || []).filter((t) => _gerenciaTime(sup, t));
     res.json({
       pessoa: { id: vp.id, full_name: vp.full_name, avatar_url: vp.avatar_url || null, telefone: vp.phone || null, rodizio_semana: vp.rodizio_semana ?? null },
-      vinculos: (vinc || []).map(_vinculoResp).filter((v) => v.team_id),
-      times: (times || []).map((t) => ({
+      escopo: sup.admin ? 'admin' : 'lider',
+      vinculos,
+      vinculos_fora: todosVinc.length - vinculos.length,
+      // A preferência é da PESSOA: líder só mexe se ela está num time dele.
+      pode_rodizio: sup.admin || vinculos.length > 0,
+      times: timesGeridos.map((t) => ({
         id: t.id, name: t.name, area: t.area || null,
         posicoes: (t.positions || []).filter((p) => p.is_active !== false)
           .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || String(a.name).localeCompare(String(b.name), 'pt-BR'))
@@ -2713,16 +2744,18 @@ router.get('/voluntariado/admin/pessoas/:id', authApp, limiterNormal, async (req
 // em vez de duplicar — tirar e pôr de volta não pode acumular lixo nem dar 409.
 router.post('/voluntariado/admin/vinculos', authApp, limiterNormal, async (req, res) => {
   try {
-    if (!(await exigirAdminServir(req, res))) return;
+    const sup = await exigirGestorServir(req, res);
+    if (!sup) return;
     const { volunteer_profile_id, team_id } = req.body || {};
     const position_id = req.body?.position_id || null;
     if (!volunteer_profile_id || !team_id) return res.status(400).json({ error: 'volunteer_profile_id e team_id obrigatórios' });
     const [{ data: vp }, { data: eq }] = await Promise.all([
       supabase.from('vol_profiles').select('id, full_name').eq('id', volunteer_profile_id).maybeSingle(),
-      supabase.from('vol_teams').select('id, name, is_active').eq('id', team_id).maybeSingle(),
+      supabase.from('vol_teams').select('id, name, area, is_active').eq('id', team_id).maybeSingle(),
     ]);
     if (!vp) return res.status(404).json({ error: 'Pessoa não encontrada' });
     if (!eq || eq.is_active === false) return res.status(404).json({ error: 'Time não encontrado ou inativo' });
+    if (!_gerenciaTime(sup, eq)) return res.status(403).json({ error: `Você não lidera ${eq.name}.` });
     if (position_id) {
       const { data: pos } = await supabase.from('vol_positions').select('id, team_id').eq('id', position_id).maybeSingle();
       if (!pos || String(pos.team_id) !== String(team_id)) return res.status(400).json({ error: 'Essa função não é deste time.' });
@@ -2758,11 +2791,12 @@ router.post('/voluntariado/admin/vinculos', authApp, limiterNormal, async (req, 
 // Marcar todos ou nenhum grava NULL (= serve em qualquer culto).
 router.patch('/voluntariado/admin/vinculos/:id', authApp, limiterNormal, async (req, res) => {
   try {
-    if (!(await exigirAdminServir(req, res))) return;
+    const sup = await exigirGestorServir(req, res);
+    if (!sup) return;
     const { service_type_ids, position_id } = req.body || {};
-    const { data: alvo } = await supabase.from('vol_team_members')
-      .select('id, team_id, volunteer_profile_id').eq('id', req.params.id).maybeSingle();
+    const alvo = await _timeDoVinculo(req.params.id);
     if (!alvo) return res.status(404).json({ error: 'Vínculo não encontrado' });
+    if (!_gerenciaTime(sup, alvo.team || { id: alvo.team_id })) return res.status(403).json({ error: `Você não lidera ${alvo.team?.name || 'este time'}.` });
     if (service_type_ids !== undefined) {
       const tipos = await _tiposAtivos();
       const valor = normalizarEscolha(service_type_ids, tipos.map((t) => t.id));
@@ -2790,7 +2824,11 @@ router.patch('/voluntariado/admin/vinculos/:id', authApp, limiterNormal, async (
 // DELETE /app/voluntariado/admin/vinculos/:id — tira do time (is_active=false, reversível).
 router.delete('/voluntariado/admin/vinculos/:id', authApp, limiterNormal, async (req, res) => {
   try {
-    if (!(await exigirAdminServir(req, res))) return;
+    const sup = await exigirGestorServir(req, res);
+    if (!sup) return;
+    const alvo = await _timeDoVinculo(req.params.id);
+    if (!alvo) return res.status(404).json({ error: 'Vínculo não encontrado' });
+    if (!_gerenciaTime(sup, alvo.team || { id: alvo.team_id })) return res.status(403).json({ error: `Você não lidera ${alvo.team?.name || 'este time'}.` });
     const { data, error } = await supabase.from('vol_team_members')
       .update({ is_active: false }).eq('id', req.params.id).select('id').maybeSingle();
     if (error) throw error;
@@ -2806,11 +2844,18 @@ router.delete('/voluntariado/admin/vinculos/:id', authApp, limiterNormal, async 
 // semana de preferência de alguém (a pessoa também faz isso sozinha na aba Servir).
 router.patch('/voluntariado/admin/pessoas/:id/rodizio', authApp, limiterNormal, async (req, res) => {
   try {
-    if (!(await exigirAdminServir(req, res))) return;
+    const sup = await exigirGestorServir(req, res);
+    if (!sup) return;
     const bruto = req.body ? req.body.semana : undefined;
     const semana = (bruto === null || bruto === undefined || bruto === '') ? null : Number(bruto);
     if (semana !== null && !(Number.isInteger(semana) && semana >= 1 && semana <= 4)) {
       return res.status(400).json({ error: 'Semana inválida: 1 a 4, ou vazio pra nenhuma.' });
+    }
+    if (!sup.admin) {
+      const { data: vinc } = await supabase.from('vol_team_members')
+        .select('team:vol_teams(id, name, area)').eq('volunteer_profile_id', req.params.id).eq('is_active', true);
+      const emTimeMeu = (vinc || []).some((v) => _gerenciaTime(sup, _um(v.team)));
+      if (!emTimeMeu) return res.status(403).json({ error: 'A preferência é editável por quem lidera um time dessa pessoa.' });
     }
     const { data, error } = await supabase.from('vol_profiles').update({ rodizio_semana: semana }).eq('id', req.params.id).select('id').maybeSingle();
     if (error) throw error;

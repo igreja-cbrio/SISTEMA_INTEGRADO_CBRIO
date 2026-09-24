@@ -198,8 +198,42 @@ function cultoNoEscopo(entrada, culto) {
   return normalizarConcessoes(entrada).some((g) => cultoCoberto(g, culto || null));
 }
 
+/**
+ * Esta pessoa GERENCIA A ESTRUTURA deste time — vincular gente, dizer em quais
+ * cultos serve, tirar do time (24/09/2026 · decisão do Marcos: "abrir a tela
+ * Pessoas do Servir pra quem é Líder, recortada aos times que a pessoa lidera").
+ *
+ * É mais estreito que `equipeSupervisionada`, de propósito: estrutura não tem
+ * culto nem subárea. Supervisora só do Ofertório do 2º domingo monta a escala
+ * dela, mas não vincula gente à Integração inteira. Vale a concessão que:
+ *   · escreve (papel ≠ leitor) e
+ *   · não tem recorte de subárea nem de rodízio, e
+ *   · é do TIME (team_id) ou da ÁREA inteira (legado) ou geral.
+ * Admin (geral sem recorte) gerencia todos.
+ */
+function gerenciaEstruturaDoTime(entrada, equipe) {
+  const gs = normalizarConcessoes(entrada).filter((g) => (
+    g.papel !== 'leitor' && !g.position_id && !g.culto_dia && !g.culto_periodo && !g.culto_semana
+  ));
+  if (gs.some((g) => chaveArea(g.area) === CURINGA && !g.team_id)) return true;
+  if (!equipe) return false;
+  const id = equipe.id ? String(equipe.id) : null;
+  const area = chaveArea(equipe.area);
+  return gs.some((g) => (
+    g.team_id ? (!!id && String(g.team_id) === id) : (!!area && chaveArea(g.area) === area)
+  ));
+}
+
+/** Gerencia a estrutura de ALGUM time? (é o que acende o card "Pessoas do Servir"). */
+function gerenciaAlgumaEstrutura(entrada) {
+  return normalizarConcessoes(entrada).some((g) => (
+    g.papel !== 'leitor' && !g.position_id && !g.culto_dia && !g.culto_periodo && !g.culto_semana
+  ));
+}
+
 module.exports = {
   chaveArea, supervisionaTudo, equipeSupervisionada, filtrarPorSupervisao, CURINGA, PAPEIS,
   normalizarConcessoes, podeSupervisionar, subareasNaArea,
   soEditores, somenteLeitura, papelMaior, cultoNoEscopo,
+  gerenciaEstruturaDoTime, gerenciaAlgumaEstrutura,
 };

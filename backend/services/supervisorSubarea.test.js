@@ -155,4 +155,25 @@ assert.equal(papelMaior([{ area: 'geral' }]), 'admin', 'geral sem recorte É o a
 assert.equal(papelMaior([{ area: 'produção', papel: 'admin' }]), 'admin');
 assert.equal(normalizarConcessoes([{ area: 'geral', papel: 'chefe' }])[0].papel, 'lider', 'papel desconhecido cai em líder, não em leitor nem em admin');
 
-console.log('supervisorSubarea.test.js OK (papéis · time · dia do culto)');
+
+// ── Gerenciar ESTRUTURA do time (Pessoas do Servir pra líder · 24/09) ─────────
+const { gerenciaEstruturaDoTime, gerenciaAlgumaEstrutura } = require('../utils/supervisorArea');
+assert.equal(gerenciaEstruturaDoTime(LIDER_BANDA, BANDA), true, 'líder do time gerencia a estrutura dele');
+assert.equal(gerenciaEstruturaDoTime(LIDER_BANDA, KIDS), false, 'e só dele');
+assert.equal(gerenciaEstruturaDoTime([{ area: 'geral' }], KIDS), true, 'admin (geral sem recorte) gerencia todos');
+assert.equal(gerenciaEstruturaDoTime([{ area: 'KIDS' }], KIDS), true, 'área inteira (legado) gerencia os times da área');
+assert.equal(gerenciaEstruturaDoTime([{ area: 'KIDS', position_id: RECEP_KIDS }], KIDS), false,
+  'supervisor de SUBÁREA não vincula gente ao time inteiro');
+assert.equal(gerenciaEstruturaDoTime([{ area: 'louvor', team_id: BANDA_ID, culto_semana: 2 }], BANDA), false,
+  'recorte de rodízio é de ESCALA, não de estrutura');
+assert.equal(gerenciaEstruturaDoTime(LEITOR_DOMINGO, BANDA), false, 'leitor não gerencia');
+assert.equal(gerenciaEstruturaDoTime([{ area: 'geral', culto_dia: 'domingo' }], BANDA), false,
+  'líder "de domingo" (culto) não mexe em estrutura — estrutura não tem culto');
+assert.equal(gerenciaEstruturaDoTime(LIDER_BANDA, null), false, 'sem time não dá pra afirmar');
+assert.equal(gerenciaAlgumaEstrutura(LIDER_BANDA), true);
+assert.equal(gerenciaAlgumaEstrutura(LEITOR_DOMINGO), false);
+assert.equal(gerenciaAlgumaEstrutura([{ area: 'integração', position_id: OFERTORIO, culto_semana: 1 }]), false,
+  'as 19 concessões de turno da Ariel não acendem o card');
+assert.equal(gerenciaAlgumaEstrutura([]), false);
+
+console.log('supervisorSubarea.test.js OK (papéis · time · dia do culto · estrutura)');
