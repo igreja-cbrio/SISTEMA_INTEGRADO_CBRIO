@@ -14,6 +14,7 @@ const multer = require('multer');
 const { supabase } = require('../utils/supabase');
 const { equipeSupervisionada, filtrarPorSupervisao, supervisionaTudo, podeSupervisionar, subareasNaArea, soEditores, somenteLeitura, papelMaior, cultoNoEscopo } = require('../utils/supervisorArea');
 const { ordenarPorPreferencia } = require('../utils/preferenciaRodizio');
+const { normalizarEscolha } = require('../utils/elegibilidadeVol');
 const { ehDiaDoCulto } = require('../utils/janelaCulto');
 const { classificarCulto } = require('../utils/rodizioCulto');
 const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior, ocorrenciasPassadas, janelaCorrecaoPassada } = require('../utils/agendaGrupo');
@@ -2594,6 +2595,222 @@ router.get('/voluntariado/voluntario/:id/detalhe', authApp, limiterNormal, async
 });
 
 // POST /app/voluntariado/escala — adiciona à escala { service_id, volunteer_id, team_name, position_name }
+// ══════════════════════════════════════════════════════════════════════════
+// ADMIN DO SERVIR · pessoas × times × cultos (24/09/2026 · pedido do Marcos)
+// ══════════════════════════════════════════════════════════════════════════
+// "pensei em colocar para as pessoas que forem admin uma opção na aba de servir
+// de buscar as pessoas que tem no app, clicar no perfil, vincular ele em um
+// time, selecionar quais cultos ele vai servir naquele time".
+//
+// É a parte "gerencia pessoas e estruturas" do papel ADMIN, que até aqui só a
+// web fazia (Voluntariado → Equipes → Membros). Mesmas tabelas, mesmas leis:
+//   · vínculo = linha de `vol_team_members` (pessoa, time, função);
+//   · "em quais cultos serve" = `service_type_ids` POR (PESSOA, TIME) — a
+//     escrita se espalha por todas as linhas da pessoa naquele time, e marcar
+//     TODOS (ou nenhum) grava NULL (`elegibilidadeVol.normalizarEscolha`);
+//   · tirar do time é `is_active = false`, nunca DELETE — desfaz com um toque.
+// ⚠️ Só `papelMaior === 'admin'` (papel admin OU geral sem recorte — Marcos e
+// Matheus). Líder de time não mexe em estrutura; isso é decisão do modelo.
+async function exigirAdminServir(req, res) {
+  const sup = await supervisorAreasApp(req);
+  if (sup.papel !== 'admin') {
+    res.status(403).json({ error: 'Só o admin do Servir gerencia pessoas e times.' });
+    return null;
+  }
+  return sup;
+}
+const SEL_VINCULO = 'id, team_id, position_id, volunteer_profile_id, volunteer_name, is_active, service_type_ids, team:vol_teams(id, name, area, is_active), position:vol_positions(id, name)';
+function _um(x) { return Array.isArray(x) ? x[0] : x; }
+function _vinculoResp(v) {
+  const team = _um(v.team); const position = _um(v.position);
+  return {
+    id: v.id, team_id: v.team_id, team_name: team?.name || null, team_area: team?.area || null,
+    position_id: v.position_id || null, position_name: position?.name || null,
+    service_type_ids: Array.isArray(v.service_type_ids) && v.service_type_ids.length ? v.service_type_ids.map(String) : null,
+    is_active: v.is_active !== false,
+  };
+}
+async function _tiposAtivos() {
+  const { data } = await supabase.from('vol_service_types')
+    .select('id, name, recurrence_day, recurrence_time, is_active').eq('is_active', true).order('name');
+  return (data || []).map((t) => ({ id: t.id, name: t.name, recurrence_day: t.recurrence_day ?? null, recurrence_time: t.recurrence_time ?? null }));
+}
+
+// GET /app/voluntariado/admin/pessoas?q= — busca pelo nome (2+ letras), com os times de cada uma.
+router.get('/voluntariado/admin/pessoas', authApp, limiterNormal, async (req, res) => {
+  try {
+    if (!(await exigirAdminServir(req, res))) return;
+    const q = String(req.query.q || '').trim();
+    if (q.length < 2) return res.json([]);
+    const { data: perfis, error } = await supabase.from('vol_profiles')
+      .select('id, full_name, avatar_url, rodizio_semana').eq('arquivado', false)
+      .ilike('full_name', `%${q}%`).order('full_name').limit(30);
+    if (error) throw error;
+    const ids = (perfis || []).map((p) => p.id);
+    const timesPor = {};
+    if (ids.length) {
+      const { data: vinc } = await supabase.from('vol_team_members')
+        .select('volunteer_profile_id, team:vol_teams(name, is_active)').in('volunteer_profile_id', ids).eq('is_active', true);
+      for (const v of vinc || []) {
+        const t = _um(v.team);
+        if (!t || t.is_active === false) continue;
+        (timesPor[v.volunteer_profile_id] ||= new Set()).add(t.name);
+      }
+    }
+    res.json((perfis || []).map((p) => ({
+      id: p.id, full_name: p.full_name, avatar_url: p.avatar_url || null, rodizio_semana: p.rodizio_semana ?? null,
+      times: [...(timesPor[p.id] || [])].sort((a, b) => a.localeCompare(b, 'pt-BR')),
+    })));
+  } catch (e) {
+    console.error('[APP vol/admin pessoas]', e.message);
+    res.status(500).json({ error: 'Erro ao buscar pessoas' });
+  }
+});
+
+// GET /app/voluntariado/admin/pessoas/:id — a pessoa, os vínculos dela, e as
+// opções pra vincular (times ativos com funções) e pra marcar cultos (tipos ativos).
+router.get('/voluntariado/admin/pessoas/:id', authApp, limiterNormal, async (req, res) => {
+  try {
+    if (!(await exigirAdminServir(req, res))) return;
+    const { data: vp } = await supabase.from('vol_profiles')
+      .select('id, full_name, avatar_url, phone, rodizio_semana, arquivado').eq('id', req.params.id).maybeSingle();
+    if (!vp) return res.status(404).json({ error: 'Pessoa não encontrada' });
+    const [{ data: vinc }, { data: times }, tipos] = await Promise.all([
+      supabase.from('vol_team_members').select(SEL_VINCULO).eq('volunteer_profile_id', vp.id).eq('is_active', true),
+      supabase.from('vol_teams').select('id, name, area, positions:vol_positions(id, name, is_active, sort_order)').eq('is_active', true).order('name'),
+      _tiposAtivos(),
+    ]);
+    res.json({
+      pessoa: { id: vp.id, full_name: vp.full_name, avatar_url: vp.avatar_url || null, telefone: vp.phone || null, rodizio_semana: vp.rodizio_semana ?? null },
+      vinculos: (vinc || []).map(_vinculoResp).filter((v) => v.team_id),
+      times: (times || []).map((t) => ({
+        id: t.id, name: t.name, area: t.area || null,
+        posicoes: (t.positions || []).filter((p) => p.is_active !== false)
+          .sort((a, b) => (a.sort_order ?? 0) - (b.sort_order ?? 0) || String(a.name).localeCompare(String(b.name), 'pt-BR'))
+          .map((p) => ({ id: p.id, name: p.name })),
+      })),
+      tipos,
+    });
+  } catch (e) {
+    console.error('[APP vol/admin pessoa]', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a pessoa' });
+  }
+});
+
+// POST /app/voluntariado/admin/vinculos { volunteer_profile_id, team_id, position_id? }
+// Vincula a pessoa ao time (com função, se veio). Linha inativa igual é REATIVADA
+// em vez de duplicar — tirar e pôr de volta não pode acumular lixo nem dar 409.
+router.post('/voluntariado/admin/vinculos', authApp, limiterNormal, async (req, res) => {
+  try {
+    if (!(await exigirAdminServir(req, res))) return;
+    const { volunteer_profile_id, team_id } = req.body || {};
+    const position_id = req.body?.position_id || null;
+    if (!volunteer_profile_id || !team_id) return res.status(400).json({ error: 'volunteer_profile_id e team_id obrigatórios' });
+    const [{ data: vp }, { data: eq }] = await Promise.all([
+      supabase.from('vol_profiles').select('id, full_name').eq('id', volunteer_profile_id).maybeSingle(),
+      supabase.from('vol_teams').select('id, name, is_active').eq('id', team_id).maybeSingle(),
+    ]);
+    if (!vp) return res.status(404).json({ error: 'Pessoa não encontrada' });
+    if (!eq || eq.is_active === false) return res.status(404).json({ error: 'Time não encontrado ou inativo' });
+    if (position_id) {
+      const { data: pos } = await supabase.from('vol_positions').select('id, team_id').eq('id', position_id).maybeSingle();
+      if (!pos || String(pos.team_id) !== String(team_id)) return res.status(400).json({ error: 'Essa função não é deste time.' });
+    }
+    let q = supabase.from('vol_team_members').select('id, is_active').eq('team_id', team_id).eq('volunteer_profile_id', vp.id);
+    q = position_id ? q.eq('position_id', position_id) : q.is('position_id', null);
+    const { data: existentes } = await q;
+    const igual = (existentes || [])[0];
+    if (igual) {
+      if (igual.is_active !== false) return res.status(409).json({ error: `${vp.full_name} já está neste time${position_id ? ' nessa função' : ''}.` });
+      const { data, error } = await supabase.from('vol_team_members').update({ is_active: true }).eq('id', igual.id).select(SEL_VINCULO).single();
+      if (error) throw error;
+      return res.status(200).json(_vinculoResp(data));
+    }
+    const { data, error } = await supabase.from('vol_team_members')
+      .insert({ team_id, position_id, volunteer_profile_id: vp.id, volunteer_name: vp.full_name, is_active: true })
+      .select(SEL_VINCULO).single();
+    if (error) {
+      if (error.code === '23505') return res.status(409).json({ error: `${vp.full_name} já está neste time.` });
+      throw error;
+    }
+    res.status(201).json(_vinculoResp(data));
+  } catch (e) {
+    console.error('[APP vol/admin vinculo post]', e.message);
+    res.status(500).json({ error: 'Erro ao vincular ao time' });
+  }
+});
+
+// PATCH /app/voluntariado/admin/vinculos/:id { service_type_ids?, position_id? }
+// ⚠️⚠️ `service_type_ids` é por (PESSOA, TIME): grava em TODAS as linhas da pessoa
+// naquele time (155 dos 832 pares têm mais de uma linha — repetir por linha
+// deixaria metade configurada = pessoa sumindo de metade das escalas).
+// Marcar todos ou nenhum grava NULL (= serve em qualquer culto).
+router.patch('/voluntariado/admin/vinculos/:id', authApp, limiterNormal, async (req, res) => {
+  try {
+    if (!(await exigirAdminServir(req, res))) return;
+    const { service_type_ids, position_id } = req.body || {};
+    const { data: alvo } = await supabase.from('vol_team_members')
+      .select('id, team_id, volunteer_profile_id').eq('id', req.params.id).maybeSingle();
+    if (!alvo) return res.status(404).json({ error: 'Vínculo não encontrado' });
+    if (service_type_ids !== undefined) {
+      const tipos = await _tiposAtivos();
+      const valor = normalizarEscolha(service_type_ids, tipos.map((t) => t.id));
+      let q = supabase.from('vol_team_members').update({ service_type_ids: valor }).eq('team_id', alvo.team_id);
+      q = alvo.volunteer_profile_id ? q.eq('volunteer_profile_id', alvo.volunteer_profile_id) : q.eq('id', alvo.id);
+      const { error } = await q;
+      if (error) throw error;
+    }
+    if (position_id !== undefined) {
+      if (position_id) {
+        const { data: pos } = await supabase.from('vol_positions').select('id, team_id').eq('id', position_id).maybeSingle();
+        if (!pos || String(pos.team_id) !== String(alvo.team_id)) return res.status(400).json({ error: 'Essa função não é deste time.' });
+      }
+      const { error } = await supabase.from('vol_team_members').update({ position_id: position_id || null }).eq('id', alvo.id);
+      if (error) throw error;
+    }
+    const { data } = await supabase.from('vol_team_members').select(SEL_VINCULO).eq('id', alvo.id).single();
+    res.json(_vinculoResp(data));
+  } catch (e) {
+    console.error('[APP vol/admin vinculo patch]', e.message);
+    res.status(500).json({ error: 'Erro ao atualizar o vínculo' });
+  }
+});
+
+// DELETE /app/voluntariado/admin/vinculos/:id — tira do time (is_active=false, reversível).
+router.delete('/voluntariado/admin/vinculos/:id', authApp, limiterNormal, async (req, res) => {
+  try {
+    if (!(await exigirAdminServir(req, res))) return;
+    const { data, error } = await supabase.from('vol_team_members')
+      .update({ is_active: false }).eq('id', req.params.id).select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Vínculo não encontrado' });
+    res.json({ ok: true, id: data.id });
+  } catch (e) {
+    console.error('[APP vol/admin vinculo delete]', e.message);
+    res.status(500).json({ error: 'Erro ao tirar do time' });
+  }
+});
+
+// PATCH /app/voluntariado/admin/pessoas/:id/rodizio { semana } — o admin ajusta a
+// semana de preferência de alguém (a pessoa também faz isso sozinha na aba Servir).
+router.patch('/voluntariado/admin/pessoas/:id/rodizio', authApp, limiterNormal, async (req, res) => {
+  try {
+    if (!(await exigirAdminServir(req, res))) return;
+    const bruto = req.body ? req.body.semana : undefined;
+    const semana = (bruto === null || bruto === undefined || bruto === '') ? null : Number(bruto);
+    if (semana !== null && !(Number.isInteger(semana) && semana >= 1 && semana <= 4)) {
+      return res.status(400).json({ error: 'Semana inválida: 1 a 4, ou vazio pra nenhuma.' });
+    }
+    const { data, error } = await supabase.from('vol_profiles').update({ rodizio_semana: semana }).eq('id', req.params.id).select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Pessoa não encontrada' });
+    res.json({ rodizio_semana: semana });
+  } catch (e) {
+    console.error('[APP vol/admin pessoa rodizio]', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a preferência' });
+  }
+});
+
 router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => {
   try {
     const sup = await supervisorAreasApp(req, { escrita: true });
