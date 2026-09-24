@@ -22,6 +22,7 @@ const {
 } = require('../utils/exclusaoInscricaoLote');
 const { diaBRT, avaliarIndisponibilidade, textoIndisponibilidade, indexarPorPessoa, ehPessoaEscalavel } = require('../utils/volDisponibilidade');
 const { semanasSemServir, rotuloTempoSemServir, distribuirVagas } = require('../utils/volRodizio');
+const { normalizarFlagsTipoCulto } = require('../utils/tipoCultoFlags');
 const { montarCobertura, contarStatus } = require('../utils/volCobertura');
 const { cultosDoBloco } = require('../utils/blocoCulto');
 const { podeServirNoTipo, pessoaServeNoTipo } = require('../utils/elegibilidadeVol');
@@ -3698,24 +3699,42 @@ router.get('/service-types', async (req, res) => {
 // ⚠️ Escrita em tipo de culto é ADMIN do voluntariado (nível 5) — o herdado do
 // router (`membresia`, 1 = LEITURA) deixava 27 cargos alcançarem POST/PUT/DELETE
 // (achado 🔴 da varredura de cultos de domingo · docs/cultos-domingo/).
-// ⚠️ O POST NÃO cobre has_kids/has_online/presencial_label — tipo de culto NOVO
-// nasce por SQL (senão nasce sem Kids e nenhuma criança faz check-in).
+//
+// ⚠️⚠️ As FLAGS que definem o tipo entram por `utils/tipoCultoFlags` (régua pura,
+// no gate). Até 24/09/2026 o POST as descartava e o tipo nascia nos defaults da
+// coluna, que são OPOSTOS entre si: `has_online_stream` DEFAULT **true** (o
+// portão do cron que MATERIALIZA culto) contra `has_kids`/`has_online` DEFAULT
+// false e `presencial_label` DEFAULT 'Presencial'. Ou seja: o tipo nascia
+// gerando culto toda semana e, ao mesmo tempo, sem Kids (nenhuma criança faz
+// check-in), invisível ao pipeline online, e fora do bloco de domingo (o
+// dashboard discrimina o templo por `presencial_label='Sede'`). Foi assim que
+// nasceram os 3 tipos CBKIDS fantasmas. O motivo do default de criação ser
+// `has_online_stream: false` está escrito na régua — não inverter sem ler.
 router.post('/service-types', authorizeModule('voluntariado', 5), async (req, res) => {
   try {
     const { name, description, recurrence_day, recurrence_time, color } = req.body;
     if (!name) return res.status(400).json({ error: 'name obrigatorio' });
+    const flags = normalizarFlagsTipoCulto(req.body, { modo: 'criar' });
+    if (!flags.ok) return res.status(400).json({ error: flags.erro, campo: flags.campo });
     const { data, error } = await supabase.from('vol_service_types')
-      .insert({ name, description, recurrence_day, recurrence_time, color }).select().single();
+      .insert({ name, description, recurrence_day, recurrence_time, color, ...flags.patch })
+      .select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao criar tipo de culto' }); }
 });
 
+// ⚠️ O PUT é o ÚNICO caminho de UI para CONSERTAR um tipo que nasceu com as
+// flags erradas — sem ele, "criar certo daqui pra frente" deixaria o passado
+// inconsertável sem SQL. Campo AUSENTE não entra no patch (`undefined` some no
+// JSON e a régua não o inventa): o PUT não pode zerar o que a tela não mandou.
 router.put('/service-types/:id', authorizeModule('voluntariado', 5), async (req, res) => {
   try {
     const { name, description, recurrence_day, recurrence_time, color, is_active } = req.body;
+    const flags = normalizarFlagsTipoCulto(req.body, { modo: 'atualizar' });
+    if (!flags.ok) return res.status(400).json({ error: flags.erro, campo: flags.campo });
     const { data, error } = await supabase.from('vol_service_types')
-      .update({ name, description, recurrence_day, recurrence_time, color, is_active })
+      .update({ name, description, recurrence_day, recurrence_time, color, is_active, ...flags.patch })
       .eq('id', req.params.id).select().single();
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
