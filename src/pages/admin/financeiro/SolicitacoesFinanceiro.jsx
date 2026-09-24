@@ -8,6 +8,7 @@ import { Card, CardContent } from '../../../components/ui/card';
 import { Button } from '../../../components/ui/button';
 import { Badge } from '../../../components/ui/badge';
 import { Avatar, AvatarImage, AvatarFallback } from '../../../components/ui/avatar';
+import { safeHref } from '../../../lib/safeHref';
 import { DatePicker } from '@/components/ui/date-picker';
 import { financeiro, solicitacoes } from '../../../api';
 import { ehImagem, nomeDoArquivo, rotuloTipo } from '@/lib/anexoSolicitacao';
@@ -361,7 +362,7 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
                       {cotacao.prazo && <span className="text-muted-foreground">· {cotacao.prazo}</span>}
                     </div>
                     {cotacao.link && (
-                      <a href={cotacao.link} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1 text-primary hover:underline">
+                      <a href={safeHref(cotacao.link)} target="_blank" rel="noopener noreferrer" className="mt-1 inline-flex items-center gap-1 text-primary hover:underline">
                         <ExternalLink className="h-3 w-3" /> Abrir cotação
                       </a>
                     )}
@@ -419,13 +420,13 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
               </div>
             )}
             {s.documento_url && (
-              <a href={s.documento_url} target="_blank" rel="noopener noreferrer"
+              <a href={safeHref(s.documento_url)} target="_blank" rel="noopener noreferrer"
                  className="inline-flex items-center gap-1 text-xs text-primary hover:underline">
                 <ExternalLink className="h-3 w-3" /> Ver comprovante
               </a>
             )}
             {s.nota_fiscal_url && (
-              <a href={s.nota_fiscal_url} target="_blank" rel="noopener noreferrer"
+              <a href={safeHref(s.nota_fiscal_url)} target="_blank" rel="noopener noreferrer"
                  className="inline-flex items-center gap-1 text-xs text-primary hover:underline ml-3">
                 <ExternalLink className="h-3 w-3" /> Ver nota fiscal
               </a>
@@ -451,7 +452,7 @@ function DetalheDialog({ solicitacao: s, onClose, onAction }) {
               <div className="text-[10px] uppercase font-semibold text-muted-foreground">Anexos</div>
               <div className="flex flex-wrap gap-1.5">
                 {anexos.map((url, i) => (
-                  <a key={i} href={url} target="_blank" rel="noopener noreferrer"
+                  <a key={i} href={safeHref(url)} target="_blank" rel="noopener noreferrer"
                      title={nomeDoArquivo(url)}
                      className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs text-foreground hover:border-primary/50 max-w-[220px]">
                     <ExternalLink className="h-3 w-3 shrink-0 text-muted-foreground" />
