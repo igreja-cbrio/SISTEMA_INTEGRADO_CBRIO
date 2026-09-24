@@ -210,7 +210,7 @@ router.post('/cultos', authorizeIntegracao, async (req, res) => {
       youtube_video_id: youtube_video_id || null,
       online_pico: online_pico ? nonNeg(online_pico, null) : null,
       observacoes: observacoes ? String(observacoes).trim() : null,
-      inserido_por: req.user.id,
+      inserido_por: req.user.userId || req.user.id,
     })
     .select()
     .single();
