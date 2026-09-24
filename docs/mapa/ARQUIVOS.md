@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-452 arquivos.
+454 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -237,6 +237,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/fotoApresentacao.js` | régua pura | — | `src/test/fotoApresentacao.test.ts` |
 | `backend/utils/fotoVoluntario.js` | régua pura | — | `src/test/fotoVoluntario.test.ts` |
 | `backend/utils/freioBot.js` | régua pura | — | `src/test/freioBot.test.ts` |
+| `backend/utils/genesisCba.js` | régua pura | — | `src/test/genesisCba.test.ts` |
 | `backend/utils/grupoCapaApp.js` | régua pura | — | `src/test/grupoCapaApp.test.ts` |
 | `backend/utils/grupoEdicaoApp.js` | régua pura | — | `src/test/grupoEdicaoApp.test.ts` |
 | `backend/utils/grupoOnline.js` | régua pura | — | `src/test/assuntoGrupoConversa.test.ts` |
@@ -436,6 +437,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/public/EventoExterno` | tela ERP | — | `/genesis/:slug` |
 | `src/pages/public/FamiliaConvite` | tela ERP | — | `/f/a/:codigo` |
 | `src/pages/public/FichaContratada` | tela ERP | — | `/ficha-contratada/:token` |
+| `src/pages/public/GenesisPublico` | tela ERP | — | `/genesis` |
 | `src/pages/public/GrupoAprovarPedido` | tela ERP | — | `/g/a/:token` |
 | `src/pages/public/GrupoConfiraLista` | tela ERP | — | `/g/c/:token` |
 | `src/pages/public/GrupoFrequenciaMes` | tela ERP | — | `/g/f/:token` |
