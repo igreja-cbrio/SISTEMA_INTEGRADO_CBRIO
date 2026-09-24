@@ -14176,6 +14176,83 @@ dos KPIs). Tipo é **encerrado** (`is_active=false`), nunca apagado.
 - ⚠️ O **cutoff "de hoje pra cá"** de 18/05 foi **REVERTIDO** em 09/06
   (`20260609160000`): com a NSM em janela móvel de 90d ele escondia gap que JÁ
   contava no denominador. `vw_nsm_sem_dados` cobre tudo; o recorte é do consumidor.
+## ⚠️⚠️ O CRUD de tipo de culto descartava as flags que DEFINEM o culto (2026-09-24 · SEM migration)
+
+Causa raiz dos 3 tipos CBKIDS fantasmas de agosto, atacada a pedido do Matheus.
+`POST /voluntariado/service-types` aceitava só `name`, `description`,
+`recurrence_day`, `recurrence_time`, `color`; o `PUT`, esses + `is_active`. Todo
+o resto nascia no **default da coluna** — e os defaults são **OPOSTOS entre si**:
+
+| coluna | default | onde foi criada |
+|---|---|---|
+| `has_online_stream` | **true** | `migrations_manual/20260420` (fora do fluxo) |
+| `has_kids` | false | migration `20260514120000` |
+| `has_online` | false | migration `20260514120000` |
+| `presencial_label` | `'Presencial'` | migration `20260514120000` |
+
+⇒ Tipo criado pela tela nascia **materializando culto toda semana** (o cron
+`/kpis/cultos/auto-create` filtra `has_online_stream=true`) e, ao mesmo tempo,
+**sem Kids** (portão duro do totem, do resumo Kids e da coleta da Integração),
+**invisível ao pipeline online** (`has_online=false` → o live-monitor devolve
+`reason:'fora_de_janela'`, que **aponta a causa errada**) e **fora do bloco de
+domingo** (`dashboardSemanal.js:434,1053` discrimina o templo por
+`presencial_label='Sede'`). E o `PUT` também não as aceitava, então **não havia
+caminho de UI para consertar** — por isso o tipo novo do corte de domingo nasceu
+por SQL.
+
+- **Régua PURA em `backend/utils/tipoCultoFlags.js`** (no gate ·
+  `src/test/tipoCultoFlags.test.ts`, 25 casos · **4 mutantes RODADOS e mortos**:
+  default virando `true` → 6 vermelhos · default aplicado no PUT → 3 · coagir
+  valor em vez de recusar → 7 · `presencial_label` sem trim → 3).
+- ⚠️⚠️ **O default de CRIAÇÃO é `has_online_stream: false`, e é deliberado.** O
+  lado caro de errar é o `true`: tipo criado sem pensar (ou de teste) vira
+  fábrica semanal de cultos, cada linha custando ~1,3 s de gatilho de KPI/NSM e
+  entrando em denominador. `false` deixa o tipo inerte até alguém ligá-lo de
+  propósito — visível e reversível.
+- ⚠️ **`false` não é "ausente".** A coluna é NOT NULL, então o banco não
+  distingue "ninguém decidiu" de "decidiram que não". Quem preserva a distinção é
+  a régua: no `PUT`, campo AUSENTE não entra no patch (`undefined` some no JSON);
+  `false` EXPLÍCITO entra.
+- ⚠️ **Valor não-booleano é RECUSADO, nunca coagido** — `Boolean('false')` é
+  `true`, e aqui o palpite decidiria se criança faz check-in.
+- ⚠️ **O POST NÃO passou a EXIGIR as flags**, e é decisão: com o Skew Protection
+  ligado (21/08) o bundle antigo segue servido por até 12 h, então mesmo um PR
+  único front+back deixaria aba aberta tomando **400 com mensagem genérica**
+  ("Erro ao criar"). Default seguro no servidor resolve sem quebrar ninguém.
+- **Na tela** (`VolTiposCulto.tsx`) os controles dizem o **EFEITO**, não o nome da
+  coluna: *"Gerar os cultos automaticamente toda semana"*, *"Tem CBKids em
+  paralelo — sem isto nenhuma criança consegue fazer check-in"*, *"É transmitido
+  ao vivo"*, e o rótulo presencial explicando que **'Sede'** é o que põe o culto
+  no bloco de domingo.
+- **`backend/scripts/_tipos_culto_diagnostico.cjs`** (100% SOMENTE LEITURA · sem
+  `--exec`) relata o passado em 5 regras e **não corrige nada** — a flag certa
+  depende do que o culto É, e isso é decisão de gente.
+
+### ⚠️⚠️ ABERTO · `has_online_stream` tem DOIS sentidos, e o Bridge paga a conta
+
+A coluna foi criada para dizer **"tem transmissão no YouTube"** — o texto da
+própria `migrations_manual/20260420` diz *"Cultos sem online (ex.: Bridge) ficam
+de fora da coleta automática D+1/D+7"*, e ela faz
+`UPDATE ... SET has_online_stream = false WHERE LOWER(name) LIKE '%bridge%'`.
+Depois alguém a transformou no **portão do cron que MATERIALIZA culto**
+(`kpis.js:785`).
+
+⇒ Pela letra do código, **o `auto-create` não cria os cultos do Bridge**. Não foi
+possível medir nesta sessão (sem credencial de service role na máquina) — rodar
+o script de diagnóstico responde: a regra **[A]** dele é exatamente esse caso.
+
+⚠️ **NÃO "consertar" trocando o filtro para `has_online`**: Bridge tem
+`has_online=false` também, e a troca pararia de criar os cultos presenciais que
+o cron hoje cria. O conserto de raiz é **separar "o que o culto TEM" de "o culto
+deve ser GERADO"** — coluna própria de materialização (migration) ou o gate
+passar a ser `vigente_de`. É decisão do Matheus/Marcos Paulo, com migration, e
+ficou **fora** desta leva de propósito: a leva fecha a porta de entrada sem
+mexer no comportamento de nenhum tipo existente.
+
+⚠️ `POST /service-types/:id/generate` insere em **`vol_services`** (escalas do
+voluntariado), **não** em `cultos` — não é o mesmo furo e não foi tocado. Ele
+segue sem filtrar vigência, o que é follow-up próprio.
+
 ## ⚠️ Batismo · categoria etária do batizando · 4 faixas (2026-08-19 · migration `20260819160000`)
 
 Faixas definidas pelo Matheus: **criança < 13 · adolescente 13–17 · jovem 18–25
