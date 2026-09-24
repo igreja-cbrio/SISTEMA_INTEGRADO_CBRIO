@@ -110,7 +110,7 @@ async function buildContext(targetModules = ['all'], req = null, options = {}) {
 
   const modulesPromise = Promise.all(modules.map(async (mod) => {
     try {
-      return [mod, await fetchModuleContext(mod)];
+      return [mod, await fetchModuleContext(mod, req)];
     } catch (e) {
       return [mod, { error: e.message }];
     }
@@ -199,7 +199,7 @@ Regras importantes:
 `.trim();
 }
 
-async function fetchModuleContext(mod) {
+async function fetchModuleContext(mod, req = null) {
   switch (mod) {
     case 'rh': return fetchRHContext();
     case 'financeiro': return fetchFinanceiroContext();
@@ -209,7 +209,7 @@ async function fetchModuleContext(mod) {
     case 'eventos': return fetchEventosContext();
     case 'projetos': return fetchProjetosContext();
     case 'expansao': return fetchExpansaoContext();
-    case 'membresia': return fetchMembresiaContext();
+    case 'membresia': return fetchMembresiaContext(req);
     case 'voluntariado': return fetchVoluntariadoContext();
     case 'cuidados': return fetchCuidadosContext();
     case 'grupos': return fetchGruposContext();
@@ -394,7 +394,18 @@ async function fetchExpansaoContext() {
 
 // ─── Membresia ─────────────────────────────────────────────────────────
 
-async function fetchMembresiaContext() {
+async function fetchMembresiaContext(req = null) {
+  // Nível de sensibilidade do consumidor.
+  //   ≥ 4 (admin/diretor/PMO): PII completa + contribuições agregadas mensal
+  //   < 4: PII mascarada (telefone → **** + 4 dígitos, email → domínio,
+  //        data_nascimento → faixa etária) e contribuições apenas agregadas
+  //        SEM linha por membro. Contribuições individuais NUNCA vazam.
+  // Ver ALT-09/B12 do code review: antes qualquer nível ≥ 2 em membresia via
+  // 200 membros com telefone/email/DOB + 100 contribuições individuais com
+  // valor e membro_id.
+  const nivel = req ? getEffectiveLevel(req, 'membresia') : 4;
+  const podeVerPII = nivel >= 4;
+
   const { count: total } = await supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('active', true);
   const { count: membrosAtivos } = await supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('active', true).eq('status', 'membro_ativo');
   const { count: visitantes } = await supabase.from('mem_membros').select('id', { count: 'exact', head: true }).eq('active', true).eq('status', 'visitante');
@@ -431,7 +442,7 @@ async function fetchMembresiaContext() {
     .select('membro_id, tipo, valor, data, forma_pagamento')
     .gte('data', d90)
     .order('data', { ascending: false })
-    .limit(100);
+    .limit(500);
 
   const { data: gruposData } = await supabase
     .from('mem_grupos')
@@ -443,10 +454,61 @@ async function fetchMembresiaContext() {
   const famMap = {};
   (familiasData || []).forEach(f => { famMap[f.id] = f.nome; });
 
-  const membrosEnriquecidos = (membros || []).map(m => ({
-    ...m,
-    familia: famMap[m.familia_id] || null,
-  }));
+  const mascararTel = (t) => {
+    if (!t) return null;
+    const dig = String(t).replace(/\D/g, '');
+    return dig.length >= 4 ? `****${dig.slice(-4)}` : '****';
+  };
+  const mascararEmail = (e) => {
+    if (!e || !e.includes('@')) return null;
+    return `***@${e.split('@')[1]}`;
+  };
+  const faixaEtaria = (dob) => {
+    if (!dob) return null;
+    const anos = Math.floor((Date.now() - new Date(dob).getTime()) / (1000 * 60 * 60 * 24 * 365.25));
+    if (!Number.isFinite(anos) || anos < 0) return null;
+    if (anos < 12) return '0-11';
+    if (anos < 18) return '12-17';
+    if (anos < 30) return '18-29';
+    if (anos < 45) return '30-44';
+    if (anos < 60) return '45-59';
+    return '60+';
+  };
+
+  const membrosEnriquecidos = (membros || []).map(m => {
+    const base = {
+      id: m.id,
+      nome: m.nome,
+      status: m.status,
+      cidade: m.cidade,
+      profissao: m.profissao,
+      estado_civil: m.estado_civil,
+      familia: famMap[m.familia_id] || null,
+      created_at: m.created_at,
+    };
+    return podeVerPII
+      ? { ...base, email: m.email, telefone: m.telefone, data_nascimento: m.data_nascimento }
+      : { ...base, email: mascararEmail(m.email), telefone: mascararTel(m.telefone), faixa_etaria: faixaEtaria(m.data_nascimento) };
+  });
+
+  const cadastrosSanitizados = (cadastros || []).map(c => (
+    podeVerPII
+      ? c
+      : { id: c.id, nome: c.nome, email: mascararEmail(c.email), telefone: mascararTel(c.telefone), status: c.status, created_at: c.created_at }
+  ));
+
+  // Contribuições sempre agregadas por mês+tipo. Valores individuais e a
+  // ligação valor↔membro_id NÃO saem do módulo Financeiro.
+  const agregadoContrib = {};
+  for (const c of (contribRecentes || [])) {
+    const yyyymm = String(c.data || '').slice(0, 7);
+    if (!yyyymm) continue;
+    const chave = `${yyyymm}|${c.tipo || 'outro'}`;
+    if (!agregadoContrib[chave]) agregadoContrib[chave] = { mes: yyyymm, tipo: c.tipo || 'outro', total: 0, count: 0 };
+    agregadoContrib[chave].total += Number(c.valor) || 0;
+    agregadoContrib[chave].count += 1;
+  }
+  const contribAgg = Object.values(agregadoContrib).sort((a, b) => (a.mes < b.mes ? 1 : -1));
 
   return {
     resumo: {
@@ -459,10 +521,11 @@ async function fetchMembresiaContext() {
       cadastros_pendentes: cadastrosPend,
       contribuicoes_total: contribuicoes,
       ministerios_ativos: ministerios,
+      nivel_visibilidade: podeVerPII ? 'completa' : 'mascarada',
     },
     membros: membrosEnriquecidos,
-    cadastros_pendentes: cadastros || [],
-    contribuicoes_recentes: contribRecentes || [],
+    cadastros_pendentes: cadastrosSanitizados,
+    contribuicoes_agregado_mensal: contribAgg,
     grupos: gruposData || [],
     familias: familiasData || [],
   };
