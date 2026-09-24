@@ -100,6 +100,57 @@ pra eliminar. Para forçar o estado de agora: `/mapa` (skill) ou o comando acima
 ⚠️ **`src/pages/atlas/atlas.html` NÃO é fonte.** É uma TELA do sistema (`/atlas`),
 escrita à mão e desatualizada. Não citar como referência.
 
+## ⚠️⚠️ SERVIR · PAPÉIS (leitor/líder/admin), escopo por TIME e por DIA DO CULTO, e o DOMINGO DE PREFERÊNCIA da pessoa (2026-09-24 · migrations `20260924120000` + `20260924120100`)
+
+Pedido do Marcos (23/09): *"Nenhuma · Leitor (time | culto | geral) · Líder = editor
+(time | culto | geral) · Admin (eu e o Matheus)"*, com "culto" no sentido do **dia**
+(domingo, quarta, sábado), e *"cada um tem um domingo de preferência e ao clicar
+para escalar naquela posição, ele filtra as pessoas que estão naquele time
+priorizando quem colocou aquele domingo como rodízio"*.
+
+- **`vol_area_supervisores.papel`** (`leitor|lider|admin`, default **`lider`**) e
+  **`team_id`** (escopo por TIME). ⚠️ As 37 concessões vivas ficam byte a byte:
+  quem tinha concessão editava ⇒ nasce `lider`; `team_id` NULL = escopo por área.
+  `culto_dia` aceita **`sabado`** (AMI/Bridge); `rodizioCulto.DIA_POR_INDICE[6]`.
+  Unique do escopo inclui o time; `papel` fica FORA (um papel por escopo — edita).
+- **Régua `utils/supervisorArea.js`:** concessão de time casa **só pelo id** da
+  equipe (`equipeSupervisionada`/`_cobre`) — "líder da Banda" não vira "líder do
+  Louvor". **Alvo sem `team_id` é NEGADO** pra concessão de time (mesma lei da
+  equipe sem área). `geral` + `culto_dia` = escopo por culto: vê toda equipe,
+  recorte aplicado culto a culto. Novas: `soEditores` · `somenteLeitura` ·
+  `papelMaior` · `cultoNoEscopo`. `_semRecorte` exige `!team_id`.
+- ⚠️⚠️ **`supervisorAreasApp(req, { escrita: true })`** nas 5 rotas que ALTERAM
+  (POST/PATCH/DELETE escala · POST/DELETE checkin): devolve só concessões que
+  escrevem; leitor cai em 403 `somente_leitura: true` (`negarSupervisao`).
+  **A régua sempre recebe `grants`, nunca `areas`** — `string[]` normaliza SEM
+  recorte e `supervisionaTudo(['geral'])` daria acesso total a um "leitor de
+  domingo". Todo alvo passou a levar `team_id`. O PATCH ganhou `culto` no alvo
+  (antes, supervisor com rodízio nunca conseguia mover: "sem data não dá pra
+  afirmar").
+- ⚠️⚠️ **RESILIENTE À ORDEM DO ROLLOUT:** `concessoesDoMembro`, o GET web de
+  supervisores, `rodizioSemanaDosPerfis` e o GET team-members caem pro select
+  antigo em **42703** — o ERP sobe no merge e a migration é manual; sem isso todo
+  supervisor perderia a Montar escala no intervalo. POST/PATCH devolvem 503 com o
+  nome da migration.
+- **`vol_profiles.rodizio_semana`** (1..4, NULL = sem preferência) — da PESSOA,
+  não do vínculo. `utils/preferenciaRodizio.ordenarPorPreferencia` **ORDENA,
+  NUNCA FILTRA** (prefere esta semana → sem preferência → prefere outra; alfabético
+  dentro). `GET /app/voluntariado/escala-pool?team_id=&service_id=` lista o TIME
+  (dedupe por pessoa, `in` em lotes de 100 — Integração tem 264) já ordenado;
+  `PATCH /app/voluntariado/me/rodizio` (self-service) e `PUT /team-members/:id`
+  `{ rodizio_semana }` (web, grava no perfil) escrevem.
+- `GET escala/servicos` filtra os cultos por `cultoNoEscopo` e devolve
+  `somente_leitura`/`papel`; `GET escala/:id` idem; `/voluntariado/supervisor` idem.
+- **Web:** `VolSupervisores.tsx` — seletor de Papel + Escopo (Geral · Time · Área)
+  + Sábado; admin força geral sem recorte (servidor recusa outra coisa). Badge de
+  papel e de time na linha. Aviso "sem turno" ignora time e admin (cobrem todo
+  culto de propósito). `VolEquipes.tsx` — `SemanaDoMembro` ao lado de "Cultos de".
+- Testes: `npm run test:supervisor-subarea` (+27 casos) · `test:rodizio-culto`
+  (sábado) · `node backend/services/preferenciaRodizio.test.js`.
+- ⏳ Admin no app = líder geral; "gerenciar pessoas e estruturas" continua sendo a
+  web (nível do módulo). Kids por horário · nomes dos líderes · Banda→Louvor
+  seguem pendentes de decisão.
+
 ## ⚠️⚠️ ESCALA PELO APP · o ID acompanha o NOME (2026-09-23 · SEM migration)
 
 `POST`/`PATCH /api/app/voluntariado/escala` gravavam **só `team_name` e

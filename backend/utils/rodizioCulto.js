@@ -76,7 +76,11 @@ function periodoDoCulto(horaBRT) {
 }
 
 /** Só domingo e quarta entram no rodízio; o resto é `null` (ver classificar). */
-const DIA_POR_INDICE = { 0: 'domingo', 3: 'quarta' };
+// ⚠️ Sábado entrou em 24/09/2026 (pedido do Marcos: escopo "por culto" é o DIA —
+// domingo, quarta, sábado). AMI e Bridge são de sábado. Quem tinha recorte de
+// domingo/quarta NÃO ganha nem perde nada: sábado continua sendo outro dia.
+const DIA_POR_INDICE = { 0: 'domingo', 3: 'quarta', 6: 'sabado' };
+const DIAS_DO_CULTO = Object.freeze(['domingo', 'quarta', 'sabado']);
 
 /**
  * Classifica um culto para o rodízio: `{ dia, periodo, semana }`.
@@ -121,6 +125,6 @@ function cultoCoberto(grant, culto) {
 }
 
 module.exports = {
-  TZ, SEMANAS_DO_RODIZIO,
+  TZ, SEMANAS_DO_RODIZIO, DIAS_DO_CULTO,
   ordinalNoMes, semanaDoRodizio, periodoDoCulto, classificarCulto, cultoCoberto,
 };

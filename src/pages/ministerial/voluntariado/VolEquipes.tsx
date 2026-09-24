@@ -625,6 +625,7 @@ function TeamMembersList({ teamId, members, loading, positions }: { teamId: stri
                 </div>
               </div>
               <div className="flex items-center gap-1">
+                <SemanaDoMembro membro={m} />
                 <CultosDoMembro membro={m} />
                 <Button variant="ghost" size="icon" className="h-7 w-7 text-muted-foreground hover:text-destructive" onClick={() => handleRemove(m.id, m.volunteer_name)}>
                   <X className="h-3.5 w-3.5" />
@@ -658,6 +659,60 @@ function TeamMembersList({ teamId, members, loading, positions }: { teamId: stri
  * linhas dela) — 155 dos 832 pares têm mais de uma função, e repetir 9 vezes
  * produziria configuração pela metade.
  */
+/**
+ * A semana do mês que esta PESSOA prefere servir (24/09/2026 · pedido do Marcos).
+ *
+ * "cada um tem um domingo de preferência e ao clicar para escalar naquela
+ * posição, ele filtra as pessoas que estão naquele time priorizando quem colocou
+ * aquele domingo como rodízio". É da pessoa (`vol_profiles.rodizio_semana`),
+ * não do vínculo — por isso muda em TODOS os times dela ao mesmo tempo.
+ *
+ * ⚠️ PREFERÊNCIA, não restrição: só muda a ORDEM do seletor de quem monta a
+ * escala. Pra "não pode neste culto" existe o botão de Cultos ao lado.
+ * ⚠️ Como o de Cultos, o controle DIZ o estado ("2º dom") sem precisar clicar.
+ */
+const SEMANAS = [
+  { v: '', label: 'Sem preferência' },
+  { v: '1', label: '1º domingo' },
+  { v: '2', label: '2º domingo' },
+  { v: '3', label: '3º domingo' },
+  { v: '4', label: '4º domingo' },
+];
+type MembroComPreferencia = {
+  id: string; volunteer_name: string; volunteer_profile_id?: string | null;
+  profile?: { rodizio_semana?: number | null } | null;
+};
+function SemanaDoMembro({ membro }: { membro: MembroComPreferencia }) {
+  const atualizar = useUpdateTeamMember();
+  const atual = membro.profile?.rodizio_semana ? String(membro.profile.rodizio_semana) : '';
+  if (!membro.volunteer_profile_id) return null;   // só-PCO não tem onde guardar
+  return (
+    <Select
+      value={atual || '__nenhuma'}
+      onValueChange={(v) => {
+        const semana = v === '__nenhuma' ? null : Number(v);
+        atualizar.mutate(
+          { id: membro.id, data: { rodizio_semana: semana } as unknown as Parameters<typeof atualizar.mutate>[0]['data'] },
+          {
+            onSuccess: () => toast.success(semana ? `${membro.volunteer_name} prefere o ${semana}º domingo` : `${membro.volunteer_name} ficou sem preferência de domingo`),
+            onError: (e: Error) => toast.error(e?.message || 'Erro ao salvar a preferência'),
+          },
+        );
+      }}
+    >
+      <SelectTrigger
+        className={`h-7 w-auto gap-1 border-0 bg-transparent px-2 text-xs shadow-none ${atual ? 'text-[#00806f]' : 'text-muted-foreground'}`}
+        title="Semana do mês em que esta pessoa prefere servir — só ordena o seletor da escala, não restringe"
+      >
+        <SelectValue placeholder="Sem preferência">{atual ? `${atual}º dom` : 'Sem pref.'}</SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        {SEMANAS.map(o => <SelectItem key={o.v || 'n'} value={o.v || '__nenhuma'}>{o.label}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+}
+
 function CultosDoMembro({ membro }: { membro: any }) {
   const { data: tipos = [] } = useVolServiceTypes();
   const atualizar = useUpdateTeamMember();
