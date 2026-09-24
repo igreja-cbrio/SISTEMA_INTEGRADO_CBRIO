@@ -9,6 +9,7 @@
 
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { classificar, deveAlertar, textoAlerta } = require('../utils/saudeAutomacao');
 
 const HORA = 3600000;
 
@@ -27,8 +28,14 @@ const PIPELINES = [
   // atualizar não é automação vigiada, é alarme permanente. Se o WiFi voltar,
   // esta linha volta com ele (label/tabela/maxHoras inalterados) e o cron
   // `/api/wifi/cron/sync` volta ao vercel.json + systemCatalog.
-  { chave: 'youtube_snap', label: 'Snapshot do canal (YouTube)',   tabela: 'online_canal_snapshot',   coluna: 'created_at', maxHoras: 48,  modulo: 'online' },
-  { chave: 'youtube_vids', label: 'Vídeos do YouTube',             tabela: 'online_videos',           coluna: 'created_at', maxHoras: 72,  modulo: 'online' },
+  // ⚠️⚠️ `collected_at`, NÃO `created_at`. Essas duas tabelas nunca tiveram
+  // `created_at` — e o monitor nasceu (24/06/2026) perguntando por ela. A
+  // consulta dava erro, o erro virava `desconhecido`, e `desconhecido` era
+  // PULADO no alerta: por TRÊS MESES esses dois pipelines não foram vigiados
+  // por ninguém. Medido em 24/09/2026, quando o Matheus achou que estavam
+  // parados: os dois haviam rodado às 06:00 daquela manhã.
+  { chave: 'youtube_snap', label: 'Snapshot do canal (YouTube)',   tabela: 'online_canal_snapshot',   coluna: 'collected_at', maxHoras: 48,  modulo: 'online' },
+  { chave: 'youtube_vids', label: 'Vídeos do YouTube',             tabela: 'online_videos',           coluna: 'collected_at', maxHoras: 72,  modulo: 'online' },
   { chave: 'app_telemetria',label: 'Telemetria do app',            tabela: 'app_eventos',             coluna: 'created_at', maxHoras: 72,  modulo: 'dashboard' },
 ];
 
@@ -42,16 +49,12 @@ async function recencia(p) {
       .order(p.coluna, { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (error) return { ...p, status: 'desconhecido', motivo: error.message, ultima: null, horas: null };
-    const ultima = data?.[p.coluna] || null;
-    if (!ultima) return { ...p, status: 'desconhecido', ultima: null, horas: null };
-    const horas = Math.floor((Date.now() - new Date(ultima).getTime()) / HORA);
-    let status = 'ok';
-    if (horas > p.maxHoras * 2) status = 'parado';
-    else if (horas > p.maxHoras) status = 'atrasado';
-    return { ...p, status, ultima, horas };
+    // ⚠️ A CLASSIFICAÇÃO vive em `utils/saudeAutomacao.js`, pura. Aqui só se
+    // busca o dado. Guarda que decide algo dentro do código que lê o banco é
+    // guarda que nenhum mutante alcança.
+    return { ...p, ...classificar(p, data?.[p.coluna] || null, error) };
   } catch (e) {
-    return { ...p, status: 'desconhecido', motivo: e.message, ultima: null, horas: null };
+    return { ...p, ...classificar(p, null, e) };
   }
 }
 
@@ -67,15 +70,21 @@ async function checarEAlertar() {
   const hojeStr = new Date().toISOString().slice(0, 10);
   let count = 0;
   for (const s of saude) {
-    if (s.status !== 'atrasado' && s.status !== 'parado') continue;
+    // ⚠️⚠️ `erro_config` ENTRA aqui. Foi a ausência dele que deixou dois
+    // pipelines três meses sem vigia: um monitor que não consegue olhar ficava
+    // cinza e calado, ocupando o lugar de um que funcionaria.
+    if (!deveAlertar(s.status)) continue;
+    const t = textoAlerta(s);
     count += await notificar({
       modulo: s.modulo,
-      tipo: 'automacao_sem_atualizar',
-      titulo: `Automação ${s.status === 'parado' ? 'parada' : 'atrasada'}: ${s.label}`,
-      mensagem: `${s.label} está há ${s.horas}h sem novo registro (esperado a cada ${s.maxHoras}h). Verifique se a sincronização/cron está rodando.`,
+      // Tipo próprio: "o vigia quebrou" é outra conversa, para outra pessoa,
+      // que não deve ser deduplicada junto com "o pipeline parou".
+      tipo: s.status === 'erro_config' ? 'monitor_mal_configurado' : 'automacao_sem_atualizar',
+      titulo: t.titulo,
+      mensagem: t.mensagem,
       link: '/admin',
-      severidade: s.status === 'parado' ? 'warning' : 'info',
-      chaveDedup: `automacao_${s.chave}_${hojeStr}`,
+      severidade: t.severidade,
+      chaveDedup: `automacao_${s.chave}_${s.status === 'erro_config' ? 'cfg_' : ''}${hojeStr}`,
     });
   }
   return count;
