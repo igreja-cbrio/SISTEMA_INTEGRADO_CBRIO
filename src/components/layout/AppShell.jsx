@@ -229,6 +229,7 @@ const NAV_ITEMS = [
           { label: 'Projetos', description: 'Acompanhamento de projetos com Kanban/Gantt', icon: FolderKanban, path: '/projetos', perm: 'canProjetos' },
           { label: 'Planejamento Estratégico', description: 'Plano plurianual · etapas e marcos (vigente: Expansão 2026–2029)', icon: Map, path: '/expansao', module: 'expansao' },
           { label: 'Planejamento Anual', description: 'Propostas do ciclo · avaliação pelas diretorias · decisão do Pastor · calendário e orçamento', icon: CalendarDays, path: '/planejamento-anual', module: 'planejamento-anual' },
+          { label: 'Execução do Planejamento', description: 'Propostas aprovadas · detalhe da proposta · fases do Projeto/Evento vinculado em Kanban', icon: FolderKanban, path: '/planejamento-execucao', module: 'planejamento-execucao' },
         ],
       },
       {

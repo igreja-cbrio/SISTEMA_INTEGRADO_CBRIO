@@ -6955,20 +6955,34 @@ mudança incluir qualquer destes itens:
 
 ## Migrations do Supabase
 
-Sempre que uma PR incluir arquivos em `supabase/migrations/`:
+⚠️⚠️ **DECISÃO DO DIEGO (2026-09-24): Claude aplica migration DIRETO em
+produção, via MCP do Supabase (`apply_migration`/`execute_sql`), SEM esperar
+confirmação do usuário.** Revoga a regra antiga de "colar o SQL e esperar
+alguém rodar no SQL Editor" — o MCP já está conectado neste projeto
+(`hhntwfawfnxvuobhdfkb.supabase.co`, o mesmo do `SUPABASE_URL` do backend) e
+é mais rápido que o caminho manual. Trade-off aceito conscientemente: erro na
+migration vai direto pra produção, sem checagem humana no meio.
 
-1. Avisar claramente o usuário **antes do merge** que há migration nova.
-2. **Colar o SQL completo da migration direto na conversa** (dentro de um
-   bloco ```sql) para que o usuário possa copiar e rodar no SQL Editor
-   sem precisar abrir o arquivo. NÃO basta apontar o caminho do arquivo —
-   sempre enviar o conteúdo na mensagem.
-3. Aguardar confirmação do usuário de que a migration foi aplicada no
-   Supabase de produção antes de mergear — senão o backend em prod
-   quebra ao chamar a tabela/coluna.
+Sempre que uma migration nova for necessária:
 
-A única exceção é quando a mudança é puramente idempotente e
-backwards-compatible (ex.: `ADD COLUMN IF NOT EXISTS` opcional) e o
-código tolera ausência da coluna.
+1. Escrever o arquivo em `supabase/migrations/` (o repo continua sendo a
+   fonte versionada — nunca aplicar só via MCP sem o arquivo correspondente,
+   senão o histórico do repo diverge do banco vivo, a mesma armadilha que
+   este arquivo já documenta várias vezes).
+2. Aplicar via `mcp__supabase__apply_migration` (DDL) ou `execute_sql`
+   (consulta/backfill), com o MESMO SQL do arquivo.
+3. **Conferir no CATÁLOGO que a mudança pegou** (`information_schema`,
+   `pg_constraint`, `SELECT` na tabela/coluna nova) — nunca só confiar no
+   `{"success": true}` da chamada. É a lei repetida à exaustão neste arquivo:
+   medir o resultado, não o retorno da chamada.
+4. Avisar o usuário no chat que a migration foi aplicada (nome do arquivo +
+   resumo de 1 linha do que mudou) — transparência, não pedido de permissão.
+
+Se a migration for destrutiva de verdade (`DROP TABLE`, `DROP COLUMN`, perda
+de dado real) as leis de segurança deste arquivo continuam valendo por cima
+disto — aplicar sozinho é só para migration aditiva/de schema normal do dia a
+dia. Destrutivo em tabela com dado ainda pede confirmação explícita (ver
+"Quando parar e perguntar antes de mergear", mais abaixo).
 
 ## Convenções do repositório
 

@@ -137,6 +137,11 @@ const ROUTE_MODULE_MAP = {
   'gestao':       ['gestao'],
   'planejamento': ['planejamento'],
   'planejamento-anual': ['planejamento-anual'],
+  // Módulo novo (2026-09-23): lista propostas aprovadas do Planejamento Anual +
+  // materializa Projeto/Evento vinculado. routeKey PRÓPRIO (distinto de
+  // 'planejamento-anual') para as rotas /execucao/propostas e
+  // /propostas/:id/materializar, ambas em backend/routes/planejamentoAnual.js.
+  'planejamento-execucao': ['planejamento-execucao'],
   'governanca':   ['governanca'],
   'painel':       ['painel-cbrio'],
   'revisoes':    ['revisao-estrategica'],
