@@ -1383,7 +1383,7 @@ router.post('/propostas/:id/materializar', authorizeModule(EXEC_MOD, 3), async (
 
   if (tipo === 'projeto') {
     const insert = {
-      name: p.nome, year: anoInicio, description: p.descricao || '', status: 'planejamento',
+      name: p.nome, year: anoInicio, description: p.descricao || '', status: 'no-prazo',
       responsible: liderNome, responsible_id: p.lider_id,
       leader: liderNome, leader_id: p.lider_id,
       area: p.area || '',
