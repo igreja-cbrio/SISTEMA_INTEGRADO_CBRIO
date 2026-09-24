@@ -16,16 +16,19 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 //      página 7 vira "fulano não respondeu o censo".
 
 const respostasMock = vi.fn();
+const respostaMock = vi.fn();
+const removerMock = vi.fn();
 
 vi.mock('../api', () => ({
   censo: {
     respostas: (...a: unknown[]) => respostasMock(...a),
-    resposta: vi.fn(async () => ({})),
-    removerResposta: vi.fn(),
+    resposta: (...a: unknown[]) => respostaMock(...a),
+    removerResposta: (...a: unknown[]) => removerMock(...a),
   },
 }));
 vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
+import { toast } from 'sonner';
 import AbaRespostas from '../components/censo/AbaRespostas';
 
 const linha = (i: number, nome?: string) => ({
@@ -44,7 +47,9 @@ const pagina = (de: number, quantas: number, total: number) => ({
 });
 
 describe('AbaRespostas · o total é do banco, a página tem 50', () => {
-  beforeEach(() => { respostasMock.mockReset(); });
+  beforeEach(() => {
+    respostasMock.mockReset(); respostaMock.mockReset(); removerMock.mockReset();
+  });
 
   it('anuncia o total do banco e pede a primeira página de 50', async () => {
     respostasMock.mockResolvedValue(pagina(0, 50, 812));
@@ -161,6 +166,72 @@ describe('AbaRespostas · o total é do banco, a página tem 50', () => {
     await waitFor(() => { expect(screen.getByText(/A busca varreu as/)).toBeTruthy(); },
       { timeout: 6000 });
     expect(screen.getByText(/não entra/)).toBeTruthy();
+  });
+
+  // ⚠️⚠️ O BOTÃO QUE NÃO FAZIA NADA EM SILÊNCIO (24/09/2026).
+  //
+  // Matheus: *"nao estou conseguindo apagar a resposta."* O "Apagar esta
+  // resposta" do modal fazia
+  // `const l = linhas.find(x => x.id === detalhe.id); if (l) setConfirmar(l);`
+  // — e `linhas` é a PÁGINA de 50. Chegando na pessoa pela BUSCA (que olha as
+  // 1.410), ela quase nunca está na página atual: o `find` devolvia `undefined`,
+  // o `if` barrava, e o clique morria sem erro, sem toast, sem nada.
+  //
+  // ⚠️ Todos os testes desta tela passavam `podeApagar={false}` — o caminho de
+  // apagar NUNCA tinha sido exercitado. Foi por isso que passou.
+  it('apaga alguém que veio da BUSCA, não da página (o bug de 24/09)', async () => {
+    const alvo = linha(1401, 'Kevyn Ricardo Veiga de Oliveira');
+    respostasMock
+      .mockResolvedValueOnce(pagina(0, 50, 1410))
+      .mockResolvedValueOnce({ total: 1410, offset: 0, limite: 1000,
+        itens: Array.from({ length: 20 }, (_, i) => linha(i)) })
+      .mockResolvedValueOnce({ total: 1410, offset: 1000, limite: 1000, itens: [alvo] });
+    respostaMock.mockResolvedValue({ ...alvo, itens: [], itens_sensiveis_ocultos: 0 });
+    removerMock.mockResolvedValue({ ok: true });
+
+    render(<AbaRespostas pesquisaId="p1" podeApagar />);
+    await screen.findByText('1–50 de 1410');
+
+    fireEvent.change(screen.getByPlaceholderText(/Buscar por nome/), { target: { value: 'kevyn' } });
+    expect(await screen.findByText('Kevyn Ricardo Veiga de Oliveira')).toBeTruthy();
+
+    // Abre pelo "Ver" e usa o botão do MODAL — o caminho que estava quebrado.
+    fireEvent.click(screen.getAllByRole('button', { name: /Ver/ })[0]);
+    const apagarNoModal = await screen.findByRole('button', { name: /Apagar esta resposta/ });
+    fireEvent.click(apagarNoModal);
+
+    // ⚠️ A PROVA: a confirmação abre. Antes, o clique não produzia NADA.
+    expect(await screen.findByText(/Apagar a resposta de Kevyn Ricardo Veiga de Oliveira\?/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole('button', { name: /Apagar e liberar/ }));
+    await waitFor(() => { expect(removerMock).toHaveBeenCalledWith(alvo.id); });
+  });
+
+  // O botão da LINHA sempre funcionou (usa a linha direto) — este teste trava
+  // que ele continue funcionando, para o conserto de um não quebrar o outro.
+  it('o botão da linha também abre a confirmação', async () => {
+    respostasMock.mockResolvedValue(pagina(0, 3, 3));
+    render(<AbaRespostas pesquisaId="p1" podeApagar />);
+    await screen.findByText('Pessoa 0');
+
+    const lixeiras = screen.getAllByRole('button').filter((b) => !b.textContent?.trim());
+    fireEvent.click(lixeiras[0]);
+    expect(await screen.findByText(/Apagar a resposta de Pessoa 0\?/)).toBeTruthy();
+  });
+
+  // ⚠️ Se o servidor recusar, a tela TEM que dizer — e não apagar da lista.
+  it('falha do servidor não some com a linha', async () => {
+    respostasMock.mockResolvedValue(pagina(0, 3, 3));
+    removerMock.mockRejectedValue(new Error('Sem permissão'));
+    render(<AbaRespostas pesquisaId="p1" podeApagar />);
+    await screen.findByText('Pessoa 0');
+
+    const lixeiras = screen.getAllByRole('button').filter((b) => !b.textContent?.trim());
+    fireEvent.click(lixeiras[0]);
+    fireEvent.click(await screen.findByRole('button', { name: /Apagar e liberar/ }));
+
+    await waitFor(() => { expect(toast.error).toHaveBeenCalledWith('Sem permissão'); });
+    expect(screen.getByText('Pessoa 0')).toBeTruthy();
   });
 
   it('quando tudo cabe numa página, não desenha navegação', async () => {

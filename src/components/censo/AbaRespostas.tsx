@@ -437,10 +437,21 @@ export default function AbaRespostas({ pesquisaId, podeApagar }: {
               <Button
                 variant="outline"
                 className="text-red-600 hover:text-red-700"
-                onClick={() => {
-                  const l = linhas.find((x) => x.id === detalhe.id);
-                  if (l) setConfirmar(l);
-                }}
+                // ⚠️⚠️ `setConfirmar(detalhe)` direto — NÃO procurar em `linhas`.
+                //
+                // Matheus, 24/09/2026: *"nao estou conseguindo apagar a
+                // resposta."* O código era
+                // `const l = linhas.find(x => x.id === detalhe.id); if (l) ...`,
+                // e `linhas` é a PÁGINA de 50. Ao chegar na pessoa pela BUSCA
+                // (que olha as 1.410), ela quase nunca está na página atual: o
+                // `find` devolvia `undefined`, o `if` barrava, e o clique morria
+                // — sem erro, sem toast, sem nada. Botão que não faz nada em
+                // silêncio é pior que botão que falha, porque a pessoa clica de
+                // novo achando que errou a mira.
+                //
+                // O `find` nunca foi necessário: `type Detalhe = Linha & {...}`,
+                // então o próprio `detalhe` JÁ É a linha.
+                onClick={() => setConfirmar(detalhe)}
               >
                 <Trash2 className="size-4 mr-1.5" />Apagar esta resposta
               </Button>
