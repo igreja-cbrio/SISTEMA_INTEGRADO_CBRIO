@@ -12,7 +12,7 @@
 // somar zero ali produziria "−100% de crescimento" — mentira com cara de
 // alarme. Foi esse zero que encheu o ONL-11 de "0%" em W39..W52.
 import { describe, it, expect } from 'vitest';
-import { somarDs, crescimentoPct, resultadoSemana } from '../../backend/utils/crescimentoDs.js';
+import { somarDs, crescimentoPct, semanaFechada, resultadoSemana } from '../../backend/utils/crescimentoDs.js';
 
 // Medido no banco em 23/09/2026 (soma de cultos.online_ds por semana ISO).
 const W37 = 5107;
@@ -89,5 +89,78 @@ describe('⚠️⚠️ o resultado que vai para o KPI', () => {
     const r = resultadoSemana([{ online_ds: W38 }], [{ online_ds: W37 }]);
     expect(r.atual.total).toBe(W38);
     expect(r.anterior.total).toBe(W37);
+  });
+});
+
+// ⚠️⚠️ SEMANA INTEIRA ZERADA É FALHA DE COLETA, NÃO QUEDA DE 100%.
+//
+// Descoberto no ENSAIO do backfill (24/09/2026): duas semanas davam −100%. Em
+// 2025-W30 os SEIS cultos tinham `online_ds = 0` — e `online_pico` de 553, 443,
+// 365, 321, 260 e 25, com `online_ddus` chegando a 1.181. Gente assistiu; o DS
+// é que não foi gravado. Medido desde 2024: **17 cultos com DS = 0 tendo
+// audiência comprovada**, contra 758 com DS > 0. Houve uma pane de coleta de
+// TRÊS semanas em dez/2024 (W50–W52) e outra em jul/2025 (W30).
+describe('⚠️⚠️ semana zerada é ausência, não queda', () => {
+  it('todos os cultos com DS 0 vale sem dado', () => {
+    const s = somarDs([{ online_ds: 0 }, { online_ds: 0 }, { online_ds: 0 }]);
+    expect(s.total).toBeNull();
+    expect(s.ausencia).toBe('tudo_zerado');
+    expect(s.com_ds).toBe(3);
+  });
+
+  it('distingue "não coletamos" de "não teve culto"', () => {
+    expect(somarDs([{ online_ds: null }]).ausencia).toBe('sem_coleta');
+    expect(somarDs([{ online_ds: 0 }]).ausencia).toBe('tudo_zerado');
+    expect(somarDs([{ online_ds: 10 }]).ausencia).toBeNull();
+  });
+
+  it('⚠️ o −100% não acontece mais (2025-W30 contra W29)', () => {
+    const r = resultadoSemana(
+      [{ online_ds: 0 }, { online_ds: 0 }, { online_ds: 0 },
+       { online_ds: 0 }, { online_ds: 0 }, { online_ds: 0 }],
+      [{ online_ds: 6330 }]);
+    expect(r.valor).toBeNull();
+    expect(r.motivo).toBe('ds_zerado_na_semana');
+  });
+
+  it('um zero no meio de cultos com DS não zera a semana', () => {
+    const s = somarDs([{ online_ds: 0 }, { online_ds: 4638 }]);
+    expect(s.total).toBe(4638);
+    expect(s.ausencia).toBeNull();
+  });
+});
+
+// ⚠️⚠️ A SEMANA EM CURSO NÃO VALE.
+//
+// Descoberto ao rodar o backfill (24/09/2026): a semana corrente entrou com
+// **−94,09%**. Não houve queda — W39 tinha UM culto com DS coletado (a quarta
+// de 23/09) contra SEIS da semana anterior. Comparar semana pela metade com
+// semana inteira é catástrofe falsa, e apareceria no card de terça a sábado,
+// toda semana, para sempre.
+describe('⚠️⚠️ só semana fechada é gravada', () => {
+  it('semana em curso não fecha (fim depois de hoje)', () => {
+    expect(semanaFechada('2026-09-28', '2026-09-24')).toBe(false);
+  });
+
+  it('semana passada fecha', () => {
+    expect(semanaFechada('2026-09-21', '2026-09-24')).toBe(true);
+  });
+
+  // `fim` é EXCLUSIVO — é a segunda-feira seguinte. Quando ela chega, a semana
+  // anterior acabou de verdade.
+  it('o próprio dia do fim exclusivo já conta como fechada', () => {
+    expect(semanaFechada('2026-09-21', '2026-09-21')).toBe(true);
+  });
+
+  it('entrada faltando não é tratada como fechada', () => {
+    expect(semanaFechada(null as never, '2026-09-24')).toBe(false);
+    expect(semanaFechada('2026-09-21', null as never)).toBe(false);
+  });
+
+  // ⚠️ Comparação de TEXTO só funciona com ISO zero-padded — a mesma armadilha
+  // do corte de período futuro na ficha.
+  it('a virada de ano não inverte a comparação', () => {
+    expect(semanaFechada('2027-01-04', '2026-12-31')).toBe(false);
+    expect(semanaFechada('2026-12-29', '2027-01-02')).toBe(true);
   });
 });
