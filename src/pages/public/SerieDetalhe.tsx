@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { useParams, Navigate } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, BookOpen, Download, FileText, Play, Lock, Heart as HeartIcon } from 'lucide-react';
 import {
-  Wave, SiteHeader, SiteFooter, Badge, useChrome, useGo, SERIES_PATH, seriePath,
+  SiteHeader, SiteFooter, Badge, useChrome, useGo, SERIES_PATH, seriePath,
 } from './novosite/shared';
 import { NS_CSS } from './novosite/styles';
 import { SERIES, ANO_SERIES, fundoSerie, type Mensagem, type Serie } from './novosite/series2027';
@@ -118,23 +118,25 @@ function SerieDetalheConteudo({ slug }: { slug?: string }) {
   return (
     <div className="ns" ref={rootRef}>
       <style>{NS_CSS}</style>
-      <SiteHeader scrolled={scrolled} menuOpen={menuOpen} setMenuOpen={setMenuOpen} />
+      <SiteHeader scrolled menuOpen={menuOpen} setMenuOpen={setMenuOpen} />
 
-      <section className="ns-qs-hero ns-serie-hero">
-        <div className="ns-qs-hero-bg" style={fundoSerie(serie)} />
-        <div className="ns-qs-hero-ov" />
-        <div className="ns-container ns-qs-hero-in ns-reveal">
+      {/* Faixa longa só com a arte da série (o nome vem escrito na própria imagem). */}
+      <div className="ns-pagina-clara ns-serie-banner-area">
+        <div className="ns-container">
           <a className="ns-serie-voltar" href={SERIES_PATH} onClick={go({ to: SERIES_PATH })}>
             <ArrowLeft size={16} /> Todas as séries
           </a>
-          <p className="ns-eyebrow ns-hero-eyebrow">{MESES[serie.mes - 1]} · {ANO_SERIES}</p>
-          <h1 className="ns-hero-title"><span className="ns-hero-black">{serie.titulo}</span></h1>
-          {serie.subtitulo && <p className="ns-qs-lead-dark">{serie.subtitulo}</p>}
+          <div className="ns-serie-banner" style={fundoSerie(serie)} role="img" aria-label={`Arte da série ${serie.titulo}`}>
+            {!serie.imagem && <span className="ns-serie-banner-nome">{serie.titulo}</span>}
+          </div>
+          <h1 className="ns-sr-only">{serie.titulo}</h1>
+          <p className="ns-eyebrow ns-petrol-accent ns-serie-banner-meta">
+            {MESES[serie.mes - 1]} · {ANO_SERIES}{serie.subtitulo ? ` · ${serie.subtitulo}` : ''}
+          </p>
         </div>
-        <Wave color="var(--cb-offwhite)" />
-      </section>
+      </div>
 
-      <section className="ns-section ns-theme-offwhite ns-historia">
+      <section className="ns-section ns-theme-offwhite ns-historia ns-serie-conteudo">
         <div className="ns-container ns-serie-topo">
           <div className="ns-reveal">
             {serie.objetivo && (

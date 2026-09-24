@@ -9,8 +9,9 @@
  *   - titulo: null  → o card do mês aparece como "Série em breve".
  *   - slug: vira o endereço (/series/<slug>) · minúsculas, hífen, sem acento.
  *     ⚠️ NÃO trocar o slug depois de divulgado: link compartilhado quebra.
- *   - imagem: arte da série em /public/series/2027/<arquivo>.webp (opcional ·
- *     sem imagem o card usa o degradê de `cor`).
+ *   - imagem: arte da série em /public/series/2027/<arquivo>.webp — faixa LONGA
+ *     3:1 (ex.: 2400×800), com o nome da série escrito na arte (a página não
+ *     escreve o nome por cima). Sem imagem: degradê de `cor` + o nome.
  *   - pdf / devocional.pdf / mensagem.pdf: arquivos em /public/series/2027/.
  *     Caminho começando com "/" (ex.: '/series/2027/fevereiro-guia.pdf').
  *   - youtube: o ID ou a URL do vídeo da pregação (entra depois do culto).
@@ -240,6 +241,6 @@ export const SERIES: Serie[] = [
 /** Fundo do card/hero: a arte da série, ou o degradê de `cor` sem arte. */
 export function fundoSerie(s: Serie): { backgroundImage: string } {
   return s.imagem
-    ? { backgroundImage: `linear-gradient(180deg, rgba(0,0,0,.05), rgba(0,30,40,.55)), url(${s.imagem})` }
+    ? { backgroundImage: `url(${s.imagem})` }
     : { backgroundImage: `linear-gradient(135deg, ${s.cor[0]}, ${s.cor[1]})` };
 }

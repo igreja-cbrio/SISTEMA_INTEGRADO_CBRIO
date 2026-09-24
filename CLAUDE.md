@@ -13737,6 +13737,10 @@ do site. **Conteúdo é arquivo, não banco**: `src/pages/public/novosite/series
   "Descrição" é anotação INTERNA — "punch para natal", "31WISE" — e fica fora); o objetivo de cada
   mensagem (coluna "Mensagem") aparece SEMPRE. Fases (Empoderamento/Alcance/Consolidação), eventos e
   anúncios da planilha também ficam fora. Lista sem foto no topo (pedido).
+- **Layout (24/09, pedido do Matheus):** a lista é página corrida CLARA (sem faixa azul, sem onda) e a
+  série abre com uma FAIXA 3:1 só com a arte (ex.: 2400×800) — o nome vem escrito NA ARTE; a página só
+  escreve o nome quando não há imagem. Header forçado sólido (`<SiteHeader scrolled>`): com fundo claro o
+  menu branco sumiria. Vozes (julho) = 4 pregadores (2 internos, 2 externos), tema encorajamento, em aberto.
 - ⏳ Futuro possível: puxar os vídeos da playlist do YouTube (`online_series`/`online_videos`) em vez
   de colar o ID à mão.
 
