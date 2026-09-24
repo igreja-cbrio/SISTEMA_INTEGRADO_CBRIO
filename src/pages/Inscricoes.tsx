@@ -17,6 +17,7 @@ import InscricoesPortas from './InscricoesPortas';
 import InscricoesQrInventario from './InscricoesQrInventario';
 import InscricoesEmails from './InscricoesEmails';
 import { caminhoPublicoEvento } from '../lib/genesisCba';
+import { rotuloStatusEvento } from '../lib/statusEvento';
 import GenesisPainel from '../components/inscricoes/GenesisPainel';
 import { useAuth } from '../contexts/AuthContext';
 import { Card } from '../components/ui/card';
@@ -889,8 +890,8 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
               <label className="text-xs text-muted-foreground">Status</label>
               <select value={f.status} onChange={set('status')} className="w-full h-9 rounded-md border border-border bg-[var(--cbrio-input-bg)] text-sm px-2">
                 <option value="rascunho">Rascunho</option>
-                <option value="publicado">Publicado</option>
-                <option value="encerrado">Encerrado</option>
+                <option value="publicado">Ativo (publicado)</option>
+                <option value="encerrado">Inativo (inscrições encerradas)</option>
                 <option value="arquivado">Arquivado</option>
               </select>
               <p className="text-[11px] text-muted-foreground mt-1">Publicado = o formulário público fica NO AR em /evento/{'{slug}'} (mesmo endereço dos QRs do Celebra). Evento pago só abre na fase do Pix.</p>
@@ -1007,7 +1008,7 @@ function SerieModal({ grupo, onClose, onEditar, onDuplicar, onPublicar, onCopiar
                   <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
                     {e.data && <span>{fmtData(e.data)}{e.hora ? ` · ${e.hora}` : ''}</span>}
                     <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {e.inscritos}{e.vagas ? `/${e.vagas}` : ''}</span>
-                    <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{e.status}</span>
+                    <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{rotuloStatusEvento(e.status)}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0" onClick={ev => ev.stopPropagation()}>
@@ -1315,7 +1316,7 @@ export default function Inscricoes() {
                       {e.igreja?.nome && <span className="rounded bg-amber-500/15 text-amber-700 px-1.5 py-0.5">Parceira · {e.igreja.nome}</span>}
                       {e.data && <span>{fmtData(e.data)}</span>}
                       <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {e.inscritos}{e.vagas ? `/${e.vagas}` : ''}</span>
-                      <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{e.status}</span>
+                      <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{rotuloStatusEvento(e.status)}</span>
                     </div>
                   </div>
                   <span className="text-xs text-primary font-medium shrink-0">Abrir →</span>
