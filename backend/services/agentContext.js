@@ -40,17 +40,33 @@ const ALL_MODULES = [
   'nps', 'cerebro', 'kpis', 'processos', 'governanca',
 ];
 
+// Evita spam de warning: um log por módulo desconhecido por instância.
+const moduloDesconhecidoAvisado = new Set();
+
 /**
  * Retorna true se o usuário pode ver o módulo (nível >= 2).
  * Admin/diretor sempre retorna true. Sem req.user retorna true (compat legacy).
+ *
+ * ⚠️ FAIL-CLOSED (MED-09 do code review): módulo que não está em
+ * MODULE_ROUTE_KEY não é liberado silenciosamente. Antes, um módulo novo
+ * (ex.: alguém adiciona 'auditoria' a ALL_MODULES esquecendo do map)
+ * ficava automaticamente visível pra todo mundo. Agora bloqueia e loga
+ * warning — o admin percebe que precisa mapear.
  */
 function canSeeModule(req, mod) {
   if (!req || !req.user) return true;
   if (['admin', 'diretor'].includes(req.user.role)) return true;
 
+  if (!Object.prototype.hasOwnProperty.call(MODULE_ROUTE_KEY, mod)) {
+    if (!moduloDesconhecidoAvisado.has(mod)) {
+      moduloDesconhecidoAvisado.add(mod);
+      console.warn(`[AGENT CONTEXT] módulo '${mod}' sem entrada em MODULE_ROUTE_KEY — omitido (fail-closed). Mapeie para permitir visualização.`);
+    }
+    return false;
+  }
+
   const routeKey = MODULE_ROUTE_KEY[mod];
-  if (routeKey === null) return false; // marketing: só admin
-  if (!routeKey) return true;            // módulo sem mapeamento: liberar
+  if (routeKey === null) return false; // módulos cross-cutting: só admin/diretor
 
   return getEffectiveLevel(req, routeKey) >= 2;
 }
