@@ -211,6 +211,7 @@ Guard: `authorizeModule('financeiro', 3 | 4 | 5 | padrão)`
 **Réguas puras (backend/utils)**
 
 - `backend/utils/cronAuth.js`
+- `backend/utils/dataBr.js`
 - `backend/utils/decendioComparativo.js`
 - `backend/utils/digitoCampanha.js`
 - `backend/utils/documentoBr.js`
@@ -239,6 +240,7 @@ Guard: `authorizeModule('financeiro', 3 | 4 | 5 | padrão)`
 **Tabelas que estas rotas tocam**
 
 - `app_audit_log`
+- `audit_log`
 - `fin_alertas`
 - `fin_cartoes`
 - `fin_categorias`
