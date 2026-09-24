@@ -99,6 +99,32 @@ leitores que olham `inscricoes` direto:
   deve nomear a igreja parceira como destinatária.
 - Guardas: `src/test/genesisCba.test.ts` (molde + estáticas das travas).
 
+### ⚠️ 2ª forma (mesmo dia): Genesis CBA é uma SÉRIE PERMANENTE · migration `20260924170000`
+
+Correção do Matheus: *"crie um evento Genesis CBA, deixe ele sempre aberto, e aí
+nós colocamos as datas, ativamos ou inativamos, colocamos a igreja sede… e
+retiraria essa opção de Genesis CBA, deixa o próprio CBA como responsável
+atrelado ao pastor Nélio"*.
+
+- **O botão "Novo Genesis CBA" e o molde no formulário SAÍRAM.** Agora é UMA
+  `insc_series` (`slug_base = 'genesis'`, área **CBA**, `responsavel_id` = o login
+  do ERP do pastor Nélio, resolvido por e-mail na migration). Cada Genesis é uma
+  EDIÇÃO (`insc_eventos`) com data + `igreja_id` (a igreja sede).
+- Painel **Inscrições → "Genesis CBA"** (`src/components/inscricoes/GenesisPainel.tsx`):
+  todos os Genesis, igreja, inscritos, Ativar/Inativar (= publicar/encerrar),
+  "Novo Genesis" (data + igreja sede obrigatória), resumo e "por igreja".
+  O card da série na lista também abre esse painel.
+- `GET /inscricoes/genesis` · `POST /inscricoes/genesis/edicoes` (formulário vem
+  da edição mais recente, senão do molde `backend/utils/genesisCba.js`).
+- **Link sempre aberto `/genesis`** (`GenesisPublico.tsx` + `GET /api/public/evento/serie/:slugBase`,
+  declarada ANTES de `/:slug`): 1 Genesis ativo → vai direto; vários → a pessoa
+  escolhe; nenhum → avisa.
+- O **responsável da série** recebe o aviso de cada inscrição (porta pública).
+- ⚠️ `nova-edicao` genérica passou a **herdar `igreja_id`**: sem isso "Duplicar"
+  numa edição de parceira criava evento da CBRio e as pessoas virariam cadastro.
+- Área **CBA** entrou no catálogo `areas` (setor Ministerial). Não está no
+  `AREA_MODULO_BOOST`, então não dá permissão a ninguém.
+
 ## 📍 ANTES DE INVESTIGAR "onde mora X", LEIA O MAPA (2026-08-20)
 
 Pedido do Matheus: *"queria que já tivesse um contexto definido de cada módulo,

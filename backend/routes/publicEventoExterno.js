@@ -93,7 +93,7 @@ const EXT_COMPROVANTE = {
 // aparecem (encerrado mostra "inscrições encerradas" em vez de sumir o link).
 async function eventoEspinhaPorSlug(slug) {
   const { data } = await supabase.from('insc_eventos')
-    .select('id, nome, slug, area, igreja_id, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status, checkout_externo_url, checkout_externo_nome')
+    .select('id, nome, slug, area, igreja_id, serie_id, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status, checkout_externo_url, checkout_externo_nome')
     .eq('slug', slug).is('deleted_at', null).maybeSingle();
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
   await anexarConfigMenor(data);
@@ -235,7 +235,7 @@ async function anexarExtrasEvento(ev) {
 // evento que a página pública — rascunho/arquivado não abrem em lugar nenhum.
 async function eventoEspinhaPorId(id) {
   const { data } = await supabase.from('insc_eventos')
-    .select('id, nome, slug, area, igreja_id, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status, no_totem, checkout_externo_url, checkout_externo_nome')
+    .select('id, nome, slug, area, igreja_id, serie_id, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status, no_totem, checkout_externo_url, checkout_externo_nome')
     .eq('id', id).is('deleted_at', null).maybeSingle();
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
   await anexarConfigMenor(data);
@@ -656,6 +656,32 @@ router.use('/comprovante', semCache);
 
 // GET /textos — textos canônicos de consentimento (o front EXIBE estes; o
 // snapshot gravado vem sempre do backend, então tela e registro nunca divergem)
+// GET /serie/:slugBase — edições NO AR de uma série (ex.: /genesis, o link que
+// fica sempre divulgado). Devolve o mínimo: nome, slug, data, local, igreja.
+// ⚠️ Declarada ANTES de GET /:slug (senão 'serie' viraria um slug).
+router.get('/serie/:slugBase', async (req, res) => {
+  try {
+    const { data: serie } = await supabase.from('insc_series')
+      .select('id, nome').eq('slug_base', String(req.params.slugBase || '').slice(0, 80))
+      .is('deleted_at', null).maybeSingle();
+    if (!serie) return res.status(404).json({ error: 'Não encontrado' });
+    const agora = new Date().toISOString();
+    const { data, error } = await supabase.from('insc_eventos')
+      .select('nome, slug, data, hora, local, inscricoes_abrem_em, inscricoes_encerram_em, igreja:igrejas(nome, cidade, estado)')
+      .eq('serie_id', serie.id).eq('status', 'publicado').is('deleted_at', null)
+      .order('data', { ascending: true, nullsFirst: false });
+    if (error) throw error;
+    const abertas = (data || []).filter((e) =>
+      !(e.inscricoes_abrem_em && e.inscricoes_abrem_em > agora)
+      && !(e.inscricoes_encerram_em && e.inscricoes_encerram_em < agora))
+      .map(({ inscricoes_abrem_em: _a, inscricoes_encerram_em: _b, ...e }) => e);
+    res.json({ serie: { nome: serie.nome }, edicoes: abertas });
+  } catch (e) {
+    console.error('[publicEvento] serie:', e.message);
+    res.status(500).json({ error: 'Não foi possível carregar agora. Tente de novo em instantes.' });
+  }
+});
+
 router.get('/textos', (_req, res) => {
   res.json({
     termos_lgpd: TEXTOS.termos_lgpd,
@@ -1581,6 +1607,12 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
   try {
     const moduloArea = ev.igreja_parceira ? null : moduloDaAreaEvento(ev.area);
     if (moduloArea) avisarTambem = await resolverDestinatarios(moduloArea, 'nova_inscricao');
+    // Responsável da SÉRIE (Genesis CBA → CBA/pastor Nélio · 24/09) também sabe.
+    if (ev.serie_id) {
+      const { data: serieResp } = await supabase.from('insc_series')
+        .select('responsavel_id').eq('id', ev.serie_id).maybeSingle();
+      if (serieResp?.responsavel_id) avisarTambem = [...new Set([...(avisarTambem || []), serieResp.responsavel_id])];
+    }
   } catch (err) {
     console.error('[publicEvento espinha] destinatarios da area:', err.message);
   }

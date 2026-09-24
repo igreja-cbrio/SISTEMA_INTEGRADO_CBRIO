@@ -176,6 +176,7 @@ async function areaValida(nome) {
 }
 
 const { igrejaParceiraPorId, eventoEhParceiro, idsEventosParceiros, TIPO_PARCEIRA } = require('../services/igrejaParceira');
+const genesis = require('../utils/genesisCba');
 
 // Igreja PARCEIRA (CBA · Genesis 24/09) · valida o `igreja_id` que veio no corpo.
 // undefined = não mexe · null/'' = evento da CBRio · uuid = TEM de ser igreja
@@ -964,6 +965,77 @@ router.post('/igrejas-parceiras', authorizeModule('inscricoes', 3), async (req, 
   } catch (e) {
     console.error('[inscricoes] criar igreja parceira:', e.message);
     res.status(500).json({ error: 'Erro ao cadastrar igreja parceira' });
+  }
+});
+
+// ── Genesis CBA · a SÉRIE permanente (24/09) ────────────────────────────────
+// Uma série (`slug_base = 'genesis'`) · cada Genesis é uma EDIÇÃO com data e
+// igreja sede. Ativar/inativar = publicar/encerrar a edição (PUT /eventos/:id).
+async function serieGenesis() {
+  const { data, error } = await supabase.from('insc_series')
+    .select('id, nome, slug_base, area, responsavel_id, responsavel:profiles!insc_series_responsavel_id_fkey(id, name)')
+    .eq('slug_base', genesis.SLUG_BASE_GENESIS).is('deleted_at', null).maybeSingle();
+  if (!error) return data;
+  // Deploy antes da migration 20260924170000: sem a coluna/FK do responsável,
+  // lê o básico em vez de derrubar o painel.
+  const r = await supabase.from('insc_series').select('id, nome, slug_base, area')
+    .eq('slug_base', genesis.SLUG_BASE_GENESIS).is('deleted_at', null).maybeSingle();
+  if (r.error) throw r.error;
+  return r.data;
+}
+
+router.get('/genesis', authorizeModule('inscricoes', 1), async (_req, res) => {
+  try {
+    const serie = await serieGenesis();
+    if (!serie) return res.json({ serie: null, edicoes: [], resumo: genesis.resumoGenesis([]) });
+    const { data: eds, error } = await supabase.from('insc_eventos')
+      .select('id, nome, slug, data, hora, local, status, vagas, igreja_id, igreja:igrejas(id, nome, cidade, estado)')
+      .eq('serie_id', serie.id).is('deleted_at', null)
+      .order('data', { ascending: false, nullsFirst: false });
+    if (error) throw error;
+    const contagem = await contarInscritosVivos(supabase, (eds || []).map((e) => e.id));
+    const edicoes = (eds || []).map((e) => ({ ...e, inscritos: contagem.get(e.id) || 0 }));
+    res.json({ serie, edicoes, resumo: genesis.resumoGenesis(edicoes) });
+  } catch (e) {
+    console.error('[inscricoes] genesis:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar o Genesis CBA' });
+  }
+});
+
+// Nova edição: data + igreja sede (obrigatória). O formulário vem da edição
+// mais recente (o que a equipe ajustou é preservado) ou do molde da parceira.
+router.post('/genesis/edicoes', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const data = genesis.rotuloEdicaoGenesis(String(b.data || '').slice(0, 10));
+    if (!data) return res.status(400).json({ error: 'Informe a data do Genesis' });
+    const igreja = b.igreja_id ? await igrejaParceiraPorId(String(b.igreja_id)) : null;
+    if (!igreja) return res.status(400).json({ error: 'Escolha a igreja sede (igreja parceira)' });
+    const serie = await serieGenesis();
+    if (!serie) return res.status(409).json({ error: 'A série Genesis CBA não existe (migration 20260924170000).' });
+
+    const { data: ultima } = await supabase.from('insc_eventos').select('*')
+      .eq('serie_id', serie.id).is('deleted_at', null)
+      .order('created_at', { ascending: false }).limit(1).maybeSingle();
+
+    const slug = await slugUnico(slugify(`genesis-${igreja.slug || igreja.nome}-${data}`));
+    const novo = {
+      nome: genesis.nomeEdicao(igreja.nome), slug, area: serie.area, tipo: 'evento',
+      serie_id: serie.id, edicao_rotulo: data, igreja_id: igreja.id, no_totem: false,
+      data, hora: b.hora ? String(b.hora).slice(0, 5) : (ultima?.hora || null),
+      local: String(b.local || '').trim() || null,
+      campos: ultima?.campos?.length ? ultima.campos : genesis.camposGenesis(),
+      descricao: ultima?.descricao || null, capa_url: ultima?.capa_url || null,
+      msg_sucesso_titulo: ultima?.msg_sucesso_titulo || null, msg_sucesso_texto: ultima?.msg_sucesso_texto || null,
+      checkin_ativo: ultima?.checkin_ativo ?? false,
+      status: 'rascunho', created_by: req.user?.id || null,
+    };
+    const { data: criado, error } = await supabase.from('insc_eventos').insert(novo).select('id, slug').single();
+    if (error) throw error;
+    res.status(201).json(criado);
+  } catch (e) {
+    console.error('[inscricoes] nova edição genesis:', e.message);
+    res.status(500).json({ error: 'Erro ao criar o Genesis' });
   }
 });
 
@@ -2954,6 +3026,11 @@ router.post('/eventos/:id/nova-edicao', authorizeModule('inscricoes', 3), async 
       pagamento_ativo: ev.pagamento_ativo, valor_centavos: ev.valor_centavos,
       pagamento_metodos: ev.pagamento_metodos, pagamento_expira_horas: ev.pagamento_expira_horas,
       checkin_ativo: ev.checkin_ativo,
+      // ⚠️ Edição de igreja PARCEIRA herda a igreja: sem isto a cópia nasceria
+      // como evento da CBRio e as pessoas virariam cadastro (troca-se a igreja
+      // na edição enquanto ela não tem inscrição).
+      igreja_id: ev.igreja_id || null,
+      ...(ev.igreja_id ? { no_totem: false } : {}),
       status: 'rascunho',
       created_by: req.user?.id || null,
     };

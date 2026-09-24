@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { GENESIS_CAMPOS, presetGenesis, caminhoPublicoEvento } from '../lib/genesisCba';
+import { caminhoPublicoEvento, agruparPorIgreja } from '../lib/genesisCba';
+import { createRequire } from 'node:module';
+const require_ = createRequire(import.meta.url);
+const { GENESIS_CAMPOS, camposGenesis, nomeEdicao, rotuloEdicaoGenesis, resumoGenesis } = require_('../../backend/utils/genesisCba.js');
 
 const raiz = resolve(__dirname, '../..');
 const ler = (p: string) => readFileSync(resolve(raiz, p), 'utf8');
@@ -11,31 +14,50 @@ const semComentarios = (s: string) => s
   .split('\n').map((l) => l.replace(/\/\/[^\n]*/, '').replace(/\/\*.*?\*\//g, '')).join('\n');
 const semComentariosSql = (s: string) => s.split('\n').map((l) => l.replace(/--[^\n]*/, '')).join('\n');
 
-describe('Genesis CBA · molde do formulário', () => {
+describe('Genesis CBA · molde e régua da série', () => {
   it('traz as 5 perguntas da igreja parceira, com keys estáveis e válidas', () => {
     expect(GENESIS_CAMPOS).toHaveLength(5);
     for (const c of GENESIS_CAMPOS) expect(c.key).toMatch(/^[a-z0-9_]{1,60}$/);
-    expect(new Set(GENESIS_CAMPOS.map((c) => c.key)).size).toBe(5);
-  });
-
-  it('obrigatoriedade igual à pedida (só "como soube" é opcional)', () => {
-    const opcionais = GENESIS_CAMPOS.filter((c) => !c.obrigatorio).map((c) => c.key);
-    expect(opcionais).toEqual(['c_genesis_como_soube']);
-    const ja = GENESIS_CAMPOS.find((c) => c.key === 'c_genesis_ja_participou')!;
-    expect(ja.opcoes).toEqual(['Sim', 'Não']);
+    expect(new Set(GENESIS_CAMPOS.map((c: any) => c.key)).size).toBe(5);
+    expect(GENESIS_CAMPOS.filter((c: any) => !c.obrigatorio).map((c: any) => c.key)).toEqual(['c_genesis_como_soube']);
   });
 
   it('não repete campo padrão do Contrato (nome/CPF/e-mail/celular vêm do servidor)', () => {
-    const rotulos = GENESIS_CAMPOS.map((c) => c.label.toLowerCase()).join(' | ');
+    const rotulos = GENESIS_CAMPOS.map((c: any) => c.label.toLowerCase()).join(' | ');
     for (const padrao of ['nome completo', 'cpf', 'e-mail', 'celular']) expect(rotulos).not.toContain(padrao);
   });
 
-  it('preset é CÓPIA: editar o formulário não altera o molde', () => {
-    const a = presetGenesis();
-    a.campos[0].label = 'mexi';
-    a.campos[3].opcoes.push('Talvez');
-    expect(GENESIS_CAMPOS[0].label).not.toBe('mexi');
+  it('camposGenesis é CÓPIA: editar não altera o molde', () => {
+    const a = camposGenesis();
+    a[3].opcoes.push('Talvez');
     expect(GENESIS_CAMPOS[3].opcoes).toEqual(['Sim', 'Não']);
+  });
+
+  it('nome e rótulo da edição', () => {
+    expect(nomeEdicao('Igreja Batista X')).toBe('Genesis CBA · Igreja Batista X');
+    expect(nomeEdicao('')).toBe('Genesis CBA');
+    expect(rotuloEdicaoGenesis('2026-10-10')).toBe('2026-10-10');
+    expect(rotuloEdicaoGenesis('10/10/2026')).toBeNull();
+  });
+
+  it('resumo conta Genesis, ativos, igrejas distintas (por id) e inscritos', () => {
+    const r = resumoGenesis([
+      { igreja_id: 'a', inscritos: 30, status: 'encerrado' },
+      { igreja_id: 'a', inscritos: 12, status: 'publicado' },
+      { igreja_id: 'b', inscritos: 8, status: 'rascunho' },
+    ]);
+    expect(r).toEqual({ edicoes: 3, ativas: 1, igrejas: 2, inscritos: 50 });
+    expect(resumoGenesis(null)).toEqual({ edicoes: 0, ativas: 0, igrejas: 0, inscritos: 0 });
+  });
+
+  it('agrupa por igreja pelo ID, com a data do mais recente', () => {
+    const g = agruparPorIgreja([
+      { igreja_id: 'a', igreja: { nome: 'A' }, data: '2026-03-01', inscritos: 10 },
+      { igreja_id: 'a', igreja: { nome: 'A renomeada' }, data: '2026-09-01', inscritos: 5 },
+      { igreja_id: 'b', igreja: { nome: 'B' }, data: '2026-05-01', inscritos: 7 },
+    ]);
+    expect(g[0]).toMatchObject({ chave: 'a', edicoes: 2, inscritos: 15, ultima: '2026-09-01' });
+    expect(g).toHaveLength(2);
   });
 
   it('caminho público: parceira sai por /genesis, CBRio por /evento', () => {
@@ -78,5 +100,29 @@ describe('Genesis CBA · a pessoa da parceira NUNCA vira cadastro da CBRio (guar
     expect(sql).toMatch(/NEW\.membro_id IS NOT NULL/);
     expect(sql).toMatch(/cba_acompanhada/);
     expect(sql).toMatch(/v_n <> 1/);
+  });
+});
+
+describe('Genesis CBA · a série (guardas estáticas)', () => {
+  it('duplicar uma edição de parceira herda a igreja (não nasce como evento da CBRio)', () => {
+    const src = semComentarios(ler('backend/routes/inscricoes.js'));
+    const corpo = src.slice(src.indexOf("router.post('/eventos/:id/nova-edicao'"));
+    expect(corpo.slice(0, 4000)).toContain('igreja_id: ev.igreja_id || null');
+  });
+
+  it('nova edição do Genesis exige igreja parceira', () => {
+    const src = semComentarios(ler('backend/routes/inscricoes.js'));
+    const corpo = src.slice(src.indexOf("router.post('/genesis/edicoes'"));
+    expect(corpo.slice(0, 1500)).toMatch(/if \(!igreja\) return res\.status\(400\)/);
+  });
+
+  it('/serie/:slugBase é declarada ANTES de /:slug', () => {
+    const src = semComentarios(ler('backend/routes/publicEventoExterno.js'));
+    expect(src.indexOf("router.get('/serie/:slugBase'")).toBeGreaterThan(-1);
+    expect(src.indexOf("router.get('/serie/:slugBase'")).toBeLessThan(src.indexOf("router.get('/:slug'"));
+  });
+
+  it('não existe mais o botão "Novo Genesis CBA" (Genesis se cria pela série)', () => {
+    expect(semComentarios(ler('src/pages/Inscricoes.tsx'))).not.toContain('Novo Genesis CBA');
   });
 });
