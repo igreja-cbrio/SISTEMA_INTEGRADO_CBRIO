@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-448 arquivos.
+449 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -361,6 +361,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/devocional/DevocionalMovido` | tela ERP | — | `/devocional` |
 | `src/pages/eventos/EventDetail` | tela ERP | — | `/eventos/:id` |
 | `src/pages/eventos/Eventos` | tela ERP | — | `/eventos` |
+| `src/pages/execucaoPlanejamento/ExecucaoPlanejamento` | tela ERP | planejamento-execucao | `/planejamento-execucao` |
 | `src/pages/Expansao` | tela ERP | expansao | `/expansao` |
 | `src/pages/GestaoAnual` | tela ERP | — | `/planejamento` |
 | `src/pages/governanca/Governanca` | tela ERP | governanca | `/governanca` |

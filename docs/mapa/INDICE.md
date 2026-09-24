@@ -54,6 +54,7 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **patrimonio** | — | `patrimonio.js` | [patrimonio](patrimonio.md) |
 | **permissoes** | — | `permissoes.js` | [permissoes](permissoes.md) |
 | **planejamento-anual** | `/planejamento-anual` | — | [planejamento-anual](planejamento-anual.md) |
+| **planejamento-execucao** | `/planejamento-execucao` | — | [planejamento-execucao](planejamento-execucao.md) |
 | **producao** | `/producao` | `producao.js` | [producao](producao.md) |
 | **projects** | — | `projects.js` | [projects](projects.md) |
 | **relatorios** | — | `relatorios.js` | [relatorios](relatorios.md) |
