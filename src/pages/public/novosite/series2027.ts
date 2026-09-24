@@ -122,7 +122,7 @@ export const SERIES: Serie[] = [
     mensagens: [
       { data: "2027-04-04", titulo: "Jesus realmente existiu?", texto: "1 João 1:2", resumo: "Mostrar de maneira persuasiva as evidências, comprovações históricas de que Jesus realmente existiu. E os impactos práticos disso." },
       { data: "2027-04-11", titulo: "Jesus realmente é o Messias?", texto: "Isaías 53; João 8:58; João 4", resumo: "Evidenciar como o cumprimento de profecias mostra que Jesus Cristo realmente é o Messias enviado de Deus." },
-      { data: "2027-04-18", titulo: "Jesus realmente ressuscitou?", texto: "1 Coríntios 14:15; 1 Coríntios 15:6", resumo: "Evidenciar como a ressurreição realmente aconteceu, através das testemunhas oculares, túmulo vazio, devoção dos discípulos e a consequência da vinda do Espírito Santo." },
+      { data: "2027-04-18", titulo: "Jesus realmente ressuscitou?", texto: "1 Coríntios 15:14; 1 Coríntios 15:6", resumo: "Evidenciar como a ressurreição realmente aconteceu, através das testemunhas oculares, túmulo vazio, devoção dos discípulos e a consequência da vinda do Espírito Santo." },
       { data: "2027-04-25", titulo: "Jesus realmente vai voltar?", texto: "João 14:2-3; Atos 1:11", resumo: "Mostrar como a Bíblia aponta a realidade que Cristo Jesus realmente vai voltar um dia. Cristo prometeu isso e Ele fala sobre isso." },
     ],
   },
@@ -158,13 +158,13 @@ export const SERIES: Serie[] = [
     slug: "vozes-2027",
     mes: 7,
     titulo: "Vozes",
-    objetivo: "Coragem para ouvir novas pessoas. Coragem para encarar o novo. Coragem para furar a bolha. Coragem para enfrentar o incerto. Coragem para o desconhecido.",
+    objetivo: "Em julho, a igreja ouve outras vozes: quatro pregadores — dois da casa e dois convidados — trazem uma palavra de encorajamento, cada um do jeito que Deus falar à vida deles. Coragem para ouvir novas pessoas. Coragem para encarar o novo. Coragem para furar a bolha. Coragem para enfrentar o incerto. Coragem para o desconhecido.",
     cor: ['#1F6F78', '#8E9562'],
     mensagens: [
       { data: "2027-07-04", titulo: "Encorajamento" },
-      { data: "2027-07-11", titulo: "Mensagem a definir" },
-      { data: "2027-07-18", titulo: "Mensagem a definir" },
-      { data: "2027-07-25", titulo: "Mensagem a definir" },
+      { data: "2027-07-11", titulo: "Encorajamento" },
+      { data: "2027-07-18", titulo: "Encorajamento" },
+      { data: "2027-07-25", titulo: "Encorajamento" },
     ],
   },
   {
