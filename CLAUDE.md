@@ -59,6 +59,46 @@ si segue só no banco — ⏳ dumpar).
   `authenticated` + RLS própria, em migration** — a auditoria que aperta o papel
   não sabe o que o app lê se não estiver no repo.
 
+## ⚠️⚠️ GENESIS CBA · evento de IGREJA PARCEIRA · a pessoa NÃO vira da CBRio (2026-09-24 · migration `20260924150000`)
+
+Pedido do Matheus: primeiro Genesis numa igreja ligada à CBA, com inscrição pelo
+sistema, mas *"essas pessoas não devem contar nos nossos números, nem logar no
+nosso app, devem ter dados separados"*. Porta `/genesis/:slug` + botão **"Novo
+Genesis CBA"** em `/inscricoes` (molde com as 5 perguntas da igreja parceira ·
+`src/lib/genesisCba.ts`).
+
+**A régua**: evento é de parceira ⇔ `insc_eventos.igreja_id` aponta para
+`igrejas.tipo = 'cba_acompanhada'` (o tipo já existia desde maio). `igreja_id`
+NULL = CBRio (todos os eventos anteriores). Helper: `backend/services/igrejaParceira.js`.
+
+⚠️⚠️ **Separação por AUSÊNCIA, não por filtro.** Todos os números da CBRio (NSM,
+KPI, jornada, painel, cuidados) saem de `mem_membros` e derivados — como a pessoa
+da parceira **nunca nasce lá**, ela não conta em lugar nenhum. Filtro só nos
+leitores que olham `inscricoes` direto:
+
+| onde | o que faz |
+|---|---|
+| porta pública (`inscreverEspinha`) | pula `processarIdentidade` INTEIRO (até o 'ligar' escreve contato/CPF tardio/observação) · só grava o consentimento · não avisa a área |
+| trigger `trg_inscricoes_parceira_sem_membro` | o BANCO recusa `membro_id` em inscrição de parceira — cobre fila de órfãs, import, backfill de CPF |
+| `vw_inscricoes_unificadas` | ramo da espinha exclui parceira (patch DINÂMICO sobre a def viva) ⇒ fila de órfãs, "Todas", portas e dashboard |
+| import e-Inscrição (`importarEInscricao.executar`) | não roda o matcher · leitura falhada = trata como parceira |
+| app (`/app/eventos`, `/inscrever`, `/minhas`) | não lista · 404 · o fallback por CPF não traz |
+| `notificarNovoEventoApp` | não manda push de evento de parceira |
+| dashboard de inscrições | arrecadação exclui eventos de parceira |
+| painel RH | fora da agenda da casa |
+
+- ⚠️ `PUT /eventos/:id` só troca a igreja **enquanto o evento não tem inscrição
+  viva** (409): trocar com gente dentro misturaria as duas bases.
+- Evento de parceira nasce com `no_totem = false` (o totem é o hall da CBRio).
+- `GET|POST /inscricoes/igrejas-parceiras` = catálogo curto (só `cba_acompanhada`).
+- ⚠️ **NÃO usar o desenho de maio** (pessoa CBA em `mem_membros` com `igreja_id`):
+  é separação por filtro, e uma consulta esquecida contamina o número.
+- ⏳ **Aberto**: Genesis pago cai no PSP e no caixa da CBRio (o dashboard de
+  inscrições já exclui, o financeiro não sabe da parceira) · a parceira não tem
+  login no ERP (Fase 2 do multicampus) — a CBRio exporta a lista · LGPD: o termo
+  deve nomear a igreja parceira como destinatária.
+- Guardas: `src/test/genesisCba.test.ts` (molde + estáticas das travas).
+
 ## 📍 ANTES DE INVESTIGAR "onde mora X", LEIA O MAPA (2026-08-20)
 
 Pedido do Matheus: *"queria que já tivesse um contexto definido de cada módulo,

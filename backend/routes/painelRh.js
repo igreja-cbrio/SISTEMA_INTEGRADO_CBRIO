@@ -2,6 +2,7 @@ const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { proximoQuartoDomingoISO } = require('./publicBatismo');
+const { idsIgrejasParceiras } = require('../services/igrejaParceira');
 
 // Painel informativo de RH exibido na home (Dashboard). Leitura liberada a
 // qualquer autenticado — é um painel geral, não uma tela do módulo RH. Só as
@@ -163,14 +164,17 @@ router.get('/eventos', async (req, res) => {
     try {
       const { data: eventosInsc } = await supabase
         .from('insc_eventos')
-        .select('id, nome, data, local')
+        .select('id, nome, data, local, igreja_id')
         .eq('status', 'publicado')
         .gte('data', hoje)
         .is('deleted_at', null)
         .order('data')
         .limit(10);
+      // Evento de igreja PARCEIRA (Genesis CBA) não é agenda da casa.
+      const igrejasParceiras = new Set(await idsIgrejasParceiras().catch(() => []));
       (eventosInsc || [])
         .filter((e) => !NOMES_INSC_OCULTOS.includes(e.nome))
+        .filter((e) => !igrejasParceiras.has(e.igreja_id))
         .forEach((e) => {
         if (lista.some((l) => l.data === e.data && l.nome === e.nome)) return;
         lista.push({

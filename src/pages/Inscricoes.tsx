@@ -16,6 +16,7 @@ import InscricoesDashboard from './InscricoesDashboard';
 import InscricoesPortas from './InscricoesPortas';
 import InscricoesQrInventario from './InscricoesQrInventario';
 import InscricoesEmails from './InscricoesEmails';
+import { presetGenesis, caminhoPublicoEvento } from '../lib/genesisCba';
 import { useAuth } from '../contexts/AuthContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -302,6 +303,8 @@ function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any
 
 const EVENTO_VAZIO = {
   nome: '', area: '', periodicidade: 'unica', tipo: 'evento',
+  // Igreja PARCEIRA (CBA · Genesis 24/09). Vazio = evento da CBRio.
+  igreja_id: '',
   data: '', hora: '', local: '', descricao: '', capa_url: '',
   // Último dia (retiro/viagem de vários dias) + arquivo de instruções gerais
   // que a pessoa baixa ao concluir e recebe anexado no e-mail (20/08).
@@ -367,8 +370,10 @@ function isoParaInputLocal(iso?: string | null): string {
  * ⚠️ Falha de carga NÃO abre o formulário: abrir com dado pela metade é
  * exatamente o bug que esta camada existe pra fechar.
  */
-export function EventoModal({ evento, areas, onClose, onSaved }: {
+export function EventoModal({ evento, areas, onClose, onSaved, preset }: {
   evento?: any; areas: any[]; onClose: () => void; onSaved: () => void;
+  /** Molde de evento NOVO (ex.: Genesis CBA · src/lib/genesisCba.ts). */
+  preset?: { nome?: string; tipo?: string; campos?: any[]; genesis?: boolean };
 }) {
   // `campos` presente é a marca do objeto completo (a lista nunca o traz).
   const jaCompleto = !evento || evento.campos !== undefined;
@@ -406,13 +411,16 @@ export function EventoModal({ evento, areas, onClose, onSaved }: {
       </Dialog>
     );
   }
-  return <EventoForm evento={completo} areas={areas} onClose={onClose} onSaved={onSaved} />;
+  return <EventoForm evento={completo} areas={areas} onClose={onClose} onSaved={onSaved} preset={preset} />;
 }
 
-function EventoForm({ evento, areas, onClose, onSaved }: {
+function EventoForm({ evento, areas, onClose, onSaved, preset }: {
   evento?: any; areas: any[]; onClose: () => void; onSaved: () => void;
+  preset?: { nome?: string; tipo?: string; campos?: any[]; genesis?: boolean };
 }) {
   const ed = !!evento;
+  // Genesis CBA: evento NOVO pelo molde, ou evento já salvo de igreja parceira.
+  const ehGenesis = !!preset?.genesis || !!evento?.igreja_id;
   const [f, setF] = useState<any>(() => ed ? {
     ...EVENTO_VAZIO, ...evento,
     vagas: evento.vagas ?? '',
@@ -432,8 +440,32 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
     whatsapp_duvidas_url: evento.whatsapp_duvidas_url || '',
     pagamento_expira_horas: evento.pagamento_expira_horas ?? '',
     inscricoes_encerram_em: isoParaInputLocal(evento.inscricoes_encerram_em),
-  } : { ...EVENTO_VAZIO });
-  const [campos, setCampos] = useState<any[]>(evento?.campos || []);
+    igreja_id: evento.igreja_id || '',
+  } : { ...EVENTO_VAZIO, ...(preset?.nome ? { nome: preset.nome } : {}), ...(preset?.tipo ? { tipo: preset.tipo } : {}) });
+  const [campos, setCampos] = useState<any[]>(evento?.campos || preset?.campos || []);
+  // Igrejas parceiras (catálogo curto · só `cba_acompanhada`).
+  const [igrejas, setIgrejas] = useState<any[] | null>(null);
+  const [novaIgreja, setNovaIgreja] = useState('');
+  const [criandoIgreja, setCriandoIgreja] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    api.igrejasParceiras()
+      .then((r: any) => { if (vivo) setIgrejas(Array.isArray(r) ? r : []); })
+      .catch(() => { if (vivo) setIgrejas([]); });
+    return () => { vivo = false; };
+  }, []);
+  async function cadastrarIgreja() {
+    const nome = novaIgreja.trim();
+    if (nome.length < 3) { toast.error('Informe o nome da igreja parceira'); return; }
+    setCriandoIgreja(true);
+    try {
+      const nova: any = await api.criarIgrejaParceira({ nome });
+      setIgrejas((l) => [...(l || []), nova].sort((x, y) => String(x.nome).localeCompare(String(y.nome))));
+      setF((s: any) => ({ ...s, igreja_id: nova.id }));
+      setNovaIgreja('');
+      toast.success('Igreja parceira cadastrada');
+    } catch (e: any) { toast.error(e?.message || 'Erro ao cadastrar a igreja'); } finally { setCriandoIgreja(false); }
+  }
   const [premios, setPremios] = useState<string[]>(evento?.premios || []);
   const [termos, setTermos] = useState<any[]>(Array.isArray(evento?.termos_extra) ? evento.termos_extra : []);
   // Lotes na tela ficam em REAIS (como o campo Valor); viram centavos no save.
@@ -463,6 +495,7 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
   async function salvar() {
     if (f.nome.trim().length < 2) { toast.error('Informe o nome do evento'); return; }
     if (!f.area) { toast.error('Selecione a área (obrigatória)'); return; }
+    if (ehGenesis && !f.igreja_id) { toast.error('Escolha a igreja parceira do Genesis'); return; }
     for (const c of campos) { if (!c.label?.trim()) { toast.error('Todo campo extra precisa de uma pergunta'); return; } }
     if (f.pagamento_ativo) {
       // Evento pago sem valor ou sem forma não abre no formulário público (o
@@ -479,6 +512,7 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
     try {
       const payload: any = {
         nome: f.nome, area: f.area, tipo: f.tipo, data: f.data || null, hora: f.hora || null,
+        igreja_id: f.igreja_id || null,
         local: f.local || null, descricao: f.descricao || null, capa_url: f.capa_url || null,
         data_fim: f.data_fim || null,
         instrucoes_url: f.instrucoes_url || null,
@@ -573,6 +607,30 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
               <p className="mt-1 text-[11px] text-muted-foreground">
                 Quem cuida desta área também recebe o aviso de cada nova inscrição.
               </p>
+            </div>
+            <div className="sm:col-span-2 rounded-md border border-border p-2.5 space-y-2">
+              <label className="text-xs text-muted-foreground">
+                Igreja parceira (CBA){ehGenesis ? ' *' : ' · opcional'}
+              </label>
+              <select value={f.igreja_id || ''} onChange={set('igreja_id')}
+                className="w-full h-9 rounded-md border border-border bg-[var(--cbrio-input-bg)] text-sm px-2">
+                <option value="">{ehGenesis ? 'Selecione a igreja…' : 'Nenhuma — evento da CBRio'}</option>
+                {(igrejas || []).map((g: any) => <option key={g.id} value={g.id}>{g.nome}</option>)}
+              </select>
+              <div className="flex gap-2">
+                <Input value={novaIgreja} onChange={(e) => setNovaIgreja(e.target.value)}
+                  placeholder="Cadastrar nova igreja parceira" className="h-8 text-sm" />
+                <Button type="button" size="sm" variant="outline" disabled={criandoIgreja} onClick={cadastrarIgreja}>
+                  {criandoIgreja ? 'Salvando…' : 'Cadastrar'}
+                </Button>
+              </div>
+              {f.igreja_id && (
+                <p className="text-[11px] text-amber-600">
+                  Quem se inscrever aqui NÃO vira cadastro da CBRio, não entra nos números da CBRio e
+                  não vê o evento no app. O link público é /genesis/… . A igreja só pode ser trocada
+                  enquanto o evento não tiver inscrições.
+                </p>
+              )}
             </div>
             {!ed && (
               <div>
@@ -1060,7 +1118,7 @@ export default function Inscricoes() {
   const [areas, setAreas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [mesRef, setMesRef] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
-  const [modal, setModal] = useState<{ tipo: 'novo' | 'editar' | 'edicao' | 'serie'; evento?: any; serieId?: string } | null>(null);
+  const [modal, setModal] = useState<{ tipo: 'novo' | 'genesis' | 'editar' | 'edicao' | 'serie'; evento?: any; serieId?: string } | null>(null);
 
   function carregar() {
     setLoading(true);
@@ -1122,7 +1180,7 @@ export default function Inscricoes() {
   }
 
   function copiarLink(ev: any) {
-    navigator.clipboard.writeText(`${window.location.origin}/evento/${ev.slug}`);
+    navigator.clipboard.writeText(`${window.location.origin}${caminhoPublicoEvento(ev)}`);
     if (ev.status === 'publicado') toast.success('Link copiado — formulário no ar');
     else toast.warning('Link copiado, mas o evento está em RASCUNHO — clique em Publicar pra ativar');
   }
@@ -1150,6 +1208,10 @@ export default function Inscricoes() {
               longa e ninguém procuraria "totem" ao lado de "Dashboard"). */}
           <Button variant="outline" onClick={() => navigate('/inscricoes/totens')}>
             <MonitorSmartphone className="h-4 w-4 mr-1" /> Totens
+          </Button>
+          <Button variant="outline" onClick={() => setModal({ tipo: 'genesis' })}
+            title="Evento de igreja parceira (CBA): as pessoas inscritas não viram cadastro da CBRio">
+            <Plus className="h-4 w-4 mr-1" /> Novo Genesis CBA
           </Button>
           <Button onClick={() => setModal({ tipo: 'novo' })}><Plus className="h-4 w-4 mr-1" /> Novo evento</Button>
         </div>
@@ -1250,6 +1312,7 @@ export default function Inscricoes() {
                     <div className="font-medium text-sm">{e.nome}</div>
                     <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
                       <span className="rounded bg-foreground/8 px-1.5 py-0.5">{e.area}</span>
+                      {e.igreja?.nome && <span className="rounded bg-amber-500/15 text-amber-700 px-1.5 py-0.5">Parceira · {e.igreja.nome}</span>}
                       {e.data && <span>{fmtData(e.data)}</span>}
                       <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {e.inscritos}{e.vagas ? `/${e.vagas}` : ''}</span>
                       <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{e.status}</span>
@@ -1287,6 +1350,7 @@ export default function Inscricoes() {
       )}
 
       {modal?.tipo === 'novo' && <EventoModal areas={areas} onClose={() => setModal(null)} onSaved={() => { setModal(null); carregar(); }} />}
+      {modal?.tipo === 'genesis' && <EventoModal areas={areas} preset={{ ...presetGenesis(), genesis: true }} onClose={() => setModal(null)} onSaved={() => { setModal(null); carregar(); }} />}
       {modal?.tipo === 'editar' && <EventoModal evento={modal.evento} areas={areas} onClose={() => setModal(null)} onSaved={() => { setModal(null); carregar(); }} />}
       {modal?.tipo === 'edicao' && <NovaEdicaoModal evento={modal.evento} onClose={() => setModal(null)} onSaved={() => { setModal(null); carregar(); }} />}
       {grupoAberto && (

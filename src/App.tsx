@@ -682,6 +682,10 @@ function AppRoutes() {
       <Route path="/batismo/acesso" element={<Suspense fallback={<Loading />}><BatismoAcesso /></Suspense>} />
       <Route path="/apresentacao-criancas" element={<Suspense fallback={<Loading />}><ApresentacaoCriancasPublica /></Suspense>} />
       <Route path="/evento/:slug" element={<Suspense fallback={<Loading />}><EventoExterno /></Suspense>} />
+      {/* Porta do Genesis CBA (igreja parceira · 24/09): MESMA página e mesmo
+          backend do /evento — o que muda é o endereço divulgado. A régua de
+          "não vira pessoa da CBRio" é do SERVIDOR (services/igrejaParceira). */}
+      <Route path="/genesis/:slug" element={<Suspense fallback={<Loading />}><EventoExterno /></Suspense>} />
       {/* Status do pagamento da inscrição · público, pelo public_token da cobrança */}
       <Route path="/pagamento/:token" element={<Suspense fallback={<Loading />}><PagamentoInscricao /></Suspense>} />
       {/* Doação · público. `/doar` é o formulário; `/doar/:token` é a tela do

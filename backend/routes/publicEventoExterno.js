@@ -26,6 +26,7 @@ const {
   honeypotPreenchido, TEXTOS, normalizarCpf,
 } = require('../services/inscricaoContrato');
 const { nomesMesmaPessoa } = require('../services/membroMatch');
+const { igrejaParceiraPorId } = require('../services/igrejaParceira');
 const {
   emitirTokenComprovante,
   verificarTokenComprovanteAtivo,
@@ -92,12 +93,15 @@ const EXT_COMPROVANTE = {
 // aparecem (encerrado mostra "inscrições encerradas" em vez de sumir o link).
 async function eventoEspinhaPorSlug(slug) {
   const { data } = await supabase.from('insc_eventos')
-    .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status, checkout_externo_url, checkout_externo_nome')
+    .select('id, nome, slug, area, igreja_id, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status, checkout_externo_url, checkout_externo_nome')
     .eq('slug', slug).is('deleted_at', null).maybeSingle();
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
   await anexarConfigMenor(data);
   await anexarExtrasEvento(data);
   await anexarLotesEvento(data);
+  // Igreja PARCEIRA (CBA · Genesis 24/09): a inscrição não vira pessoa da
+  // CBRio — ver services/igrejaParceira.js. NULL = evento da CBRio.
+  data.igreja_parceira = await igrejaParceiraPorId(data.igreja_id);
   await anexarWhatsappDuvidas(data);
   await anexarValorCartaoExterno(data);
   return data;
@@ -231,12 +235,15 @@ async function anexarExtrasEvento(ev) {
 // evento que a página pública — rascunho/arquivado não abrem em lugar nenhum.
 async function eventoEspinhaPorId(id) {
   const { data } = await supabase.from('insc_eventos')
-    .select('id, nome, slug, area, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status, no_totem, checkout_externo_url, checkout_externo_nome')
+    .select('id, nome, slug, area, igreja_id, data, hora, local, descricao, campos, capa_url, vagas, inscricoes_abrem_em, inscricoes_encerram_em, msg_sucesso_titulo, msg_sucesso_texto, tem_sorteio, pagamento_ativo, valor_centavos, pagamento_metodos, pagamento_expira_horas, parcelas_max, juros_repassados, status, no_totem, checkout_externo_url, checkout_externo_nome')
     .eq('id', id).is('deleted_at', null).maybeSingle();
   if (!data || data.status === 'rascunho' || data.status === 'arquivado') return null;
   await anexarConfigMenor(data);
   await anexarExtrasEvento(data);
   await anexarLotesEvento(data);
+  // Igreja PARCEIRA (CBA · Genesis 24/09): a inscrição não vira pessoa da
+  // CBRio — ver services/igrejaParceira.js. NULL = evento da CBRio.
+  data.igreja_parceira = await igrejaParceiraPorId(data.igreja_id);
   await anexarWhatsappDuvidas(data);
   await anexarValorCartaoExterno(data);
   return data;
@@ -1080,6 +1087,7 @@ router.get('/:slug', async (req, res) => {
       // Grupo de WhatsApp pra dúvidas (21/08): link de ENTRADA exibido no
       // cabeçalho — cobre escolha de forma, formulário e tela de sucesso.
       whatsapp_duvidas: esp.whatsapp_duvidas_url || null,
+      igreja_parceira: esp.igreja_parceira ? { nome: esp.igreja_parceira.nome } : null,
       pagamento_metodos: pago ? metodosDoEvento(esp) : [],
       // Cartão numa plataforma externa (e-Inscrição): a tela pergunta a forma
       // ANTES do formulário e manda pra lá quem escolher cartão. `null` = o
@@ -1545,8 +1553,11 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
   // exige CPF em toda inscrição (D5), então o caminho normal é sempre o
   // `criar` — e `acharOuCriarGuardado` liga no cadastro existente quando o CPF
   // bate, só criando quando a pessoa é mesmo nova.
+  // ⚠️⚠️ Igreja PARCEIRA (24/09): pula o funil INTEIRO — até o 'ligar' escreve
+  // em mem_contatos, CPF tardio e observação de identidade. A pessoa é da
+  // outra igreja; só o consentimento é gravado (prova legal do aceite).
   const politicaIdentidade = normalizarCpf(val.cpf) ? 'criar' : 'ligar';
-  processarIdentidade({
+  (ev.igreja_parceira ? consentimentos(ins.id, null) : processarIdentidade({
     nomeCompleto: val.nomeCompleto, cpf: val.cpf, email: val.email, telefone: val.telefone,
     dataNascimento: val.dataNascimento, genero: val.sexo, politica: politicaIdentidade,
     origem: 'inscricoes_formulario', origemId: ins.id,
@@ -1557,7 +1568,7 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
         .then(() => consentimentos(ins.id, ident.membroId));
     }
     return consentimentos(ins.id, null);
-  }).catch((err) => console.error('[publicEvento espinha] identidade/consentimentos:', err.message));
+  })).catch((err) => console.error('[publicEvento espinha] identidade/consentimentos:', err.message));
 
   // ⚠️ Quem cuida da ÁREA do evento também é avisado (17/08/2026). O aviso sai
   // pelo módulo `inscricoes`, que não tem regra pra `nova_inscricao` e cai no
@@ -1568,7 +1579,7 @@ async function inscreverEspinha(req, res, ev, opts = {}) {
   // ⚠️ Best-effort: falhar aqui não pode tirar o aviso de quem já recebe.
   let avisarTambem = [];
   try {
-    const moduloArea = moduloDaAreaEvento(ev.area);
+    const moduloArea = ev.igreja_parceira ? null : moduloDaAreaEvento(ev.area);
     if (moduloArea) avisarTambem = await resolverDestinatarios(moduloArea, 'nova_inscricao');
   } catch (err) {
     console.error('[publicEvento espinha] destinatarios da area:', err.message);
