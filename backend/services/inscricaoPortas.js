@@ -18,7 +18,7 @@ const PORTAS_INSCRICAO = Object.freeze([
     nome: 'Eventos e retiros',
     fontes: Object.freeze(['inscricoes', 'eventos_externos']),
     // /genesis/:slug = porta do Genesis CBA (igreja parceira · 24/09) · mesma página
-    rotasPublicas: Object.freeze(['/evento/:slug', '/genesis/:slug']),
+    rotasPublicas: Object.freeze(['/evento/:slug', '/genesis/:slug', '/genesis']),
     gestao: '/inscricoes',
     modulo: 'Inscrições',
     // Espinha + FALLBACK no ext: ext_inscricoes segue escrevível e é a

@@ -495,6 +495,9 @@ export const inscricoesApi = {
   // Igrejas PARCEIRAS (CBA · Genesis 24/09): quem se inscreve não vira pessoa da CBRio
   igrejasParceiras: () => get('/inscricoes/igrejas-parceiras'),
   criarIgrejaParceira: (data) => post('/inscricoes/igrejas-parceiras', data),
+  // Genesis CBA · a série permanente (edições = data + igreja sede)
+  genesis: () => get('/inscricoes/genesis'),
+  criarEdicaoGenesis: (data) => post('/inscricoes/genesis/edicoes', data),
   atualizarEvento: (id, data) => put(`/inscricoes/eventos/${id}`, data),
   excluirEvento: (id) => del(`/inscricoes/eventos/${id}`),
   novaEdicao: (id, data) => post(`/inscricoes/eventos/${id}/nova-edicao`, data),
@@ -590,6 +593,10 @@ export const eventoPublico = {
     const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
   }),
   // Textos canônicos de consentimento (o snapshot gravado é sempre o do backend)
+  // Edições NO AR de uma série (ex.: /genesis, o link sempre aberto)
+  serie: (slugBase) => fetch(`${API}/public/evento/serie/${encodeURIComponent(slugBase)}`).then(async r => {
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
+  }),
   textos: () => fetch(`${API}/public/evento/textos`).then(async r => {
     const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
   }),

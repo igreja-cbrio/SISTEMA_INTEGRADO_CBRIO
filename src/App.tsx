@@ -408,6 +408,7 @@ const GovernancaRitual = lazyWithRetry(() => import('./pages/governanca/RitualPa
 // Mantido aqui apenas pra retrocompat de URL — redirect via Navigate.
 const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext'));
 const EventoExterno = lazyWithRetry(() => import('./pages/public/EventoExterno'));
+const GenesisPublico = lazyWithRetry(() => import('./pages/public/GenesisPublico'));
 const PagamentoInscricao = lazyWithRetry(() => import('./pages/public/PagamentoInscricao'));
 // Doação (Generosidade) · página PÚBLICA. ⚠️ É esta página que o app de membros
 // abre no NAVEGADOR EXTERNO — a guideline 3.2.2(iv) da App Store proíbe coletar
@@ -685,6 +686,7 @@ function AppRoutes() {
       {/* Porta do Genesis CBA (igreja parceira · 24/09): MESMA página e mesmo
           backend do /evento — o que muda é o endereço divulgado. A régua de
           "não vira pessoa da CBRio" é do SERVIDOR (services/igrejaParceira). */}
+      <Route path="/genesis" element={<Suspense fallback={<Loading />}><GenesisPublico /></Suspense>} />
       <Route path="/genesis/:slug" element={<Suspense fallback={<Loading />}><EventoExterno /></Suspense>} />
       {/* Status do pagamento da inscrição · público, pelo public_token da cobrança */}
       <Route path="/pagamento/:token" element={<Suspense fallback={<Loading />}><PagamentoInscricao /></Suspense>} />
