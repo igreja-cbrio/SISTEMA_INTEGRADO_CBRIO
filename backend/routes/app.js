@@ -2510,11 +2510,22 @@ router.get('/voluntariado/escala-pool', authApp, limiterNormal, async (req, res)
         return res.status(403).json({ error: `Você não supervisiona ${eq.name}.` });
       }
       const { data: vinc, error: vErr } = await supabase.from('vol_team_members')
-        .select('volunteer_profile_id').eq('team_id', teamId).eq('is_active', true)
+        .select('volunteer_profile_id, position_id, position:vol_positions(id, name)')
+        .eq('team_id', teamId).eq('is_active', true)
         .not('volunteer_profile_id', 'is', null);
       if (vErr) throw vErr;
       // ⚠️ 155 dos 832 pares (pessoa, time) têm mais de uma linha — dedupe por pessoa.
+      // As FUNÇÕES da pessoa no time (uma por linha) vão junto: a tela separa
+      // "quem é dessa vaga" de "resto do time" (pedido do Marcos, 24/09:
+      // "estou escalando um saxofonista: primeiro os saxofonistas, abaixo o resto").
       const ids = [...new Set((vinc || []).map(v => v.volunteer_profile_id))];
+      const posPor = {};
+      for (const v of vinc || []) {
+        const pos = Array.isArray(v.position) ? v.position[0] : v.position;
+        if (!pos || !pos.id) continue;
+        const lista = (posPor[v.volunteer_profile_id] ||= []);
+        if (!lista.some(x => x.id === pos.id)) lista.push({ id: pos.id, name: pos.name || null });
+      }
       // ⚠️ Em lotes de 100: a Integração tem 264 pessoas e o `in` vai na URL.
       for (let k = 0; k < ids.length; k += 100) {
         let query = supabase.from('vol_profiles')
@@ -2523,7 +2534,7 @@ router.get('/voluntariado/escala-pool', authApp, limiterNormal, async (req, res)
         if (q) query = query.ilike('full_name', `%${q}%`);
         const { data, error } = await query;
         if (error) throw error;
-        for (const p of data || []) pessoas.push({ ...p, do_time: true });
+        for (const p of data || []) pessoas.push({ ...p, do_time: true, posicoes: posPor[p.id] || [] });
       }
     } else {
       let query = supabase.from('vol_profiles')
