@@ -172,6 +172,9 @@ function podeEditarMembroTotem(req, membroId) {
 function calcularNivelGenerosidade(ultimaContribuicaoDate) {
   if (!ultimaContribuicaoDate) return 'nunca_contribuiu';
   const dias = Math.floor((Date.now() - new Date(ultimaContribuicaoDate).getTime()) / (1000 * 60 * 60 * 24));
+  // Data futura (erro de digitação: "2030-01-15" em vez de "2020-01-15")
+  // NÃO deve marcar o membro como "ativo". Ver MED-19 do code review.
+  if (dias < 0) return 'nunca_contribuiu';
   if (dias <= 30) return 'ativo';
   if (dias <= 150) return 'irregular';
   return 'inativo';
@@ -185,6 +188,8 @@ function calcularNivelGenerosidade(ultimaContribuicaoDate) {
 function calcularNivelServico(ultimoCheckinDate) {
   if (!ultimoCheckinDate) return 'nunca_serviu';
   const dias = Math.floor((Date.now() - new Date(ultimoCheckinDate).getTime()) / (1000 * 60 * 60 * 24));
+  // Data futura (erro de digitação em check-in retroativo). Idem MED-19.
+  if (dias < 0) return 'nunca_serviu';
   if (dias <= 60) return 'ativo';
   return 'ausente';
 }
@@ -3344,6 +3349,21 @@ router.post('/contribuicoes', authorize('admin', 'diretor'), async (req, res) =>
     if (payload.forma_pagamento === '') delete payload.forma_pagamento;
     if (payload.referencia_externa === '') delete payload.referencia_externa;
 
+    // Barra data futura na entrada. Sem isto um typo de ano ("2030" em vez
+    // de "2020") já causou dois efeitos ruins: (a) inflava o total do ano
+    // corrente no KPI (MED-18); (b) marcava o membro como "generosidade:ativo"
+    // apesar de ele não contribuir há anos (MED-19). Ao gate: 1 dia de folga
+    // para não brigar com fuso quando alguém lança "hoje" de outro fuso.
+    if (payload.data) {
+      const amanhaMS = Date.now() + 24 * 60 * 60 * 1000;
+      const lancMS = new Date(payload.data).getTime();
+      if (Number.isFinite(lancMS) && lancMS > amanhaMS) {
+        return res.status(400).json({
+          error: 'Data da contribuição não pode ser no futuro. Verifique o ano.',
+        });
+      }
+    }
+
     const { data, error } = await supabase
       .from('mem_contribuicoes')
       .insert(payload)
@@ -3419,11 +3439,14 @@ router.get('/contribuicoes/kpis', async (req, res) => {
       return out;
     };
 
-    // Totais do ano por tipo
+    // Totais do ano por tipo — limite superior evita que um lançamento com
+    // ano futuro digitado errado ("2030-01-15" em vez de "2020-01-15") entre
+    // no total do ano corrente. Ver MED-18 do code review.
     const contribsAno = await fetchTudo(() => supabase
       .from('mem_contribuicoes')
       .select('tipo, valor, data, membro_id')
-      .gte('data', `${anoAtual}-01-01`));
+      .gte('data', `${anoAtual}-01-01`)
+      .lte('data', `${anoAtual}-12-31`));
 
     const totais = { dizimo: 0, oferta: 0, campanha: 0, total: 0 };
     const contribuintesAno = new Set();
