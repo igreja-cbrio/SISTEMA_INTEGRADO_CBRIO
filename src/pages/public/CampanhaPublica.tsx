@@ -14,6 +14,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { resolveApiBaseUrl } from '../../lib/api-base';
+import { safeHref } from '../../lib/safeHref';
 
 type Campanha = {
   slug: string; nome: string; descricao_curta?: string; descricao?: string;
@@ -208,7 +209,7 @@ export default function CampanhaPublica() {
         )}
 
         {c.video_url && (
-          <a href={c.video_url} target="_blank" rel="noreferrer"
+          <a href={safeHref(c.video_url)} target="_blank" rel="noreferrer"
             style={{ display: 'inline-block', marginTop: '4vh', color: acento, fontSize: 'clamp(14px, 1.8vw, 18px)' }}>
             Assistir ao vídeo da campanha →
           </a>

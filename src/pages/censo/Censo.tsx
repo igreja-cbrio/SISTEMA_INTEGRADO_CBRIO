@@ -10,6 +10,7 @@
 // F1: coleta pública por QR. F3: dashboards. F4: leitura da IA.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
+import { safeHref } from '../../lib/safeHref';
 import { censo } from '../../api';
 import { useAuth } from '../../contexts/AuthContext';
 import { ModuleHeader } from '@/components/layout/ModuleHeader';
@@ -425,7 +426,7 @@ function Compartilhar({ slug, status, compacto }: { slug: string; status: string
             </Button>
           )}
           <Button size={compacto ? 'sm' : 'default'} variant="ghost" asChild>
-            <a href={link} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+            <a href={safeHref(link)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
               <ExternalLink className="h-4 w-4 mr-1" /> {compacto ? '' : 'Abrir o formulário'}
             </a>
           </Button>
