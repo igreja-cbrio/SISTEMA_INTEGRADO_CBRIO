@@ -9,7 +9,7 @@
 // ============================================================================
 
 const { supabase } = require('../utils/supabase');
-const { resultadoSemana } = require('../utils/crescimentoDs');
+const { resultadoSemana, semanaFechada } = require('../utils/crescimentoDs');
 
 // ── Helpers de período ──────────────────────────────────────────────────────
 
@@ -259,6 +259,13 @@ const COLLECTORS = {
   // ⚠️ `fim` é EXCLUSIVO (`periodoRange` devolve a segunda-feira seguinte), por
   // isso a semana anterior é [inicio−7, inicio).
   'cultos.online_ds_cresc': async ({ inicio, fim }) => {
+    // ⚠️⚠️ Semana em curso NÃO é gravada. Medido no backfill (24/09/2026): a
+    // semana corrente entrou com −94,09% porque tinha UM culto coletado contra
+    // SEIS da anterior. Essa falsa catástrofe apareceria no card de terça a
+    // sábado, toda semana. `fim` é exclusivo (a segunda seguinte).
+    const hoje = new Date().toISOString().slice(0, 10);
+    if (!semanaFechada(fim, hoje)) return null;
+
     const menos7 = (d) => {
       const x = new Date(d + 'T12:00:00Z');
       x.setUTCDate(x.getUTCDate() - 7);
