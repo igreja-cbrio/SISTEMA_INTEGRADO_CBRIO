@@ -270,6 +270,7 @@ Guard: `authorizeModule('membresia', 1 | 2 | 3 | 4)`
 - `backend/utils/prontidaoCadastro.js`
 - `backend/utils/sanitize.js`
 - `backend/utils/supabase.js`
+- `backend/utils/tipoCultoFlags.js`
 - `backend/utils/trechoCep.js`
 - `backend/utils/vigenciaTipoCulto.js`
 - `backend/utils/volCadastroCheckin.js`
