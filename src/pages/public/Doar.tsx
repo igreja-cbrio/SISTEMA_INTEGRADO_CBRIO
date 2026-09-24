@@ -21,6 +21,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import QRCode from 'qrcode';
 import confetti from 'canvas-confetti';
 import { generosidadePublica } from '../../api';
+import { safeHref } from '../../lib/safeHref';
 // ⚠️ DV do CPF vem da régua da casa, NUNCA de uma 4ª cópia do algoritmo nesta
 // tela (é a lei do Contrato de Inscrição: cópia local de CPF/máscara divergia).
 import { cpfValido } from '../../lib/inscricao';
@@ -732,7 +733,7 @@ function TelaPagamento({ token, pag, setPag, C, onNovaDoacao }: {
               <strong>{METODO_LABEL[metodoSel] || metodoSel} não está disponível agora.</strong>
               <div style={{ marginTop: 4, color: C.text2 }}>{falhas[metodoSel]}</div>
               {pag.checkout_url && (
-                <a href={pag.checkout_url} target="_blank" rel="noreferrer"
+                <a href={safeHref(pag.checkout_url)} target="_blank" rel="noreferrer"
                   className="doar-acao" style={{ ...btn(C, false), display: 'block', textAlign: 'center', marginTop: 10 }}>
                   Abrir a página de pagamento
                 </a>
@@ -755,7 +756,7 @@ function TelaPagamento({ token, pag, setPag, C, onNovaDoacao }: {
                   </p>
                 </>
               ) : pag.checkout_url ? (
-                <a href={pag.checkout_url} target="_blank" rel="noreferrer"
+                <a href={safeHref(pag.checkout_url)} target="_blank" rel="noreferrer"
                   className="doar-acao" style={{ ...btn(C, true), display: 'block', textAlign: 'center' }}>
                   Abrir o Pix
                 </a>
@@ -782,7 +783,7 @@ function TelaPagamento({ token, pag, setPag, C, onNovaDoacao }: {
                 </>
               )}
               {pag.checkout_url ? (
-                <a href={pag.checkout_url} target="_blank" rel="noreferrer"
+                <a href={safeHref(pag.checkout_url)} target="_blank" rel="noreferrer"
                   className="doar-acao" style={{ ...btn(C, true), display: 'block', textAlign: 'center', marginTop: 12 }}>
                   Pagar com cartão
                 </a>
@@ -812,7 +813,7 @@ function TelaPagamento({ token, pag, setPag, C, onNovaDoacao }: {
                 </>
               ) : null}
               {pag.boleto_url && (
-                <a href={pag.boleto_url} target="_blank" rel="noreferrer"
+                <a href={safeHref(pag.boleto_url)} target="_blank" rel="noreferrer"
                   className="doar-acao" style={{ ...btn(C, false), display: 'block', textAlign: 'center', marginTop: 8 }}>
                   Abrir o boleto
                 </a>

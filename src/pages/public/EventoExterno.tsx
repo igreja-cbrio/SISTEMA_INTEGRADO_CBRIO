@@ -16,6 +16,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import confetti from 'canvas-confetti';
 import QRCode from 'qrcode';
 import { eventoPublico } from '../../api';
+import { safeHref } from '../../lib/safeHref';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
 import { BirthDatePicker } from '../../components/ui/birth-date-picker';
@@ -283,7 +284,7 @@ function ComprovanteQr({ token }: { token: string }) {
       <p style={{ fontSize: 12, color: C.text3, marginTop: 8, lineHeight: 1.5 }}>
         Apresente este QR na entrada do evento. Salve uma captura de tela ou guarde o link:
       </p>
-      <a href={url} style={{ fontSize: 12, color: '#00B39D', fontWeight: 600, wordBreak: 'break-all' }}>{url}</a>
+      <a href={safeHref(url)} style={{ fontSize: 12, color: '#00B39D', fontWeight: 600, wordBreak: 'break-all' }}>{url}</a>
     </div>
   );
 }
@@ -412,7 +413,7 @@ function EscolhaPagamento({ C, evento, onProprio }: { C: any; evento: any; onPro
       {/* ⚠️ Link de verdade (`<a>`), não window.open: o navegador mostra o
           destino no toque longo, e bloqueador de pop-up não engole a navegação.
           `rel="noopener"` porque a outra página não pode mexer nesta. */}
-      <a href={ext.url} target="_blank" rel="noopener noreferrer" style={{ ...btn(so), textDecoration: 'none' }}>
+      <a href={safeHref(ext.url)} target="_blank" rel="noopener noreferrer" style={{ ...btn(so), textDecoration: 'none' }}>
         <div style={linhaTopo}>
           <div style={{ fontSize: 15, fontWeight: 700 }}>Cartão de crédito</div>
           {mostrarPrecos && (
@@ -629,7 +630,7 @@ export default function EventoExterno() {
                   aparece na escolha Pix×cartão, no formulário e na tela de
                   sucesso, que dividem esta página. Link real (<a>), nova aba. */}
               {evento?.whatsapp_duvidas && (
-                <a href={evento.whatsapp_duvidas} target="_blank" rel="noopener noreferrer" style={{
+                <a href={safeHref(evento.whatsapp_duvidas)} target="_blank" rel="noopener noreferrer" style={{
                   display: 'inline-block', marginTop: 10, padding: '7px 14px', borderRadius: 999,
                   background: 'rgba(37,211,102,0.10)', border: '1px solid rgba(37,211,102,0.35)',
                   color: '#1da851', fontSize: 12.5, fontWeight: 700, textDecoration: 'none',
@@ -870,7 +871,7 @@ export default function EventoExterno() {
                     {t.url ? (
                       <>
                         <br />
-                        <a href={t.url} target="_blank" rel="noreferrer" style={{ color: '#00B39D', textDecoration: 'underline' }}>
+                        <a href={safeHref(t.url)} target="_blank" rel="noreferrer" style={{ color: '#00B39D', textDecoration: 'underline' }}>
                           Baixar o documento
                         </a>
                       </>
