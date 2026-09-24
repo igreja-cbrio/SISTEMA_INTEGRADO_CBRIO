@@ -3382,9 +3382,14 @@ router.post('/self-checkin', async (req, res) => {
     const { data: service } = await supabase.from('vol_services').select('id, name, scheduled_at').eq('id', serviceId).single();
     if (!service) return res.status(404).json({ error: 'Culto não encontrado' });
 
-    const serviceDate = new Date(service.scheduled_at);
-    const today = new Date();
-    if (serviceDate.toDateString() !== today.toDateString()) {
+    // Comparar datas no fuso do Brasil: Vercel roda em UTC e um culto do
+    // domingo 19h-22h BRT (Mon 00-01h UTC) era rejeitado — `.toDateString()`
+    // via UTC dizia "Sun" para o culto e "Mon" para today. Ver ALT-16 do
+    // code review.
+    const ymdBR = (d) => new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(d);
+    if (ymdBR(new Date(service.scheduled_at)) !== ymdBR(new Date())) {
       return res.status(400).json({ error: 'Este culto não e de hoje' });
     }
 
