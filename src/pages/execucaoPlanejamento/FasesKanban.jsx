@@ -24,6 +24,7 @@ import { Lock } from 'lucide-react';
 import { projects as projectsApi, cycles as cyclesApi, planejamentoAnual as planApi } from '../../api';
 import { C, cardStyle, btn, hint } from '../planejamentoAnual/comum';
 import { useArrastoKanban } from '../marketing/useArrastoKanban';
+import FaseStepper from '../../components/FaseStepper';
 
 const COLUNAS = [
   { key: 'pendente', label: 'Pendente', cor: C.t3 },
@@ -31,6 +32,33 @@ const COLUNAS = [
   { key: 'concluida', label: 'Concluída', cor: C.green },
   { key: 'bloqueada', label: 'Bloqueada', cor: C.red },
 ];
+
+// Mesmas 7 fases fixas de Projetos.jsx (PHASE_NAMES/PHASE_ABBREVS) — projeto
+// sempre nasce com elas via initPhases(). Evento usa as fases do PRÓPRIO
+// ciclo criativo (número variável, nome vem de cycle_phase_templates), então
+// a abreviação ali é derivada do nome.
+const PHASE_NAMES_PROJETO = ['Concepção', 'Planejamento', 'Mobilização', 'Comunicação', 'Execução', 'Monitoramento', 'Encerramento'];
+const PHASE_ABBREVS_PROJETO = ['CON', 'PLA', 'MOB', 'COM', 'EXE', 'MON', 'ENC'];
+
+function abrevDoNome(nome) {
+  const limpo = (nome || '').trim();
+  if (!limpo) return '???';
+  return limpo.slice(0, 3).toUpperCase();
+}
+
+// Status da fase é DERIVADO das tarefas vinculadas a ela (mesmo agrupamento
+// que já alimenta os cards do Kanban), não de uma coluna de status da fase —
+// para evento, `event_cycle_phases.status` fica parado em 'pendente' desde a
+// criação (nada no backend a atualiza); para projeto o campo existe mas
+// pode ficar desalinhado do que as tarefas realmente mostram.
+function statusDaFase(nomeFase, cards) {
+  const itens = cards.filter((c) => c.fase === nomeFase);
+  if (itens.length === 0) return 'pendente';
+  if (itens.every((c) => c.status === 'concluida')) return 'concluida';
+  if (itens.some((c) => c.status === 'bloqueada')) return 'bloqueada';
+  if (itens.some((c) => c.status === 'em-andamento' || c.status === 'concluida')) return 'em-andamento';
+  return 'pendente';
+}
 
 // ── Projeto: o vocabulário de status JÁ é o das 4 colunas ───────────────
 function statusDeTarefaProjeto(t) { return COLUNAS.some((c) => c.key === t.status) ? t.status : 'pendente'; }
@@ -66,17 +94,20 @@ export default function FasesKanban({ proposta, onMaterializado }) {
   const vinculo = proposta.vinculo || { tipo: null, id: null };
   const [carregando, setCarregando] = useState(Boolean(vinculo.tipo));
   const [cards, setCards] = useState([]); // {id, titulo, status, fase}
+  const [fasesBrutas, setFasesBrutas] = useState([]); // fases cruas do vínculo (projeto.phases | ciclo.phases)
+  const [faseSelecionada, setFaseSelecionada] = useState(null);
   const [materializando, setMaterializando] = useState(false);
   const containerRef = useRef(null);
 
   const carregar = useCallback(async () => {
-    if (!vinculo.tipo) { setCards([]); return; }
+    if (!vinculo.tipo) { setCards([]); setFasesBrutas([]); return; }
     setCarregando(true);
     try {
       if (vinculo.tipo === 'projeto') {
         const proj = await projectsApi.get(vinculo.id);
         const fases = proj?.phases || [];
         const tarefas = proj?.tasks || [];
+        setFasesBrutas([...fases].sort((a, b) => (a.order_index || 0) - (b.order_index || 0)));
         setCards(tarefas.map((t) => ({
           id: t.id, titulo: t.title || t.name || 'Tarefa',
           status: statusDeTarefaProjeto(t), fase: faseDaTarefaProjeto(t, fases),
@@ -85,6 +116,7 @@ export default function FasesKanban({ proposta, onMaterializado }) {
         const ciclo = await cyclesApi.get(vinculo.id);
         const fases = ciclo?.phases || [];
         const tarefas = ciclo?.tasks || [];
+        setFasesBrutas([...fases].sort((a, b) => (a.numero_fase || 0) - (b.numero_fase || 0)));
         setCards(tarefas.map((t) => ({
           id: t.id, titulo: t.titulo || 'Tarefa',
           status: statusDeTarefaEvento(t), fase: faseDaTarefaEvento(t, fases),
@@ -95,6 +127,28 @@ export default function FasesKanban({ proposta, onMaterializado }) {
     } finally { setCarregando(false); }
   }, [vinculo.tipo, vinculo.id]);
   useEffect(() => { carregar(); }, [carregar]);
+  useEffect(() => { setFaseSelecionada(null); }, [vinculo.tipo, vinculo.id]);
+
+  // Fases resolvidas para o stepper: {id, nome, abrev, status}. Projeto usa
+  // os 7 nomes/abreviações fixos (por posição, como o stepper de /projetos);
+  // evento usa nome_fase do próprio ciclo, com abreviação derivada.
+  const fasesStepper = useMemo(() => {
+    if (fasesBrutas.length === 0) return [];
+    if (vinculo.tipo === 'projeto') {
+      return fasesBrutas.map((f, i) => {
+        const nome = f.name || PHASE_NAMES_PROJETO[i] || `Fase ${i + 1}`;
+        return { id: f.id, nome, abrev: PHASE_ABBREVS_PROJETO[i] || abrevDoNome(nome), status: statusDaFase(nome, cards) };
+      });
+    }
+    return fasesBrutas.map((f) => {
+      const nome = f.nome_fase || `Fase ${f.numero_fase}`;
+      return { id: f.id, nome, abrev: abrevDoNome(nome), status: statusDaFase(nome, cards) };
+    });
+  }, [fasesBrutas, cards, vinculo.tipo]);
+
+  const nomeDaFaseSelecionada = faseSelecionada
+    ? fasesStepper.find((f) => f.id === faseSelecionada)?.nome
+    : null;
 
   const moverCard = useCallback(async (cardId, novoEstado) => {
     if (novoEstado === null) return; // foi só um toque — nada a fazer aqui
@@ -119,10 +173,10 @@ export default function FasesKanban({ proposta, onMaterializado }) {
 
   const arrastoK = useArrastoKanban({ onMover: moverCard, habilitado: Boolean(vinculo.tipo) });
 
-  const colunas = useMemo(() => COLUNAS.map((col) => ({
-    ...col,
-    itens: cards.filter((c) => c.status === col.key),
-  })), [cards]);
+  const colunas = useMemo(() => {
+    const base = nomeDaFaseSelecionada ? cards.filter((c) => c.fase === nomeDaFaseSelecionada) : cards;
+    return COLUNAS.map((col) => ({ ...col, itens: base.filter((c) => c.status === col.key) }));
+  }, [cards, nomeDaFaseSelecionada]);
 
   // ── Vínculo ainda não existe: estado vazio + CTA de materializar ──────
   if (!vinculo.tipo) {
@@ -171,6 +225,19 @@ export default function FasesKanban({ proposta, onMaterializado }) {
       {carregando ? (
         <p style={{ fontSize: 13, color: C.t3 }}>Carregando fases…</p>
       ) : (
+        <>
+          {fasesStepper.length > 0 && (
+            <div style={cardStyle}>
+              <FaseStepper fases={fasesStepper} selecionada={faseSelecionada} onSelecionar={setFaseSelecionada} />
+              {faseSelecionada && (
+                <div style={{ textAlign: 'center', paddingBottom: 8 }}>
+                  <button style={btn('ghost')} onClick={() => setFaseSelecionada(null)}>
+                    Mostrar todas as fases
+                  </button>
+                </div>
+              )}
+            </div>
+          )}
         <div
           ref={arrastoK.containerRef}
           className={`flex gap-3 overflow-x-auto pb-2 ${arrastoK.arrastando ? 'select-none' : ''}`}
@@ -216,6 +283,7 @@ export default function FasesKanban({ proposta, onMaterializado }) {
             </div>
           ))}
         </div>
+        </>
       )}
       {arrastoK.arrastando && (
         <div
