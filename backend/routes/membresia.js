@@ -1844,7 +1844,7 @@ router.get('/membros/:id/reconhecimento-facial', authorizeModule('membros', 1), 
 // POST /api/membresia/historico
 router.post('/historico', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const body = { ...req.body, registrado_por: req.user.id };
+    const body = { ...req.body, registrado_por: req.user.userId || req.user.id };
     const { data, error } = await supabase
       .from('mem_historico')
       .insert(body)
@@ -3337,7 +3337,7 @@ router.post('/contribuicoes', authorize('admin', 'diretor'), async (req, res) =>
   try {
     const payload = {
       ...req.body,
-      registrado_por: req.user.id,
+      registrado_por: req.user.userId || req.user.id,
       origem: req.body.origem || 'manual',
     };
     if (payload.campanha === '') delete payload.campanha;
@@ -3699,7 +3699,7 @@ router.post('/checkins', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const payload = {
       ...req.body,
-      registrado_por: req.user.id,
+      registrado_por: req.user.userId || req.user.id,
       origem: req.body.origem || 'manual',
     };
     const { data, error } = await supabase

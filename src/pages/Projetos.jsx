@@ -385,20 +385,12 @@ export default function Projetos() {
 
   const loadKanbanData = useCallback(async () => {
     try {
-      const [tasksData, phasesRes] = await Promise.all([
-        tasksApi.all({ source: 'projeto' }),
-        // Buscar todas as fases de todos os projetos via Supabase (rota não existe, mas podemos pegar do list)
-        // Alternativa: buscar via cada projeto — mas para performance, vamos usar o que o list já traz
-        fetch('/api/projects/all-phases', { headers: { 'Authorization': `Bearer ${localStorage.getItem('sb-token')}` } }).then(r => r.ok ? r.json() : []).catch(() => []),
-      ]);
+      // Fases vêm do próprio `list` (o backend não expõe /projects/all-phases).
+      // A chamada anterior nunca retornava dados (token errado + rota inexistente).
+      const tasksData = await tasksApi.all({ source: 'projeto' });
       setKanbanTasks(Array.isArray(tasksData) ? tasksData : []);
-      setKanbanPhases(Array.isArray(phasesRes) ? phasesRes : []);
-      // Se não tiver endpoint de fases, usar dados do list
-      if (!phasesRes.length && list.length) {
-        // Pegar fases do primeiro projeto como referência para phase_order
-        const firstWithPhases = list.find(p => p.phases?.length > 0);
-        if (firstWithPhases) setKanbanPhases(firstWithPhases.phases);
-      }
+      const firstWithPhases = list.find((p) => p.phases?.length > 0);
+      setKanbanPhases(firstWithPhases?.phases || []);
     } catch (e) { console.error('Kanban data:', e); }
   }, [list]);
 
