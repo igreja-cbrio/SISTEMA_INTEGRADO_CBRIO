@@ -96,6 +96,73 @@ describe('AbaRespostas · o total é do banco, a página tem 50', () => {
     expect(screen.queryByRole('button', { name: /Próxima/ })).toBeNull();
   });
 
+  // ⚠️⚠️ O BUG DE 24/09/2026: a busca puxava UM lote de 1.000 e a pesquisa tinha
+  // 1.410 respostas. Ordenadas da mais recente para a mais antiga, as 410 MAIS
+  // ANTIGAS eram invisíveis — a tela dizia "0 encontrada(s)", que se lê como
+  // "fulano não respondeu o censo".
+  //
+  // Os nomes abaixo são REAIS, das posições 1.001 e 1.410 da pesquisa medida no
+  // banco naquele dia: exatamente quem estava no buraco.
+  it('acha quem está DEPOIS das mil primeiras (o buraco de 24/09)', async () => {
+    respostasMock
+      .mockResolvedValueOnce(pagina(0, 50, 1410))
+      .mockResolvedValueOnce({ total: 1410, offset: 0, limite: 1000,
+        itens: Array.from({ length: 20 }, (_, i) => linha(i)) })
+      .mockResolvedValueOnce({ total: 1410, offset: 1000, limite: 1000,
+        itens: [
+          ...Array.from({ length: 5 }, (_, i) => linha(1000 + i)),
+          linha(1401, 'Juliane Milani Tavares'),
+          linha(1402, 'Fernanda Figueredo Sarruf Sudré'),
+        ] });
+
+    render(<AbaRespostas pesquisaId="p1" podeApagar={false} />);
+    await screen.findByText('1–50 de 1410');
+    fireEvent.change(screen.getByPlaceholderText(/Buscar por nome/), { target: { value: 'juliane' } });
+
+    // ⚠️ A prova: a pessoa da posição 1.001 aparece. Antes, não aparecia.
+    expect(await screen.findByText('Juliane Milani Tavares')).toBeTruthy();
+    expect(respostasMock).toHaveBeenCalledWith('p1', 1000, 0);
+    expect(respostasMock).toHaveBeenCalledWith('p1', 1000, 1000);
+  });
+
+  // ⚠️ Acento continua valendo no lote novo: "sudre" tem que achar "Sudré". A
+  // régua da casa normaliza os DOIS lados — é por isso que a busca não foi para
+  // o servidor (o `ilike` do Postgres não é acento-insensível).
+  it('a régua de acento vale também para quem veio do 2º lote', async () => {
+    respostasMock
+      .mockResolvedValueOnce(pagina(0, 50, 1410))
+      .mockResolvedValueOnce({ total: 1410, offset: 0, limite: 1000,
+        itens: Array.from({ length: 20 }, (_, i) => linha(i)) })
+      .mockResolvedValueOnce({ total: 1410, offset: 1000, limite: 1000,
+        itens: [linha(1402, 'Fernanda Figueredo Sarruf Sudré')] });
+
+    render(<AbaRespostas pesquisaId="p1" podeApagar={false} />);
+    await screen.findByText('1–50 de 1410');
+    fireEvent.change(screen.getByPlaceholderText(/Buscar por nome/), { target: { value: 'sudre' } });
+    expect(await screen.findByText('Fernanda Figueredo Sarruf Sudré')).toBeTruthy();
+  });
+
+  // ⚠️⚠️ Um teto que trunca em silêncio é o defeito que esta mudança conserta.
+  // Se um dia a base passar do que dá para varrer, a tela DIZ.
+  it('avisa quando a busca não alcançou tudo', async () => {
+    respostasMock.mockResolvedValueOnce(pagina(0, 50, 34000));
+    for (let i = 0; i < 20; i += 1) {
+      // ⚠️ 5 itens por lote de propósito: o que se testa aqui é o NÚMERO DE
+      // LOTES e o aviso, não o volume. Encher 20 × 1.000 objetos fazia o teste
+      // levar mais de um minuto sem provar nada a mais.
+      respostasMock.mockResolvedValueOnce({ total: 34000, offset: i * 1000, limite: 1000,
+        itens: Array.from({ length: 5 }, (_, k) => linha(i * 1000 + k)) });
+    }
+
+    render(<AbaRespostas pesquisaId="p1" podeApagar={false} />);
+    await screen.findByText('1–50 de 34000');
+    fireEvent.change(screen.getByPlaceholderText(/Buscar por nome/), { target: { value: 'pessoa' } });
+
+    await waitFor(() => { expect(screen.getByText(/A busca varreu as/)).toBeTruthy(); },
+      { timeout: 6000 });
+    expect(screen.getByText(/não entra/)).toBeTruthy();
+  });
+
   it('quando tudo cabe numa página, não desenha navegação', async () => {
     respostasMock.mockResolvedValue(pagina(0, 3, 3));
     render(<AbaRespostas pesquisaId="p1" podeApagar={false} />);

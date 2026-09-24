@@ -21,6 +21,7 @@ import { Loader2, Search, Trash2, Lock, User, UserX, ExternalLink } from 'lucide
 import EmptyState from '@/components/EmptyState';
 import { toast } from 'sonner';
 import { normalizarBusca, contemNormalizado } from '@/lib/busca';
+import { lotesPara, POR_LOTE } from '@/lib/lotesBusca';
 
 // 50 por página, como a lista de pessoas da Membresia. O número embaixo é o que
 // diz onde a pessoa está — "812" sozinho no topo não responde "e eu estou em
@@ -102,6 +103,10 @@ export default function AbaRespostas({ pesquisaId, podeApagar }: {
   const [todas, setTodas] = useState<Linha[] | null>(null);
   const [carregandoBusca, setCarregandoBusca] = useState(false);
   const buscaEmVoo = useRef(false);
+  // ⚠️ Quantas linhas a busca REALMENTE varreu, e se sobrou gente de fora.
+  // Teto que trunca calado é o defeito que estamos consertando — ver
+  // `src/lib/lotesBusca.js`.
+  const [buscaTruncada, setBuscaTruncada] = useState<{ alcance: number } | null>(null);
 
   const carregarPagina = useCallback(async (novoOffset: number, primeira = false) => {
     if (!pesquisaId) return;
@@ -121,7 +126,7 @@ export default function AbaRespostas({ pesquisaId, podeApagar }: {
   }, [pesquisaId]);
 
   useEffect(() => {
-    setOffset(0); setTodas(null); buscaEmVoo.current = false;
+    setOffset(0); setTodas(null); setBuscaTruncada(null); buscaEmVoo.current = false;
     carregarPagina(0, true);
   }, [carregarPagina]);
 
@@ -145,12 +150,37 @@ export default function AbaRespostas({ pesquisaId, podeApagar }: {
     let vivo = true;
     buscaEmVoo.current = true;
     setCarregandoBusca(true);
-    censo.respostas(pesquisaId, 1000, 0)
-      .then((r: { itens?: Linha[]; total?: number }) => {
-        if (!vivo) return;
-        setTodas(r.itens || []);
-        if (r.total != null) setTotal(r.total);
-      })
+    // ⚠️⚠️ PAGINADO, não um lote fixo. Antes eram `1000, 0` — e a pesquisa
+    // tinha 1.410 respostas (medido em 24/09/2026). Como a ordem é da mais
+    // recente para a mais antiga, as 410 MAIS ANTIGAS ficavam invisíveis e a
+    // tela dizia "0 encontrada(s)" — que se lê como "fulano não respondeu".
+    //
+    // ⚠️ Aumentar o número não resolveria: o servidor faz `Math.min(limite,
+    // 1000)` e devolve 1.000 sem avisar. Por isso é preciso paginar.
+    //
+    // O 1º lote traz o `total`; com ele, `lotesPara` diz quantos faltam.
+    (async () => {
+      const primeiro = await censo.respostas(pesquisaId, POR_LOTE, 0);
+      if (!vivo) return;
+      const itens: Linha[] = [...(primeiro.itens || [])];
+      const totalReal = primeiro.total ?? itens.length;
+      if (primeiro.total != null) setTotal(primeiro.total);
+
+      const { offsets, truncado, alcance } = lotesPara(totalReal);
+      // ⚠️ Os lotes seguintes vão EM PARALELO, não em fila. Em fila, o custo é
+      // a soma das idas e voltas — com 20 lotes o teste levou 68 SEGUNDOS, e o
+      // que é lento no teste é lento na mão de quem digita. `offsets[0]` já
+      // veio acima; os demais são independentes entre si.
+      const resto = await Promise.all(
+        offsets.slice(1).map((off) => censo.respostas(pesquisaId, POR_LOTE, off)),
+      );
+      if (!vivo) return;
+      // ⚠️ A ordem importa: `Promise.all` preserva a ordem dos offsets, então a
+      // lista continua da mais recente para a mais antiga.
+      for (const r of resto) itens.push(...((r as { itens?: Linha[] }).itens || []));
+      setTodas(itens);
+      setBuscaTruncada(truncado ? { alcance } : null);
+    })()
       .catch((e: Error) => { if (vivo) toast.error(e?.message || 'Não foi possível buscar.'); })
       // ⚠️ SEM o guarda de `vivo` aqui, e de propósito: `setTodas` acima muda uma
       // dependência do efeito, então a limpeza roda ANTES deste `finally` e
@@ -235,7 +265,9 @@ export default function AbaRespostas({ pesquisaId, podeApagar }: {
       <div className="flex items-center justify-between gap-3 flex-wrap">
         <p className="text-sm text-muted-foreground">
           {total ?? linhas.length} resposta(s) concluída(s)
-          {buscando && (carregandoBusca ? ' · buscando em todas…' : ` · ${filtradas.length} encontrada(s)`)}
+          {buscando && (carregandoBusca
+            ? ' · buscando em todas…'
+            : ` · ${filtradas.length} encontrada(s) em ${(todas?.length ?? 0).toLocaleString('pt-BR')} varrida(s)`)}
         </p>
         <div className="relative w-full sm:w-72">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 size-4 text-muted-foreground" />
@@ -247,6 +279,19 @@ export default function AbaRespostas({ pesquisaId, podeApagar }: {
           />
         </div>
       </div>
+
+      {/* ⚠️⚠️ Se a busca não alcançou tudo, a tela DIZ. Um teto que trunca em
+          silêncio é exatamente o defeito que esta mudança conserta: "0
+          encontrada(s)" se lê como "a pessoa não respondeu", e ninguém tem como
+          desconfiar. Hoje (1.410 respostas) isto não aparece — ele existe para
+          o dia em que a base crescer. */}
+      {buscando && buscaTruncada && !carregandoBusca && (
+        <p className="text-xs text-amber-700 dark:text-amber-500 leading-snug">
+          ⚠️ A busca varreu as <strong>{buscaTruncada.alcance.toLocaleString('pt-BR')}</strong> respostas
+          mais recentes, de {(total ?? 0).toLocaleString('pt-BR')}. Quem respondeu antes disso não entra
+          neste resultado — use os filtros da pesquisa para estreitar o período.
+        </p>
+      )}
 
       <Card className="overflow-hidden p-0">
         <div className="overflow-x-auto">
