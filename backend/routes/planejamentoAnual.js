@@ -15,18 +15,40 @@ const router = require('express').Router();
 const { authenticate, authorizeModule, isSuperAdminEmail } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
+const { isAuthorizedCron } = require('../utils/cronAuth');
 const PA = require('../services/planejamentoAnualRegras');
 const PAInsights = require('../services/planejamentoAnualInsights');
+const { criarSolicitacaoRotina, gerarSolicitacoesRotinaCompras } = require('../services/planejamentoAnualSolicitacoes');
 
 const MOD = 'planejamento-anual';
 
-router.use(authenticate);
-
-// ── Helpers ──────────────────────────────────────────────────────────────
 function hojeSaoPaulo() {
   // 'YYYY-MM-DD' no fuso America/Sao_Paulo (en-CA formata ISO)
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo' }).format(new Date());
 }
+
+// Cron (ANTES do authenticate · CRON_SECRET): gera 1 solicitação de COMPRAS
+// por ciclo de recorrência vencido, para propostas de rotina JÁ APROVADAS
+// (a régua de vencimento vive em services/planejamentoAnualSolicitacoes.js).
+// Reserva de espaço NÃO passa por aqui — é gerada uma única vez, no momento
+// da decisão (ver aplicarDecisao abaixo).
+// ⚠️ Sem slot próprio no vercel.json (a Vercel está no teto de crons do
+// plano) — o disparo automático é de carona no cron diário
+// `/api/kpis/v2/cron/coletar` (07:00 · ver kpisV2.js). Esta rota é o caminho
+// de disparo MANUAL/teste, sempre atrás do CRON_SECRET.
+router.get('/cron/gerar-solicitacoes-rotina', async (req, res) => {
+  if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'Unauthorized' });
+  try {
+    const r = await gerarSolicitacoesRotinaCompras();
+    console.log(`[planejamento-anual/cron/gerar-solicitacoes-rotina] ${hojeSaoPaulo()} · ${r.avaliadas} avaliadas · ${r.gerados} geradas · ${r.erros.length} erros`);
+    res.json({ ok: true, ...r });
+  } catch (e) {
+    console.error('[planejamento-anual/cron/gerar-solicitacoes-rotina]', e.message);
+    res.status(500).json({ error: 'Erro ao gerar solicitações de rotina' });
+  }
+});
+
+router.use(authenticate);
 
 // Pastor presidente por CARGO · ou SUPER-ADMIN (decisão do Yago 2026-08-13:
 // super-admin vê tudo sem restrição — é quem testa e administra o sistema;
@@ -380,6 +402,48 @@ router.put('/propostas/:id', authorizeModule(MOD, 2), async (req, res) => {
   res.json(data);
 });
 
+// ── Config de rotina (Compras/Reserva de Espaço) ────────────────────────
+// Vive em tabela PRÓPRIA (plan_propostas_rotina_solicitacao), NUNCA em coluna
+// de plan_propostas — as rotas de avaliação/decisão fazem select('*') na
+// proposta e repassam a linha adiante; isolar aqui garante por construção
+// que diretores e Pastor nunca veem esses campos. Só o próprio proponente
+// (ou Pastor/super-admin) lê/edita.
+router.get('/propostas/:id/config-rotina', authorizeModule(MOD, 1), async (req, res) => {
+  const p = await carregarProposta(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });
+  if (!proponenteIds(p).includes(req.user.id) && !(await ehPastorOuSuper(req))) {
+    return res.status(403).json({ error: 'Só o proponente vê a configuração de rotina' });
+  }
+  const { data } = await supabase
+    .from('plan_propostas_rotina_solicitacao').select('*').eq('proposta_id', p.id).maybeSingle();
+  res.json(data || null);
+});
+
+router.put('/propostas/:id/config-rotina', authorizeModule(MOD, 2), async (req, res) => {
+  const p = await carregarProposta(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });
+  if (!proponenteIds(p).includes(req.user.id) && !(await ehPastorOuSuper(req))) {
+    return res.status(403).json({ error: 'Só o proponente edita a configuração de rotina' });
+  }
+  if (p.natureza !== 'rotina') {
+    return res.status(422).json({ error: 'Esta configuração só existe para propostas de natureza "rotina"' });
+  }
+  const categoria = req.body?.categoria;
+  if (!['compras', 'reserva_espaco', 'outros'].includes(categoria)) {
+    return res.status(400).json({ error: 'Categoria inválida (compras · reserva_espaco · outros)' });
+  }
+  const dados = categoria === 'outros' ? {} : (req.body?.dados && typeof req.body.dados === 'object' ? req.body.dados : {});
+  const { data, error } = await supabase
+    .from('plan_propostas_rotina_solicitacao')
+    .upsert({ proposta_id: p.id, categoria, dados, ativo: true }, { onConflict: 'proposta_id' })
+    .select().single();
+  if (error) {
+    console.error('[planejamento-anual] erro ao salvar config de rotina:', error.message);
+    return res.status(400).json({ error: 'Não foi possível salvar a configuração de rotina' });
+  }
+  res.json(data);
+});
+
 // Enviar: valida a janela NO BACKEND (teste de aceitação 11)
 router.post('/propostas/:id/enviar', authorizeModule(MOD, 2), async (req, res) => {
   const p = await carregarProposta(req.params.id);
@@ -540,6 +604,32 @@ async function aplicarDecisao({ proposta, corpo, pastorId }) {
       .eq('id', decisao.id);
     return { erro: 'Erro ao atualizar o estado da proposta · decisão desfeita' };
   }
+
+  // Rotina de Reserva de Espaço · geração ÚNICA, no momento em que a decisão
+  // aprova a proposta (nunca por cron — é uma reserva permanente, não um
+  // pedido novo a cada ciclo · ver services/planejamentoAnualSolicitacoes.js).
+  // Best-effort: falha aqui não pode desfazer uma decisão já registrada.
+  if (['aprovada', 'aprovada_ressalvas'].includes(tipo) && proposta.natureza === 'rotina') {
+    try {
+      const { data: cfg } = await supabase
+        .from('plan_propostas_rotina_solicitacao').select('*')
+        .eq('proposta_id', proposta.id).eq('categoria', 'reserva_espaco').eq('ativo', true)
+        .is('ultima_geracao_em', null).maybeSingle();
+      if (cfg) {
+        const r = await criarSolicitacaoRotina({ proposta, categoria: 'reserva_espaco', dados: cfg.dados || {} });
+        if (r.solicitacao) {
+          await supabase.from('plan_propostas_rotina_solicitacao')
+            .update({ ultima_geracao_em: new Date().toISOString(), ativo: false })
+            .eq('id', cfg.id);
+        } else if (r.erro) {
+          console.error('[planejamento-anual] rotina reserva_espaco não gerada:', r.erro);
+        }
+      }
+    } catch (e) {
+      console.error('[planejamento-anual] exceção ao gerar rotina de reserva de espaço:', e.message);
+    }
+  }
+
   return { decisao };
 }
 
@@ -1144,6 +1234,194 @@ router.get('/ciclos/:id/orcamento/pastor', authorizeModule(MOD, 1), async (req, 
     itens: visao.aprovadas.map((p) => ({ id: p.id, nome: p.nome, rateio: PA.distribuirCustoPorMes(p, { usarApontamento: true }) })),
     pendentes: visao.pendentes.map((p) => ({ id: p.id, nome: p.nome, rateio: PA.rateioMensal(p) })),
   });
+});
+
+// =====================================================================
+// ── Execução do Planejamento (2026-09-23) ───────────────────────────────
+// =====================================================================
+// Módulo novo, unificando Eventos/Projetos/Rotinas nascidos do ciclo de
+// propostas. routeKey PRÓPRIO no ROUTE_MODULE_MAP ('planejamento-execucao',
+// distinto de 'planejamento-anual') — leitura nível 1, materializar nível 3.
+// Reaproveita o SELECT/mapeamento de GET /ciclos/:id/propostas (linha ~264),
+// mas: (a) sem escopo "minhas vs todas" — é visão consolidada de quem tem
+// acesso ao módulo; (b) filtro server-side por natureza/área; (c) inclui o
+// derivado no_calendario (PA.noCalendario) e o vínculo materializado.
+const EXEC_MOD = 'planejamento-execucao';
+
+router.get('/execucao/propostas', authorizeModule(EXEC_MOD, 1), async (req, res) => {
+  let query = supabase.from('plan_propostas').select('*')
+    .in('estado', ['aprovada', 'aprovada_ressalvas'])
+    .is('deleted_at', null)
+    .order('data_inicio');
+  if (req.query.ciclo_id) query = query.eq('ciclo_id', req.query.ciclo_id);
+  if (req.query.natureza) query = query.eq('natureza', req.query.natureza);
+  if (req.query.area) query = query.eq('area', req.query.area);
+  const { data: propostas, error } = await query;
+  if (error) return res.status(500).json({ error: 'Erro ao listar as propostas aprovadas' });
+
+  const ids = (propostas || []).map((p) => p.id);
+  const decs = await decisoesPorProposta(ids);
+
+  // Líder por consulta PRÓPRIA (não embed) — evita depender do nome exato
+  // da FK do PostgREST e degrada sozinho se a consulta falhar.
+  const liderIds = [...new Set((propostas || []).map((p) => p.lider_id).filter(Boolean))];
+  const lideres = {};
+  if (liderIds.length) {
+    const { data } = await supabase.from('profiles').select('id, name').in('id', liderIds);
+    (data || []).forEach((r) => { lideres[r.id] = r.name; });
+  }
+
+  // Vínculo materializado (projeto/evento) · consulta ISOLADA best-effort —
+  // falha aqui vira "vínculo desconhecido", nunca derruba a lista inteira.
+  const vinculoPorProposta = {};
+  if (ids.length) {
+    try {
+      const [{ data: projs }, { data: evs }] = await Promise.all([
+        supabase.from('projects').select('id, proposta_id').in('proposta_id', ids),
+        supabase.from('events').select('id, proposta_id').in('proposta_id', ids),
+      ]);
+      (projs || []).forEach((r) => { vinculoPorProposta[r.proposta_id] = { tipo: 'projeto', id: r.id }; });
+      (evs || []).forEach((r) => { vinculoPorProposta[r.proposta_id] = { tipo: 'evento', id: r.id }; });
+    } catch (e) {
+      console.error('[planejamento-execucao] erro ao ler vínculos:', e.message);
+    }
+  }
+
+  res.json((propostas || []).map((p) => ({
+    id: p.id, nome: p.nome, natureza: p.natureza, area: p.area,
+    lider_id: p.lider_id, lider_nome: lideres[p.lider_id] || null,
+    data_inicio: p.data_inicio, precisao_inicio: p.precisao_inicio,
+    multi_dia: p.multi_dia, data_fim: p.data_fim, precisao_fim: p.precisao_fim,
+    estado: p.estado, ciclo_id: p.ciclo_id, custo: p.custo,
+    no_calendario: PA.noCalendario(p, decs[p.id] || []),
+    vinculo: vinculoPorProposta[p.id] || { tipo: null, id: null },
+  })));
+});
+
+// Detalhe somente-leitura (aba Info + o que a aba Fases precisa pra decidir
+// o que mostrar). A régua de visibilidade é a mesma do GET /propostas/:id
+// restrita a quem já está aprovada — quem acessa o módulo de execução vê
+// qualquer proposta aprovada, não só a própria (é o "consolidado" do plano).
+router.get('/execucao/propostas/:id', authorizeModule(EXEC_MOD, 1), async (req, res) => {
+  const p = await carregarProposta(req.params.id);
+  if (!p || !['aprovada', 'aprovada_ressalvas'].includes(p.estado)) {
+    return res.status(404).json({ error: 'Proposta não encontrada' });
+  }
+  const decs = await decisoesPorProposta([p.id]);
+
+  let vinculo = { tipo: null, id: null };
+  try {
+    const [{ data: proj }, { data: ev }] = await Promise.all([
+      supabase.from('projects').select('id').eq('proposta_id', p.id).maybeSingle(),
+      supabase.from('events').select('id').eq('proposta_id', p.id).maybeSingle(),
+    ]);
+    if (proj) vinculo = { tipo: 'projeto', id: proj.id };
+    else if (ev) vinculo = { tipo: 'evento', id: ev.id };
+  } catch (e) {
+    console.error('[planejamento-execucao] erro ao ler vínculo:', e.message);
+  }
+
+  let liderNome = null;
+  if (p.lider_id) {
+    const { data } = await supabase.from('profiles').select('name').eq('id', p.lider_id).maybeSingle();
+    liderNome = data?.name || null;
+  }
+  let localNome = null;
+  if (p.local_id) {
+    const { data } = await supabase.from('plan_locais').select('nome').eq('id', p.local_id).maybeSingle();
+    localNome = data?.nome || null;
+  }
+  let rotinaConfig = null;
+  if (p.natureza === 'rotina') {
+    const { data } = await supabase
+      .from('plan_propostas_rotina_solicitacao').select('*').eq('proposta_id', p.id).maybeSingle();
+    rotinaConfig = data || null;
+  }
+
+  res.json({
+    ...p,
+    lider_nome: liderNome,
+    local_nome: localNome,
+    no_calendario: PA.noCalendario(p, decs[p.id] || []),
+    vinculo,
+    rotina_config: rotinaConfig,
+  });
+});
+
+// Materializa o Projeto/Evento vinculado. Só depois de `no_calendario` —
+// nunca automático na decisão do Pastor (decisão do plano) — e nunca duas
+// vezes (1 proposta → no máximo 1 vínculo, checado nas DUAS tabelas).
+router.post('/propostas/:id/materializar', authorizeModule(EXEC_MOD, 3), async (req, res) => {
+  const tipo = req.body?.tipo;
+  if (!['projeto', 'evento'].includes(tipo)) {
+    return res.status(400).json({ error: 'Tipo inválido (informe "projeto" ou "evento")' });
+  }
+  const p = await carregarProposta(req.params.id);
+  if (!p) return res.status(404).json({ error: 'Proposta não encontrada' });
+  if (p.natureza !== tipo) {
+    return res.status(422).json({ error: `Esta proposta é de natureza "${p.natureza}" — não pode virar ${tipo}` });
+  }
+  const decs = await decisoesPorProposta([p.id]);
+  if (!PA.noCalendario(p, decs[p.id] || [])) {
+    return res.status(409).json({ error: 'A proposta ainda não entrou no calendário (ressalva pendente de verificação, ou fora do estado aprovado)' });
+  }
+
+  const [{ data: projExistente }, { data: evExistente }] = await Promise.all([
+    supabase.from('projects').select('id').eq('proposta_id', p.id).maybeSingle(),
+    supabase.from('events').select('id').eq('proposta_id', p.id).maybeSingle(),
+  ]);
+  if (projExistente || evExistente) {
+    return res.status(409).json({ error: 'Esta proposta já tem um Projeto/Evento vinculado' });
+  }
+
+  let liderNome = '';
+  if (p.lider_id) {
+    const { data } = await supabase.from('profiles').select('name').eq('id', p.lider_id).maybeSingle();
+    liderNome = data?.name || '';
+  }
+  const anoInicio = parseInt(String(p.data_inicio || '').slice(0, 4), 10) || new Date().getFullYear();
+
+  if (tipo === 'projeto') {
+    const insert = {
+      name: p.nome, year: anoInicio, description: p.descricao || '', status: 'planejamento',
+      responsible: liderNome, responsible_id: p.lider_id,
+      leader: liderNome, leader_id: p.lider_id,
+      area: p.area || '',
+      date_start: p.data_inicio || null, date_end: p.data_fim || null,
+      budget_planned: Number(p.custo) || 0, priority: 'media', notes: '',
+      created_by: req.user.id, proposta_id: p.id,
+    };
+    const { data, error } = await supabase.from('projects').insert(insert).select().single();
+    if (error) {
+      console.error('[planejamento-execucao] erro ao criar projeto:', error.message);
+      return res.status(500).json({ error: 'Não foi possível criar o projeto vinculado' });
+    }
+    return res.status(201).json({ tipo, id: data.id });
+  }
+
+  // tipo === 'evento'
+  let localNome = '';
+  if (p.local_id) {
+    const { data } = await supabase.from('plan_locais').select('nome').eq('id', p.local_id).maybeSingle();
+    localNome = data?.nome || '';
+  }
+  // `events.recurrence` só aceita unico|semanal|mensal|anual — recorrências
+  // mais finas da proposta (trimestral/semestral/personalizada) degradam pra
+  // 'unico' (a periodicidade real fica registrada na proposta de origem).
+  const recorrenciaMap = { unica: 'unico', semanal: 'semanal', mensal: 'mensal' };
+  const insertEvento = {
+    name: p.nome, date: p.data_inicio, description: p.descricao || '',
+    location: localNome, responsible: liderNome,
+    budget_planned: Number(p.custo) || 0,
+    recurrence: recorrenciaMap[p.recorrencia] || 'unico',
+    notes: '', created_by: req.user.id, proposta_id: p.id,
+  };
+  const { data, error } = await supabase.from('events').insert(insertEvento).select().single();
+  if (error) {
+    console.error('[planejamento-execucao] erro ao criar evento:', error.message);
+    return res.status(500).json({ error: 'Não foi possível criar o evento vinculado' });
+  }
+  res.status(201).json({ tipo, id: data.id });
 });
 
 module.exports = router;

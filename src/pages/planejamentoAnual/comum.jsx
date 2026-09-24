@@ -36,6 +36,15 @@ export const NATUREZAS = [
   { valor: 'rotina', rotulo: 'Rotina' },
 ];
 
+// Categoria da rotina · só aparece quando natureza='rotina'. Compras e Reserva
+// de Espaço disparam geração automática de solicitação (ver PropostasTab);
+// "Outros" não gera nada — a proposta segue como rotina comum.
+export const CATEGORIAS_ROTINA = [
+  { valor: 'compras', rotulo: 'Compras' },
+  { valor: 'reserva_espaco', rotulo: 'Reserva de Espaço' },
+  { valor: 'outros', rotulo: 'Outros' },
+];
+
 export const RECORRENCIAS = [
   { valor: 'unica', rotulo: 'Única' },
   { valor: 'diaria', rotulo: 'Diária' },
