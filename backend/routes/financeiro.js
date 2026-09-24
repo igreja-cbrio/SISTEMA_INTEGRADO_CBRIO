@@ -3,6 +3,7 @@ const { authenticate, authorizeModule, getEffectiveLevel } = require('../middlew
 const { supabase } = require('../utils/supabase');
 const { fetchAllRows } = require('../utils/pagination');
 const { assinarLinhas } = require('../services/anexosLogArquivos');
+const { hojeBR } = require('../utils/dataBr');
 
 const { isAuthorizedCron } = require('../utils/cronAuth');
 
@@ -43,7 +44,10 @@ router.get('/dashboard', async (req, res) => {
     ]);
 
     const saldoTotal = (contas.data || []).filter(c => c.ativa).reduce((s, c) => s + Number(c.saldo), 0);
-    const hoje = new Date().toISOString().slice(0, 10);
+    // hojeBR (América/São_Paulo) — Vercel roda em UTC e às 21h BRT já é
+    // "amanhã" no UTC, o que empurra a conta com vencimento HOJE para fora
+    // de `vencidas` 3h antes da meia-noite BR (ver ALT-18/D6 do code review).
+    const hoje = hojeBR();
 
     const transMes = transacoes || [];
     const receitasMes = transMes.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);

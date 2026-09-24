@@ -2,6 +2,7 @@ const { supabase } = require('../utils/supabase');
 const { getEffectiveLevel } = require('../middleware/auth');
 const { searchVault } = require('./cerebroSearch');
 const { searchConhecimento } = require('./conhecimentoBase');
+const { hojeBR } = require('../utils/dataBr');
 
 /**
  * Mapeia cada módulo de agente para a routeKey usada no sistema de permissões
@@ -243,7 +244,9 @@ async function fetchFinanceiroContext() {
   const { count: transacoes } = await supabase.from('fin_transacoes').select('id', { count: 'exact', head: true });
   const { count: pendentes } = await supabase.from('fin_contas_pagar').select('id', { count: 'exact', head: true }).eq('status', 'pendente');
 
-  const today = new Date().toISOString().slice(0, 10);
+  // "hoje" no fuso BR — Vercel roda em UTC, senão às 21h BRT já vira "amanhã"
+  // e a conta com vencimento HOJE some das "vencidas" antes da meia-noite BR.
+  const today = hojeBR();
   const { count: vencidas } = await supabase.from('fin_contas_pagar').select('id', { count: 'exact', head: true }).eq('status', 'pendente').lt('data_vencimento', today);
   const { count: reembolsos } = await supabase.from('fin_reembolsos').select('id', { count: 'exact', head: true }).eq('status', 'pendente');
 
@@ -311,7 +314,9 @@ async function fetchPatrimonioContext() {
 async function fetchEventosContext() {
   const { count: total } = await supabase.from('events').select('id', { count: 'exact', head: true });
 
-  const hoje = new Date().toISOString().slice(0, 10);
+  // "hoje" no fuso BR — evita o eventos de 31/03 desaparecerem quando o
+  // relógio do agente pergunta às 22h BRT (já é abril no UTC).
+  const hoje = hojeBR();
   const { data: proximos } = await supabase.from('events')
     .select('id, name, date, status, location, responsible')
     .gte('date', hoje)
