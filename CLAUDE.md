@@ -13655,6 +13655,21 @@ handler em `backend/agents/apply/financeiroApply.js` (→ applied/failed).
   ⚠️ As rotas de leitura de `agents.js` migraram pro cliente REST (pool pg não
   conecta no Vercel · PR #920).
 
+## Site público · aba SÉRIES (`cbrio.com.br/series`) (2026-09-24 · SEM migration)
+
+Pedido do Matheus: tema anual 2027 + uma série por mês (inspiração life.church/media/wake-up).
+Páginas `/series` e `/series/:slug` (no ERP, prévia em `/novosite/series`), item "Séries" no NAV
+do site. **Conteúdo é arquivo, não banco**: `src/pages/public/novosite/series2027.ts` (TEMA_ANUAL +
+12 séries · `titulo: null` = card "Série em breve", sem página). PDFs/artes em `public/series/2027/`.
+- ⚠️ **Nada se publica à mão**: a mensagem libera vídeo (YouTube, carregado só no clique) e PDF no
+  DIA dela em BRT (`src/lib/seriesSite.ts` · comparação de STRING, nunca `new Date('YYYY-MM-DD')`,
+  que é 21h do dia anterior no Rio). Data inválida nunca libera. Teste: `src/test/seriesSite.test.ts`
+  (também valida slugs únicos e que cada mensagem cai no mês da série).
+- ⚠️ Não trocar `slug` depois de divulgado (link compartilhado quebra). Arquivo é público: zero PII.
+- `SerieDetalhe` remonta por `key={slug}`: o `useChrome` só observa `.ns-reveal` na montagem.
+- ⏳ Futuro possível: puxar os vídeos da playlist do YouTube (`online_series`/`online_videos`) em vez
+  de colar o ID à mão.
+
 ## /novosite · prévia da home do novo site público (2026-05-30)
 
 Rota PÚBLICA standalone `/novosite` (+ `/novosite/quem-somos`) fora do

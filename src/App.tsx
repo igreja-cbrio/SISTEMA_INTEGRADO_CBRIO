@@ -369,6 +369,9 @@ const Motion = lazyWithRetry(() => import('./pages/public/Motion'));
 // Pública, standalone, fora de qualquer menu. Conteúdo entra depois.
 const NovoSite = lazyWithRetry(() => import('./pages/public/NovoSite'));
 const QuemSomos = lazyWithRetry(() => import('./pages/public/QuemSomos'));
+// /series · séries de pregação do ano (conteúdo em pages/public/novosite/series2027.ts).
+const SeriesLista = lazyWithRetry(() => import('./pages/public/SeriesLista'));
+const SerieDetalhe = lazyWithRetry(() => import('./pages/public/SerieDetalhe'));
 const Suporte = lazyWithRetry(() => import('./pages/public/Suporte'));
 // /atlas · atlas operacional do sistema (manual + auditoria) · standalone, autenticado, fora do menu.
 const Atlas = lazyWithRetry(() => import('./pages/atlas/Atlas'));
@@ -726,6 +729,8 @@ function AppRoutes() {
       {/* Prévia interna do novo site (redesign cbrio.com.br) · não-listada */}
       <Route path="/novosite" element={<Suspense fallback={<Loading />}><NovoSite /></Suspense>} />
       <Route path="/novosite/quem-somos" element={<Suspense fallback={<Loading />}><QuemSomos /></Suspense>} />
+      <Route path="/novosite/series" element={<Suspense fallback={<Loading />}><SeriesLista /></Suspense>} />
+      <Route path="/novosite/series/:slug" element={<Suspense fallback={<Loading />}><SerieDetalhe /></Suspense>} />
       {/* Página pública de suporte dos apps (Apple Guideline 1.5 · Support URL) */}
       <Route path="/suporte" element={<Suspense fallback={<Loading />}><Suporte /></Suspense>} />
       <Route path="/nps/publica/:token" element={<Suspense fallback={<Loading />}><NpsPublica /></Suspense>} />
@@ -972,6 +977,8 @@ function SitePublicoRoutes() {
     <Routes>
       <Route path="/" element={<Suspense fallback={<Loading />}><NovoSite /></Suspense>} />
       <Route path="/quem-somos" element={<Suspense fallback={<Loading />}><QuemSomos /></Suspense>} />
+      <Route path="/series" element={<Suspense fallback={<Loading />}><SeriesLista /></Suspense>} />
+      <Route path="/series/:slug" element={<Suspense fallback={<Loading />}><SerieDetalhe /></Suspense>} />
       {/* caminhos antigos da prévia continuam funcionando */}
       <Route path="/novosite" element={<Navigate to="/" replace />} />
       <Route path="/novosite/quem-somos" element={<Navigate to="/quem-somos" replace />} />
