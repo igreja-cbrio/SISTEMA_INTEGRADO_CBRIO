@@ -47,7 +47,7 @@ export type Serie = {
   mes: number; // 1..12
   titulo: string | null;
   subtitulo?: string;
-  /** Objetivo da série (o "por quê" que os pastores definiram). */
+  /** Texto público da série (síntese da descrição + objetivos das mensagens da planilha). */
   objetivo?: string;
   /** Textos bíblicos-base da série. */
   textos?: string[];
@@ -75,7 +75,7 @@ export const SERIES: Serie[] = [
     slug: "eis-que-faco-uma-coisa-nova-2027",
     mes: 1,
     titulo: "Eis que faço uma coisa nova",
-    objetivo: "Coragem para o novo. Coragem para enxergar o futuro. Coragem para transformações. Coragem para uma nova profundidade. Coragem para enfrentar as incertezas.",
+    objetivo: "Deus está fazendo algo novo — e nos chama a avançar com Ele. Nesta série, olhamos para o futuro com os olhos de Deus: percebemos o que Ele já está fazendo entre nós e o que Ele ainda quer fazer, descobrimos aquilo que é único em cada pessoa para esse plano, e nos preparamos em santidade para entrar em águas mais profundas. É tempo de marchar.",
     cor: ['#00839D', '#00ACB3'],
     mensagens: [
       { data: "2027-01-03", titulo: "Diga ao povo que marche", texto: "Exôdo 14:15", resumo: "Chamado ao avanço para o plano de Deus. Pregação em torno de coragem." },
@@ -90,7 +90,7 @@ export const SERIES: Serie[] = [
     mes: 2,
     titulo: "Coragem",
     subtitulo: "Tema anual",
-    objetivo: "Coragem para liderar.",
+    objetivo: "Coragem é o tema do nosso ano. Em fevereiro, aprendemos com pessoas da Bíblia que não se curvaram aos ídolos do seu tempo, enfrentaram o medo pela fé, aceitaram liderar mesmo sem se sentir prontas e agiram quando era preciso. Um convite para você assumir o seu lugar no Reino e na igreja de Cristo.",
     cor: ['#2F4858', '#00839D'],
     mensagens: [
       { data: "2027-02-07", titulo: "Coragem para não se curvar", texto: "Daniel 3", resumo: "Diante de uma semana de carnaval, falar sobre o perigo da idolatria." },
@@ -104,7 +104,7 @@ export const SERIES: Serie[] = [
     mes: 3,
     titulo: "Ainda há lugar na mesa",
     subtitulo: "O Grande Banquete",
-    objetivo: "Coragem para se relacionar. Coragem para se envolver. Coragem para sentar em uma mesa nova. Coragem para se comprometer. Coragem para ser vulnerável.",
+    objetivo: "Deus deseja que vivamos em relacionamento — com Ele e uns com os outros. Nesta série falamos sobre o poder da mesa: as influências que nos curam ou nos destroem, o convite de Deus que alcança todas as pessoas e, na Páscoa, o Grande Banquete que Jesus preparou na cruz para quem quiser se sentar com Ele.",
     cor: ['#8E9562', '#C9B37E'],
     mensagens: [
       { data: "2027-03-07", titulo: "A necessidade da mesa", texto: "Tiago 5:16; 2 Samuel 9:1-13", resumo: "Há um desejo de Deus para que nos relacionemos, com Ele e com os outros." },
@@ -118,7 +118,7 @@ export const SERIES: Serie[] = [
     mes: 4,
     titulo: "Mentiroso, Maluco ou Messias",
     subtitulo: "Em defesa de Cristo",
-    objetivo: "Coragem para ser transformado. Coragem para se render. Coragem para acreditar. Coragem para uma nova vida. Coragem para morrer.",
+    objetivo: "Quem é Jesus, afinal? Nesta série olhamos com seriedade para perguntas que todo mundo já fez: Jesus realmente existiu? Ele é mesmo o Messias prometido? Ressuscitou de verdade? E vai voltar? Evidências históricas, profecias cumpridas e o testemunho de quem viu — e o que tudo isso muda na nossa vida.",
     cor: ['#00ACB3', '#7CC6C2'],
     mensagens: [
       { data: "2027-04-04", titulo: "Jesus realmente existiu?", texto: "1 João 1:2", resumo: "Mostrar de maneira persuasiva as evidências, comprovações históricas de que Jesus realmente existiu. E os impactos práticos disso." },
@@ -131,7 +131,7 @@ export const SERIES: Serie[] = [
     slug: "entre-domingos-2027",
     mes: 5,
     titulo: "Entre Domingos",
-    objetivo: "Coragem para se aprofundar. Coragem para amadurecer. Coragem para ser constante. Coragem para ter disciplina. Coragem para novos hábitos. Coragem para sair da zona de conforto. Coragem para novas prioridades.",
+    objetivo: "A vida com Deus não acontece só no domingo. Nesta série falamos sobre as práticas que nos sustentam ao longo da semana — oração, leitura da Bíblia, jejum, adoração e ser testemunha — para que a fé vire rotina, profundidade e caminho.",
     cor: ['#5B4B8A', '#00839D'],
     mensagens: [
       { data: "2027-05-02", titulo: "Oração" },
@@ -145,7 +145,7 @@ export const SERIES: Serie[] = [
     slug: "love-killers-2027",
     mes: 6,
     titulo: "Love Killers",
-    objetivo: "Coragem para se relacionar. Coragem para amar.",
+    objetivo: "O amor é um presente de Deus, mas há coisas que o destroem por dentro. A partir de 1 João 2:16, esta série fala sobre quatro inimigos do amor — a ira, a luxúria, o dinheiro e a soberba — e sobre como a Palavra nos ensina a proteger e a viver os relacionamentos que Deus nos deu.",
     textos: ["1 João 2:16"],
     cor: ['#B5654A', '#E0A46B'],
     mensagens: [
@@ -159,7 +159,7 @@ export const SERIES: Serie[] = [
     slug: "vozes-2027",
     mes: 7,
     titulo: "Vozes",
-    objetivo: "Em julho, a igreja ouve outras vozes: quatro pregadores — dois da casa e dois convidados — trazem uma palavra de encorajamento, cada um do jeito que Deus falar à vida deles. Coragem para ouvir novas pessoas. Coragem para encarar o novo. Coragem para furar a bolha. Coragem para enfrentar o incerto. Coragem para o desconhecido.",
+    objetivo: "Em julho, a igreja ouve outras vozes. Quatro pregadores — dois da casa e dois convidados — trazem uma palavra de encorajamento, cada um do jeito que Deus falar à vida deles. Um mês para ouvir o novo e se deixar encorajar.",
     cor: ['#1F6F78', '#8E9562'],
     mensagens: [
       { data: "2027-07-04", titulo: "Encorajamento" },
@@ -172,7 +172,7 @@ export const SERIES: Serie[] = [
     slug: "acorda-2027",
     mes: 8,
     titulo: "Acorda",
-    objetivo: "Coragem para dar novos passos. Coragem para agir. Coragem para se conectar. Coragem para pertencer. Coragem para continuar avançando.",
+    objetivo: "Tem hora de acordar. Nesta série passamos por histórias de pessoas que despertaram: Pedro, liberto da prisão e indo encontrar a igreja reunida; a menina que voltou à vida pela palavra de Jesus; Êutico, que dormiu enquanto a Palavra era pregada; os discípulos que não conseguiram vigiar em oração; e Jonas, que dormia fugindo do seu chamado. Um convite para despertar para a comunhão, para a vida, para ouvir Deus, para a oração e para a missão.",
     cor: ['#00839D', '#2F4858'],
     mensagens: [
       { data: "2027-08-01", titulo: "Acorda pra resenha (Pedro)", texto: "Atos 12:6–17", resumo: "Pedro acorda na prisão, é liberto e vai encontrar os irmãos reunidos na casa de Maria." },
@@ -186,7 +186,7 @@ export const SERIES: Serie[] = [
     slug: "linhas-tortas-2027",
     mes: 9,
     titulo: "Linhas tortas",
-    objetivo: "Coragem para confiar. Coragem para se frustrar. Coragem para enfrentar os momentos ruins. Coragem para olhar além. Coragem para ter fé.",
+    objetivo: "Deus não perde o controle. Mesmo quando as circunstâncias parecem contrárias, o plano dEle não pode ser frustrado. Com José, Rute, Daniel e os discípulos no caminho de Emaús, esta série fala de esperança, fé e vida — e de como Deus escreve certo por linhas tortas.",
     cor: ['#9C4F5B', '#D98A7E'],
     mensagens: [
       { data: "2027-09-05", titulo: "José: do poço ao palácio", texto: "Gênesis 37 e 50:15–21" },
@@ -199,7 +199,7 @@ export const SERIES: Serie[] = [
     slug: "eu-robo-2027",
     mes: 10,
     titulo: "Eu Robô",
-    objetivo: "Coragem para se desconectar. Coragem para parar. Coragem para mudar. Coragem para descansar. Coragem para ser humano. Coragem para criar. Coragem para inovar. Coragem para ir na contramão.",
+    objetivo: "Num mundo acelerado e automatizado, Deus nos chama a viver de um jeito mais humano. Nesta série colocamos lado a lado a pressa e o descanso, os atalhos e o empenho, a religiosidade mecânica e o coração genuíno, a obsessão por resultados e o valor da jornada — e lembramos que Deus não nos vê como um número: Ele nos conhece pelo nome.",
     cor: ['#3E6B48', '#8E9562'],
     mensagens: [
       { data: "2027-10-03", titulo: "Velocidade x Descanso/Pausa", texto: "Mateus 11:28-30; Hebreus 4:11; Gênesis 2:2-3", resumo: "Mostrar a importância do descanso em detrimento a urgência atual" },
@@ -214,7 +214,7 @@ export const SERIES: Serie[] = [
     mes: 11,
     titulo: "31 dias para mudar sua vida",
     subtitulo: "Bênção ou maldição?",
-    objetivo: "Coragem para ouvir, Coragem para refletir, Coragem para aprender, Coragem para mudar, Coragem para praticar, Coragem para ser generoso.",
+    objetivo: "Sabedoria para a vida real. Inspirada em Provérbios, esta série é um mês de estudo sobre as escolhas que trazem bênção ou maldição em quatro áreas do dia a dia: sexo, dinheiro, palavras e relacionamentos.",
     cor: ['#2F4858', '#5B4B8A'],
     mensagens: [
       { data: "2027-11-07", titulo: "Sexo", texto: "Provérbios 5; Cânticos" },
@@ -227,7 +227,7 @@ export const SERIES: Serie[] = [
     slug: "encontros-2027",
     mes: 12,
     titulo: "Encontros",
-    objetivo: "Coragem para se surpreender, Coragem para encontrar Jesus, Coragem para agir, Coragem para decisão, Coragem para posicionamento.",
+    objetivo: "Jesus faz o extraordinário no meio do cotidiano. Nesta série acompanhamos encontros que mudaram vidas — o homem no tanque de Betesda, a mulher samaritana, o cego de nascença — até chegarmos ao Natal, o encontro de Deus com a humanidade no nascimento de Jesus.",
     cor: ['#B5654A', '#00839D'],
     mensagens: [
       { data: "2027-12-05", titulo: "O tanque de Betesda", texto: "João 5:1–15" },
