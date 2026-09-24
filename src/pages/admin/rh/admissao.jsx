@@ -10,6 +10,7 @@ import { Button } from '../../../components/ui/button';
 import { BirthDatePicker } from '../../../components/ui/birth-date-picker';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
+import { sanitizeContratoHtml } from '../../../lib/sanitizeContratoHtml';
 
 const C = {
   card: 'var(--cbrio-card)', primary: '#00B39D',
@@ -329,23 +330,42 @@ export function ContratoEditorModal({ data, onClose, onSave, saving }) {
   const [adm] = useState({ ...data });
 
   function handleSave() {
-    const html = editorRef.current ? editorRef.current.innerHTML : adm.contrato_editado;
+    // Sanitiza antes de gravar. Se um XSS passou pelo contentEditable (colar
+    // HTML da área de transferência aceita qualquer tag), aqui fica bloqueado
+    // antes de virar dado persistido no DB.
+    const raw = editorRef.current ? editorRef.current.innerHTML : (adm.contrato_editado || '');
+    const html = sanitizeContratoHtml(raw);
     onSave({ ...adm, contrato_editado: html });
   }
   function handlePrint() {
-    const content = editorRef.current?.innerHTML;
-    if (!content) return;
-    const w = window.open('', '_blank');
-    w.document.write(`
-      <html><head><title>Contrato — ${adm.nome}</title>
+    const raw = editorRef.current?.innerHTML;
+    if (!raw) return;
+    // Fix CRIT-13: `w.document.write(...)` num window.open sem noopener deixa
+    // `window.opener` acessível, e um script embutido roda com origem herdada.
+    // Tanto o texto do contrato quanto o nome do colaborador (adm.nome vem do
+    // DB) precisam ser sanitizados. Usamos Blob URL para eliminar o vetor.
+    const contentSeguro = sanitizeContratoHtml(raw);
+    const nomeSeguro = String(adm.nome || '').replace(/[&<>"']/g, (c) => (
+      { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#x27;' }[c]
+    ));
+    const html = `
+      <html><head><title>Contrato — ${nomeSeguro}</title>
       <style>
         body { font-family: 'Times New Roman', serif; max-width: 700px; margin: 40px auto; padding: 0 24px; color: #1a1a1a; line-height: 1.7; font-size: 14px; }
         h2 { font-size: 18px; } h3 { font-size: 15px; margin-top: 24px; }
         @media print { body { margin: 0; } }
-      </style></head><body>${content}</body></html>
-    `);
-    w.document.close();
-    w.print();
+      </style></head><body>${contentSeguro}
+      <script>window.addEventListener('load', () => setTimeout(() => window.print(), 100));</script>
+      </body></html>
+    `;
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, '_blank', 'noopener,noreferrer');
+    // Revoga a URL depois que o browser carregou o documento pra não vazar memória.
+    setTimeout(() => URL.revokeObjectURL(url), 30000);
+    if (!w) {
+      alert('O navegador bloqueou o popup. Libere popups para imprimir o contrato.');
+    }
   }
 
   return (
@@ -372,7 +392,7 @@ export function ContratoEditorModal({ data, onClose, onSave, saving }) {
           ref={editorRef}
           contentEditable
           suppressContentEditableWarning
-          dangerouslySetInnerHTML={{ __html: (adm.contrato_editado || '').replace(/<script[\s\S]*?<\/script>/gi, '').replace(/on\w+\s*=/gi, 'data-removed=') }}
+          dangerouslySetInnerHTML={{ __html: sanitizeContratoHtml(adm.contrato_editado || '') }}
           style={{
             flex: 1, padding: '32px 48px', overflowY: 'auto',
             outline: 'none', fontSize: 14, lineHeight: 1.7, color: C.text,
