@@ -132,6 +132,7 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 - `backend/services/anexosRhDocumentos.js`
 - `backend/services/cerebroSync.js`
 - `backend/services/cobertura.js`
+- `backend/services/igrejaParceira.js`
 - `backend/services/notificar.js`
 - `backend/services/organogramaIA.js`
 - `backend/services/rhFichaEnvios.js`

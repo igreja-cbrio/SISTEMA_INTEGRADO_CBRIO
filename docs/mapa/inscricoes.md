@@ -19,7 +19,7 @@
 ## Backend
 - `backend/routes/inscricoes.js`
 Guard: `authorizeModule('inscricoes', 1 | 2 | 3 | 4 | 5)`
-<details><summary>Endpoints (62)</summary>
+<details><summary>Endpoints (64)</summary>
 - `DELETE /api/inscricoes/email-templates/:tipo`
 - `DELETE /api/inscricoes/eventos/:id`
 - `DELETE /api/inscricoes/eventos/:id/beneficios/:beneficioId`
@@ -43,6 +43,7 @@ Guard: `authorizeModule('inscricoes', 1 | 2 | 3 | 4 | 5)`
 - `GET /api/inscricoes/eventos/:id/inscricoes/:inscricaoId/comprovantes`
 - `GET /api/inscricoes/eventos/:id/pessoas/buscar`
 - `GET /api/inscricoes/eventos/:id/resumo`
+- `GET /api/inscricoes/igrejas-parceiras`
 - `GET /api/inscricoes/pagamento-saude`
 - `GET /api/inscricoes/portas`
 - `GET /api/inscricoes/qrs`
@@ -72,6 +73,7 @@ Guard: `authorizeModule('inscricoes', 1 | 2 | 3 | 4 | 5)`
 - `POST /api/inscricoes/eventos/:id/inscricoes/excluir-lote`
 - `POST /api/inscricoes/eventos/:id/nova-edicao`
 - `POST /api/inscricoes/eventos/:id/sortear`
+- `POST /api/inscricoes/igrejas-parceiras`
 - `POST /api/inscricoes/totem/eventos/:id/inscrever`
 - `POST /api/inscricoes/totens`
 - `POST /api/inscricoes/totens/:id/pareamento`
@@ -104,6 +106,7 @@ Guard: `authorizeModule('inscricoes', 1 | 2 | 3 | 4 | 5)`
 - `backend/services/appPush.js`
 - `backend/services/avisoComprovanteEmail.js`
 - `backend/services/email.js`
+- `backend/services/igrejaParceira.js`
 - `backend/services/importarEInscricao.js`
 - `backend/services/inscricaoCheckin.js`
 - `backend/services/inscricaoComprovante.js`
@@ -121,6 +124,7 @@ Guard: `authorizeModule('inscricoes', 1 | 2 | 3 | 4 | 5)`
 - `app_push_tokens`
 - `areas`
 - `cargos`
+- `igrejas`
 - `insc_beneficios`
 - `insc_checkin_eventos`
 - `insc_checkins`
