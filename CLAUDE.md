@@ -939,6 +939,147 @@ Lei de 10/08 respeitada: palpite por nome só grava com confirmação humana
 pela liderança (`sexo_declarado_lideranca`). **Sobram 7 sem sexo**, todos de
 nome ambíguo ou raro — ficam para identificação nominal, nunca palpite.
 
+## ⚠️⚠️ MEMBRESIA · os cadastros-fantasma da decisão ONLINE (2026-09-24 · SEM migration)
+
+Pedido do Matheus, com o print da lista de Membresia filtrada em "Sem CPF":
+*"essas pessoas que vem do online, sem cpf e dado nenhum, preciso que vc remova
+dos membros, esta poluindo."*
+
+### O que são (medido, não suposto)
+
+A coordenação do Online assiste ao culto no YouTube e lança à mão quem escreve
+no **CHAT** que está aceitando Jesus. O formulário **exige telefone**, então ela
+preenche `00000000000`; no campo NOME vai o **@handle do YouTube**, a única
+coisa que ela tem. Cada lançamento desses cria um `mem_membros`.
+
+⚠️ **E eles ficam nas 7 PRIMEIRAS linhas da lista**: a ordenação é por nome e
+`@` vem antes das letras no ASCII. É por isso que "está poluindo" salta aos
+olhos — não é volume, é posição.
+
+| | |
+|---|---|
+| cadastros | **12** · criados em **14/09 (8)** e **21/09 (4)** |
+| decisão online lançada à mão | ago/2026: **2** · set/2026: **19** — é prática NOVA |
+| dos 19 de setembro | **7 com telefone real** (viram cadastro, e devem virar) × **12 com `00000000000`** |
+| pendurado em cada um | 1 decisão + 1 fila pastoral + 1 trilha + 1 `nsm_eventos` + 1 observação · **ZERO nas outras 93 FKs** |
+
+⚠️ **A separação é limpa**: não há zona cinzenta entre "pessoa real" e fantasma.
+
+### ⚠️⚠️ A LEI: apagar o CADASTRO não apaga a DECISÃO
+
+A decisão de fé é **real** — alguém escreveu no chat que estava aceitando Jesus.
+O que não existe é dado de contato. São coisas separáveis, e o sistema já sabia
+disso (o precedente é o **Kids**, que registra a decisão e não cria a pessoa,
+por LGPD art. 14 §1º).
+
+⇒ **SOFT-DELETE só do `mem_membros`.** Medido antes de executar:
+- todas as 98 FKs para `mem_membros` são `SET NULL`, e o soft-delete **nem as
+  toca** — decisão, fila, trilha e NSM ficam intactos;
+- **`recalcular_nsm()` lê `cui_convertidos`** (filtrando o `deleted_at` DELA) e
+  **nunca olha `mem_membros.deleted_at`** ⇒ o denominador não muda;
+- **`fn_nsm_sinais_engajados` devolve `{}` para os 12** ⇒ nunca estiveram no
+  numerador. Conferido depois: `nsm_estado` **inalterado** (online 19/0/0,00% ·
+  central e cbrio 156/16/10,26%);
+- **`GET /cuidados/convertidos`** lê `cui_convertidos` direto, sem join ⇒ a fila
+  da Renata sobrevive inteira;
+- o **@handle não se perde**: está gravado igual em `mem_membros.nome`,
+  `cultos_decisoes_pessoas.nome` **e** `cui_convertidos.nome`.
+
+⚠️⚠️ **`cui_convertidos.membro_id` NÃO é solto (não vira NULL), e é decisão:**
+`garantirMembro()` (`routes/cuidados.js:1559`) só chama o matcher quando
+`membro_id` está vazio. Soltar o ponteiro faria o fantasma **RENASCER** no dia
+em que alguém direcionasse a pessoa pro Next ou pro batismo.
+
+⚠️ **A matview NÃO se atualiza sozinha**: `vw_pessoas_papeis_mat` ainda tinha os
+12 depois do soft-delete (ela só roda via `refresh_vw_pessoas_papeis_mat`, sob
+demanda em `routes/jornada.js`, **sem cron**). Rodar o refresh faz parte da
+limpeza — sem ele, os KPIs que a leem continuam contando os apagados.
+
+### ⚠️ A régua da seleção são TRÊS sinais, não "sem CPF"
+
+A lei de 17/08 ("exclusão em lote exige dois sinais") com uma correção medida:
+**três critérios de AUSÊNCIA não são dois sinais** — ausência não identifica
+ninguém. `cpf IS NULL` + sem e-mail + telefone ruim pega **270 cadastros**, 258
+de gente real. A régua que dá exatamente 12:
+
+1. **PROCEDÊNCIA** — o cadastro nasceu de uma decisão `tipo_decisao='online'`;
+2. **SEM CHAVE** — sem CPF, sem e-mail **com forma de e-mail**, sem telefone de
+   10–11 dígitos não repetidos;
+3. **SEM ENGAJAMENTO** — nenhum vínculo em grupo, batismo, Next, voluntariado,
+   contribuição, login, inscrição ou perfil de voluntário.
+
+⚠️⚠️ **"e-mail com FORMA de e-mail", nunca "e-mail preenchido"**: nos 2 mais
+recentes a coordenação passou a pôr o handle **no campo e-mail**
+(`@wil66lobo`, `@lorenjacksonde`), e `email IS NOT NULL` os deixaria passar. O
+contorno MUTA — a régua tem que olhar a forma do valor, não a presença dele.
+
+**Executado em 24/09**: backup em `backups._bk_20260924_online_sem_chave` (12
+linhas · lei de 16/09: foto de reparo nasce no schema `backups`, nunca no
+`public`), soft-delete pela RPC `app_soft_delete`, matview atualizada.
+Resultado: **0 fantasmas · 4.623 → 4.611 membros vivos · 12 decisões, 12 filas,
+12 trilhas e 12 eventos de NSM preservados**. Reversível com `app_restore`.
+
+### ⚠️⚠️ A TORNEIRA CONTINUA ABERTA — e é decisão do Matheus
+
+Sem fechar, volta ~6/semana. O que fechar custa, medido:
+
+- **A régua tem que morar no TRIGGER** `tg_cultos_dec_pessoas_resolve_membro`,
+  não no Express: a rota manda `membro_id: null` de propósito e quem cria é o
+  trigger, que também serve a porta pública, o app e o totem. Guarda só no JS é
+  contornada por 4 caminhos (é a lei do "guarda em código impuro").
+- O precedente está pronto: o ramo `IF NEW.tipo_decisao = 'kids' THEN
+  NEW.membro_id := NULL; RETURN NEW; END IF;` — acrescentar uma condição.
+- ⚠️⚠️ **MAS o efeito colateral é real e estreia sem histórico**: com
+  `membro_id` NULL, `tg_cultos_dec_pessoas_jornada` insere `mem_trilha_valores`
+  e `nsm_eventos` **toda vez** (o `NOT EXISTS ... = NULL` é sempre verdadeiro);
+  o dedup da fila passa a ser por **nome + data**, perdendo homônimos; o
+  denominador da NSM muda de `COUNT(DISTINCT membro_id)` para `COUNT(*)`; e
+  `cadastrado = (NEW.membro_id IS NOT NULL)` vira false sempre, **derrubando o
+  card `convertidos_cadastrados`** — parece que a equipe parou de cadastrar.
+  Medido: hoje há **0 linhas** com `membro_id IS NULL` nessas três tabelas — o
+  caminho "órfão" nunca rodou com dado real.
+- **A correção de raiz é a PORTA, não a saída**: enquanto o telefone for
+  obrigatório, toda régua corre atrás do placeholder da vez (hoje
+  `00000000000`; amanhã `21999999999`, que tem DDD válido e **casa por
+  telefone+nome no cadastro de outra pessoa**). Telefone opcional na decisão
+  online + campo próprio pro handle é o que tira o incentivo.
+
+### ⚠️⚠️ ACHADO DE CARONA · a decisão online manual NÃO conta no culto
+
+`fn_cultos_dec_online_form_incrementa` só incrementa `cultos.decisoes_online`
+quando **`fonte = 'form_publico'`**. As decisões que a coordenação lança à mão
+ficam registradas nominalmente e **não entram no número do culto**. Medido em
+setembro: 09/09 tem 2 nominais e contador **0** · 13/09 19:00 tem 3 e contador
+**0** · 20/09 tem 1 em cada culto e contador **0**.
+
+⚠️ Ou seja **o trabalho dela está subcontado em ~9 decisões só em setembro**, e
+é esse número que alimenta KPI, painel e dashboard semanal. O caminho manual
+existe (`decisoes_online_extra`, de 14/09) e foi usado **uma vez** (16/09).
+⚠️ Consertar exige decidir a interação com `decisoes_online_extra`, senão quem
+lançar nominalmente **e** preencher o extra conta duas vezes. Decisão pendente.
+
+### ⚠️ O que ficou pendente de GENTE
+
+- **11 dos 12 estão com `primeiro_contato_em` carimbado e nenhum como
+  `contato_impossivel`** — logo entram no NUMERADOR do indicador de contato.
+  ⚠️ E o padrão do carimbo é de higienização de fila, não de conversa: **5
+  marcações em 7 segundos** (15/09) e **3 em 9 segundos** (21/09). **NÃO
+  reclassifiquei**: se ela respondeu pelo chat do YouTube, foi contato real, e
+  reescrever em massa por dedução é a lei da casa sendo quebrada. É pergunta
+  para a Renata.
+- **`@leandrobeanes3264` e `@lezandrobeanes3264`** diferem por uma letra e têm o
+  mesmo sufixo — provavelmente a mesma pessoa (lançada em cultos diferentes,
+  09/09 e 13/09). Sem chave, não dá para afirmar.
+- **`renata.v.rangel` e `marciafernandes4711`** estão com `area='sede'` na fila,
+  não `online`.
+- ⚠️ **A queixa não fica 100% resolvida**: os handles continuam aparecendo em
+  `/painel/nsm/pessoas` e na aba Convertidos do Cuidados, porque as duas leem
+  `cui_convertidos`. É o correto (a decisão é real), mas é bom ele saber.
+- **O quadro maior**: a base tem **1.909 cadastros vivos sem CPF** e **455 sem
+  chave nenhuma** — os 12 são 2,6% destes. A maioria vem de imports antigos
+  (`import_next_historico_2025_2026` 64, `grupos_import_2026` 13,
+  `pco_import_2026` 12) e de 276 sem origem declarada. Escopo separado.
+
 ## ⚠️⚠️ VISITANTES · a porta pública `/visitante` (QR nos cartazes · voucher · pesquisa) (2026-09-09 · migration `20260909120000`)
 
 Pedido do Marcos: *"o número de visitantes é importante para nós e nós não
