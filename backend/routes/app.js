@@ -12,7 +12,8 @@ const { semCache } = require('../middleware/semCache');
 const rateLimit = require('express-rate-limit');
 const multer = require('multer');
 const { supabase } = require('../utils/supabase');
-const { equipeSupervisionada, filtrarPorSupervisao, supervisionaTudo, podeSupervisionar, subareasNaArea } = require('../utils/supervisorArea');
+const { equipeSupervisionada, filtrarPorSupervisao, supervisionaTudo, podeSupervisionar, subareasNaArea, soEditores, somenteLeitura, papelMaior, cultoNoEscopo } = require('../utils/supervisorArea');
+const { ordenarPorPreferencia } = require('../utils/preferenciaRodizio');
 const { ehDiaDoCulto } = require('../utils/janelaCulto');
 const { classificarCulto } = require('../utils/rodizioCulto');
 const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior, ocorrenciasPassadas, janelaCorrecaoPassada } = require('../utils/agendaGrupo');
@@ -746,13 +747,13 @@ router.get('/voluntariado/status/:userId', authApp, async (req, res) => {
 router.get('/voluntariado/supervisor', authApp, async (req, res) => {
   try {
     const membro = await resolveMembroApp(req).catch(() => null);
-    if (!membro) return res.json({ supervisor: false, areas: [] });
-    const { data } = await supabase
-      .from('vol_area_supervisores')
-      .select('area')
-      .eq('membro_id', membro.id);
-    const areas = [...new Set((data || []).map(r => r.area).filter(Boolean))];
-    res.json({ supervisor: areas.length > 0, areas });
+    if (!membro) return res.json({ supervisor: false, areas: [], somente_leitura: false, papel: null });
+    const grants = await concessoesDoMembro(membro.id);
+    const areas = [...new Set(grants.map(r => r.area).filter(Boolean))];
+    // `somente_leitura`/`papel` (24/09): a tela esconde os botões de escrever
+    // pra quem é só leitor. É cortesia — a trava é `supervisorAreasApp(req,
+    // { escrita: true })` nas rotas de POST/PATCH/DELETE.
+    res.json({ supervisor: areas.length > 0, areas, somente_leitura: somenteLeitura(grants), papel: papelMaior(grants) });
   } catch (e) {
     console.error('[app] voluntariado/supervisor:', e.message);
     res.status(500).json({ error: 'Erro ao verificar supervisão' });
@@ -1645,9 +1646,10 @@ router.get('/voluntariado/me', authApp, limiterNormal, async (req, res) => {
     }
 
     const ativo = vp?.allocation_status === 'active';
-    const [escalas, indispRes] = await Promise.all([
+    const [escalas, indispRes, prefs] = await Promise.all([
       escalasDoVoluntario(vp),
       vp ? supabase.from('vol_availability').select('*').eq('volunteer_profile_id', vp.id).order('unavailable_from') : Promise.resolve({ data: [] }),
+      vp ? rodizioSemanaDosPerfis([vp.id]) : Promise.resolve({}),
     ]);
 
     res.json({
@@ -1659,6 +1661,8 @@ router.get('/voluntariado/me', authApp, limiterNormal, async (req, res) => {
       ministerios: inscricao?.ministerios_interesse || null,
       escalas,
       indisponibilidades: indispRes.data || [],
+      // Semana do mês que a pessoa prefere servir (1..4) · NULL = não declarou.
+      rodizio_semana: vp ? (prefs[vp.id] ?? null) : null,
     });
   } catch (e) {
     console.error('[APP vol/me]', e.message);
@@ -1668,6 +1672,32 @@ router.get('/voluntariado/me', authApp, limiterNormal, async (req, res) => {
 
 // POST /api/app/voluntariado/solicitar-area — pede pra servir (em outra área também)
 // body: { areas: [labels], nome_mae? }  · cai na triagem do voluntariado
+// PATCH /app/voluntariado/me/rodizio — a PESSOA declara a semana do mês que
+// prefere servir (self-service · 24/09/2026). `semana` 1..4, ou null pra tirar.
+// ⚠️ É preferência, não indisponibilidade: só muda a ORDEM do seletor de quem
+// monta a escala. Pra "não posso neste dia" existe a indisponibilidade.
+router.patch('/voluntariado/me/rodizio', authApp, limiterNormal, async (req, res) => {
+  try {
+    const membro = await resolveMembroApp(req).catch(() => null);
+    const vp = await resolverVolProfile(req, membro);
+    if (!vp) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
+    const bruto = req.body ? req.body.semana : undefined;
+    const semana = (bruto === null || bruto === undefined || bruto === '') ? null : Number(bruto);
+    if (semana !== null && !(Number.isInteger(semana) && semana >= 1 && semana <= 4)) {
+      return res.status(400).json({ error: 'Semana inválida: 1 a 4, ou vazio pra nenhuma.' });
+    }
+    const { error } = await supabase.from('vol_profiles').update({ rodizio_semana: semana }).eq('id', vp.id);
+    if (error) {
+      if (error.code === '42703') return res.status(503).json({ error: 'A preferência de semana ainda não foi liberada no banco.' });
+      throw error;
+    }
+    res.json({ rodizio_semana: semana });
+  } catch (e) {
+    console.error('[APP vol/me rodizio]', e.message);
+    res.status(500).json({ error: 'Erro ao salvar a preferência' });
+  }
+});
+
 router.post('/voluntariado/solicitar-area', authApp, limiterStrict, async (req, res) => {
   try {
     const { areas, nome_mae } = req.body || {};
@@ -2109,22 +2139,77 @@ router.delete('/voluntariado/indisponibilidade/:id', authApp, limiterNormal, asy
 // SUPERVISOR DE ÁREA · monta escala pelo app (concessão feita no sistema)
 // ══════════════════════════════════════════════════════════════════════════
 // Retorna as áreas onde o membro logado é supervisor (ou [] se não for).
-async function supervisorAreasApp(req) {
+/**
+ * As concessões de uma pessoa, com `papel` e `team_id` (24/09/2026).
+ *
+ * ⚠️ RESILIENTE À ORDEM DO ROLLOUT: o ERP sobe sozinho no merge e a migration
+ * `20260924120000` é aplicada à mão. Se as colunas novas ainda não existirem
+ * (42703), cai pro select antigo — senão TODO supervisor perderia a Montar
+ * escala até a migration rodar. Sem as colunas, todo mundo é 'lider' de área,
+ * exatamente o comportamento de antes.
+ */
+async function concessoesDoMembro(membroId) {
+  const base = 'area, position_id, culto_dia, culto_periodo, culto_semana';
+  let r = await supabase.from('vol_area_supervisores').select(`${base}, papel, team_id`).eq('membro_id', membroId);
+  if (r.error && r.error.code === '42703') {
+    r = await supabase.from('vol_area_supervisores').select(base).eq('membro_id', membroId);
+  }
+  if (r.error) throw r.error;
+  return (r.data || []).filter(x => x.area);
+}
+
+/**
+ * Retorna as concessões do membro logado.
+ *
+ * `{ escrita: true }` devolve SÓ as que escrevem (papel ≠ leitor) — é o que as
+ * rotas de POST/PATCH/DELETE passam. `areas` vazio ⇒ 403; `somente_leitura`
+ * diz se o 403 é "não é supervisor" ou "é leitor" (mensagens diferentes).
+ * ⚠️ `grants` é a concessão INTEIRA (área + time + subárea + rodízio + papel).
+ * `areas` continua sendo devolvido porque é o que abre o portão do 403 e o que
+ * a tela do app exibe em `areas_supervisionadas` — mas quem decide permissão é
+ * `grants`, sempre. Passar `areas` (string[]) pra régua APAGA o recorte.
+ */
+async function supervisorAreasApp(req, { escrita = false } = {}) {
   const membro = await resolveMembroApp(req).catch(() => null);
-  if (!membro) return { membro: null, areas: [], grants: [] };
-  // ⚠️ `grants` é a concessão INTEIRA (área + subárea). `areas` continua sendo
-  // devolvido porque é o que abre o portão do 403 e o que a tela do app exibe
-  // em `areas_supervisionadas` — mas quem decide permissão fina é `grants`.
-  const { data } = await supabase
-    .from('vol_area_supervisores')
-    .select('area, position_id, culto_dia, culto_periodo, culto_semana')
-    .eq('membro_id', membro.id);
-  const grants = (data || []).filter(r => r.area);
+  if (!membro) return { membro: null, areas: [], grants: [], todas: [], somente_leitura: false, papel: null };
+  const todas = await concessoesDoMembro(membro.id);
+  const grants = escrita ? soEditores(todas) : todas;
   return {
     membro,
     areas: [...new Set(grants.map(r => r.area))],
     grants,
+    todas,
+    somente_leitura: somenteLeitura(todas),
+    papel: papelMaior(todas),
   };
+}
+
+function negarSupervisao(res, sup) {
+  if (sup && sup.somente_leitura) {
+    return res.status(403).json({ error: 'Seu acesso ao Servir é só de leitura. Fale com quem lidera o time.', somente_leitura: true });
+  }
+  return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+}
+
+/**
+ * `vol_profiles.rodizio_semana` (24/09/2026) — a semana do mês que a PESSOA
+ * prefere servir. Lido à parte e tolerante a 42703 pelo mesmo motivo de
+ * `concessoesDoMembro`: se a migration ainda não rodou, a resposta vem sem
+ * preferência em vez de derrubar a rota.
+ */
+async function rodizioSemanaDosPerfis(ids) {
+  const mapa = {};
+  const lista = [...new Set((ids || []).filter(Boolean))];
+  for (let k = 0; k < lista.length; k += 100) {
+    const { data, error } = await supabase.from('vol_profiles')
+      .select('id, rodizio_semana').in('id', lista.slice(k, k + 100));
+    if (error) {
+      if (error.code !== '42703') console.warn('[APP vol/rodizio_semana]', error.message);
+      return mapa;
+    }
+    for (const p of data || []) mapa[p.id] = p.rodizio_semana ?? null;
+  }
+  return mapa;
 }
 
 /**
@@ -2189,8 +2274,8 @@ async function resolverEquipeId(teamName) {
  * deixa a porta aberta pelos outros verbos: bastaria o id da escala pra tirar
  * alguém da área de outro supervisor.
  */
-async function escalaSobSupervisao(scheduleId, areas) {
-  if (supervisionaTudo(areas)) return { ok: true };
+async function escalaSobSupervisao(scheduleId, grants) {
+  if (supervisionaTudo(grants)) return { ok: true };
   const { data: sc } = await supabase.from('vol_schedules')
     .select('id, team_id, team_name, position_id, position_name, service_id').eq('id', scheduleId).maybeSingle();
   if (!sc) return { ok: false, motivo: 'nao_encontrada' };
@@ -2205,14 +2290,14 @@ async function escalaSobSupervisao(scheduleId, areas) {
   // ⚠️ Escala sem equipe resolvível NÃO é liberada: seria a brecha por onde
   // qualquer linha antiga do Planning Center viraria terreno de todo mundo.
   if (!equipe) return { ok: false, motivo: 'sem_equipe' };
-  if (!equipeSupervisionada(equipe, areas)) {
+  if (!equipeSupervisionada(equipe, grants)) {
     return { ok: false, motivo: 'outra_area', equipe: equipe.name };
   }
   // ⚠️ Recorte de SUBÁREA (2026-08-25). Quem tem concessão só do Ofertório não
   // pode mover/remover a linha do Estacionamento, mesmo sendo a mesma equipe.
   // Vale pra MOVER e REMOVER, não só pra adicionar — a lição do bloco acima.
-  const alvo = { area: equipe.area, position_id: sc.position_id || null, culto: await rodizioDoServico(sc.service_id) };
-  if (!podeSupervisionar(areas, alvo)) {
+  const alvo = { area: equipe.area, team_id: equipe.id, position_id: sc.position_id || null, culto: await rodizioDoServico(sc.service_id) };
+  if (!podeSupervisionar(grants, alvo)) {
     return { ok: false, motivo: 'outra_subarea', equipe: equipe.name, subarea: sc.position_name || null };
   }
   return { ok: true };
@@ -2221,8 +2306,9 @@ async function escalaSobSupervisao(scheduleId, areas) {
 // GET /app/voluntariado/escala/servicos — próximos cultos (para montar escala)
 router.get('/voluntariado/escala/servicos', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas } = await supervisorAreasApp(req);
-    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const sup = await supervisorAreasApp(req);
+    const { areas, grants } = sup;
+    if (!areas.length) return negarSupervisao(res, sup);
     const hoje = new Date(Date.now() - 12 * 3600 * 1000).toISOString();
     // ⚠️ JANELA, não contagem. O teto de 60 registros era invisível e virou
     // corte real em 18/08, quando o calendário passou a ser gerado aqui em vez
@@ -2247,7 +2333,15 @@ router.get('/voluntariado/escala/servicos', authApp, limiterNormal, async (req, 
       const { data: scs } = await supabase.from('vol_schedules').select('service_id').in('service_id', ids);
       for (const r of scs || []) cnt[r.service_id] = (cnt[r.service_id] || 0) + 1;
     }
-    res.json({ areas, servicos: (data || []).map(s => ({ ...s, escalados: cnt[s.id] || 0 })) });
+    // Escopo "por culto" (24/09): quem só lê/lidera o domingo não vê a quarta na
+    // lista. Concessão sem recorte de culto alcança tudo (inclusive culto sem data).
+    const servicos = (data || []).filter(sv => cultoNoEscopo(grants, classificarCulto(sv.scheduled_at)));
+    res.json({
+      areas,
+      somente_leitura: sup.somente_leitura,
+      papel: sup.papel,
+      servicos: servicos.map(sv => ({ ...sv, escalados: cnt[sv.id] || 0 })),
+    });
   } catch (e) {
     console.error('[APP vol/escala servicos]', e.message);
     res.status(500).json({ error: 'Erro ao listar cultos' });
@@ -2260,8 +2354,9 @@ router.get('/voluntariado/escala/servicos', authApp, limiterNormal, async (req, 
 // visíveis no app, exatamente como no sistema web.
 router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas, grants } = await supervisorAreasApp(req);
-    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const sup = await supervisorAreasApp(req);
+    const { areas, grants } = sup;
+    if (!areas.length) return negarSupervisao(res, sup);
     const [{ data, error }, { data: composicao, error: composicaoErr }] = await Promise.all([
       supabase
       .from('vol_schedules')
@@ -2303,7 +2398,7 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
     // do item — por isso é resolvida uma vez, fora do filtro.
     const rodizio = await rodizioDoServico(req.params.serviceId);
     const itens = (todosItens || []).filter(i => podeSupervisionar(grants, {
-      area: i.area, position_id: i.position_id, culto: rodizio,
+      area: i.area, team_id: i.team_id, position_id: i.position_id, culto: rodizio,
     }));
     // ⚠️ A escala também é recortada: mostrar quem está escalado em áreas que
     // ele não supervisiona transformaria a tela num diretório de gente, e o
@@ -2315,9 +2410,9 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
     // escalado nela deixaria o botão de remover apagando escala alheia — o
     // mesmo furo que o comentário acima descreve, um nível abaixo.
     const posicoesVisiveis = new Set(itens.map(i => i.position_id).filter(Boolean));
-    const recortaSubarea = itens.some(i => i.position_id) && !supervisionaTudo(areas)
+    const recortaSubarea = itens.some(i => i.position_id) && !supervisionaTudo(grants)
       && (data || []).some(e => e.position_id);
-    const escalasVisiveis = supervisionaTudo(areas)
+    const escalasVisiveis = supervisionaTudo(grants)
       ? (data || [])
       : (data || [])
         .filter(e => equipesVisiveis.has(e.team_id) || nomesVisiveis.has(e.team_name))
@@ -2374,6 +2469,8 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
       escala: comArea,
       composicao: itens.map(i => ({ ...i, area: i.area || 'Sem área' })),
       areas_supervisionadas: areas,
+      somente_leitura: sup.somente_leitura,
+      papel: sup.papel,
       // Declara o que foi escondido: uma tela que some com linhas sem dizer
       // parece dado faltando.
       ocultos: todosItens.length - itens.length,
@@ -2385,18 +2482,61 @@ router.get('/voluntariado/escala/:serviceId', authApp, limiterNormal, async (req
 });
 
 // GET /app/voluntariado/escala-pool — voluntários pra adicionar (busca ?q=)
+// GET /app/voluntariado/escala-pool?q=&service_id=&team_id=
+//
+// Com `team_id` (24/09/2026 · pedido do Marcos): lista as PESSOAS DO TIME,
+// priorizando quem declarou preferir a semana deste culto (`rodizio_semana`).
+// "cada um tem um domingo de preferência e ao clicar para escalar naquela
+// posição, ele filtra as pessoas que estão naquele time priorizando quem
+// colocou aquele domingo como rodízio". Sem `team_id`, é a busca geral de antes.
+// ⚠️ Preferência ORDENA, nunca filtra: quem prefere o 1º continua escalável no 3º.
 router.get('/voluntariado/escala-pool', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas } = await supervisorAreasApp(req);
-    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const sup = await supervisorAreasApp(req);
+    const { areas, grants } = sup;
+    if (!areas.length) return negarSupervisao(res, sup);
     const q = String(req.query.q || '').trim();
-    let query = supabase.from('vol_profiles')
-      .select('id, full_name, planning_center_id').eq('arquivado', false)
-      .order('full_name').limit(30);
-    if (q) query = query.ilike('full_name', `%${q}%`);
-    const { data, error } = await query;
-    if (error) throw error;
-    res.json(data || []);
+    const serviceId = String(req.query.service_id || '').trim() || null;
+    const teamId = String(req.query.team_id || '').trim() || null;
+    const culto = serviceId ? await rodizioDoServico(serviceId) : null;
+    const semana = culto && culto.semana ? Number(culto.semana) : null;
+
+    let pessoas = [];
+    if (teamId) {
+      const { data: eq } = await supabase.from('vol_teams').select('id, name, area').eq('id', teamId).maybeSingle();
+      if (!eq) return res.status(404).json({ error: 'Equipe não encontrada' });
+      if (!equipeSupervisionada(eq, grants)) {
+        return res.status(403).json({ error: `Você não supervisiona ${eq.name}.` });
+      }
+      const { data: vinc, error: vErr } = await supabase.from('vol_team_members')
+        .select('volunteer_profile_id').eq('team_id', teamId).eq('is_active', true)
+        .not('volunteer_profile_id', 'is', null);
+      if (vErr) throw vErr;
+      // ⚠️ 155 dos 832 pares (pessoa, time) têm mais de uma linha — dedupe por pessoa.
+      const ids = [...new Set((vinc || []).map(v => v.volunteer_profile_id))];
+      // ⚠️ Em lotes de 100: a Integração tem 264 pessoas e o `in` vai na URL.
+      for (let k = 0; k < ids.length; k += 100) {
+        let query = supabase.from('vol_profiles')
+          .select('id, full_name, planning_center_id')
+          .in('id', ids.slice(k, k + 100)).eq('arquivado', false);
+        if (q) query = query.ilike('full_name', `%${q}%`);
+        const { data, error } = await query;
+        if (error) throw error;
+        for (const p of data || []) pessoas.push({ ...p, do_time: true });
+      }
+    } else {
+      let query = supabase.from('vol_profiles')
+        .select('id, full_name, planning_center_id').eq('arquivado', false)
+        .order('full_name').limit(30);
+      if (q) query = query.ilike('full_name', `%${q}%`);
+      const { data, error } = await query;
+      if (error) throw error;
+      pessoas = (data || []).map(p => ({ ...p, do_time: false }));
+    }
+
+    const pref = await rodizioSemanaDosPerfis(pessoas.map(p => p.id));
+    const comPref = pessoas.map(p => ({ ...p, rodizio_semana: pref[p.id] ?? null }));
+    res.json(ordenarPorPreferencia(comPref, semana));
   } catch (e) {
     console.error('[APP vol/escala pool]', e.message);
     res.status(500).json({ error: 'Erro ao buscar voluntários' });
@@ -2456,21 +2596,22 @@ router.get('/voluntariado/voluntario/:id/detalhe', authApp, limiterNormal, async
 // POST /app/voluntariado/escala — adiciona à escala { service_id, volunteer_id, team_name, position_name }
 router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas, grants } = await supervisorAreasApp(req);
-    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const sup = await supervisorAreasApp(req, { escrita: true });
+    const { areas, grants } = sup;
+    if (!areas.length) return negarSupervisao(res, sup);
     const { service_id, volunteer_id, team_name, position_name } = req.body || {};
     if (!service_id || !volunteer_id) return res.status(400).json({ error: 'service_id e volunteer_id obrigatórios' });
 
     // ⚠️⚠️ A TRAVA DE ESCRITA. Esconder a área na tela é sugestão; o que impede
     // um supervisor de escalar na área de outro é esta checagem, porque o
     // cliente manda `team_name` no corpo e nada impedia mandar qualquer um.
-    if (!supervisionaTudo(areas)) {
+    if (!supervisionaTudo(grants)) {
       if (!team_name) {
         return res.status(400).json({ error: 'Escolha a equipe: supervisor de área não escala sem equipe definida.' });
       }
       const { data: eq } = await supabase.from('vol_teams')
         .select('id, name, area').eq('name', team_name).maybeSingle();
-      if (!eq || !equipeSupervisionada(eq, areas)) {
+      if (!eq || !equipeSupervisionada(eq, grants)) {
         return res.status(403).json({
           error: `Você não supervisiona ${team_name}. Fale com quem responde por essa área.`,
         });
@@ -2482,7 +2623,7 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
       // primeira versão e ela recusava quem tinha subárea no culto certo,
       // porque a pré-checagem de rodízio passava `position_id: null`.
       const rodizio = await rodizioDoServico(service_id);
-      const recorte = subareasNaArea(grants, eq.area);
+      const recorte = subareasNaArea(grants, eq.area, eq.id);
       if (recorte.length) {
         // Supervisão de subárea específica: a subárea é obrigatória no corpo.
         if (!position_name) {
@@ -2491,12 +2632,12 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
           });
         }
         const posId = await resolverPosicaoId(eq.id, position_name);
-        if (!posId || !podeSupervisionar(grants, { area: eq.area, position_id: posId, culto: rodizio })) {
+        if (!posId || !podeSupervisionar(grants, { area: eq.area, team_id: eq.id, position_id: posId, culto: rodizio })) {
           return res.status(403).json({
             error: `Você não supervisiona ${position_name} em ${team_name} neste culto.`,
           });
         }
-      } else if (!podeSupervisionar(grants, { area: eq.area, position_id: null, culto: rodizio })) {
+      } else if (!podeSupervisionar(grants, { area: eq.area, team_id: eq.id, position_id: null, culto: rodizio })) {
         // Supervisão da área inteira: só o rodízio pode barrar aqui (a área já
         // passou no `equipeSupervisionada` acima).
         return res.status(403).json({
@@ -2573,8 +2714,9 @@ router.post('/voluntariado/escala', authApp, limiterNormal, async (req, res) => 
 // PATCH /app/voluntariado/escala/:id — move de equipe (drag & drop) / muda função
 router.patch('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas, grants } = await supervisorAreasApp(req);
-    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const sup = await supervisorAreasApp(req, { escrita: true });
+    const { areas, grants } = sup;
+    if (!areas.length) return negarSupervisao(res, sup);
     const { team_name, position_name } = req.body || {};
     const { data: atual } = await supabase.from('vol_schedules')
       .select('id, service_id, volunteer_id, team_id, team_name').eq('id', req.params.id).maybeSingle();
@@ -2590,15 +2732,15 @@ router.patch('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res
     }
     // Trava de escrita no MOVER: tanto a origem quanto o destino têm que ser
     // áreas desta pessoa — senão dá pra "mover pra fora" o que não é seu.
-    if (!supervisionaTudo(areas)) {
-      const origem = await escalaSobSupervisao(req.params.id, areas);
+    if (!supervisionaTudo(grants)) {
+      const origem = await escalaSobSupervisao(req.params.id, grants);
       if (!origem.ok) {
         return res.status(403).json({ error: `Essa escala é de ${origem.equipe || 'outra área'}, que você não supervisiona.` });
       }
       if (novoTeam) {
         const { data: destino } = await supabase.from('vol_teams')
           .select('id, name, area').eq('name', novoTeam).maybeSingle();
-        if (!destino || !equipeSupervisionada(destino, areas)) {
+        if (!destino || !equipeSupervisionada(destino, grants)) {
           return res.status(403).json({ error: `Você não supervisiona ${novoTeam}.` });
         }
         // ⚠️ Subárea do DESTINO. Sem isto, quem só tem o Ofertório moveria a
@@ -2611,7 +2753,7 @@ router.patch('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res
             return res.status(400).json({ error: 'Escolha a subárea do destino: sua supervisão é de subárea específica.' });
           }
           const posId = await resolverPosicaoId(destino.id, nomePos);
-          if (!posId || !podeSupervisionar(grants, { area: destino.area, position_id: posId })) {
+          if (!posId || !podeSupervisionar(grants, { area: destino.area, team_id: destino.id, position_id: posId, culto: await rodizioDoServico(atual.service_id) })) {
             return res.status(403).json({ error: `Você não supervisiona ${nomePos} em ${novoTeam}.` });
           }
         }
@@ -2649,11 +2791,12 @@ router.patch('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res
 // DELETE /app/voluntariado/escala/:id — remove da escala
 router.delete('/voluntariado/escala/:id', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas } = await supervisorAreasApp(req);
-    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const sup = await supervisorAreasApp(req, { escrita: true });
+    const { areas, grants } = sup;
+    if (!areas.length) return negarSupervisao(res, sup);
     // Só remove quem foi escalado pelo app (source='manual'). Escala do Planning
     // Center é gerida lá — se apagar aqui, o próximo sync recria (remoção fantasma).
-    const sob = await escalaSobSupervisao(req.params.id, areas);
+    const sob = await escalaSobSupervisao(req.params.id, grants);
     if (!sob.ok) {
       return res.status(403).json({ error: `Essa escala é de ${sob.equipe || 'outra área'}, que você não supervisiona.` });
     }
@@ -2712,8 +2855,8 @@ async function cultoEhHoje(serviceId) {
  * check-in existe para atender (chegou gente pra ajudar e não estava na
  * escala). A janela do dia do culto é o que impede abuso.
  */
-async function checkinSobSupervisao(scheduleId, areas) {
-  if (supervisionaTudo(areas)) return { ok: true };
+async function checkinSobSupervisao(scheduleId, grants) {
+  if (supervisionaTudo(grants)) return { ok: true };
   if (!scheduleId) return { ok: true, sem_escala: true };
   const { data: sc } = await supabase.from('vol_schedules')
     .select('id, team_id, team_name, position_id, position_name, service_id').eq('id', scheduleId).maybeSingle();
@@ -2727,7 +2870,7 @@ async function checkinSobSupervisao(scheduleId, areas) {
     equipe = data;
   }
   if (!equipe) return { ok: false, motivo: 'sem_equipe' };
-  if (!podeSupervisionar(areas, { area: equipe.area, position_id: sc.position_id || null, culto: await rodizioDoServico(sc.service_id) })) {
+  if (!podeSupervisionar(grants, { area: equipe.area, team_id: equipe.id, position_id: sc.position_id || null, culto: await rodizioDoServico(sc.service_id) })) {
     return { ok: false, motivo: 'fora_do_escopo', equipe: equipe.name, subarea: sc.position_name || null };
   }
   return { ok: true };
@@ -2766,7 +2909,7 @@ router.get('/voluntariado/escala/:serviceId/checkins', authApp, limiterNormal, a
       // criá-lo, senão o supervisor não veria o que ele mesmo acabou de marcar.
       if (!sch) return true;
       const area = areaPorEquipe[sch.team_id] ?? areaPorEquipe[`n:${sch.team_name}`] ?? null;
-      return podeSupervisionar(grants, { area, position_id: sch.position_id || null, culto: rodizioLista });
+      return podeSupervisionar(grants, { area, team_id: sch.team_id || null, position_id: sch.position_id || null, culto: rodizioLista });
     };
     const visiveis = (data || []).filter(noEscopo);
 
@@ -2798,8 +2941,9 @@ router.get('/voluntariado/escala/:serviceId/checkins', authApp, limiterNormal, a
 // default 'manual'. NÃO mexe em cultos/Integração — só controle do voluntariado.
 router.post('/voluntariado/checkin', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas, grants } = await supervisorAreasApp(req);
-    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const sup = await supervisorAreasApp(req, { escrita: true });
+    const { areas, grants } = sup;
+    if (!areas.length) return negarSupervisao(res, sup);
     const { service_id, schedule_id, volunteer_id, method } = req.body || {};
     if (!service_id) return res.status(400).json({ error: 'service_id obrigatório' });
     const metodo = ['qr_code', 'manual', 'facial', 'self_service'].includes(method) ? method : 'manual';
@@ -2943,8 +3087,9 @@ router.post('/voluntariado/checkin', authApp, limiterNormal, async (req, res) =>
 // lição do `escalaSobSupervisao` ("vale para MOVER e REMOVER, não só adicionar").
 router.delete('/voluntariado/checkin/:id', authApp, limiterNormal, async (req, res) => {
   try {
-    const { areas, grants } = await supervisorAreasApp(req);
-    if (!areas.length) return res.status(403).json({ error: 'Você não é supervisor de escala.' });
+    const sup = await supervisorAreasApp(req, { escrita: true });
+    const { areas, grants } = sup;
+    if (!areas.length) return negarSupervisao(res, sup);
 
     const { data: ci } = await supabase.from('vol_check_ins')
       .select('id, service_id, schedule_id, volunteer_id, volunteer_name, checked_in_at, method, volunteer:vol_profiles(full_name), schedule:vol_schedules(volunteer_name)')

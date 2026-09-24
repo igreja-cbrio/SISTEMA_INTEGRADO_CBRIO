@@ -72,9 +72,10 @@ const dom30 = classificarCulto('2026-08-30T11:30:00Z');
 assert.equal(dom30.semana, 1, '5º domingo é coberto pelo supervisor do 1º');
 assert.equal(dom30.ordinal_real, 5, 'mas a tela precisa saber que era o 5º');
 
-// Culto que NÃO é domingo nem quarta fica FORA do rodízio (AMI é sábado).
-assert.equal(classificarCulto('2026-08-22T17:00:00Z').dia, null,
-  'sábado não entra no rodízio — a lista da Ariel não cobre AMI/Bridge');
+// Sábado (AMI/Bridge) é um DIA de culto desde 24/09/2026 — o escopo "por culto"
+// do Marcos é o dia da semana. Sexta continua fora (não há culto).
+assert.equal(classificarCulto('2026-08-22T17:00:00Z').dia, 'sabado', 'sábado classifica');
+assert.equal(classificarCulto('2026-08-21T20:00:00Z').dia, null, 'sexta não é dia de culto');
 
 assert.equal(classificarCulto(null), null);
 assert.equal(classificarCulto('nao-e-data'), null);
