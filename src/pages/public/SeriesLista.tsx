@@ -56,30 +56,20 @@ export default function SeriesLista() {
       <style>{NS_CSS}</style>
       <SiteHeader scrolled={scrolled} menuOpen={menuOpen} setMenuOpen={setMenuOpen} />
 
-      <section className="ns-qs-hero">
-        <div className="ns-qs-hero-bg" style={{ backgroundImage: 'url(/novosite/palavra.webp)' }} />
-        <div className="ns-qs-hero-ov" />
-        <div className="ns-container ns-qs-hero-in ns-reveal">
-          <p className="ns-eyebrow ns-hero-eyebrow">Séries {ANO_SERIES}</p>
-          {TEMA_ANUAL.titulo ? (
-            <>
-              <h1 className="ns-hero-title"><span className="ns-hero-black">{TEMA_ANUAL.titulo}</span></h1>
-              {TEMA_ANUAL.descricao && <p className="ns-qs-lead-dark">{TEMA_ANUAL.descricao}</p>}
+      {/* Cabeçalho sem foto (pedido: nada de hero com imagem aqui). */}
+      <section className="ns-section ns-theme-petrol has-wave ns-series-topo">
+        <div className="ns-container ns-reveal">
+          <p className="ns-eyebrow ns-turq-light">Séries de pregação · {ANO_SERIES}</p>
+          <h1 className="ns-h2">Séries de <b>pregação</b></h1>
+          {TEMA_ANUAL.titulo && (
+            <div className="ns-series-tema">
+              <span className="ns-series-tema-rot">Tema do ano</span>
+              <strong>{TEMA_ANUAL.titulo}</strong>
               {TEMA_ANUAL.versiculo && (
-                <p className="ns-qs-lead-dark ns-serie-versiculo">
-                  “{TEMA_ANUAL.versiculo}”{TEMA_ANUAL.referencia && <span> — {TEMA_ANUAL.referencia}</span>}
-                </p>
+                <p>“{TEMA_ANUAL.versiculo}”{TEMA_ANUAL.referencia && <span> — {TEMA_ANUAL.referencia}</span>}</p>
               )}
-            </>
-          ) : (
-            <h1 className="ns-hero-title">
-              <span className="ns-hero-light">Um ano inteiro</span> <span className="ns-hero-black">na Palavra.</span>
-            </h1>
+            </div>
           )}
-          <p className="ns-qs-lead-dark">
-            A cada mês, uma série. Aqui você encontra as mensagens, os textos bíblicos,
-            os materiais para baixar e o devocional de cada uma.
-          </p>
         </div>
         <Wave color="var(--cb-offwhite)" />
       </section>

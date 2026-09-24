@@ -209,7 +209,12 @@ export const NS_CSS = `
 .ns-qs-missao .ns-lead{ margin-inline:auto; }
 
 /* ===== Séries ===== */
-.ns-serie-versiculo{ font-style:italic; }
+.ns-series-topo{ padding-top:calc(var(--section-y) + 3rem); }
+.ns-series-tema{ margin-top:1.8rem; display:flex; flex-direction:column; gap:.35rem; max-width:62ch; border-left:3px solid var(--cb-turquoise-light); padding-left:1.1rem; }
+.ns-series-tema-rot{ text-transform:uppercase; letter-spacing:.2em; font-size:.72rem; font-weight:800; color:var(--cb-turquoise-light); }
+.ns-series-tema strong{ font-size:clamp(1.8rem,4vw,2.8rem); font-weight:900; line-height:1.05; color:#fff; }
+.ns-series-tema p{ color:rgba(255,255,255,.88); font-size:clamp(1rem,1.4vw,1.15rem); font-style:italic; }
+.ns-series-tema p span{ font-style:normal; font-weight:700; color:var(--cb-turquoise-light); }
 .ns-series-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:1.4rem; }
 .ns-serie-card{ display:flex; flex-direction:column; background:#fff; border-radius:var(--radius-card); overflow:hidden; box-shadow:var(--shadow-soft); transition:transform var(--dur-fast) var(--ease); }
 .ns-serie-card:hover{ transform:translateY(-6px); }

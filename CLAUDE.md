@@ -13718,6 +13718,11 @@ do site. **Conteúdo é arquivo, não banco**: `src/pages/public/novosite/series
   (também valida slugs únicos e que cada mensagem cai no mês da série).
 - ⚠️ Não trocar `slug` depois de divulgado (link compartilhado quebra). Arquivo é público: zero PII.
 - `SerieDetalhe` remonta por `key={slug}`: o `useChrome` só observa `.ns-reveal` na montagem.
+- **Conteúdo 2027 preenchido em 24/09** a partir da planilha "Séries de Pregação 2027.xlsx" (tema anual
+  **Coragem · 2 Timóteo 1:7**). Decisões do Matheus: descrição pública da série = coluna "Coragem" (a coluna
+  "Descrição" é anotação INTERNA — "punch para natal", "31WISE" — e fica fora); o objetivo de cada
+  mensagem (coluna "Mensagem") aparece SEMPRE. Fases (Empoderamento/Alcance/Consolidação), eventos e
+  anúncios da planilha também ficam fora. Lista sem foto no topo (pedido).
 - ⏳ Futuro possível: puxar os vídeos da playlist do YouTube (`online_series`/`online_videos`) em vez
   de colar o ID à mão.
 
