@@ -624,6 +624,11 @@ export default function EventoExterno() {
                   {[periodoLongo(evento?.data, evento?.data_fim), evento?.hora].filter(Boolean).join(' · ')}
                 </div>
               )}
+              {evento?.igreja_parceira?.nome && (
+                <p style={{ fontSize: 12.5, color: C.text3, marginTop: 8 }}>
+                  {evento.igreja_parceira.nome} · em parceria com a CBRio
+                </p>
+              )}
               {evento?.local && <p style={{ fontSize: 13, color: C.text3, marginTop: 8 }}>{evento.local}</p>}
               {evento?.descricao && <p style={{ fontSize: 13, color: C.text3, marginTop: 8, lineHeight: 1.5, whiteSpace: 'pre-line' }}>{evento.descricao}</p>}
               {/* Grupo de dúvidas (21/08): fica no CABEÇALHO de propósito —

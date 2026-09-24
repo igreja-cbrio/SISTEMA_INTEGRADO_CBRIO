@@ -24,6 +24,7 @@ import { idadeEmAnos, faixaLabel, sexoLabel } from '../lib/faixaEtaria';
 // Máscara/validação de CPF do canônico do Contrato de Inscrição — não recriar.
 import { mascaraCpf, cpfValido, soDigitos } from '../lib/inscricao';
 import { imprimirListaInscritos, type Agrupamento } from '../lib/imprimirListaInscritos';
+import { caminhoPublicoEvento } from '../lib/genesisCba';
 // Filtro pelos campos extras do form-builder (ex.: "Em qual ministério você
 // serve?" do Celebra). ⚠️ As opções são o catálogo do evento ∪ o que está
 // respondido — o porquê está no cabeçalho da lib.
@@ -318,7 +319,7 @@ export default function InscricaoEventoDetalhe() {
   useEffect(() => { setLoading(true); carregar(); }, [id]);
   useEffect(() => { api.areas().then((a: any) => setAreas(Array.isArray(a) ? a : [])).catch(() => {}); }, []);
 
-  const link = ev ? `${window.location.origin}/evento/${ev.slug}` : '';
+  const link = ev ? `${window.location.origin}${caminhoPublicoEvento(ev)}` : '';
   function copiar() {
     navigator.clipboard.writeText(link);
     if (ev?.status === 'publicado') toast.success('Link copiado — formulário no ar');

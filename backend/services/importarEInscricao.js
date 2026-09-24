@@ -151,6 +151,17 @@ async function executar({ supabase, acharOuCriarGuardado, eventoId, plano }) {
   const inseridas = []; const canceladas = []; const erros = [];
   let ligados = 0; let criados = 0; let semVinculo = 0;
 
+  // ⚠️ Evento de igreja PARCEIRA (Genesis CBA · 24/09): a pessoa NÃO vira
+  // cadastro da CBRio, então o matcher não roda (o banco também recusa o
+  // vínculo · trg_inscricoes_parceira_sem_membro). Falha na leitura trata como
+  // parceira — criar gente na membresia por engano é o erro caro aqui.
+  let parceira = false;
+  {
+    const { data: evIg, error: eIg } = await supabase.from('insc_eventos')
+      .select('igreja_id, igreja:igrejas(tipo)').eq('id', eventoId).maybeSingle();
+    parceira = Boolean(eIg) || evIg?.igreja?.tipo === 'cba_acompanhada';
+  }
+
   for (const { linha } of plano.inserir) {
     const { avisos, codigo_plataforma: _cod, ...row } = linha;
     const { data: ins, error } = await supabase.from('inscricoes')
@@ -159,6 +170,15 @@ async function executar({ supabase, acharOuCriarGuardado, eventoId, plano }) {
     if (error) { erros.push({ nome: linha.nome_completo, erro: error.message }); continue; }
 
     let r = null;
+    if (parceira) {
+      semVinculo += 1;
+      inseridas.push({
+        id: ins.id, codigo: ins.codigo, nome: linha.nome_completo,
+        codigo_plataforma: linha.dados?.e_inscricao?.codigo || null,
+        valor_centavos: linha.valor_cobrado_centavos, vinculo: 'igreja parceira · sem vínculo',
+      });
+      continue;
+    }
     try {
       r = await acharOuCriarGuardado({
         cpf: linha.cpf, email: linha.email, telefone: linha.telefone, nome: linha.nome_completo,

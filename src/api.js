@@ -492,6 +492,9 @@ export const inscricoesApi = {
   recusarComprovante: (eventoId, inscricaoId, comprovanteId, motivo) =>
     post(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}/comprovantes/${comprovanteId}/recusar`, { motivo }),
   criarEvento: (data) => post('/inscricoes/eventos', data),
+  // Igrejas PARCEIRAS (CBA · Genesis 24/09): quem se inscreve não vira pessoa da CBRio
+  igrejasParceiras: () => get('/inscricoes/igrejas-parceiras'),
+  criarIgrejaParceira: (data) => post('/inscricoes/igrejas-parceiras', data),
   atualizarEvento: (id, data) => put(`/inscricoes/eventos/${id}`, data),
   excluirEvento: (id) => del(`/inscricoes/eventos/${id}`),
   novaEdicao: (id, data) => post(`/inscricoes/eventos/${id}/nova-edicao`, data),

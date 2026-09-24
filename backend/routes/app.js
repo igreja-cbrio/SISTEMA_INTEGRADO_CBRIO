@@ -4884,6 +4884,7 @@ router.get('/pense-ultimo', authApp, async (req, res) => {
 // desenho (dia em BRT · o mais recente que começou vence · achado de
 // 04/08/2026) está documentado lá.
 const { cultoDeAgora } = require('../services/cultoDeAgora');
+const { filtroSoEventosCbrio, idsEventosParceiros } = require('../services/igrejaParceira');
 
 // GET /api/app/culto/agora — Modo Culto: culto de hoje + link ao vivo + se já registrou decisão.
 router.get('/culto/agora', authApp, async (req, res) => {
@@ -7920,9 +7921,14 @@ router.delete('/familia/vinculo/:outroId', authApp, limiterNormal, async (req, r
 router.get('/eventos', authApp, limiterNormal, async (req, res) => {
   try {
     const nowIso = new Date().toISOString();
-    const { data, error } = await supabase.from('insc_eventos')
+    // ⚠️ Evento de igreja PARCEIRA (Genesis CBA · 24/09) NÃO aparece no app da
+    // CBRio: quem se inscreve ali não é da CBRio (services/igrejaParceira.js).
+    const soCbrio = await filtroSoEventosCbrio();
+    let qCatalogo = supabase.from('insc_eventos')
       .select('id, nome, slug, descricao, area, tipo, data, hora, local, capa_url, vagas, valor_centavos, pagamento_ativo, pagamento_metodos, parcelas_max, inscricoes_abrem_em, inscricoes_encerram_em, tem_sorteio, campos, msg_sucesso_titulo, msg_sucesso_texto, checkout_externo_url, checkout_externo_nome, created_at')
-      .eq('status', 'publicado').is('deleted_at', null)
+      .eq('status', 'publicado').is('deleted_at', null);
+    if (soCbrio) qCatalogo = qCatalogo.or(soCbrio);
+    const { data, error } = await qCatalogo
       .order('data', { ascending: true, nullsFirst: false })
       .limit(100);
     if (error) throw error;
@@ -8075,6 +8081,12 @@ router.get('/eventos/minhas', authApp, limiterNormal, async (req, res) => {
         .order('created_at', { ascending: false }).limit(50);
       if (r.error) console.warn('[APP] eventos/minhas por cpf:', r.error.message);
       else porCpf = r.data || [];
+      // ⚠️ Inscrição de igreja PARCEIRA nunca é "minha" no app da CBRio, mesmo
+      // com o CPF batendo — é a outra igreja (Genesis CBA · 24/09).
+      if (porCpf.length) {
+        const parceiros = new Set(await idsEventosParceiros().catch(() => []));
+        if (parceiros.size) porCpf = porCpf.filter((i) => !parceiros.has(i.evento_id));
+      }
     }
     const data = mesclarInscricoes(porVinculo || [], porCpf, chaves)
       .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')))
@@ -8171,7 +8183,7 @@ router.get('/eventos/minhas', authApp, limiterNormal, async (req, res) => {
 router.post('/eventos/:id/inscrever', authApp, limiterStrict, async (req, res) => {
   try {
     const ev = await eventoEspinhaPorId(req.params.id);
-    if (!ev) return res.status(404).json({ error: 'Evento não encontrado' });
+    if (!ev || ev.igreja_parceira) return res.status(404).json({ error: 'Evento não encontrado' });
     if (ev.status !== 'publicado') {
       return res.status(403).json({ error: 'As inscrições deste evento não estão abertas.' });
     }

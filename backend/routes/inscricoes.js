@@ -175,6 +175,20 @@ async function areaValida(nome) {
   return data && data.length ? data[0].nome : null;
 }
 
+const { igrejaParceiraPorId, eventoEhParceiro, idsEventosParceiros, TIPO_PARCEIRA } = require('../services/igrejaParceira');
+
+// Igreja PARCEIRA (CBA · Genesis 24/09) · valida o `igreja_id` que veio no corpo.
+// undefined = não mexe · null/'' = evento da CBRio · uuid = TEM de ser igreja
+// `cba_acompanhada` (sede/online não entram por aqui: NULL já é CBRio).
+// Devolve { skip } | { valor } | { erro }.
+async function igrejaDoCorpo(b) {
+  if (b.igreja_id === undefined) return { skip: true };
+  if (b.igreja_id === null || b.igreja_id === '') return { valor: null };
+  const igreja = await igrejaParceiraPorId(String(b.igreja_id));
+  if (!igreja) return { erro: 'Igreja parceira inválida (cadastre a igreja antes).' };
+  return { valor: igreja.id };
+}
+
 const CAMPOS_EVENTO = [
   'nome', 'descricao', 'data', 'hora', 'local', 'capa_url', 'vagas',
   'inscricoes_abrem_em', 'inscricoes_encerram_em',
@@ -519,8 +533,12 @@ router.get('/unificadas/dashboard', authorizeModule('inscricoes', 1), async (req
     let arrecadacao = 0;
     try {
       const { data: pagos } = await supabase.from('insc_pagamentos')
-        .select('valor_centavos').eq('status', 'pago').limit(10000);
-      arrecadacao = (pagos || []).reduce((s, p) => s + (p.valor_centavos || 0), 0);
+        .select('valor_centavos, inscricao:inscricoes(evento_id)').eq('status', 'pago').limit(10000);
+      // Igreja PARCEIRA fora do número da CBRio (Genesis CBA · 24/09).
+      const parceiros = new Set(await idsEventosParceiros());
+      arrecadacao = (pagos || [])
+        .filter((p) => !parceiros.has(p.inscricao?.evento_id))
+        .reduce((s, p) => s + (p.valor_centavos || 0), 0);
     } catch { /* tabela do motor pode evoluir na F3.3 — card fica em 0 */ }
 
     // série diária (BRT)
@@ -904,10 +922,55 @@ router.patch('/qrs/:id/reativar', authorizeModule('inscricoes', 3), async (req, 
 });
 
 // GET /eventos — lista com série + contagem de inscritos
+// ── Igrejas PARCEIRAS (CBA · Genesis 24/09) ─────────────────────────────────
+// Catálogo curto das igrejas para as quais a CBRio opera evento. Só o tipo
+// `cba_acompanhada` passa por aqui: sede/online são a própria CBRio.
+router.get('/igrejas-parceiras', authorizeModule('inscricoes', 1), async (_req, res) => {
+  try {
+    const { data, error } = await supabase.from('igrejas')
+      .select('id, nome, slug, cidade, estado, ativa')
+      .eq('tipo', TIPO_PARCEIRA)
+      .order('nome');
+    if (error) throw error;
+    res.json(data || []);
+  } catch (e) {
+    console.error('[inscricoes] igrejas parceiras:', e.message);
+    res.status(500).json({ error: 'Erro ao listar igrejas parceiras' });
+  }
+});
+
+router.post('/igrejas-parceiras', authorizeModule('inscricoes', 3), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const nome = String(b.nome || '').trim().slice(0, 120);
+    if (nome.length < 3) return res.status(400).json({ error: 'Informe o nome da igreja parceira.' });
+    const base = slugify(nome) || 'igreja';
+    // slug é UNIQUE em igrejas · sufixo curto em colisão
+    let slug = base;
+    for (let i = 2; i < 20; i += 1) {
+      const { data: ex } = await supabase.from('igrejas').select('id').eq('slug', slug).maybeSingle();
+      if (!ex) break;
+      slug = `${base}-${i}`;
+    }
+    const { data, error } = await supabase.from('igrejas').insert({
+      nome, slug, tipo: TIPO_PARCEIRA,
+      cidade: String(b.cidade || '').trim().slice(0, 80) || null,
+      estado: String(b.estado || '').trim().slice(0, 2).toUpperCase() || null,
+      observacoes: 'Igreja parceira (CBA) · cadastrada pelo módulo de Inscrições',
+      ativa: true,
+    }).select('id, nome, slug, cidade, estado, ativa').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) {
+    console.error('[inscricoes] criar igreja parceira:', e.message);
+    res.status(500).json({ error: 'Erro ao cadastrar igreja parceira' });
+  }
+});
+
 router.get('/eventos', authorizeModule('inscricoes', 1), async (_req, res) => {
   try {
     const { data, error } = await supabase.from('insc_eventos')
-      .select('id, nome, slug, area, tipo, data, hora, local, capa_url, status, vagas, tem_sorteio, checkin_ativo, no_totem, pagamento_ativo, valor_centavos, edicao_rotulo, serie_id, serie:insc_series(id, nome, periodicidade, recorre_ate, slug_base)')
+      .select('id, nome, slug, area, tipo, data, hora, local, capa_url, status, vagas, tem_sorteio, checkin_ativo, no_totem, pagamento_ativo, valor_centavos, edicao_rotulo, serie_id, igreja_id, serie:insc_series(id, nome, periodicidade, recorre_ate, slug_base), igreja:igrejas(id, nome, tipo)')
       .is('deleted_at', null)
       .order('data', { ascending: false, nullsFirst: false });
     if (error) throw error;
@@ -2697,6 +2760,12 @@ router.post('/eventos', authorizeModule('inscricoes', 3), async (req, res) => {
     }
     const metodos = sanitizeMetodos(b.pagamento_metodos);
     if (metodos) payload.pagamento_metodos = metodos;
+    const igrejaPost = await igrejaDoCorpo(b);
+    if (igrejaPost.erro) return res.status(400).json({ error: igrejaPost.erro });
+    if (!igrejaPost.skip && igrejaPost.valor) {
+      payload.igreja_id = igrejaPost.valor;
+      payload.no_totem = false; // o totem é o hall da CBRio
+    }
     const termos = sanitizeTermosExtra(b.termos_extra);
     if (termos) payload.termos_extra = termos;
     // Lotes de preço (20/08): jsonb com saneador próprio, como termos_extra.
@@ -2721,6 +2790,9 @@ router.post('/eventos', authorizeModule('inscricoes', 3), async (req, res) => {
 // Best-effort · lotes p/ não estourar payload. O tap abre /evento/<slug>.
 async function notificarNovoEventoApp(evento) {
   if (!evento?.slug) return;
+  // ⚠️ Evento de igreja PARCEIRA não é da CBRio: avisar os membros da CBRio
+  // ("inscreva-se pelo app") seria anunciar evento que o app nem lista.
+  if (await eventoEhParceiro(evento)) return;
   // ⚠️ PAGINADO (auditoria 06/08/2026): `select('user_id')` cru trunca em 1000
   // linhas server-side, SEM erro — a partir de ~1.000 instalações o "inscrições
   // abertas" alcançaria só o primeiro pedaço da igreja e nada acusaria.
@@ -2772,6 +2844,26 @@ router.put('/eventos/:id', authorizeModule('inscricoes', 3), async (req, res) =>
     const erroCheckout = conferirCheckoutExterno(patch)
       || sanitizeValorCartaoExterno(patch);
     if (erroCheckout) return res.status(400).json({ error: erroCheckout });
+    const igrejaPut = await igrejaDoCorpo(b);
+    if (igrejaPut.erro) return res.status(400).json({ error: igrejaPut.erro });
+    if (!igrejaPut.skip) {
+      const { data: atualIg } = await supabase.from('insc_eventos')
+        .select('igreja_id').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+      if ((atualIg?.igreja_id || null) !== igrejaPut.valor) {
+        // ⚠️ Trocar a igreja com inscrição dentro misturaria as duas bases: quem
+        // entrou como CBRio já pode estar ligado a cadastro, e quem entrou como
+        // parceira passaria a cair na fila de identidade da CBRio.
+        const { count, error: eCnt } = await supabase.from('inscricoes')
+          .select('id', { count: 'exact', head: true })
+          .eq('evento_id', req.params.id).is('deleted_at', null);
+        if (eCnt) throw eCnt;
+        if (count > 0) {
+          return res.status(409).json({ error: 'A igreja do evento só pode mudar enquanto ele não tem inscrições.' });
+        }
+        patch.igreja_id = igrejaPut.valor;
+        if (igrejaPut.valor) patch.no_totem = false;
+      }
+    }
     if (b.status !== undefined) {
       if (!['rascunho', 'publicado', 'encerrado', 'arquivado'].includes(b.status)) {
         return res.status(400).json({ error: 'Status inválido' });
@@ -2788,7 +2880,7 @@ router.put('/eventos/:id', authorizeModule('inscricoes', 3), async (req, res) =>
     }
     const { data, error } = await supabase.from('insc_eventos')
       .update(patch).eq('id', req.params.id).is('deleted_at', null)
-      .select('id, nome, slug, status').single();
+      .select('id, nome, slug, status, igreja_id').single();
     if (error) throw error;
     if (data?.status === 'publicado' && statusAntes && statusAntes !== 'publicado') {
       notificarNovoEventoApp(data).catch((e) => console.warn('[inscricoes] push evento publicado:', e.message));
