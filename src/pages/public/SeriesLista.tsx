@@ -1,7 +1,7 @@
 import { useEffect, useMemo } from 'react';
 import { ArrowUpRight } from 'lucide-react';
 import {
-  Wave, SiteHeader, SiteFooter, Badge, useChrome, useGo, seriePath,
+  SiteHeader, SiteFooter, Badge, useChrome, useGo, seriePath,
 } from './novosite/shared';
 import { NS_CSS } from './novosite/styles';
 import { SERIES, TEMA_ANUAL, ANO_SERIES, fundoSerie, type Serie } from './novosite/series2027';
@@ -54,28 +54,24 @@ export default function SeriesLista() {
   return (
     <div className="ns" ref={rootRef}>
       <style>{NS_CSS}</style>
-      <SiteHeader scrolled={scrolled} menuOpen={menuOpen} setMenuOpen={setMenuOpen} />
+      {/* Header sólido desde o topo: a página é clara, o menu branco sumiria. */}
+      <SiteHeader scrolled menuOpen={menuOpen} setMenuOpen={setMenuOpen} />
 
-      {/* Cabeçalho sem foto (pedido: nada de hero com imagem aqui). */}
-      <section className="ns-section ns-theme-petrol has-wave ns-series-topo">
-        <div className="ns-container ns-reveal">
-          <p className="ns-eyebrow ns-turq-light">Séries de pregação · {ANO_SERIES}</p>
-          <h1 className="ns-h2">Séries de <b>pregação</b></h1>
-          {TEMA_ANUAL.titulo && (
-            <div className="ns-series-tema">
-              <span className="ns-series-tema-rot">Tema do ano</span>
-              <strong>{TEMA_ANUAL.titulo}</strong>
-              {TEMA_ANUAL.versiculo && (
-                <p>“{TEMA_ANUAL.versiculo}”{TEMA_ANUAL.referencia && <span> — {TEMA_ANUAL.referencia}</span>}</p>
-              )}
-            </div>
-          )}
-        </div>
-        <Wave color="var(--cb-offwhite)" />
-      </section>
-
-      <section className="ns-section ns-theme-offwhite">
+      <section className="ns-section ns-theme-offwhite ns-pagina-clara">
         <div className="ns-container">
+          <div className="ns-reveal ns-series-cab">
+            <p className="ns-eyebrow ns-petrol-accent">Séries de pregação · {ANO_SERIES}</p>
+            <h1 className="ns-h2 ns-petrol-accent">Séries de <b>pregação</b></h1>
+            {TEMA_ANUAL.titulo && (
+              <div className="ns-series-tema">
+                <span className="ns-series-tema-rot">Tema do ano</span>
+                <strong>{TEMA_ANUAL.titulo}</strong>
+                {TEMA_ANUAL.versiculo && (
+                  <p>“{TEMA_ANUAL.versiculo}”{TEMA_ANUAL.referencia && <span> — {TEMA_ANUAL.referencia}</span>}</p>
+                )}
+              </div>
+            )}
+          </div>
           {atual && (
             <div className="ns-reveal ns-section-head">
               <p className="ns-eyebrow ns-petrol-accent">Neste mês</p>

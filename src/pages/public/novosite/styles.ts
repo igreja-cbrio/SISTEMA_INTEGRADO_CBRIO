@@ -209,12 +209,19 @@ export const NS_CSS = `
 .ns-qs-missao .ns-lead{ margin-inline:auto; }
 
 /* ===== Séries ===== */
-.ns-series-topo{ padding-top:calc(var(--section-y) + 3rem); }
-.ns-series-tema{ margin-top:1.8rem; display:flex; flex-direction:column; gap:.35rem; max-width:62ch; border-left:3px solid var(--cb-turquoise-light); padding-left:1.1rem; }
-.ns-series-tema-rot{ text-transform:uppercase; letter-spacing:.2em; font-size:.72rem; font-weight:800; color:var(--cb-turquoise-light); }
-.ns-series-tema strong{ font-size:clamp(1.8rem,4vw,2.8rem); font-weight:900; line-height:1.05; color:#fff; }
-.ns-series-tema p{ color:rgba(255,255,255,.88); font-size:clamp(1rem,1.4vw,1.15rem); font-style:italic; }
-.ns-series-tema p span{ font-style:normal; font-weight:700; color:var(--cb-turquoise-light); }
+.ns-pagina-clara{ padding-top:calc(72px + clamp(1.5rem,4vw,3rem)); background:var(--cb-offwhite); }
+.ns-series-cab{ margin-bottom:clamp(2rem,4vw,3rem); }
+.ns-sr-only{ position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); white-space:nowrap; }
+.ns .ns-serie-voltar{ display:inline-flex; align-items:center; gap:.4rem; color:var(--cb-petrol); font-weight:700; font-size:.92rem; margin-bottom:1rem; }
+.ns-serie-banner{ width:100%; aspect-ratio:3/1; border-radius:var(--radius-img); background-size:cover; background-position:center; box-shadow:var(--shadow-soft); display:flex; align-items:center; justify-content:center; }
+.ns-serie-banner-nome{ color:#fff; font-weight:900; font-size:clamp(1.6rem,5vw,3.6rem); letter-spacing:-.02em; text-align:center; padding:0 1rem; text-shadow:0 2px 16px rgba(0,0,0,.25); }
+.ns .ns-serie-banner-meta{ margin:1.2rem 0 0; }
+.ns-section.ns-serie-conteudo{ padding-top:clamp(1.5rem,3vw,2.5rem); }
+.ns-series-tema{ margin-top:1.8rem; display:flex; flex-direction:column; gap:.35rem; max-width:62ch; border-left:3px solid var(--cb-turquoise); padding-left:1.1rem; }
+.ns-series-tema-rot{ text-transform:uppercase; letter-spacing:.2em; font-size:.72rem; font-weight:800; color:var(--cb-turquoise); }
+.ns-series-tema strong{ font-size:clamp(1.8rem,4vw,2.8rem); font-weight:900; line-height:1.05; color:var(--cb-petrol); }
+.ns-series-tema p{ color:#5b6b62; font-size:clamp(1rem,1.4vw,1.15rem); font-style:italic; }
+.ns-series-tema p span{ font-style:normal; font-weight:700; color:var(--cb-petrol); }
 .ns-series-grid{ display:grid; grid-template-columns:repeat(3,1fr); gap:1.4rem; }
 .ns-serie-card{ display:flex; flex-direction:column; background:#fff; border-radius:var(--radius-card); overflow:hidden; box-shadow:var(--shadow-soft); transition:transform var(--dur-fast) var(--ease); }
 .ns-serie-card:hover{ transform:translateY(-6px); }
@@ -228,8 +235,6 @@ export const NS_CSS = `
 .ns-serie-corpo{ padding:1.2rem 1.3rem 1.4rem; display:flex; flex-direction:column; flex:1; }
 .ns-serie-titulo{ color:var(--cb-petrol); font-size:1.25rem; font-weight:800; line-height:1.2; }
 .ns-serie-sub{ color:#5d5852; font-size:.96rem; margin-top:.4rem; flex:1; }
-.ns-serie-hero{ min-height:clamp(380px,60vh,600px); }
-.ns-header .ns-serie-voltar, .ns-serie-voltar{ display:inline-flex; align-items:center; gap:.4rem; color:#fff; font-weight:700; font-size:.92rem; margin-bottom:1.4rem; opacity:.9; }
 .ns-serie-topo{ display:grid; grid-template-columns:1.2fr .8fr; gap:clamp(2rem,5vw,4rem); align-items:start; margin-bottom:clamp(2.5rem,5vw,4rem); }
 .ns-serie-textos{ margin-top:1.8rem; }
 .ns-serie-textos li{ display:flex; align-items:center; gap:.5rem; color:var(--cb-petrol); font-weight:700; padding:.35rem 0; }
