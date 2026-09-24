@@ -63,7 +63,17 @@ router.post('/chat', chatLimiter, async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(503).json({ error: 'API da Anthropic não configurada' });
 
-  const { message, module, sessionId } = sanitizeObj(req.body);
+  // A `message` NÃO passa por sanitizeObj (HTML-escape) — isso corrompia
+  // perguntas com HTML/aspas ("como o &lt;div&gt; funciona?") e ainda dava falsa
+  // sensação de proteção contra prompt-injection (LLMs entendem entidades HTML
+  // como texto). Validação real fica no envelope XML do contexto (ver #F2/#B2
+  // do code review) + limite de comprimento aqui.
+  const rawMessage = req.body?.message;
+  const message = typeof rawMessage === 'string' ? rawMessage.trim().slice(0, 8000) : '';
+  const { module, sessionId } = sanitizeObj({
+    module: req.body?.module,
+    sessionId: req.body?.sessionId,
+  });
   if (!message) return res.status(400).json({ error: 'Mensagem obrigatória' });
 
   const agentModule = module || 'supervisor';
@@ -134,17 +144,31 @@ router.post('/chat', chatLimiter, async (req, res) => {
 
       sendEvent('session', { sessionId: activeSessionId, dbSessionId, module: agentModule });
     } else {
-      // Update last_message_at (preenche title só se ainda estiver vazio · COALESCE)
+      // Ownership check: só o dono da sessão pode continuar/atualizar ela.
+      // Antes deste guard, um usuário autenticado podia enviar o
+      // anthropic_session_id de outro (ou enumerar UUIDs), continuar a
+      // conversa alheia e ler a resposta pelo SSE. Ver CRIT-05 do code review.
       try {
         const { data: sessRows } = await supabase
           .from('agent_sessions')
-          .select('title')
+          .select('id, title, user_id')
           .eq('anthropic_session_id', activeSessionId)
           .limit(1);
+        const owned = sessRows?.[0] && sessRows[0].user_id === req.user.userId;
+        if (!owned) {
+          sendEvent('error', { text: 'Sessão não encontrada ou sem permissão.' });
+          res.write('data: [DONE]\n\n');
+          return res.end();
+        }
         const patch = { last_message_at: new Date().toISOString() };
-        if (sessRows?.[0] && !sessRows[0].title) patch.title = message.slice(0, 80);
-        await supabase.from('agent_sessions').update(patch).eq('anthropic_session_id', activeSessionId);
-      } catch (e) { console.warn('[AGENTS] Failed to update session timestamp:', e.message); }
+        if (!sessRows[0].title) patch.title = message.slice(0, 80);
+        await supabase.from('agent_sessions').update(patch).eq('id', sessRows[0].id);
+      } catch (e) {
+        console.warn('[AGENTS] Failed to validate/update session:', e.message);
+        sendEvent('error', { text: 'Erro ao validar sessão.' });
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
     }
 
     // 2. Build context from DB (filtrado pela permissão do usuário)
@@ -248,11 +272,14 @@ router.post('/chat', chatLimiter, async (req, res) => {
       return [...new Set(candidates)];
     };
 
+    const debugAgents = process.env.DEBUG_AGENTS === '1';
     const handleSsePayload = (jsonStr) => {
       if (!jsonStr || jsonStr === '[DONE]') return;
 
-      // Send raw payload to frontend for debugging
-      sendEvent('raw', { payload: jsonStr.slice(0, 500) });
+      // Só envia payload bruto ao cliente com DEBUG_AGENTS=1. Em produção
+      // isso vazava metadata interna da Sessions API (session ids, telemetria
+      // de agente) via SSE. Ver ALT-07 do code review.
+      if (debugAgents) sendEvent('raw', { payload: jsonStr.slice(0, 500) });
 
       try {
         const event = JSON.parse(jsonStr);
