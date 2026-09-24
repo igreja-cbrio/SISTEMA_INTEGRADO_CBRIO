@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
 import ReactMarkdown from 'react-markdown';
 import { events, meetings, cycles as cyclesApi, occurrences as occApi, dashboard as dashApi, risks as risksApi, retrospective as retroApi, history as historyApi, users as usersApi, reports as reportsApi } from '../../api';
+import { safeHref } from '../../lib/safeHref';
 import { supabase } from '../../supabaseClient';
 import { resolveApiBaseUrl } from '../../lib/api-base';
 import CycleView from './components/CycleView';
@@ -3563,7 +3564,7 @@ export default function Eventos() {
 
             {/* Link para arquivo */}
             {kpiDocModal.file_url && (
-              <a href={kpiDocModal.file_url} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-block', marginTop: 12, fontSize: 12, color: C.primary, fontWeight: 600 }}>Abrir arquivo original</a>
+              <a href={safeHref(kpiDocModal.file_url)} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-block', marginTop: 12, fontSize: 12, color: C.primary, fontWeight: 600 }}>Abrir arquivo original</a>
             )}
           </div>
         </div>

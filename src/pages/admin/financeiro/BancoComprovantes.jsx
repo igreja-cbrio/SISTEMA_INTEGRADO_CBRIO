@@ -6,6 +6,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { financeiro } from '../../../api';
 import { DatePicker } from '../../../components/ui/date-picker';
 import { FileText, Download, ExternalLink, Search, Receipt } from 'lucide-react';
+import { safeHref } from '../../../lib/safeHref';
 
 const C = {
   card: 'var(--cbrio-card)', text: 'var(--cbrio-text)', text2: 'var(--cbrio-text2)',
@@ -115,11 +116,11 @@ export default function BancoComprovantes() {
                       <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>{fmtMoney(it.valor)}</td>
                       <td style={{ ...td, textAlign: 'right', whiteSpace: 'nowrap' }}>
                         <div style={{ display: 'inline-flex', gap: 8 }}>
-                          <a href={it.url} target="_blank" rel="noreferrer" title="Abrir"
+                          <a href={safeHref(it.url)} target="_blank" rel="noreferrer" title="Abrir"
                             style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: C.primary, fontSize: 12, fontWeight: 600, textDecoration: 'none' }}>
                             <ExternalLink style={{ width: 14, height: 14 }} /> Abrir
                           </a>
-                          <a href={it.url} download={it.arquivo || 'comprovante'} title="Baixar"
+                          <a href={safeHref(it.url)} download={it.arquivo || 'comprovante'} title="Baixar"
                             style={{ display: 'inline-flex', alignItems: 'center', gap: 4, color: C.text2, fontSize: 12, fontWeight: 600, textDecoration: 'none' }}>
                             <Download style={{ width: 14, height: 14 }} /> Baixar
                           </a>
