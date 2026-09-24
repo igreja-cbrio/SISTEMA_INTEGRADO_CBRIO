@@ -351,6 +351,20 @@ export default function AppShell() {
     }
   }, [rotaTravada, travaPrefixos, location.pathname, navigate]);
 
+  // Voluntário digitando URL do staff (/dashboard, /planejamento, /revisao,
+  // /solicitacoes, /admin/*) renderiza a página do staff completa — o guard
+  // depende do backend rejeitar as chamadas de API, e um caso já falhou
+  // (NotificacaoRegras.jsx faz supabase.from('profiles').select direto sem
+  // passar por backend). Ver ALT-14 do code review. Mantém livre:
+  // /voluntariado/*, /perfil (dados próprios), /notificacoes (do voluntário).
+  const PREFIXOS_VOLUNTARIO = ['/voluntariado', '/perfil', '/notificacoes'];
+  useEffect(() => {
+    if (!isVoluntario || rotaTravada) return; // rotaTravada já cuida acima
+    if (!PREFIXOS_VOLUNTARIO.some((p) => location.pathname.startsWith(p))) {
+      navigate('/voluntariado/checkin', { replace: true });
+    }
+  }, [isVoluntario, rotaTravada, location.pathname, navigate]);
+
   const initials = (profile?.name || '??')
     .split(' ')
     .map(n => n[0])
