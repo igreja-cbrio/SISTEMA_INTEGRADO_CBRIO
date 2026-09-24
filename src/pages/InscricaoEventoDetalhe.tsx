@@ -8,6 +8,7 @@ import confetti from 'canvas-confetti';
 import { inscricoesApi as api } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { Card } from '../components/ui/card';
+import { safeHref } from '../lib/safeHref';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -2021,7 +2022,7 @@ function ComprovantesBloco({ eventoId, inscricao, podeEditar, onPago }: {
               {/* Signed URL de 15 min (bucket privado). Abre em aba nova: PDF e
                   imagem grande não caberiam legíveis dentro do modal. */}
               {c.url && (
-                <a href={c.url} target="_blank" rel="noreferrer"
+                <a href={safeHref(c.url)} target="_blank" rel="noreferrer"
                   className="text-primary hover:underline inline-flex items-center gap-1 font-medium">
                   <ExternalLink className="h-3 w-3" /> Ver arquivo
                 </a>

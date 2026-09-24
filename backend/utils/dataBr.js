@@ -42,4 +42,36 @@ function parseDateBR(raw) {
   return null;
 }
 
-module.exports = { parseDateBR };
+// ─── Cabeçalho de "hoje/mês" no fuso do Brasil ───────────────────────
+//
+// ⚠️ Vercel roda em UTC. `new Date().toISOString().slice(0, 10)` responde
+// o dia no UTC — entre 21h e 24h BRT (00:00-03:00 UTC) já virou "amanhã".
+// Isso quebrava vários KPIs às noites: conta com vencimento HOJE saía de
+// "vencidas" 3h antes da meia-noite (D6 do code review); o mês atual em
+// KPIs de cuidados/eventos avançava cedo demais (D15). As funções abaixo
+// devolvem sempre o dia/mês *no fuso do Brasil*, independente de onde o
+// processo está rodando.
+
+const TZ_BR = 'America/Sao_Paulo';
+
+/** Retorna `YYYY-MM-DD` do "hoje" no fuso America/Sao_Paulo. */
+function hojeBR() {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ_BR, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(new Date());
+}
+
+/** Retorna `YYYY-MM-DD` (fuso BR) de uma Date/ISO qualquer. */
+function toYmdBR(d) {
+  const date = d instanceof Date ? d : new Date(d);
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone: TZ_BR, year: 'numeric', month: '2-digit', day: '2-digit',
+  }).format(date);
+}
+
+/** Retorna `YYYY-MM-01` do primeiro dia do mês atual no fuso BR. */
+function inicioDoMesBR() {
+  return `${hojeBR().slice(0, 7)}-01`;
+}
+
+module.exports = { parseDateBR, hojeBR, toYmdBR, inicioDoMesBR, TZ_BR };

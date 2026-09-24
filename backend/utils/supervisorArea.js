@@ -26,6 +26,7 @@ function chaveArea(v) {
 
 /** 'geral' é o curinga: supervisiona tudo. É o que preserva quem já tinha acesso. */
 const CURINGA = 'geral';
+const PAPEIS = Object.freeze(['leitor', 'lider', 'admin']);
 
 
 /**
@@ -39,13 +40,18 @@ const CURINGA = 'geral';
  */
 function equipeSupervisionada(equipe, areasDoSupervisor) {
   if (supervisionaTudo(areasDoSupervisor)) return true;
+  const gs = normalizarConcessoes(areasDoSupervisor);
+  // Escopo por TIME (24/09/2026): casa pelo id da equipe, e SÓ por ele — a área
+  // do time é irrelevante aqui, senão "líder da Banda" viraria "líder do Louvor".
+  const id = equipe && equipe.id ? String(equipe.id) : null;
+  if (id && gs.some((g) => g.team_id && String(g.team_id) === id)) return true;
   const alvo = chaveArea(equipe && equipe.area);
   if (!alvo) return false;
-  // ⚠️ Nível de EQUIPE: ignora o recorte de subárea E de rodízio, de propósito.
-  // A equipe é o container da área; quem supervisiona só o Ofertório do 1º
-  // domingo ainda precisa VER a equipe Integração pra chegar na vaga dele. O
-  // corte fino é no ITEM (subárea) e no CULTO (rodízio).
-  return normalizarConcessoes(areasDoSupervisor).some((g) => chaveArea(g.area) === alvo);
+  // ⚠️ Nível de EQUIPE: ignora o recorte de subárea E de rodízio — quem cobre só
+  // o Ofertório precisa VER a equipe pra chegar no Ofertório. O curinga `geral`
+  // com recorte de culto (leitor/líder "de domingo") também vê toda equipe; o
+  // recorte é aplicado depois, culto a culto, em `podeSupervisionar`.
+  return gs.some((g) => !g.team_id && (chaveArea(g.area) === alvo || chaveArea(g.area) === CURINGA));
 }
 
 /** Filtra itens (de composição, de equipe…) pelo que a pessoa supervisiona. */
@@ -79,9 +85,13 @@ function filtrarPorSupervisao(itens, areasDoSupervisor, lerArea) {
 function normalizarConcessoes(entrada) {
   return (entrada || []).map((g) => (
     typeof g === 'string'
-      ? { area: g, position_id: null, culto_dia: null, culto_periodo: null, culto_semana: null }
+      ? { area: g, papel: 'lider', team_id: null, position_id: null, culto_dia: null, culto_periodo: null, culto_semana: null }
       : {
         area: g && g.area,
+        // ⚠️ Sem `papel` = 'lider': é o que as 37 concessões anteriores a 24/09
+        // sempre foram (quem tinha concessão editava). Só 'leitor' tira a escrita.
+        papel: (g && PAPEIS.includes(g.papel)) ? g.papel : 'lider',
+        team_id: (g && g.team_id) || null,
         position_id: (g && g.position_id) || null,
         // Rodízio (25/08): semana × dia × período. NULL em cada eixo = curinga,
         // que é o que mantém string[] e as concessões antigas funcionando igual.
@@ -100,7 +110,7 @@ function normalizarConcessoes(entrada) {
  * qualquer coisa montando escala de todas as áreas) pela porta dos fundos.
  */
 function _semRecorte(g) {
-  return !g.position_id && !g.culto_dia && !g.culto_periodo && !g.culto_semana;
+  return !g.team_id && !g.position_id && !g.culto_dia && !g.culto_periodo && !g.culto_semana;
 }
 
 function supervisionaTudo(entrada) {
@@ -109,8 +119,15 @@ function supervisionaTudo(entrada) {
 
 /** Uma concessão cobre este alvo `{ area, position_id, culto }`? */
 function _cobre(g, alvo) {
-  const areaOk = chaveArea(g.area) === CURINGA || (!!chaveArea(alvo.area) && chaveArea(g.area) === chaveArea(alvo.area));
-  if (!areaOk) return false;
+  if (g.team_id) {
+    // Escopo por TIME manda: o alvo precisa dizer de que time é. Alvo sem
+    // `team_id` é NEGADO pela mesma lei da equipe sem área — liberar "porque não
+    // dá pra saber" devolveria acesso amplo bastando omitir o id.
+    if (!(alvo.team_id && String(g.team_id) === String(alvo.team_id))) return false;
+  } else {
+    const areaOk = chaveArea(g.area) === CURINGA || (!!chaveArea(alvo.area) && chaveArea(g.area) === chaveArea(alvo.area));
+    if (!areaOk) return false;
+  }
   // Subárea
   if (g.position_id && !(alvo.position_id && String(g.position_id) === String(alvo.position_id))) return false;
   // Rodízio · delegado à régua pura (`utils/rodizioCulto`), que é quem sabe
@@ -134,13 +151,55 @@ function podeSupervisionar(entrada, alvo) {
 }
 
 /** Só as subáreas concedidas nesta área (vazio = a área inteira). */
-function subareasNaArea(entrada, area) {
-  const gs = normalizarConcessoes(entrada).filter((g) => chaveArea(g.area) === chaveArea(area) || chaveArea(g.area) === CURINGA);
+function subareasNaArea(entrada, area, teamId) {
+  const gs = normalizarConcessoes(entrada).filter((g) => (
+    g.team_id
+      ? (!!teamId && String(g.team_id) === String(teamId))
+      : (chaveArea(g.area) === chaveArea(area) || chaveArea(g.area) === CURINGA)
+  ));
   if (gs.some((g) => !g.position_id)) return [];   // curinga: sem recorte
   return [...new Set(gs.map((g) => String(g.position_id)))];
 }
 
+/**
+ * PAPÉIS (24/09/2026 · pedido do Marcos): leitor abre a Montar escala e só lê;
+ * lider (= editor) altera; admin é o `geral` sem recorte de quem gerencia
+ * pessoas e estruturas (Marcos e Matheus). "Nenhuma" é não ter linha.
+ * A lista mora no topo do arquivo (`PAPEIS`) porque `normalizarConcessoes` a usa.
+ */
+
+/** Só as concessões que ESCREVEM. É o que as rotas de POST/PATCH/DELETE usam. */
+function soEditores(entrada) {
+  return normalizarConcessoes(entrada).filter((g) => g.papel !== 'leitor');
+}
+
+/** Tem concessão, mas nenhuma escreve — a tela mostra e esconde os botões. */
+function somenteLeitura(entrada) {
+  const gs = normalizarConcessoes(entrada);
+  return gs.length > 0 && gs.every((g) => g.papel === 'leitor');
+}
+
+/** O maior papel entre as concessões (pra tela dizer "Leitor" / "Líder" / "Admin"). */
+function papelMaior(entrada) {
+  const gs = normalizarConcessoes(entrada);
+  if (!gs.length) return null;
+  if (gs.some((g) => g.papel === 'admin' || (chaveArea(g.area) === CURINGA && _semRecorte(g)))) return 'admin';
+  if (gs.some((g) => g.papel === 'lider')) return 'lider';
+  return 'leitor';
+}
+
+/**
+ * Este CULTO está no escopo de alguma concessão? Só olha o eixo do rodízio
+ * (dia × período × semana) — é o filtro da LISTA de cultos: quem só lê o
+ * domingo não precisa ver a quarta na lista pra descobrir que ela vem vazia.
+ */
+function cultoNoEscopo(entrada, culto) {
+  const { cultoCoberto } = require('./rodizioCulto');
+  return normalizarConcessoes(entrada).some((g) => cultoCoberto(g, culto || null));
+}
+
 module.exports = {
-  chaveArea, supervisionaTudo, equipeSupervisionada, filtrarPorSupervisao, CURINGA,
+  chaveArea, supervisionaTudo, equipeSupervisionada, filtrarPorSupervisao, CURINGA, PAPEIS,
   normalizarConcessoes, podeSupervisionar, subareasNaArea,
+  soEditores, somenteLeitura, papelMaior, cultoNoEscopo,
 };

@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { batismoPublico } from '../../api';
 import AnimatedBackground from './AnimatedBackground';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
+import { safeHref } from '../../lib/safeHref';
 
 type Foto = { nome: string; url: string };
 type Dados = { nome: string; data_batismo: string | null; fotos: Foto[] };
@@ -116,7 +117,7 @@ export default function BatismoAcesso() {
               display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(150px, 1fr))', gap: 10,
             }}>
               {dados.fotos.map((f) => (
-                <a key={f.nome} href={f.url} target="_blank" rel="noreferrer"
+                <a key={f.nome} href={safeHref(f.url)} target="_blank" rel="noreferrer"
                   style={{
                     display: 'block', borderRadius: 12, overflow: 'hidden',
                     border: `1px solid ${C.cardBorder}`, aspectRatio: '1 / 1', background: C.optionBg,

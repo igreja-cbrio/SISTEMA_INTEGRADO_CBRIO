@@ -4707,6 +4707,15 @@ export const planejamentoAnual = {
       put(`/planejamento-anual/propostas/${id}/apontamento-pastor`, { campo, valor, dia_semana, precisao }),
     removerApontamentoPastor: (id, campo) =>
       put(`/planejamento-anual/propostas/${id}/apontamento-pastor`, { campo, valor: null }),
+    configRotina: (id) => get(`/planejamento-anual/propostas/${id}/config-rotina`),
+    salvarConfigRotina: (id, corpo) => put(`/planejamento-anual/propostas/${id}/config-rotina`, corpo),
+  },
+  // Execução do Planejamento (2026-09-23) · lista consolidada de propostas
+  // aprovadas + detalhe somente-leitura + materialização de Projeto/Evento.
+  execucao: {
+    propostas: (params) => get('/planejamento-anual/execucao/propostas' + (params ? '?' + new URLSearchParams(params) : '')),
+    proposta: (id) => get(`/planejamento-anual/execucao/propostas/${id}`),
+    materializar: (id, tipo) => post(`/planejamento-anual/propostas/${id}/materializar`, { tipo }),
   },
 };
 

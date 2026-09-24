@@ -23,9 +23,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { toast } from 'sonner';
 import {
   ArrowLeft, Baby, Loader2, Phone, Search, Copy, Share2, Check, Award, Download,
-  Clock, ChevronDown, FileText, Plus, Trash2, AlertTriangle, Image as ImageIcon,
+  Clock, ChevronDown, FileText, Plus, Trash2, AlertTriangle, Image as ImageIcon, Printer,
 } from 'lucide-react';
 import { gerarCertificadoApresentacao, gerarCertificadosApresentacaoLote } from '../../../lib/gerarCertificadoApresentacao';
+import { imprimirListaApresentacao, montarBlocosApresentacao } from '../../../lib/imprimirListaApresentacao';
 
 const fmt = (d?: string | null) => { if (!d) return '—'; try { return new Date(d + (String(d).length === 10 ? 'T00:00:00' : '')).toLocaleDateString('pt-BR'); } catch { return d || '—'; } };
 const fmtDataHora = (d?: string | null) => { if (!d) return '—'; try { return new Date(d).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }); } catch { return d || '—'; } };
@@ -569,6 +570,22 @@ export default function ApresentacaoCriancas() {
   };
   const turmaTodaMarcada = (items: any[]) => items.length > 0 && items.every(b => selecionados[b.id]);
 
+  // ⚠️ Contato é PII em papel: a lista impressa circula na mão de voluntário e
+  // fica em cima da mesa. Só sai quando alguém marca. (Padrão de
+  // `imprimirListaInscritos`.)
+  const [imprimirContato, setImprimirContato] = useState(false);
+
+  const imprimir = (items: any[], rotuloVazio: string) => {
+    const blocos = montarBlocosApresentacao(items, fmt, {
+      fmtHorario: (h) => hLabel(h) || h,
+    });
+    if (blocos.length === 0) { toast.error(rotuloVazio); return; }
+    // ⚠️ O batismo só faz console.warn quando o popup é bloqueado — a pessoa
+    // clica e nada acontece. Aqui a tela DIZ.
+    const abriu = imprimirListaApresentacao(blocos, { colunas: { contato: imprimirContato } });
+    if (!abriu) toast.error('O navegador bloqueou a janela de impressão. Libere os pop-ups deste site e tente de novo.');
+  };
+
   return (
     <div className="max-w-4xl mx-auto px-4 py-6 space-y-4">
       <button onClick={() => navigate('/kids')} className="text-xs text-muted-foreground hover:text-foreground inline-flex items-center gap-1"><ArrowLeft className="h-3.5 w-3.5" /> Voltar ao Kids</button>
@@ -605,7 +622,20 @@ export default function ApresentacaoCriancas() {
         <Card className="p-8 text-center text-sm text-muted-foreground">Nenhuma inscrição de apresentação no momento.</Card>
       ) : (
         <div className="space-y-2">
-          <div className="text-xs text-muted-foreground">{filtradas.length} inscriç{filtradas.length !== 1 ? 'ões' : 'ão'} · {grupos.length} turma{grupos.length !== 1 ? 's' : ''}</div>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="text-xs text-muted-foreground">{filtradas.length} inscriç{filtradas.length !== 1 ? 'ões' : 'ão'} · {grupos.length} turma{grupos.length !== 1 ? 's' : ''}</div>
+            <label className="ml-auto flex items-center gap-1.5 text-[11px] text-muted-foreground cursor-pointer select-none" title="O telefone dos responsáveis é dado pessoal em papel — só sai na folha se você marcar">
+              <input type="checkbox" className="h-3.5 w-3.5 accent-[#407F96] cursor-pointer" checked={imprimirContato} onChange={(e) => setImprimirContato(e.target.checked)} />
+              Incluir contato na folha
+            </label>
+            <button
+              onClick={() => imprimir(filtradas, 'Nenhuma criança para imprimir (as canceladas ficam de fora).')}
+              className="inline-flex items-center gap-1.5 text-xs border border-border rounded-md px-2.5 py-1.5 hover:bg-muted transition-colors"
+              title="Imprime a lista de presença de todas as turmas que estão na tela"
+            >
+              <Printer className="h-3.5 w-3.5" /> Imprimir lista
+            </button>
+          </div>
           {grupos.map(([data, items]) => (
             <div key={data} className="space-y-2">
               <div className="flex flex-wrap items-center gap-2 pt-2">
@@ -634,6 +664,13 @@ export default function ApresentacaoCriancas() {
                     <ImageIcon className="h-3 w-3" /> {items.filter((x: any) => x.tem_foto).length} de {items.length} com foto
                   </span>
                 )}
+                <button
+                  onClick={() => imprimir(items, 'Nenhuma criança nesta turma (as canceladas ficam de fora).')}
+                  className="ml-auto inline-flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground rounded-md px-1.5 py-1 hover:bg-muted transition-colors"
+                  title="Imprimir a lista de presença só desta turma"
+                >
+                  <Printer className="h-3 w-3" /> Imprimir
+                </button>
               </div>
               {items.map((b) => {
                 const pais = nomesDosPaisUnicos(b.nome_pai, b.nome_mae);

@@ -1683,14 +1683,14 @@ router.delete('/form-opcoes/:id', authorizeModule('voluntariado', 3), async (req
 // ══════════════════════════════════════════════════════════════
 router.get('/supervisores', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
-    const { data, error } = await supabase
-      .from('vol_area_supervisores')
-      // ⚠️ `position` é a SUBÁREA (Ofertório, Estacionamento…). Vem embutida
-      // pra tela não precisar de um segundo round-trip por linha.
-      .select(SELECT_SUPERVISOR)
-      .order('area', { ascending: true });
-    if (error) throw error;
-    res.json(data || []);
+    // ⚠️ `position` é a SUBÁREA (Ofertório, Estacionamento…). Vem embutida
+    // pra tela não precisar de um segundo round-trip por linha.
+    let r = await supabase.from('vol_area_supervisores').select(SELECT_SUPERVISOR).order('area', { ascending: true });
+    if (r.error && r.error.code === '42703') {
+      r = await supabase.from('vol_area_supervisores').select(SELECT_SUPERVISOR_BASE).order('area', { ascending: true });
+    }
+    if (r.error) throw r.error;
+    res.json(r.data || []);
   } catch (e) {
     console.error('[voluntariado] supervisores get:', e.message);
     res.status(500).json({ error: 'Erro ao listar supervisores' });
@@ -1705,40 +1705,71 @@ router.get('/supervisores', authorizeModule('voluntariado', 3), async (req, res)
  * "Integração + Recepção do KIDS" mandando o id cru no corpo, e o que traduz o
  * CHECK do banco em 400 com mensagem em vez de um 23514 cru.
  */
-async function validarEscopoSupervisao({ area, position_id, culto_dia, culto_periodo, culto_semana }) {
-  // Subárea tem que PERTENCER à área concedida (nome de posição repete entre
-  // áreas: "Recepção" existe em Integração E em KIDS).
+/**
+ * Valida o ESCOPO de uma concessão (24/09/2026: + papel, + time, + sábado).
+ *
+ * Três formas de escopo, e a régua do app (`utils/supervisorArea`) lê as três:
+ *   · TIME  → `team_id` (a área vem do time, só por compatibilidade);
+ *   · CULTO → `area = 'geral'` + `culto_dia` (domingo | quarta | sabado);
+ *   · GERAL → `area = 'geral'` sem recorte nenhum (é o que o admin tem).
+ *   · ÁREA  → `area` (legado, as 35 concessões da Ariel e da Produção).
+ *
+ * ⚠️ `papel = admin` SÓ com geral sem recorte: admin "de um time" não existe —
+ * seria líder. Recusar aqui evita uma linha que a régua leria como admin geral.
+ * ⚠️ Só o DOMINGO tem manhã/noite: quarta e sábado são culto único.
+ */
+async function validarEscopoSupervisao({ area, position_id, culto_dia, culto_periodo, culto_semana, team_id, papel }) {
+  const norm = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+  const PAPEIS = ['leitor', 'lider', 'admin'];
+  const pap = papel ? String(papel).trim().toLowerCase() : 'lider';
+  if (!PAPEIS.includes(pap)) return { erro: 'Papel invalido (leitor|lider|admin).' };
+
+  let teamId = team_id || null;
+  let areaFinal = area ? String(area).trim().toLowerCase() : '';
+  if (teamId) {
+    const { data: eq } = await supabase.from('vol_teams').select('id, name, area, is_active').eq('id', teamId).maybeSingle();
+    if (!eq) return { erro: 'Esse time não existe.' };
+    // A área do time vai junto só pra tela agrupar; quem decide é o team_id.
+    areaFinal = String(eq.area || '').trim().toLowerCase() || 'geral';
+  }
+  if (!areaFinal) return { erro: 'Escolha um time, uma área, um culto ou geral.' };
+
   let posId = position_id || null;
   if (posId) {
     const { data: pos } = await supabase.from('vol_positions')
-      .select('id, name, team:vol_teams(id, area)').eq('id', posId).maybeSingle();
-    const areaDaPos = Array.isArray(pos?.team) ? pos.team[0]?.area : pos?.team?.area;
-    const norm = (v) => String(v || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
-    if (!pos || norm(areaDaPos) !== norm(area)) {
-      return { erro: 'Essa subárea não pertence à área escolhida.' };
+      .select('id, name, team_id, team:vol_teams(id, area)').eq('id', posId).maybeSingle();
+    if (!pos) return { erro: 'Essa subárea não existe.' };
+    if (teamId) {
+      if (String(pos.team_id) !== String(teamId)) return { erro: 'Essa função não é deste time.' };
+    } else {
+      const areaDaPos = Array.isArray(pos.team) ? pos.team[0]?.area : pos.team?.area;
+      if (norm(areaDaPos) !== norm(areaFinal)) return { erro: 'Essa subárea não pertence à área escolhida.' };
     }
   }
 
-  // Rodízio · a lista da Ariel: semana × dia × período. null = curinga.
-  const DIAS = ['domingo', 'quarta'];
+  const DIAS = ['domingo', 'quarta', 'sabado'];
   const PERIODOS = ['manha', 'noite'];
-  const dia = culto_dia ? String(culto_dia).trim().toLowerCase() : null;
+  const dia = culto_dia ? norm(culto_dia) : null;
   const per = culto_periodo ? String(culto_periodo).trim().toLowerCase() : null;
   const sem = (culto_semana === 0 || culto_semana) ? Number(culto_semana) : null;
-  if (dia && !DIAS.includes(dia)) return { erro: 'Dia do culto invalido (domingo|quarta).' };
+  if (dia && !DIAS.includes(dia)) return { erro: 'Dia do culto invalido (domingo|quarta|sabado).' };
   if (per && !PERIODOS.includes(per)) return { erro: 'Periodo invalido (manha|noite).' };
   if (sem !== null && !(Number.isInteger(sem) && sem >= 1 && sem <= 4)) {
     return { erro: 'Semana do rodizio invalida (1 a 4).' };
   }
-  // ⚠️ Período SEM dia não existe no modelo da casa ("manhã" sozinho não diz se
-  // é domingo ou quarta), e a quarta é culto ÚNICO (decisão do Matheus).
   if (per && !dia) return { erro: 'Escolha o dia do culto antes do periodo.' };
-  if (per && dia === 'quarta') return { erro: 'A quarta e culto unico — nao tem manha/noite.' };
+  if (per && dia !== 'domingo') return { erro: 'Só o domingo tem manhã/noite — quarta e sábado são culto único.' };
 
-  return { posId, dia, per, sem };
+  if (pap === 'admin' && (teamId || posId || dia || per || sem !== null || areaFinal !== 'geral')) {
+    return { erro: 'Admin é sempre geral, sem recorte. Pra um time ou culto específico, use Líder.' };
+  }
+  return { posId, dia, per, sem, teamId, papel: pap, area: areaFinal };
 }
 
-const SELECT_SUPERVISOR = 'id, area, position_id, culto_dia, culto_periodo, culto_semana, created_at, membro:mem_membros(id, nome, telefone, foto_url), position:vol_positions(id, name, team_id)';
+const SELECT_SUPERVISOR_BASE = 'id, area, position_id, culto_dia, culto_periodo, culto_semana, created_at, membro:mem_membros(id, nome, telefone, foto_url), position:vol_positions(id, name, team_id)';
+// ⚠️ `papel`/`team_id`/`team` são de 24/09/2026 (migration 20260924120000). O GET
+// cai pro select BASE em 42703 pra tela não morrer entre o deploy e a migration.
+const SELECT_SUPERVISOR = `${SELECT_SUPERVISOR_BASE}, papel, team_id, team:vol_teams(id, name, area)`;
 
 // GET /supervisores/candidatos?vol_profile_id=… — POR QUE a pessoa não aparece.
 //
@@ -1818,17 +1849,19 @@ router.get('/supervisores/candidatos', authorizeModule('voluntariado', 3), async
 
 router.post('/supervisores', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
-    const { membro_id, area, position_id, culto_dia, culto_periodo, culto_semana } = req.body || {};
-    if (!membro_id || !area) return res.status(400).json({ error: 'membro_id e area obrigatórios' });
+    const { membro_id, area, position_id, culto_dia, culto_periodo, culto_semana, team_id, papel } = req.body || {};
+    if (!membro_id || (!area && !team_id)) return res.status(400).json({ error: 'membro_id e area (ou team_id) obrigatórios' });
 
-    const esc = await validarEscopoSupervisao({ area, position_id, culto_dia, culto_periodo, culto_semana });
+    const esc = await validarEscopoSupervisao({ area, position_id, culto_dia, culto_periodo, culto_semana, team_id, papel });
     if (esc.erro) return res.status(400).json({ error: esc.erro });
 
     const { data, error } = await supabase
       .from('vol_area_supervisores')
       .insert({
         membro_id,
-        area: String(area).trim().toLowerCase(),
+        area: esc.area,
+        team_id: esc.teamId,
+        papel: esc.papel,
         position_id: esc.posId,
         culto_dia: esc.dia,
         culto_periodo: esc.per,
@@ -1839,6 +1872,7 @@ router.post('/supervisores', authorizeModule('voluntariado', 3), async (req, res
       .single();
     if (error) {
       if (error.code === '23505') return res.status(409).json({ error: 'Essa pessoa já supervisiona isso' });
+      if (error.code === '42703') return res.status(503).json({ error: 'Papéis e times ainda não foram liberados no banco (migration 20260924120000).' });
       throw error;
     }
     res.status(201).json(data);
@@ -1860,16 +1894,18 @@ router.post('/supervisores', authorizeModule('voluntariado', 3), async (req, res
 // recusa — por exemplo subárea de outra área.
 router.patch('/supervisores/:id', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
-    const { area, position_id, culto_dia, culto_periodo, culto_semana } = req.body || {};
-    if (!area) return res.status(400).json({ error: 'area obrigatória' });
+    const { area, position_id, culto_dia, culto_periodo, culto_semana, team_id, papel } = req.body || {};
+    if (!area && !team_id) return res.status(400).json({ error: 'area (ou team_id) obrigatória' });
 
-    const esc = await validarEscopoSupervisao({ area, position_id, culto_dia, culto_periodo, culto_semana });
+    const esc = await validarEscopoSupervisao({ area, position_id, culto_dia, culto_periodo, culto_semana, team_id, papel });
     if (esc.erro) return res.status(400).json({ error: esc.erro });
 
     const { data, error } = await supabase
       .from('vol_area_supervisores')
       .update({
-        area: String(area).trim().toLowerCase(),
+        area: esc.area,
+        team_id: esc.teamId,
+        papel: esc.papel,
         position_id: esc.posId,
         culto_dia: esc.dia,
         culto_periodo: esc.per,
@@ -3382,9 +3418,14 @@ router.post('/self-checkin', async (req, res) => {
     const { data: service } = await supabase.from('vol_services').select('id, name, scheduled_at').eq('id', serviceId).single();
     if (!service) return res.status(404).json({ error: 'Culto não encontrado' });
 
-    const serviceDate = new Date(service.scheduled_at);
-    const today = new Date();
-    if (serviceDate.toDateString() !== today.toDateString()) {
+    // Comparar datas no fuso do Brasil: Vercel roda em UTC e um culto do
+    // domingo 19h-22h BRT (Mon 00-01h UTC) era rejeitado — `.toDateString()`
+    // via UTC dizia "Sun" para o culto e "Mon" para today. Ver ALT-16 do
+    // code review.
+    const ymdBR = (d) => new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).format(d);
+    if (ymdBR(new Date(service.scheduled_at)) !== ymdBR(new Date())) {
       return res.status(400).json({ error: 'Este culto não e de hoje' });
     }
 
@@ -3948,13 +3989,19 @@ router.delete('/positions/:id', authorizeModule('voluntariado', 3), async (req, 
 router.get('/team-members', async (req, res) => {
   try {
     const { team_id } = req.query;
-    let q = supabase.from('vol_team_members')
-      .select('*, team:vol_teams(id, name, color), position:vol_positions(id, name), profile:vol_profiles(id, full_name, avatar_url, planning_center_id)')
-      .eq('is_active', true).order('volunteer_name');
-    if (team_id) q = q.eq('team_id', team_id);
-    const { data, error } = await q;
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
+    // `profile.rodizio_semana` (24/09/2026): a semana do mês que a pessoa prefere
+    // servir. Cai pro select sem ela em 42703 (migration 20260924120100 pendente).
+    const montar = (comPref) => {
+      let q = supabase.from('vol_team_members')
+        .select(`*, team:vol_teams(id, name, color), position:vol_positions(id, name), profile:vol_profiles(id, full_name, avatar_url, planning_center_id${comPref ? ', rodizio_semana' : ''})`)
+        .eq('is_active', true).order('volunteer_name');
+      if (team_id) q = q.eq('team_id', team_id);
+      return q;
+    };
+    let r = await montar(true);
+    if (r.error && r.error.code === '42703') r = await montar(false);
+    if (r.error) return res.status(400).json({ error: r.error.message });
+    res.json(r.data);
   } catch (e) { res.status(500).json({ error: 'Erro ao listar membros da equipe' }); }
 });
 
@@ -3980,7 +4027,7 @@ router.post('/team-members', authorizeModule('voluntariado', 3), async (req, res
 // varredura 2026-09: B08 — edita o vinculo do voluntario com a equipe; gate POR ROTA (LEI 1).
 router.put('/team-members/:id', authorizeModule('voluntariado', 3), async (req, res) => {
   try {
-    const { position_id, is_active, service_type_ids } = req.body;
+    const { position_id, is_active, service_type_ids, rodizio_semana } = req.body;
 
     // ⚠️⚠️ A ELEGIBILIDADE É POR (PESSOA, TIME), NÃO POR LINHA — de propósito.
     // Medido em 04/09: **155 dos 832 pares (pessoa, time) têm mais de uma linha
@@ -3992,6 +4039,23 @@ router.put('/team-members/:id', authorizeModule('voluntariado', 3), async (req, 
     // domingo" se um dia a tela quiser); é a ESCRITA que se espalha.
     // ⚠️ `position_id` e `is_active` continuam sendo da LINHA: função e ativação
     // são do vínculo, não da pessoa.
+    // Preferência de semana (24/09/2026) é da PESSOA, não do vínculo: grava em
+    // `vol_profiles` do voluntário deste vínculo. 1..4, ou null pra "nenhuma".
+    if (rodizio_semana !== undefined) {
+      const sem = (rodizio_semana === null || rodizio_semana === '') ? null : Number(rodizio_semana);
+      if (sem !== null && !(Number.isInteger(sem) && sem >= 1 && sem <= 4)) {
+        return res.status(400).json({ error: 'Semana inválida: 1 a 4, ou vazio pra nenhuma.' });
+      }
+      const { data: v } = await supabase.from('vol_team_members')
+        .select('volunteer_profile_id').eq('id', req.params.id).maybeSingle();
+      if (!v) return res.status(404).json({ error: 'Vínculo não encontrado' });
+      if (!v.volunteer_profile_id) return res.status(400).json({ error: 'Este vínculo não tem perfil de voluntário — só dá pra guardar preferência de quem tem cadastro.' });
+      const { error: ePref } = await supabase.from('vol_profiles').update({ rodizio_semana: sem }).eq('id', v.volunteer_profile_id);
+      if (ePref) {
+        if (ePref.code === '42703') return res.status(503).json({ error: 'A preferência de semana ainda não foi liberada no banco (migration 20260924120100).' });
+        return res.status(400).json({ error: ePref.message });
+      }
+    }
     if (service_type_ids !== undefined) {
       const lista = Array.isArray(service_type_ids)
         ? [...new Set(service_type_ids.filter(Boolean).map(String))]
@@ -4023,6 +4087,7 @@ router.put('/team-members/:id', authorizeModule('voluntariado', 3), async (req, 
     // ⚠️ Corpo que só traz elegibilidade não faz UPDATE vazio (o PostgREST
     // recusaria): devolve a linha como ela ficou.
     if (position_id === undefined && is_active === undefined) {
+      // Corpo só de elegibilidade/preferência: não faz UPDATE vazio (PostgREST recusaria).
       const { data: atual, error: eGet } = await supabase.from('vol_team_members')
         .select('*').eq('id', req.params.id).single();
       if (eGet) return res.status(400).json({ error: eGet.message });

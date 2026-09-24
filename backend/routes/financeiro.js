@@ -3,6 +3,7 @@ const { authenticate, authorizeModule, getEffectiveLevel } = require('../middlew
 const { supabase } = require('../utils/supabase');
 const { fetchAllRows } = require('../utils/pagination');
 const { assinarLinhas } = require('../services/anexosLogArquivos');
+const { hojeBR } = require('../utils/dataBr');
 
 const { isAuthorizedCron } = require('../utils/cronAuth');
 
@@ -43,7 +44,10 @@ router.get('/dashboard', async (req, res) => {
     ]);
 
     const saldoTotal = (contas.data || []).filter(c => c.ativa).reduce((s, c) => s + Number(c.saldo), 0);
-    const hoje = new Date().toISOString().slice(0, 10);
+    // hojeBR (América/São_Paulo) — Vercel roda em UTC e às 21h BRT já é
+    // "amanhã" no UTC, o que empurra a conta com vencimento HOJE para fora
+    // de `vencidas` 3h antes da meia-noite BR (ver ALT-18/D6 do code review).
+    const hoje = hojeBR();
 
     const transMes = transacoes || [];
     const receitasMes = transMes.filter(t => t.tipo === 'receita').reduce((s, t) => s + Number(t.valor), 0);
@@ -347,9 +351,26 @@ router.patch('/reembolsos/:id', async (req, res) => {
     if (!['admin', 'diretor'].includes(req.user.role) && getEffectiveLevel(req, 'financeiro') < 4) {
       return res.status(403).json({ error: 'Sem permissão para aprovar/pagar reembolsos' });
     }
+    // BAIXO-05 do code review: rejeições gravavam `aprovado_por` com o UUID
+    // do rejeitor, fazendo o relatório "aprovações por gestor" contar
+    // rejeição como aprovação. Grava só nos casos onde faz sentido semântico
+    // (aprovado/pago). Para rastreio de quem rejeitou/aprovou, o histórico
+    // é mantido em `audit_log` — sem tocar em novas colunas.
+    const patch = { status };
+    if (status === 'aprovado' || status === 'pago') {
+      patch.aprovado_por = req.user.userId;
+    }
     const { data, error } = await supabase.from('fin_reembolsos')
-      .update({ status, aprovado_por: req.user.userId })
+      .update(patch)
       .eq('id', req.params.id).select().single();
+    if (!error && data) {
+      // Best-effort audit: quem tocou no status e quando.
+      supabase.from('audit_log').insert({
+        table_name: 'fin_reembolsos', record_id: req.params.id,
+        action: `reembolso_${status}`, description: `Reembolso marcado como ${status}`,
+        changed_by: req.user.userId, changed_by_name: req.user.name,
+      }).then(() => {}, (err) => console.warn('[FIN][audit reembolso]', err.message));
+    }
     if (error) return res.status(400).json({ error: error.message });
     res.json(data);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar reembolso' }); }

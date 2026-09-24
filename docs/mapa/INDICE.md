@@ -54,6 +54,7 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **patrimonio** | — | `patrimonio.js` | [patrimonio](patrimonio.md) |
 | **permissoes** | — | `permissoes.js` | [permissoes](permissoes.md) |
 | **planejamento-anual** | `/planejamento-anual` | — | [planejamento-anual](planejamento-anual.md) |
+| **planejamento-execucao** | `/planejamento-execucao` | — | [planejamento-execucao](planejamento-execucao.md) |
 | **producao** | `/producao` | `producao.js` | [producao](producao.md) |
 | **projects** | — | `projects.js` | [projects](projects.md) |
 | **relatorios** | — | `relatorios.js` | [relatorios](relatorios.md) |
@@ -73,7 +74,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **193** arquivos, **177** com teste.
+`backend/utils/` tem **194** arquivos, **178** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -224,6 +225,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/pessoaDiretaCampos.js` | `src/test/grupoPessoaDireta.test.ts` |
 | `backend/utils/podeExportar.js` | `src/test/censoPotencial.test.ts` |
 | `backend/utils/portaFluxos.js` | — |
+| `backend/utils/preferenciaRodizio.js` | `backend/services/preferenciaRodizio.test.js` |
 | `backend/utils/primeiroContatoRegua.js` | `src/test/primeiroContatoRegua.test.ts` |
 | `backend/utils/prontidaoCadastro.js` | `src/test/cadastroPessoaCompleto.test.ts` `src/test/prontidaoCadastro.test.ts` |
 | `backend/utils/pushLotes.js` | `src/test/pushLotes.test.ts` |

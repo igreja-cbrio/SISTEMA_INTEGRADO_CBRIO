@@ -100,6 +100,57 @@ pra eliminar. Para forçar o estado de agora: `/mapa` (skill) ou o comando acima
 ⚠️ **`src/pages/atlas/atlas.html` NÃO é fonte.** É uma TELA do sistema (`/atlas`),
 escrita à mão e desatualizada. Não citar como referência.
 
+## ⚠️⚠️ SERVIR · PAPÉIS (leitor/líder/admin), escopo por TIME e por DIA DO CULTO, e o DOMINGO DE PREFERÊNCIA da pessoa (2026-09-24 · migrations `20260924120000` + `20260924120100`)
+
+Pedido do Marcos (23/09): *"Nenhuma · Leitor (time | culto | geral) · Líder = editor
+(time | culto | geral) · Admin (eu e o Matheus)"*, com "culto" no sentido do **dia**
+(domingo, quarta, sábado), e *"cada um tem um domingo de preferência e ao clicar
+para escalar naquela posição, ele filtra as pessoas que estão naquele time
+priorizando quem colocou aquele domingo como rodízio"*.
+
+- **`vol_area_supervisores.papel`** (`leitor|lider|admin`, default **`lider`**) e
+  **`team_id`** (escopo por TIME). ⚠️ As 37 concessões vivas ficam byte a byte:
+  quem tinha concessão editava ⇒ nasce `lider`; `team_id` NULL = escopo por área.
+  `culto_dia` aceita **`sabado`** (AMI/Bridge); `rodizioCulto.DIA_POR_INDICE[6]`.
+  Unique do escopo inclui o time; `papel` fica FORA (um papel por escopo — edita).
+- **Régua `utils/supervisorArea.js`:** concessão de time casa **só pelo id** da
+  equipe (`equipeSupervisionada`/`_cobre`) — "líder da Banda" não vira "líder do
+  Louvor". **Alvo sem `team_id` é NEGADO** pra concessão de time (mesma lei da
+  equipe sem área). `geral` + `culto_dia` = escopo por culto: vê toda equipe,
+  recorte aplicado culto a culto. Novas: `soEditores` · `somenteLeitura` ·
+  `papelMaior` · `cultoNoEscopo`. `_semRecorte` exige `!team_id`.
+- ⚠️⚠️ **`supervisorAreasApp(req, { escrita: true })`** nas 5 rotas que ALTERAM
+  (POST/PATCH/DELETE escala · POST/DELETE checkin): devolve só concessões que
+  escrevem; leitor cai em 403 `somente_leitura: true` (`negarSupervisao`).
+  **A régua sempre recebe `grants`, nunca `areas`** — `string[]` normaliza SEM
+  recorte e `supervisionaTudo(['geral'])` daria acesso total a um "leitor de
+  domingo". Todo alvo passou a levar `team_id`. O PATCH ganhou `culto` no alvo
+  (antes, supervisor com rodízio nunca conseguia mover: "sem data não dá pra
+  afirmar").
+- ⚠️⚠️ **RESILIENTE À ORDEM DO ROLLOUT:** `concessoesDoMembro`, o GET web de
+  supervisores, `rodizioSemanaDosPerfis` e o GET team-members caem pro select
+  antigo em **42703** — o ERP sobe no merge e a migration é manual; sem isso todo
+  supervisor perderia a Montar escala no intervalo. POST/PATCH devolvem 503 com o
+  nome da migration.
+- **`vol_profiles.rodizio_semana`** (1..4, NULL = sem preferência) — da PESSOA,
+  não do vínculo. `utils/preferenciaRodizio.ordenarPorPreferencia` **ORDENA,
+  NUNCA FILTRA** (prefere esta semana → sem preferência → prefere outra; alfabético
+  dentro). `GET /app/voluntariado/escala-pool?team_id=&service_id=` lista o TIME
+  (dedupe por pessoa, `in` em lotes de 100 — Integração tem 264) já ordenado;
+  `PATCH /app/voluntariado/me/rodizio` (self-service) e `PUT /team-members/:id`
+  `{ rodizio_semana }` (web, grava no perfil) escrevem.
+- `GET escala/servicos` filtra os cultos por `cultoNoEscopo` e devolve
+  `somente_leitura`/`papel`; `GET escala/:id` idem; `/voluntariado/supervisor` idem.
+- **Web:** `VolSupervisores.tsx` — seletor de Papel + Escopo (Geral · Time · Área)
+  + Sábado; admin força geral sem recorte (servidor recusa outra coisa). Badge de
+  papel e de time na linha. Aviso "sem turno" ignora time e admin (cobrem todo
+  culto de propósito). `VolEquipes.tsx` — `SemanaDoMembro` ao lado de "Cultos de".
+- Testes: `npm run test:supervisor-subarea` (+27 casos) · `test:rodizio-culto`
+  (sábado) · `node backend/services/preferenciaRodizio.test.js`.
+- ⏳ Admin no app = líder geral; "gerenciar pessoas e estruturas" continua sendo a
+  web (nível do módulo). Kids por horário · nomes dos líderes · Banda→Louvor
+  seguem pendentes de decisão.
+
 ## ⚠️⚠️ ESCALA PELO APP · o ID acompanha o NOME (2026-09-23 · SEM migration)
 
 `POST`/`PATCH /api/app/voluntariado/escala` gravavam **só `team_name` e
@@ -887,6 +938,147 @@ Lei de 10/08 respeitada: palpite por nome só grava com confirmação humana
 (`origem='sexo_inferido_ia'`, `confirmado_por`) e nome ambíguo/raro é declarado
 pela liderança (`sexo_declarado_lideranca`). **Sobram 7 sem sexo**, todos de
 nome ambíguo ou raro — ficam para identificação nominal, nunca palpite.
+
+## ⚠️⚠️ MEMBRESIA · os cadastros-fantasma da decisão ONLINE (2026-09-24 · SEM migration)
+
+Pedido do Matheus, com o print da lista de Membresia filtrada em "Sem CPF":
+*"essas pessoas que vem do online, sem cpf e dado nenhum, preciso que vc remova
+dos membros, esta poluindo."*
+
+### O que são (medido, não suposto)
+
+A coordenação do Online assiste ao culto no YouTube e lança à mão quem escreve
+no **CHAT** que está aceitando Jesus. O formulário **exige telefone**, então ela
+preenche `00000000000`; no campo NOME vai o **@handle do YouTube**, a única
+coisa que ela tem. Cada lançamento desses cria um `mem_membros`.
+
+⚠️ **E eles ficam nas 7 PRIMEIRAS linhas da lista**: a ordenação é por nome e
+`@` vem antes das letras no ASCII. É por isso que "está poluindo" salta aos
+olhos — não é volume, é posição.
+
+| | |
+|---|---|
+| cadastros | **12** · criados em **14/09 (8)** e **21/09 (4)** |
+| decisão online lançada à mão | ago/2026: **2** · set/2026: **19** — é prática NOVA |
+| dos 19 de setembro | **7 com telefone real** (viram cadastro, e devem virar) × **12 com `00000000000`** |
+| pendurado em cada um | 1 decisão + 1 fila pastoral + 1 trilha + 1 `nsm_eventos` + 1 observação · **ZERO nas outras 93 FKs** |
+
+⚠️ **A separação é limpa**: não há zona cinzenta entre "pessoa real" e fantasma.
+
+### ⚠️⚠️ A LEI: apagar o CADASTRO não apaga a DECISÃO
+
+A decisão de fé é **real** — alguém escreveu no chat que estava aceitando Jesus.
+O que não existe é dado de contato. São coisas separáveis, e o sistema já sabia
+disso (o precedente é o **Kids**, que registra a decisão e não cria a pessoa,
+por LGPD art. 14 §1º).
+
+⇒ **SOFT-DELETE só do `mem_membros`.** Medido antes de executar:
+- todas as 98 FKs para `mem_membros` são `SET NULL`, e o soft-delete **nem as
+  toca** — decisão, fila, trilha e NSM ficam intactos;
+- **`recalcular_nsm()` lê `cui_convertidos`** (filtrando o `deleted_at` DELA) e
+  **nunca olha `mem_membros.deleted_at`** ⇒ o denominador não muda;
+- **`fn_nsm_sinais_engajados` devolve `{}` para os 12** ⇒ nunca estiveram no
+  numerador. Conferido depois: `nsm_estado` **inalterado** (online 19/0/0,00% ·
+  central e cbrio 156/16/10,26%);
+- **`GET /cuidados/convertidos`** lê `cui_convertidos` direto, sem join ⇒ a fila
+  da Renata sobrevive inteira;
+- o **@handle não se perde**: está gravado igual em `mem_membros.nome`,
+  `cultos_decisoes_pessoas.nome` **e** `cui_convertidos.nome`.
+
+⚠️⚠️ **`cui_convertidos.membro_id` NÃO é solto (não vira NULL), e é decisão:**
+`garantirMembro()` (`routes/cuidados.js:1559`) só chama o matcher quando
+`membro_id` está vazio. Soltar o ponteiro faria o fantasma **RENASCER** no dia
+em que alguém direcionasse a pessoa pro Next ou pro batismo.
+
+⚠️ **A matview NÃO se atualiza sozinha**: `vw_pessoas_papeis_mat` ainda tinha os
+12 depois do soft-delete (ela só roda via `refresh_vw_pessoas_papeis_mat`, sob
+demanda em `routes/jornada.js`, **sem cron**). Rodar o refresh faz parte da
+limpeza — sem ele, os KPIs que a leem continuam contando os apagados.
+
+### ⚠️ A régua da seleção são TRÊS sinais, não "sem CPF"
+
+A lei de 17/08 ("exclusão em lote exige dois sinais") com uma correção medida:
+**três critérios de AUSÊNCIA não são dois sinais** — ausência não identifica
+ninguém. `cpf IS NULL` + sem e-mail + telefone ruim pega **270 cadastros**, 258
+de gente real. A régua que dá exatamente 12:
+
+1. **PROCEDÊNCIA** — o cadastro nasceu de uma decisão `tipo_decisao='online'`;
+2. **SEM CHAVE** — sem CPF, sem e-mail **com forma de e-mail**, sem telefone de
+   10–11 dígitos não repetidos;
+3. **SEM ENGAJAMENTO** — nenhum vínculo em grupo, batismo, Next, voluntariado,
+   contribuição, login, inscrição ou perfil de voluntário.
+
+⚠️⚠️ **"e-mail com FORMA de e-mail", nunca "e-mail preenchido"**: nos 2 mais
+recentes a coordenação passou a pôr o handle **no campo e-mail**
+(`@wil66lobo`, `@lorenjacksonde`), e `email IS NOT NULL` os deixaria passar. O
+contorno MUTA — a régua tem que olhar a forma do valor, não a presença dele.
+
+**Executado em 24/09**: backup em `backups._bk_20260924_online_sem_chave` (12
+linhas · lei de 16/09: foto de reparo nasce no schema `backups`, nunca no
+`public`), soft-delete pela RPC `app_soft_delete`, matview atualizada.
+Resultado: **0 fantasmas · 4.623 → 4.611 membros vivos · 12 decisões, 12 filas,
+12 trilhas e 12 eventos de NSM preservados**. Reversível com `app_restore`.
+
+### ⚠️⚠️ A TORNEIRA CONTINUA ABERTA — e é decisão do Matheus
+
+Sem fechar, volta ~6/semana. O que fechar custa, medido:
+
+- **A régua tem que morar no TRIGGER** `tg_cultos_dec_pessoas_resolve_membro`,
+  não no Express: a rota manda `membro_id: null` de propósito e quem cria é o
+  trigger, que também serve a porta pública, o app e o totem. Guarda só no JS é
+  contornada por 4 caminhos (é a lei do "guarda em código impuro").
+- O precedente está pronto: o ramo `IF NEW.tipo_decisao = 'kids' THEN
+  NEW.membro_id := NULL; RETURN NEW; END IF;` — acrescentar uma condição.
+- ⚠️⚠️ **MAS o efeito colateral é real e estreia sem histórico**: com
+  `membro_id` NULL, `tg_cultos_dec_pessoas_jornada` insere `mem_trilha_valores`
+  e `nsm_eventos` **toda vez** (o `NOT EXISTS ... = NULL` é sempre verdadeiro);
+  o dedup da fila passa a ser por **nome + data**, perdendo homônimos; o
+  denominador da NSM muda de `COUNT(DISTINCT membro_id)` para `COUNT(*)`; e
+  `cadastrado = (NEW.membro_id IS NOT NULL)` vira false sempre, **derrubando o
+  card `convertidos_cadastrados`** — parece que a equipe parou de cadastrar.
+  Medido: hoje há **0 linhas** com `membro_id IS NULL` nessas três tabelas — o
+  caminho "órfão" nunca rodou com dado real.
+- **A correção de raiz é a PORTA, não a saída**: enquanto o telefone for
+  obrigatório, toda régua corre atrás do placeholder da vez (hoje
+  `00000000000`; amanhã `21999999999`, que tem DDD válido e **casa por
+  telefone+nome no cadastro de outra pessoa**). Telefone opcional na decisão
+  online + campo próprio pro handle é o que tira o incentivo.
+
+### ⚠️⚠️ ACHADO DE CARONA · a decisão online manual NÃO conta no culto
+
+`fn_cultos_dec_online_form_incrementa` só incrementa `cultos.decisoes_online`
+quando **`fonte = 'form_publico'`**. As decisões que a coordenação lança à mão
+ficam registradas nominalmente e **não entram no número do culto**. Medido em
+setembro: 09/09 tem 2 nominais e contador **0** · 13/09 19:00 tem 3 e contador
+**0** · 20/09 tem 1 em cada culto e contador **0**.
+
+⚠️ Ou seja **o trabalho dela está subcontado em ~9 decisões só em setembro**, e
+é esse número que alimenta KPI, painel e dashboard semanal. O caminho manual
+existe (`decisoes_online_extra`, de 14/09) e foi usado **uma vez** (16/09).
+⚠️ Consertar exige decidir a interação com `decisoes_online_extra`, senão quem
+lançar nominalmente **e** preencher o extra conta duas vezes. Decisão pendente.
+
+### ⚠️ O que ficou pendente de GENTE
+
+- **11 dos 12 estão com `primeiro_contato_em` carimbado e nenhum como
+  `contato_impossivel`** — logo entram no NUMERADOR do indicador de contato.
+  ⚠️ E o padrão do carimbo é de higienização de fila, não de conversa: **5
+  marcações em 7 segundos** (15/09) e **3 em 9 segundos** (21/09). **NÃO
+  reclassifiquei**: se ela respondeu pelo chat do YouTube, foi contato real, e
+  reescrever em massa por dedução é a lei da casa sendo quebrada. É pergunta
+  para a Renata.
+- **`@leandrobeanes3264` e `@lezandrobeanes3264`** diferem por uma letra e têm o
+  mesmo sufixo — provavelmente a mesma pessoa (lançada em cultos diferentes,
+  09/09 e 13/09). Sem chave, não dá para afirmar.
+- **`renata.v.rangel` e `marciafernandes4711`** estão com `area='sede'` na fila,
+  não `online`.
+- ⚠️ **A queixa não fica 100% resolvida**: os handles continuam aparecendo em
+  `/painel/nsm/pessoas` e na aba Convertidos do Cuidados, porque as duas leem
+  `cui_convertidos`. É o correto (a decisão é real), mas é bom ele saber.
+- **O quadro maior**: a base tem **1.909 cadastros vivos sem CPF** e **455 sem
+  chave nenhuma** — os 12 são 2,6% destes. A maioria vem de imports antigos
+  (`import_next_historico_2025_2026` 64, `grupos_import_2026` 13,
+  `pco_import_2026` 12) e de 276 sem origem declarada. Escopo separado.
 
 ## ⚠️⚠️ VISITANTES · a porta pública `/visitante` (QR nos cartazes · voucher · pesquisa) (2026-09-09 · migration `20260909120000`)
 
@@ -6904,20 +7096,34 @@ mudança incluir qualquer destes itens:
 
 ## Migrations do Supabase
 
-Sempre que uma PR incluir arquivos em `supabase/migrations/`:
+⚠️⚠️ **DECISÃO DO DIEGO (2026-09-24): Claude aplica migration DIRETO em
+produção, via MCP do Supabase (`apply_migration`/`execute_sql`), SEM esperar
+confirmação do usuário.** Revoga a regra antiga de "colar o SQL e esperar
+alguém rodar no SQL Editor" — o MCP já está conectado neste projeto
+(`hhntwfawfnxvuobhdfkb.supabase.co`, o mesmo do `SUPABASE_URL` do backend) e
+é mais rápido que o caminho manual. Trade-off aceito conscientemente: erro na
+migration vai direto pra produção, sem checagem humana no meio.
 
-1. Avisar claramente o usuário **antes do merge** que há migration nova.
-2. **Colar o SQL completo da migration direto na conversa** (dentro de um
-   bloco ```sql) para que o usuário possa copiar e rodar no SQL Editor
-   sem precisar abrir o arquivo. NÃO basta apontar o caminho do arquivo —
-   sempre enviar o conteúdo na mensagem.
-3. Aguardar confirmação do usuário de que a migration foi aplicada no
-   Supabase de produção antes de mergear — senão o backend em prod
-   quebra ao chamar a tabela/coluna.
+Sempre que uma migration nova for necessária:
 
-A única exceção é quando a mudança é puramente idempotente e
-backwards-compatible (ex.: `ADD COLUMN IF NOT EXISTS` opcional) e o
-código tolera ausência da coluna.
+1. Escrever o arquivo em `supabase/migrations/` (o repo continua sendo a
+   fonte versionada — nunca aplicar só via MCP sem o arquivo correspondente,
+   senão o histórico do repo diverge do banco vivo, a mesma armadilha que
+   este arquivo já documenta várias vezes).
+2. Aplicar via `mcp__supabase__apply_migration` (DDL) ou `execute_sql`
+   (consulta/backfill), com o MESMO SQL do arquivo.
+3. **Conferir no CATÁLOGO que a mudança pegou** (`information_schema`,
+   `pg_constraint`, `SELECT` na tabela/coluna nova) — nunca só confiar no
+   `{"success": true}` da chamada. É a lei repetida à exaustão neste arquivo:
+   medir o resultado, não o retorno da chamada.
+4. Avisar o usuário no chat que a migration foi aplicada (nome do arquivo +
+   resumo de 1 linha do que mudou) — transparência, não pedido de permissão.
+
+Se a migration for destrutiva de verdade (`DROP TABLE`, `DROP COLUMN`, perda
+de dado real) as leis de segurança deste arquivo continuam valendo por cima
+disto — aplicar sozinho é só para migration aditiva/de schema normal do dia a
+dia. Destrutivo em tabela com dado ainda pede confirmação explícita (ver
+"Quando parar e perguntar antes de mergear", mais abaixo).
 
 ## Convenções do repositório
 
@@ -13654,6 +13860,30 @@ handler em `backend/agents/apply/financeiroApply.js` (→ applied/failed).
   `action_type` sempre `<modulo>.<verbo_obj>`. Deploy: `agent-worker/README.md`.
   ⚠️ As rotas de leitura de `agents.js` migraram pro cliente REST (pool pg não
   conecta no Vercel · PR #920).
+
+## Site público · aba SÉRIES (`cbrio.com.br/series`) (2026-09-24 · SEM migration)
+
+Pedido do Matheus: tema anual 2027 + uma série por mês (inspiração life.church/media/wake-up).
+Páginas `/series` e `/series/:slug` (no ERP, prévia em `/novosite/series`), item "Séries" no NAV
+do site. **Conteúdo é arquivo, não banco**: `src/pages/public/novosite/series2027.ts` (TEMA_ANUAL +
+12 séries · `titulo: null` = card "Série em breve", sem página). PDFs/artes em `public/series/2027/`.
+- ⚠️ **Nada se publica à mão**: a mensagem libera vídeo (YouTube, carregado só no clique) e PDF no
+  DIA dela em BRT (`src/lib/seriesSite.ts` · comparação de STRING, nunca `new Date('YYYY-MM-DD')`,
+  que é 21h do dia anterior no Rio). Data inválida nunca libera. Teste: `src/test/seriesSite.test.ts`
+  (também valida slugs únicos e que cada mensagem cai no mês da série).
+- ⚠️ Não trocar `slug` depois de divulgado (link compartilhado quebra). Arquivo é público: zero PII.
+- `SerieDetalhe` remonta por `key={slug}`: o `useChrome` só observa `.ns-reveal` na montagem.
+- **Conteúdo 2027 preenchido em 24/09** a partir da planilha "Séries de Pregação 2027.xlsx" (tema anual
+  **Coragem · 2 Timóteo 1:7**). Decisões do Matheus: descrição pública da série = coluna "Coragem" (a coluna
+  "Descrição" é anotação INTERNA — "punch para natal", "31WISE" — e fica fora); o objetivo de cada
+  mensagem (coluna "Mensagem") aparece SEMPRE. Fases (Empoderamento/Alcance/Consolidação), eventos e
+  anúncios da planilha também ficam fora. Lista sem foto no topo (pedido).
+- **Layout (24/09, pedido do Matheus):** a lista é página corrida CLARA (sem faixa azul, sem onda) e a
+  série abre com uma FAIXA 3:1 só com a arte (ex.: 2400×800) — o nome vem escrito NA ARTE; a página só
+  escreve o nome quando não há imagem. Header forçado sólido (`<SiteHeader scrolled>`): com fundo claro o
+  menu branco sumiria. Vozes (julho) = 4 pregadores (2 internos, 2 externos), tema encorajamento, em aberto.
+- ⏳ Futuro possível: puxar os vídeos da playlist do YouTube (`online_series`/`online_videos`) em vez
+  de colar o ID à mão.
 
 ## /novosite · prévia da home do novo site público (2026-05-30)
 

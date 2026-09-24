@@ -1,10 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from 'sonner';
-import { Plus, Send, Pencil, MessageSquareWarning } from 'lucide-react';
+import { Plus, Send, Pencil, MessageSquareWarning, Trash2 } from 'lucide-react';
 import { planejamentoAnual as api, users as usersApi } from '../../api';
 import {
   C, cardStyle, btn, input, label, hint, Badge, EstadoBadge, fmtBRL, fmtData, fmtQuando,
-  NATUREZAS, RECORRENCIAS, DIAS_SEMANA, thStyle, tdStyle, rotuloArea,
+  NATUREZAS, RECORRENCIAS, DIAS_SEMANA, CATEGORIAS_ROTINA, thStyle, tdStyle, rotuloArea,
 } from './comum';
 import PessoaAutocomplete from './PessoaAutocomplete';
 
@@ -25,7 +25,14 @@ const FORM_VAZIO = {
   local_fora_detalhe: '', publico_alvo: '', descricao: '',
   alcance_pct: '', publico_considerado: 'igreja_inteira', pertencimento: '',
   valores: [], visao_explique: '', impacto: '', custo: '', tem_arrecadacao: false, arrecadacao_prevista: '',
+  // Rotina · categoria + campos que alimentam a geração automática de
+  // solicitação (só existem quando natureza='rotina' · nunca vão para a
+  // avaliação/decisão — ficam em tabela própria, ver PUT .../config-rotina).
+  categoria_rotina: '', rotina_planejado: false, rotina_fornecedor_sugerido: '',
+  rotina_itens: [], rotina_espaco_solicitado: '', rotina_qtde_pessoas: '', rotina_itens_apoio: '',
 };
+
+const ITEM_ROTINA_VAZIO = { descricao: '', quantidade: '1', valor_estimado: '', valor_tipo: 'total', link_referencia: '' };
 
 const NOME_LOCAL_FORA = 'Fora da igreja';
 
@@ -92,6 +99,69 @@ function deProposta(p) {
   };
 }
 
+// Monta o corpo de PUT .../config-rotina a partir do form · null quando não
+// há nada a salvar (natureza não é rotina, ou categoria é 'outros'/vazia).
+function corpoConfigRotina(f) {
+  if (f.natureza !== 'rotina' || !f.categoria_rotina) return null;
+  if (f.categoria_rotina === 'outros') return { categoria: 'outros', dados: {} };
+  if (f.categoria_rotina === 'compras') {
+    const itens = (f.rotina_itens || [])
+      .filter((it) => String(it.descricao || '').trim())
+      .map((it) => ({
+        descricao: it.descricao.trim(),
+        quantidade: Number(it.quantidade) > 0 ? Number(it.quantidade) : 1,
+        valor_estimado: it.valor_estimado === '' ? null : Number(it.valor_estimado),
+        valor_tipo: it.valor_tipo === 'por_unid' ? 'por_unid' : 'total',
+        link_referencia: it.link_referencia || null,
+      }));
+    return {
+      categoria: 'compras',
+      dados: { itens, planejado: Boolean(f.rotina_planejado), fornecedor_sugerido: f.rotina_fornecedor_sugerido || null },
+    };
+  }
+  // reserva_espaco
+  return {
+    categoria: 'reserva_espaco',
+    dados: {
+      espaco_solicitado: f.rotina_espaco_solicitado || null,
+      qtde_pessoas: f.rotina_qtde_pessoas === '' ? null : Number(f.rotina_qtde_pessoas),
+      itens_apoio: f.rotina_itens_apoio || null,
+    },
+  };
+}
+
+// Aplica um registro de config-rotina (vindo do GET) de volta ao form.
+function comConfigRotina(f, cfg) {
+  if (!cfg) return f;
+  const d = cfg.dados || {};
+  if (cfg.categoria === 'compras') {
+    return {
+      ...f,
+      categoria_rotina: 'compras',
+      rotina_planejado: Boolean(d.planejado),
+      rotina_fornecedor_sugerido: d.fornecedor_sugerido || '',
+      rotina_itens: Array.isArray(d.itens) && d.itens.length
+        ? d.itens.map((it) => ({
+            descricao: it.descricao || '', quantidade: String(it.quantidade ?? '1'),
+            valor_estimado: it.valor_estimado == null ? '' : String(it.valor_estimado),
+            valor_tipo: it.valor_tipo === 'por_unid' ? 'por_unid' : 'total',
+            link_referencia: it.link_referencia || '',
+          }))
+        : [],
+    };
+  }
+  if (cfg.categoria === 'reserva_espaco') {
+    return {
+      ...f,
+      categoria_rotina: 'reserva_espaco',
+      rotina_espaco_solicitado: d.espaco_solicitado || '',
+      rotina_qtde_pessoas: d.qtde_pessoas == null ? '' : String(d.qtde_pessoas),
+      rotina_itens_apoio: d.itens_apoio || '',
+    };
+  }
+  return { ...f, categoria_rotina: 'outros' };
+}
+
 function custeioDerivado(f) {
   const custo = Number(f.custo) || 0;
   const arrec = f.tem_arrecadacao ? Number(f.arrecadacao_prevista) || 0 : 0;
@@ -145,6 +215,11 @@ export default function PropostasTab({ ciclo, constantes, locais, areas, recarre
       } else {
         const criada = await api.propostas.create(corpo);
         id = criada.id;
+      }
+      const cfgRotina = corpoConfigRotina(form);
+      if (cfgRotina) {
+        try { await api.propostas.salvarConfigRotina(id, cfgRotina); }
+        catch (e) { toast.error('Proposta salva, mas a configuração de rotina não pôde ser salva: ' + (e.message || '')); }
       }
       if (enviarDepois && !form.retificacao) {
         await api.propostas.enviar(id);
@@ -365,6 +440,85 @@ export default function PropostasTab({ ciclo, constantes, locais, areas, recarre
             </div>
           )}
 
+          {form.natureza === 'rotina' && (
+            <div style={{ padding: 14, borderRadius: 10, background: C.primaryBg, display: 'grid', gap: 12 }}>
+              <div>
+                <span style={label}>Categoria da rotina</span>
+                <select style={input} value={form.categoria_rotina} onChange={(e) => set('categoria_rotina', e.target.value)}>
+                  <option value="">Nenhuma (rotina comum)</option>
+                  {CATEGORIAS_ROTINA.map((c) => <option key={c.valor} value={c.valor}>{c.rotulo}</option>)}
+                </select>
+                <div style={hint}>
+                  Compras e Reserva de Espaço, depois de aprovadas, geram sozinhas a(s) solicitação(ões) correspondente(s) —
+                  essas informações não são vistas pelos diretores nem pelo Pastor, servem só para instruir a geração.
+                </div>
+              </div>
+
+              {form.categoria_rotina === 'compras' && (
+                <div style={{ display: 'grid', gap: 10 }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: C.text }}>
+                    <input type="checkbox" checked={form.rotina_planejado} onChange={(e) => set('rotina_planejado', e.target.checked)} />
+                    Compra já estava planejada (até R$ 1.000 vai direto para cotação, sem aprovação)
+                  </label>
+                  <div>
+                    <span style={label}>Fornecedor sugerido (opcional)</span>
+                    <input style={input} value={form.rotina_fornecedor_sugerido} onChange={(e) => set('rotina_fornecedor_sugerido', e.target.value)} />
+                  </div>
+                  <div>
+                    <span style={label}>Itens</span>
+                    <div style={{ display: 'grid', gap: 8 }}>
+                      {form.rotina_itens.map((it, i) => (
+                        <div key={i} style={{ display: 'grid', gridTemplateColumns: '2fr 80px 100px 90px auto', gap: 6, alignItems: 'center' }}>
+                          <input
+                            style={input} placeholder="Descrição do item" value={it.descricao}
+                            onChange={(e) => set('rotina_itens', form.rotina_itens.map((x, j) => (j === i ? { ...x, descricao: e.target.value } : x)))}
+                          />
+                          <input
+                            style={input} type="number" min="1" placeholder="Qtd" value={it.quantidade}
+                            onChange={(e) => set('rotina_itens', form.rotina_itens.map((x, j) => (j === i ? { ...x, quantidade: e.target.value } : x)))}
+                          />
+                          <input
+                            style={input} type="number" min="0" step="0.01" placeholder="Valor" value={it.valor_estimado}
+                            onChange={(e) => set('rotina_itens', form.rotina_itens.map((x, j) => (j === i ? { ...x, valor_estimado: e.target.value } : x)))}
+                          />
+                          <select
+                            style={input} value={it.valor_tipo}
+                            onChange={(e) => set('rotina_itens', form.rotina_itens.map((x, j) => (j === i ? { ...x, valor_tipo: e.target.value } : x)))}
+                          >
+                            <option value="total">R$ total</option>
+                            <option value="por_unid">R$ por unid.</option>
+                          </select>
+                          <button style={btn('ghost')} onClick={() => set('rotina_itens', form.rotina_itens.filter((_, j) => j !== i))}><Trash2 size={13} /></button>
+                        </div>
+                      ))}
+                      <button style={{ ...btn('soft'), width: 'fit-content' }} onClick={() => set('rotina_itens', [...form.rotina_itens, { ...ITEM_ROTINA_VAZIO }])}>
+                        <Plus size={13} /> Adicionar item
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {form.categoria_rotina === 'reserva_espaco' && (
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+                  <div>
+                    <span style={label}>Espaço solicitado</span>
+                    <input style={input} value={form.rotina_espaco_solicitado} onChange={(e) => set('rotina_espaco_solicitado', e.target.value)} />
+                  </div>
+                  <div>
+                    <span style={label}>Quantidade de pessoas</span>
+                    <input style={input} type="number" min="0" value={form.rotina_qtde_pessoas} onChange={(e) => set('rotina_qtde_pessoas', e.target.value)} />
+                  </div>
+                  <div style={{ gridColumn: '1 / -1' }}>
+                    <span style={label}>Itens de apoio (opcional)</span>
+                    <textarea style={{ ...input, minHeight: 50 }} value={form.rotina_itens_apoio} onChange={(e) => set('rotina_itens_apoio', e.target.value)} />
+                    <div style={hint}>Data e horário serão os mesmos definidos na recorrência da proposta acima.</div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           <div>
             <span style={label}>Descrição</span>
             <textarea style={{ ...input, minHeight: 70 }} value={form.descricao} onChange={(e) => set('descricao', e.target.value)} />
@@ -500,7 +654,11 @@ export default function PropostasTab({ ciclo, constantes, locais, areas, recarre
                     {p.estado === 'rascunho' && p.meu_papel === 'proponente' && (
                       <button style={btn('ghost')} onClick={async () => {
                         const cheia = await api.propostas.get(p.id);
-                        setForm({ ...deProposta(cheia), id: p.id });
+                        let f = { ...deProposta(cheia), id: p.id };
+                        if (cheia.natureza === 'rotina') {
+                          try { f = comConfigRotina(f, await api.propostas.configRotina(p.id)); } catch { /* segue sem a config */ }
+                        }
+                        setForm(f);
                       }}><Pencil size={13} /> Editar</button>
                     )}
                     {['reprovada', 'aprovada_ressalvas', 'retificada', 'aprovada'].includes(p.estado) && p.meu_papel === 'proponente' && (

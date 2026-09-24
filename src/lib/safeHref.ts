@@ -24,6 +24,7 @@ export function safeHref(input: string | null | undefined): string {
   if (typeof input !== 'string' || !input.trim()) return '#';
   const raw = input.trim();
 
+  // URLs relativas ("/x", "foo/bar") passam se resolvem em protocolo permitido.
   const base =
     typeof window !== 'undefined' && window.location
       ? window.location.origin

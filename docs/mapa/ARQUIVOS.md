@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-445 arquivos.
+449 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -288,6 +288,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/pessoaDiretaCampos.js` | régua pura | — | `src/test/grupoPessoaDireta.test.ts` |
 | `backend/utils/podeExportar.js` | régua pura | — | `src/test/censoPotencial.test.ts` |
 | `backend/utils/portaFluxos.js` | régua pura | — | `SEM TESTE` |
+| `backend/utils/preferenciaRodizio.js` | régua pura | — | `backend/services/preferenciaRodizio.test.js` |
 | `backend/utils/primeiroContatoRegua.js` | régua pura | — | `src/test/primeiroContatoRegua.test.ts` |
 | `backend/utils/prontidaoCadastro.js` | régua pura | — | `src/test/cadastroPessoaCompleto.test.ts` |
 | `backend/utils/pushLotes.js` | régua pura | — | `src/test/pushLotes.test.ts` |
@@ -360,6 +361,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/devocional/DevocionalMovido` | tela ERP | — | `/devocional` |
 | `src/pages/eventos/EventDetail` | tela ERP | — | `/eventos/:id` |
 | `src/pages/eventos/Eventos` | tela ERP | — | `/eventos` |
+| `src/pages/execucaoPlanejamento/ExecucaoPlanejamento` | tela ERP | planejamento-execucao | `/planejamento-execucao` |
 | `src/pages/Expansao` | tela ERP | expansao | `/expansao` |
 | `src/pages/GestaoAnual` | tela ERP | — | `/planejamento` |
 | `src/pages/governanca/Governanca` | tela ERP | governanca | `/governanca` |
@@ -452,6 +454,8 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/public/PagamentoInscricao` | tela ERP | — | `/pagamento/:token` |
 | `src/pages/public/PoliticaReembolso` | tela ERP | — | `/politica-reembolso` |
 | `src/pages/public/QuemSomos` | tela ERP | — | `/novosite/quem-somos` |
+| `src/pages/public/SerieDetalhe` | tela ERP | — | `/novosite/series/:slug` |
+| `src/pages/public/SeriesLista` | tela ERP | — | `/novosite/series` |
 | `src/pages/public/Suporte` | tela ERP | — | `/suporte` |
 | `src/pages/public/Suporte` | tela ERP | — | `/suporte` |
 | `src/pages/public/VisitanteAvaliar` | tela ERP | — | `/visitante/avaliar/:token` |
