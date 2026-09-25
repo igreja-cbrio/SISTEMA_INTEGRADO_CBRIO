@@ -108,6 +108,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 
 **Réguas puras (backend/utils)**
 
+- `backend/utils/marketingChecklist.js`
 - `backend/utils/marketingCores.js`
 - `backend/utils/marketingOcupacao.js`
 - `backend/utils/marketingSemanas.js`
