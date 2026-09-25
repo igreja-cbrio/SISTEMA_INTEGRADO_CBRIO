@@ -37,4 +37,16 @@ function caminhoEhDoItem(itemId, caminho) {
   return /^[0-9]+\.(mp4|mov|webm)$/.test(resto);
 }
 
-module.exports = { BUCKET, LIMITE_BYTES, validarVideo, caminhoDoVideo, caminhoEhDoItem };
+/**
+ * Link do YouTube (25/09/2026 · pedido do Marcos: "passamos um vídeo do YouTube
+ * lá e a pessoa assiste dentro do app, sem sair"). Devolve o link CANÔNICO
+ * (watch?v=<id>) ou null. ⚠️ Espelho de `idDoYoutube` do app
+ * (lib/videoDevocional.ts) — os dois têm que aceitar os mesmos formatos.
+ */
+function linkDoYoutube(url) {
+  if (typeof url !== 'string') return null;
+  const m = url.trim().match(/^https?:\/\/(?:www\.|m\.)?(?:youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/)|youtu\.be\/|youtube-nocookie\.com\/embed\/)([A-Za-z0-9_-]{11})(?:[?&#/].*)?$/i);
+  return m ? `https://www.youtube.com/watch?v=${m[1]}` : null;
+}
+
+module.exports = { BUCKET, LIMITE_BYTES, validarVideo, caminhoDoVideo, caminhoEhDoItem, linkDoYoutube };

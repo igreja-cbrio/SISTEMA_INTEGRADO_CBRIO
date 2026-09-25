@@ -915,10 +915,24 @@ function EditarItemModal({ item, onClose, onSaved }: { item: Item; onClose: () =
     finally { setProgresso(null); }
   }
 
+  const [linkYoutube, setLinkYoutube] = useState('');
+  async function usarLinkYoutube() {
+    if (!linkYoutube.trim()) return;
+    setProgresso(0);
+    try {
+      const salvo: any = await planosApi.updateItem(item.id, { video_url: linkYoutube.trim() });
+      setVideoUrl(salvo?.video_url ?? null);
+      setLinkYoutube('');
+      setMudouVideo(true);
+      toast.success('Vídeo do YouTube vinculado');
+    } catch (err: any) { toast.error(err.message); }
+    finally { setProgresso(null); }
+  }
+
   async function tirarVideo() {
     setProgresso(0);
     try {
-      await planosApi.updateItem(item.id, { video_path: null });
+      await planosApi.updateItem(item.id, { video_path: null, video_url: null });
       setVideoUrl(null);
       setMudouVideo(true);
       toast.success('Vídeo removido');
@@ -935,13 +949,19 @@ function EditarItemModal({ item, onClose, onSaved }: { item: Item; onClose: () =
           <div className="space-y-2 rounded-lg border p-3">
             <Label className="flex items-center gap-2"><Video className="h-4 w-4" /> Vídeo (opcional)</Label>
             {videoUrl
-              ? <video src={videoUrl} controls preload="metadata" className="w-full rounded-md bg-black max-h-64" />
-              : <p className="text-xs text-muted-foreground">Aparece no app acima do texto bíblico, com botão de tela cheia. Prefira <b>MP4</b> — o .MOV do iPhone pode não tocar no Android. Até 500 MB.</p>}
+              ? (idYoutube(videoUrl)
+                ? <iframe src={`https://www.youtube-nocookie.com/embed/${idYoutube(videoUrl)}`} title="Vídeo do devocional" className="w-full aspect-video rounded-md bg-black" allow="encrypted-media; picture-in-picture; fullscreen" allowFullScreen />
+                : <video src={videoUrl} controls preload="metadata" className="w-full rounded-md bg-black max-h-64" />)
+              : <p className="text-xs text-muted-foreground">Aparece no app acima do texto bíblico e toca <b>dentro do app</b>, com tela cheia. Cole um link do YouTube (o vídeo pode ser "não listado", mas não privado) ou envie um arquivo — prefira <b>MP4</b>, até 500 MB.</p>}
+            {progresso === null && <div className="flex gap-2">
+              <Input value={linkYoutube} onChange={e => setLinkYoutube(e.target.value)} placeholder="https://youtu.be/…" className="text-sm" />
+              <Button variant="outline" size="sm" onClick={usarLinkYoutube} disabled={!linkYoutube.trim()}>Usar link</Button>
+            </div>}
             {progresso !== null
               ? <div className="space-y-1"><div className="h-2 rounded bg-muted overflow-hidden"><div className="h-2 bg-primary transition-all" style={{ width: `${progresso}%` }} /></div><p className="text-xs text-muted-foreground">Enviando… {progresso}%</p></div>
               : <div className="flex gap-2">
                 <label className="inline-flex items-center gap-2 cursor-pointer rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
-                  <Upload className="h-4 w-4" /> {videoUrl ? 'Trocar vídeo' : 'Enviar vídeo'}
+                  <Upload className="h-4 w-4" /> {videoUrl ? 'Trocar por arquivo' : 'Enviar arquivo'}
                   <input type="file" accept="video/mp4,video/quicktime,video/webm" className="hidden" onChange={escolherVideo} />
                 </label>
                 {videoUrl && <Button variant="outline" size="sm" onClick={tirarVideo}><Trash2 className="h-4 w-4 mr-1" /> Remover</Button>}
@@ -959,6 +979,12 @@ function EditarItemModal({ item, onClose, onSaved }: { item: Item; onClose: () =
       </DialogContent>
     </Dialog>
   );
+}
+
+/** Id do YouTube pra prévia (o servidor já guarda o link canônico watch?v=). */
+function idYoutube(url: string): string | null {
+  const m = url.match(/[?&]v=([A-Za-z0-9_-]{11})/);
+  return m ? m[1] : null;
 }
 
 /**
