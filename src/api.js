@@ -4344,6 +4344,7 @@ export const devocionalPlanos = {
   publicarItensLote: (id, itens, sobrescrever = false) => post(`/devocional-planos/${id}/itens-lote`, { itens, sobrescrever }),
   createItem: (id, body) => post(`/devocional-planos/${id}/itens`, body),
   updateItem: (itemId, body) => put(`/devocional-planos/itens/${itemId}`, body),
+  videoUpload: (itemId, body) => post(`/devocional-planos/itens/${itemId}/video/upload`, body),
   removeItem: (itemId) => del(`/devocional-planos/itens/${itemId}`),
   adesao: (id, params) => get(`/devocional-planos/${id}/adesao` + (params ? '?' + new URLSearchParams(params) : '')),
   enviarHoje: (id) => post(`/devocional-planos/${id}/enviar-hoje`, {}),

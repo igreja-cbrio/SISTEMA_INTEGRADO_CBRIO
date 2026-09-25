@@ -11,7 +11,7 @@ import { Badge } from './ui/badge';
 import { Skeleton } from './ui/skeleton';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from './ui/tabs';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from './ui/dialog';
-import { Sparkles, Plus, Trash2, Loader2, ArrowLeft, RefreshCw, Edit2, Save, Calendar, Users, BookOpen, Send, CheckCircle2, AlertTriangle, Link2, Copy, TrendingUp, TrendingDown, ChevronDown, ChevronUp, Upload } from 'lucide-react';
+import { Sparkles, Plus, Trash2, Loader2, ArrowLeft, RefreshCw, Edit2, Save, Calendar, Users, BookOpen, Send, CheckCircle2, AlertTriangle, Link2, Copy, TrendingUp, TrendingDown, ChevronDown, ChevronUp, Upload, Video } from 'lucide-react';
 import { toast } from 'sonner';
 import DevocionalPanel from './DevocionalPanel';
 
@@ -35,6 +35,8 @@ type Item = {
   aplicacao: string | null;
   oracao: string | null;
   gerado_por_ia: boolean;
+  video_url?: string | null;
+  video_path?: string | null;
 };
 type AdesaoDia = {
   plano_id: string;
@@ -880,6 +882,12 @@ function EditarItemModal({ item, onClose, onSaved }: { item: Item; onClose: () =
     oracao: item.oracao || '',
   });
   const [saving, setSaving] = useState(false);
+  // Vídeo (25/09/2026): salvo NA HORA do envio, separado do "Salvar" do texto —
+  // assim nenhum arquivo fica no Storage sem item apontando pra ele.
+  const [videoUrl, setVideoUrl] = useState<string | null>(item.video_url ?? null);
+  const [progresso, setProgresso] = useState<number | null>(null);
+  const [mudouVideo, setMudouVideo] = useState(false);
+  const fechar = () => (mudouVideo ? onSaved() : onClose());
 
   async function save() {
     setSaving(true);
@@ -891,24 +899,92 @@ function EditarItemModal({ item, onClose, onSaved }: { item: Item; onClose: () =
     finally { setSaving(false); }
   }
 
+  async function escolherVideo(e: React.ChangeEvent<HTMLInputElement>) {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    setProgresso(0);
+    try {
+      const { path, signedUrl }: any = await planosApi.videoUpload(item.id, { tipo: f.type, tamanho: f.size });
+      await enviarDireto(signedUrl, f, setProgresso);
+      const salvo: any = await planosApi.updateItem(item.id, { video_path: path });
+      setVideoUrl(salvo?.video_url ?? null);
+      setMudouVideo(true);
+      toast.success('Vídeo enviado');
+    } catch (err: any) { toast.error(err.message || 'Falha ao enviar o vídeo'); }
+    finally { setProgresso(null); }
+  }
+
+  async function tirarVideo() {
+    setProgresso(0);
+    try {
+      await planosApi.updateItem(item.id, { video_path: null });
+      setVideoUrl(null);
+      setMudouVideo(true);
+      toast.success('Vídeo removido');
+    } catch (err: any) { toast.error(err.message); }
+    finally { setProgresso(null); }
+  }
+
   return (
-    <Dialog open onOpenChange={(v) => !v && onClose()}>
+    <Dialog open onOpenChange={(v) => !v && fechar()}>
       <DialogContent className="max-w-2xl">
         <DialogHeader><DialogTitle>Editar item · {fmt(item.data)}</DialogTitle></DialogHeader>
         <div className="space-y-3 max-h-[60vh] overflow-y-auto">
           <div><Label>Título</Label><Input value={form.titulo} onChange={e => setForm({ ...form, titulo: e.target.value })} /></div>
+          <div className="space-y-2 rounded-lg border p-3">
+            <Label className="flex items-center gap-2"><Video className="h-4 w-4" /> Vídeo (opcional)</Label>
+            {videoUrl
+              ? <video src={videoUrl} controls preload="metadata" className="w-full rounded-md bg-black max-h-64" />
+              : <p className="text-xs text-muted-foreground">Aparece no app acima do texto bíblico, com botão de tela cheia. Prefira <b>MP4</b> — o .MOV do iPhone pode não tocar no Android. Até 500 MB.</p>}
+            {progresso !== null
+              ? <div className="space-y-1"><div className="h-2 rounded bg-muted overflow-hidden"><div className="h-2 bg-primary transition-all" style={{ width: `${progresso}%` }} /></div><p className="text-xs text-muted-foreground">Enviando… {progresso}%</p></div>
+              : <div className="flex gap-2">
+                <label className="inline-flex items-center gap-2 cursor-pointer rounded-md border px-3 py-1.5 text-sm hover:bg-muted">
+                  <Upload className="h-4 w-4" /> {videoUrl ? 'Trocar vídeo' : 'Enviar vídeo'}
+                  <input type="file" accept="video/mp4,video/quicktime,video/webm" className="hidden" onChange={escolherVideo} />
+                </label>
+                {videoUrl && <Button variant="outline" size="sm" onClick={tirarVideo}><Trash2 className="h-4 w-4 mr-1" /> Remover</Button>}
+              </div>}
+          </div>
           <div><Label>Passagem</Label><Input value={form.passagem} onChange={e => setForm({ ...form, passagem: e.target.value })} placeholder="João 3:16" /></div>
           <div><Label>Reflexão</Label><Textarea rows={8} value={form.reflexao} onChange={e => setForm({ ...form, reflexao: e.target.value })} /></div>
           <div><Label>Aplicação</Label><Textarea rows={3} value={form.aplicacao} onChange={e => setForm({ ...form, aplicacao: e.target.value })} /></div>
           <div><Label>Oração</Label><Textarea rows={3} value={form.oracao} onChange={e => setForm({ ...form, oracao: e.target.value })} /></div>
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>Cancelar</Button>
-          <Button onClick={save} disabled={saving}>{saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />} Salvar</Button>
+          <Button variant="outline" onClick={fechar}>{mudouVideo ? 'Fechar' : 'Cancelar'}</Button>
+          <Button onClick={save} disabled={saving || progresso !== null}>{saving ? <Loader2 className="h-4 w-4 mr-2 animate-spin" /> : <Save className="h-4 w-4 mr-2" />} Salvar</Button>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
+}
+
+/**
+ * Sobe o arquivo direto no Storage pelo link assinado (o mesmo formato do
+ * `uploadToSignedUrl` do supabase-js), com XHR pra ter PROGRESSO — vídeo de
+ * centenas de MB sem barra parece travado.
+ */
+function enviarDireto(signedUrl: string, arquivo: File, aoProgresso: (p: number) => void): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const corpo = new FormData();
+    corpo.append('cacheControl', '3600');
+    corpo.append('', arquivo);
+    const xhr = new XMLHttpRequest();
+    xhr.open('PUT', signedUrl);
+    xhr.setRequestHeader('x-upsert', 'false');
+    xhr.upload.onprogress = (ev) => { if (ev.lengthComputable) aoProgresso(Math.round((ev.loaded / ev.total) * 100)); };
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) return resolve();
+      let msg = `Falha no envio (${xhr.status})`;
+      try { const j = JSON.parse(xhr.responseText); if (j?.message) msg = j.message; } catch { /* corpo não é JSON */ }
+      if (xhr.status === 413) msg = 'O vídeo é maior que o limite aceito pelo servidor. Comprima antes de enviar.';
+      reject(new Error(msg));
+    };
+    xhr.onerror = () => reject(new Error('Falha de rede no envio do vídeo'));
+    xhr.send(corpo);
+  });
 }
 
 // ─────────────────────────────────────────────────────────────

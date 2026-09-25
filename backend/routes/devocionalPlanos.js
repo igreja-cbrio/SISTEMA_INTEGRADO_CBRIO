@@ -9,6 +9,7 @@ const mammoth = require('mammoth');
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const devSender = require('../services/devocionalSender');
+const devVideo = require('../utils/devocionalVideo');
 const { isAuthorizedCron } = require('../utils/cronAuth');
 
 // Upload do .docx do devocional da semana (em memória · 10MB)
@@ -708,6 +709,22 @@ router.put('/itens/:id', authorize('admin', 'diretor'), async (req, res) => {
     ['titulo', 'passagem', 'passagem_texto', 'reflexao', 'aplicacao', 'oracao'].forEach(k => {
       if (req.body[k] !== undefined) patch[k] = req.body[k];
     });
+    // Vídeo (25/09/2026): `video_path` string = o arquivo que o navegador acabou
+    // de subir pelo link assinado; `null` = tirar o vídeo. A URL pública é
+    // montada AQUI, nunca aceita do cliente.
+    let pathAntigo = null;
+    if (req.body.video_path !== undefined) {
+      const novo = req.body.video_path;
+      if (novo !== null && !devVideo.caminhoEhDoItem(req.params.id, novo)) {
+        return res.status(400).json({ error: 'Arquivo de vídeo inválido para este item.' });
+      }
+      const { data: atual, error: eAtual } = await supabase
+        .from('devocional_itens').select('video_path').eq('id', req.params.id).maybeSingle();
+      if (eAtual) throw eAtual;
+      pathAntigo = atual?.video_path || null;
+      patch.video_path = novo;
+      patch.video_url = novo ? supabase.storage.from(devVideo.BUCKET).getPublicUrl(novo).data.publicUrl : null;
+    }
     const { data, error } = await supabase
       .from('devocional_itens')
       .update(patch)
@@ -715,10 +732,46 @@ router.put('/itens/:id', authorize('admin', 'diretor'), async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+    // Apaga o arquivo anterior só DEPOIS de o item apontar pro novo — se o
+    // update falhasse, o item ficaria apontando pra um arquivo apagado.
+    if (pathAntigo && pathAntigo !== patch.video_path) {
+      const { error: eRm } = await supabase.storage.from(devVideo.BUCKET).remove([pathAntigo]);
+      if (eRm) console.error('devocional-itens video remove:', eRm.message);
+    }
     res.json(data);
   } catch (e) {
     console.error('devocional-itens update:', e.message);
+    if (e.code === '42703') return res.status(503).json({ error: 'O vídeo do devocional ainda não foi ativado no banco (migration 20260925120000).' });
     res.status(500).json({ error: 'Erro ao atualizar item' });
+  }
+});
+
+// ─────────────────────────────────────────────────────────────
+// POST /api/devocional-planos/itens/:id/video/upload
+//   body: { tipo, tamanho } → { path, signedUrl, token }
+//   O navegador sobe o arquivo DIRETO no Storage com o link (o Vercel corta o
+//   corpo em ~4,5 MB) e depois chama o PUT acima com o `path`.
+// ─────────────────────────────────────────────────────────────
+router.post('/itens/:id/video/upload', authorize('admin', 'diretor'), async (req, res) => {
+  try {
+    const v = devVideo.validarVideo(req.body || {});
+    if (v.erro) return res.status(400).json({ error: v.erro });
+    const { data: item, error: eItem } = await supabase
+      .from('devocional_itens').select('id').eq('id', req.params.id).maybeSingle();
+    if (eItem) throw eItem;
+    if (!item) return res.status(404).json({ error: 'Item não encontrado' });
+    const path = devVideo.caminhoDoVideo(item.id, v.ext, Date.now());
+    const { data, error } = await supabase.storage.from(devVideo.BUCKET).createSignedUploadUrl(path);
+    if (error) {
+      if (/not found|bucket/i.test(error.message || '')) {
+        return res.status(503).json({ error: 'O vídeo do devocional ainda não foi ativado no banco (migration 20260925120000).' });
+      }
+      throw error;
+    }
+    res.json({ path, signedUrl: data.signedUrl, token: data.token });
+  } catch (e) {
+    console.error('devocional-itens video upload:', e.message);
+    res.status(500).json({ error: 'Erro ao preparar o envio do vídeo' });
   }
 });
 

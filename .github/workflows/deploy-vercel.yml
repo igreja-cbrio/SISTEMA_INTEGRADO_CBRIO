@@ -115,6 +115,12 @@ jobs:
       - name: Fluxo de porta (dever da igreja, prazo BRT, fechamento)
         run: npm run test:fluxo-porta
 
+      # VIDEO DO DEVOCIONAL (25/09): formato/tamanho aceitos e o caminho do
+      # arquivo tem que ser DESTE item — senao trocar o video de um item apagaria
+      # o de outro.
+      - name: Video do devocional (regra pura)
+        run: npm run test:devocional-video
+
       # ENDERECO DO GRUPO no formulario publico (16/09): rua e NUMERO aparecem,
       # apartamento/bloco NUNCA. A lei 2 e de seguranca — o grupo e na casa de
       # alguem, e a rua mais a altura da via bastam pra pessoa decidir. O teste
