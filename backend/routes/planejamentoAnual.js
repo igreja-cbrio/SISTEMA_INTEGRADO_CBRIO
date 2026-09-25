@@ -1248,6 +1248,14 @@ router.get('/ciclos/:id/orcamento/pastor', authorizeModule(MOD, 1), async (req, 
 // derivado no_calendario (PA.noCalendario) e o vínculo materializado.
 const EXEC_MOD = 'planejamento-execucao';
 
+// Mesma lista de Projetos.jsx (initPhases) — projeto nasce sempre com estas
+// 7 fases, na mesma ordem/nomes, pra a aba Fases do execução mostrar o
+// stepper (FaseStepper) desde a materialização, sem passo manual extra.
+const FASES_PADRAO_PROJETO = [
+  'Concepção', 'Planejamento', 'Mobilização', 'Comunicação',
+  'Execução', 'Monitoramento', 'Encerramento',
+];
+
 router.get('/execucao/propostas', authorizeModule(EXEC_MOD, 1), async (req, res) => {
   let query = supabase.from('plan_propostas').select('*')
     .in('estado', ['aprovada', 'aprovada_ressalvas'])
@@ -1395,6 +1403,20 @@ router.post('/propostas/:id/materializar', authorizeModule(EXEC_MOD, 3), async (
     if (error) {
       console.error('[planejamento-execucao] erro ao criar projeto:', error.message);
       return res.status(500).json({ error: 'Não foi possível criar o projeto vinculado' });
+    }
+    // Mesmas 7 fases fixas que Projetos.jsx cria via "Iniciar Fases" (initPhases) —
+    // sem elas a aba Fases do módulo de execução não tem o que desenhar no
+    // stepper (FaseStepper) e mostra só o Kanban vazio, sem o vínculo aparente
+    // com o progresso do projeto. Best-effort: falha aqui não derruba a
+    // criação do projeto, que já está commitada.
+    try {
+      await supabase.from('project_phases').insert(
+        FASES_PADRAO_PROJETO.map((name, i) => ({
+          project_id: data.id, name, phase_order: i, status: 'pendente',
+        }))
+      );
+    } catch (e) {
+      console.error('[planejamento-execucao] erro ao criar fases padrão:', e.message);
     }
     return res.status(201).json({ tipo, id: data.id });
   }
