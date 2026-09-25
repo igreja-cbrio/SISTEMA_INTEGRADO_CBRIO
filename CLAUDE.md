@@ -7573,6 +7573,36 @@ e as migrations F2–F5 (ainda NÃO aplicadas) vivem no PR #3050 (`docs/modulo-m
 - `levelOf`/`contextoSubtarefa` saíram de `routes/marketing.js` para `services/marketingContexto.js`
   (a linha usa a mesma régua de líder).
 
+### Fase 4 · Pendentes + editor do líder (migration `20260925130000` · APLICADA pelo Marcos em 25/09)
+
+- **Migration**: `marketing_campanhas.sugerido_membro_id` + `fn_marketing_sugerir_membro(tipo)` (formato
+  pedido → `marketing_etiquetas_tipo.habilidade_padrao` → a ÚNICA pessoa ativa com essa habilidade; 2+ ou
+  sem formato = sem sugestão). A sugestão **não atribui nada** — só pré-preenche.
+- **5ª frente `Pendentes`** (`frentes.pen` no `GET /linha`, **só para o líder**): campanhas em `triagem`,
+  semana = `data_necessaria` (ou criação + 7 dias). É a caixa de entrada do Pedro ⇒ **qualquer pedido
+  esperando pinta a frente de vermelho**, não só os vencidos. No front ela é a ÚLTIMA de `FRENTES`
+  (`soLider`), então as outras não mudam de lugar para quem não é líder.
+- **Rotas (só líder · `exigirLider`)** em `routes/marketingLinha.js`:
+  `POST /linha/pendentes/:campanhaId/alocar` · `POST /linha/tarefas` (Interno) · `PATCH /linha/tarefas/:id`.
+  Régua pura em **`backend/utils/marketingAlocacao.js`** (`src/test/marketingAlocacao.test.ts`, 15 casos ·
+  2 mutantes rodados e mortos: entrega-antes-do-prazo liberada · carga contando item feito).
+- ⚠️⚠️ **DOIS TEMPOS**: cada subtarefa tem esforço + prazo próprios; a entrega final
+  (`marketing_campanhas.prazo_entrega`) **não pode ser antes do último prazo de subtarefa** (400).
+  Alocar exige responsável, prioridade, "o que você espera" e esforço+prazo por item.
+- ⚠️ **Alocar tira da triagem ANTES de criar o card** (UPDATE condicionado a `status='triagem'`): dois
+  cliques não alocam duas vezes (409). Se o card/checklist falhar, a campanha volta pra triagem e o card
+  sai (soft).
+- **Avisos saíram de `routes/marketing.js` para `services/marketingAvisos.js`** (`avisarEntregue`,
+  `avisarSeChecklistConcluiu`, `avisarPrazoAjustado`, `avisarAtribuidos`) — Kanban e linha do tempo usam a
+  MESMA redação e a mesma `chaveDedup`. Editar avisa só quem ENTROU (dono novo ou item novo/realocado);
+  remover o último item aberto passa pelo aviso de entrega (o gatilho pode ter fechado o card).
+- **Carga ao vivo** (`GET /linha` → `carga[membro][semana]` em horas, só líder): itens abertos, semana =
+  prazo do item ou da tarefa, atrasado cai na semana 1. **Dia = 8h** até a Fase 5 trazer a capacidade real.
+  O editor (`linha/EditorTarefa.jsx`, um só para alocar/nova/editar) mostra "já na agenda + desta = total"
+  e, no modo editar, tira da base o que a própria tarefa já somava.
+- ⏳ Fora desta fase: campo "que formato você imagina?" no formulário (sem ele quase nenhum pedido chega
+  com sugestão) · modal Responsabilidades com a matriz real · Fase 5 (planner em horas + capacidade).
+
 # ⚠️ REGRAS OBRIGATÓRIAS DE SEGURANÇA (não regredir · 2026-05-21)
 
 Esta seção é a lei do projeto após a Auditoria de Segurança 2026-05-21

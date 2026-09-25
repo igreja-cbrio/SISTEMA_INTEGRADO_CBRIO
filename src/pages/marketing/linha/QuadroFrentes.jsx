@@ -1,10 +1,11 @@
 import { ArrowRight } from 'lucide-react';
-import { FRENTES, G, ddmm, rotuloCulto, statusSerie } from './layout';
+import { FRENTES, G, ddmm, rotuloCulto, statusSerie, frenteVisivel } from './layout';
 
 // Os 4 quadrados fixos à esquerda. O quadrado não cresce: abrir um desenha a
 // linha para frente (feito pela página), aqui só muda o destaque.
 export function BlocosFrentes({ dados, aberta, onToggle }) {
   return FRENTES.map((f, i) => {
+    if (!frenteVisivel(f, dados)) return null;
     const fr = dados.frentes?.[f.key] || { status: 'indisponivel' };
     const cor = fr.status === 'vermelho' ? 'red' : fr.status === 'verde' ? 'green' : 'gray';
     let st = '';
@@ -35,8 +36,9 @@ export function BlocosFrentes({ dados, aberta, onToggle }) {
 
 export function NotaPerfil({ dados }) {
   const lider = dados.perfil?.lider;
+  const ocultas = FRENTES.filter(f => !frenteVisivel(f, dados)).length;
   return (
-    <div className="ml-abs ml-note" style={{ left: G.BX, top: G.NOTE_Y, width: G.BW }}>
+    <div className="ml-abs ml-note" style={{ left: G.BX, top: G.NOTE_Y - ocultas * (G.BH + G.BGAP), width: G.BW }}>
       {lider
         ? <><b>Visão do líder.</b> Você vê todas as tarefas. Clique num quadrado para abrir a linha da frente e num cartão para ver as subtarefas.</>
         : <><b>Sua visão.</b> Aparece o que está no seu nome ou sob sua responsabilidade. Clique num cartão para ler a demanda inteira.</>}

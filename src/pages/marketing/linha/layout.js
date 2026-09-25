@@ -8,7 +8,11 @@ export const FRENTES = [
   { key: 'sis', nome: 'Sistema', desc: 'Solicitações feitas pelo formulário' },
   { key: 'int', nome: 'Interno', desc: 'Demandas do líder para a equipe' },
   { key: 'rot', nome: 'Rotina', desc: 'O que cada pessoa faz na semana' },
+  // Só o líder: pedidos do formulário esperando ele alocar. Fica por ÚLTIMO de
+  // propósito: quem não é líder não a vê, e as outras frentes não mudam de lugar.
+  { key: 'pen', nome: 'Pendentes', desc: 'Pedidos esperando você alocar', soLider: true },
 ];
+export const frenteVisivel = (f, dados) => !f.soLider || !!dados?.perfil?.lider;
 export const NOME_FRENTE = Object.fromEntries(FRENTES.map(f => [f.key, f.nome]));
 export const CULTOS = { cbrio: 'CBRio', ami: 'AMI', kids: 'Kids' };
 export const rotuloCulto = (c) => CULTOS[c] || 'Sem culto';

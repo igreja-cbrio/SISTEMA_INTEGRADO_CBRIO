@@ -23,6 +23,7 @@
   --ln-sis: #6ea3bd;
   --ln-int: #a499d6;
   --ln-rot: #d9a43e;
+  --ln-pen: #e07a8a;
   --vc-cbrio: #6ea3bd;
   --vc-ami: #a98ae0;
   --vc-kids: #e8894f;
@@ -43,6 +44,7 @@
   --ln-sis: #2f5d74;
   --ln-int: #7a6fb0;
   --ln-rot: #bd861c;
+  --ln-pen: #b8475a;
   --vc-cbrio: #2f5d74;
   --vc-ami: #7b52b9;
   --vc-kids: #d0652a;
@@ -52,6 +54,7 @@
 .mkt-linha .l-sis { --lc: var(--ln-sis); }
 .mkt-linha .l-int { --lc: var(--ln-int); }
 .mkt-linha .l-rot { --lc: var(--ln-rot); }
+.mkt-linha .l-pen { --lc: var(--ln-pen); }
 
 .ml-viewport {
   position: relative; overflow: hidden; cursor: grab; touch-action: none;

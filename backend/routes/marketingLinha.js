@@ -15,6 +15,8 @@ const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { contextoSubtarefa } = require('../services/marketingContexto');
 const L = require('../utils/marketingLinha');
+const A = require('../utils/marketingAlocacao');
+const { avisarAtribuidos, avisarPrazoAjustado, avisarSeChecklistConcluiu } = require('../services/marketingAvisos');
 
 router.use(authenticate);
 
@@ -187,11 +189,48 @@ router.get('/', authorizeModule('marketing', 1), async (req, res) => {
       avisos.push(`Não deu para carregar a rotina: ${e.message}`);
     }
 
+    // ── Pendentes (só líder): pedidos em triagem, com a pessoa sugerida ─────
+    let pendentes = [];
+    let carga = {};
+    if (ctx.lider) {
+      const camps = await lerTudo(() => supabase.from('marketing_campanhas')
+        .select('id, titulo, dor_descricao, publico_alvo, solicitacao_id, sugerido_membro_id, created_at')
+        .eq('status', 'triagem').is('deleted_at', null).order('id'));
+      const sols = await lerEmLotes('solicitacoes', 'id, titulo, descricao, data_necessaria, solicitante_id', 'id', camps.map(c => c.solicitacao_id));
+      const solDe = Object.fromEntries(sols.map(x => [x.id, x]));
+      const solicitantes = await lerEmLotes('profiles', 'id, name', 'id', sols.map(x => x.solicitante_id));
+      const nomeSolicitante = Object.fromEntries(solicitantes.map(p => [p.id, p.name]));
+      const mais7 = (d) => (d ? new Date(Date.parse(d + 'T12:00:00Z') + 7 * 864e5).toISOString().slice(0, 10) : null);
+      pendentes = camps.map(c => {
+        const sol = solDe[c.solicitacao_id] || null;
+        const quando = L.dataSP(sol?.data_necessaria) || mais7(L.dataSP(c.created_at));
+        const semana = L.semanaDe(quando, semanas);
+        return {
+          id: c.id, frente: 'pen', titulo: sol?.titulo || c.titulo,
+          descricao: sol?.descricao || c.dor_descricao || null, publico_alvo: c.publico_alvo || null,
+          data_necessaria: L.dataSP(sol?.data_necessaria) || null, prazo: quando,
+          semana: semana == null ? null : Math.max(1, semana),
+          aberta: true, atrasada: semana === 0, sugerido_membro_id: c.sugerido_membro_id || null,
+          solicitante: nomeSolicitante[sol?.solicitante_id] || null, criado_em: c.created_at,
+        };
+      }).filter(p => p.semana != null)
+        .sort((a, b) => String(a.prazo).localeCompare(String(b.prazo)));
+
+      const prazoDaTarefa = Object.fromEntries(noAno.map(x => [x.card.id, x.prazo]));
+      carga = A.cargaPorSemana(itens, { prazoDaTarefa, semanaDe: (d) => L.semanaDe(d, semanas) });
+    }
+
     const porFrente = (f) => tarefas.filter(t => t.frente === f);
     const frentes = {
       ins: { ...L.statusFrente(porFrente('ins'), semanaAtual), series: listaSeries },
       sis: { ...L.statusFrente(porFrente('sis'), semanaAtual), tarefas: porFrente('sis') },
       int: { ...L.statusFrente(porFrente('int'), semanaAtual), tarefas: porFrente('int') },
+      ...(ctx.lider ? { pen: {
+        // Pendentes é a caixa de entrada do Pedro: qualquer pedido esperando já é pendência dele.
+        ...L.statusFrente(pendentes, semanaAtual),
+        status: pendentes.length ? 'vermelho' : 'verde', pendentes: pendentes.length,
+        tarefas: pendentes,
+      } } : {}),
       rot: rotina == null
         ? { status: 'indisponivel', pendentes: null, semanas_atrasadas: [], tarefas: [], marcavel: false }
         : { ...L.statusFrente(rotina, semanaAtual), tarefas: rotina, marcavel: rotinaDisponivel },
@@ -201,6 +240,7 @@ router.get('/', authorizeModule('marketing', 1), async (req, res) => {
       ano, hoje, semana_atual: semanaAtual, semanas,
       perfil: { lider: ctx.lider, meus_membro_ids: ctx.meusMembroIds },
       membros: membrosOut,
+      carga,
       frentes,
       sem_data: tarefas.filter(t => t.semana == null).length,
       avisos,
@@ -272,6 +312,175 @@ router.delete('/rotina/:compromissoId/:semanaInicio', authorizeModule('marketing
   } catch (e) {
     console.error('[MARKETING-LINHA] rotina delete:', e.message);
     res.status(500).json({ error: 'Não foi possível reabrir a rotina', detalhe: e.message });
+  }
+});
+
+// ════════════════════════════════════════════════════════════════════════
+// Fase 4 · editor do Pedro (só líder): alocar pendente · nova tarefa · editar
+// A régua é pura (utils/marketingAlocacao). Aqui só lê, grava e avisa.
+// ════════════════════════════════════════════════════════════════════════
+
+async function exigirLider(req, res) {
+  const ctx = await contextoSubtarefa(req);
+  if (!ctx.lider) { res.status(403).json({ error: 'Só o líder do Marketing aloca e edita tarefas' }); return null; }
+  return ctx;
+}
+
+async function membrosAtivos(ids) {
+  const unicos = [...new Set(ids.filter(Boolean))];
+  if (!unicos.length) return true;
+  const { data, error } = await supabase.from('marketing_membros').select('id')
+    .in('id', unicos).eq('ativo', true).is('deleted_at', null);
+  if (error) throw error;
+  return (data || []).length === unicos.length;
+}
+
+const prazoProducao = (dataFim) => (dataFim ? new Date(dataFim + 'T18:00:00-03:00').toISOString() : null);
+
+// Cria card + checklist. Se o checklist falhar, o card sai (soft) e o erro sobe.
+async function criarTarefa({ card, itens, extras, userId }) {
+  const { data: novo, error } = await supabase.from('marketing_kanban_cards').insert({
+    origem: 'interna', estado: 'backlog', visibilidade: 'equipe',
+    ...card, ...extras,
+    data_inicio: L.dataSP(new Date()),
+    prazo_producao: prazoProducao(card.data_fim),
+    criado_por: userId,
+  }).select(CARD_COLS).single();
+  if (error) throw error;
+  const { error: eItens } = await supabase.from('marketing_card_checklist')
+    .insert(itens.map(i => ({ ...i, card_id: novo.id, feito: false })));
+  if (eItens) {
+    await supabase.from('marketing_kanban_cards').update({ deleted_at: new Date().toISOString() }).eq('id', novo.id);
+    throw eItens;
+  }
+  return novo;
+}
+
+// Pedido do formulário (campanha em triagem) → tarefa em Sistema.
+router.post('/pendentes/:campanhaId/alocar', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    if (!(await exigirLider(req, res))) return;
+    const v = A.validarNovaTarefa(req.body, { modo: 'pendente' });
+    if (v.erro) return res.status(400).json({ error: v.erro });
+    if (!(await membrosAtivos([v.card.atribuido_a, ...v.itens.map(i => i.membro_id)]))) {
+      return res.status(400).json({ error: 'Alguém escolhido não está ativo na equipe do Marketing' });
+    }
+
+    // Tira da triagem ANTES de criar: dois cliques (ou duas abas) não alocam duas vezes.
+    const { data: camp, error: eCamp } = await supabase.from('marketing_campanhas')
+      .update({ status: 'ativa', triada_por: req.user.userId, prazo_entrega: v.prazo_entrega, updated_at: new Date().toISOString() })
+      .eq('id', req.params.campanhaId).eq('status', 'triagem').is('deleted_at', null)
+      .select('id, titulo, status, solicitacao_id, solicitante_id, prazo_entrega').maybeSingle();
+    if (eCamp) throw eCamp;
+    if (!camp) return res.status(409).json({ error: 'Este pedido não está mais em Pendentes (já foi alocado ou removido)' });
+
+    let card;
+    try {
+      card = await criarTarefa({ card: v.card, itens: v.itens, extras: { campanha_id: camp.id }, userId: req.user.userId });
+    } catch (e) {
+      await supabase.from('marketing_campanhas')
+        .update({ status: 'triagem', triada_por: null, triada_em: null, prazo_entrega: null }).eq('id', camp.id);
+      throw e;
+    }
+    await avisarAtribuidos(card, [card.atribuido_a, ...v.itens.map(i => i.membro_id)]);
+    await avisarPrazoAjustado(camp);
+    res.status(201).json({ ok: true, card_id: card.id });
+  } catch (e) {
+    console.error('[MARKETING-LINHA] alocar:', e.message);
+    res.status(500).json({ error: 'Não foi possível alocar o pedido', detalhe: e.message });
+  }
+});
+
+// "+ Nova tarefa" do Pedro → Interno (sem solicitante, sem entrega final).
+router.post('/tarefas', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    if (!(await exigirLider(req, res))) return;
+    const v = A.validarNovaTarefa(req.body, { modo: 'interna' });
+    if (v.erro) return res.status(400).json({ error: v.erro });
+    if (!(await membrosAtivos([v.card.atribuido_a, ...v.itens.map(i => i.membro_id)]))) {
+      return res.status(400).json({ error: 'Alguém escolhido não está ativo na equipe do Marketing' });
+    }
+    const card = await criarTarefa({ card: v.card, itens: v.itens, extras: {}, userId: req.user.userId });
+    await avisarAtribuidos(card, [card.atribuido_a, ...v.itens.map(i => i.membro_id)]);
+    res.status(201).json({ ok: true, card_id: card.id });
+  } catch (e) {
+    console.error('[MARKETING-LINHA] nova tarefa:', e.message);
+    res.status(500).json({ error: 'Não foi possível criar a tarefa', detalhe: e.message });
+  }
+});
+
+// Editar título, responsável, prioridade, culto, descrição, itens e entrega final.
+router.patch('/tarefas/:id', authorizeModule('marketing', 1), async (req, res) => {
+  try {
+    if (!(await exigirLider(req, res))) return;
+    const { data: card, error: eCard } = await supabase.from('marketing_kanban_cards')
+      .select(CARD_COLS).eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (eCard) throw eCard;
+    if (!card) return res.status(404).json({ error: 'Tarefa não encontrada' });
+    const { data: itensAtuais, error: eIt } = await supabase.from('marketing_card_checklist')
+      .select(ITEM_COLS).eq('card_id', card.id);
+    if (eIt) throw eIt;
+    let camp = null;
+    if (card.campanha_id) {
+      const { data, error } = await supabase.from('marketing_campanhas')
+        .select('id, titulo, solicitacao_id, solicitante_id, prazo_entrega').eq('id', card.campanha_id).maybeSingle();
+      if (error) throw error;
+      camp = data;
+    }
+    if (req.body?.prazo_entrega !== undefined && !camp) {
+      return res.status(400).json({ error: 'Só pedido do formulário tem entrega final' });
+    }
+
+    const v = A.validarEdicao(req.body, {
+      itens: itensAtuais || [], atribuido_a: card.atribuido_a,
+      prazo_entrega: camp?.prazo_entrega ? L.dataSP(camp.prazo_entrega) : null,
+    });
+    if (v.erro) return res.status(400).json({ error: v.erro });
+    const pessoas = [v.card.atribuido_a, ...v.atualizar.map(a => a.campos.membro_id), ...v.novos.map(n => n.membro_id)];
+    if (!(await membrosAtivos(pessoas))) {
+      return res.status(400).json({ error: 'Alguém escolhido não está ativo na equipe do Marketing' });
+    }
+
+    const estadoAntes = card.estado;
+    if (Object.keys(v.card).length) {
+      const upd = { ...v.card, atualizado_por: req.user.userId };
+      if (v.card.data_fim !== undefined) upd.prazo_producao = prazoProducao(v.card.data_fim);
+      const { error } = await supabase.from('marketing_kanban_cards').update(upd).eq('id', card.id);
+      if (error) throw error;
+    }
+    for (const a of v.atualizar) {
+      if (!Object.keys(a.campos).length) continue;
+      const { error } = await supabase.from('marketing_card_checklist').update(a.campos).eq('id', a.id).eq('card_id', card.id);
+      if (error) throw error;
+    }
+    if (v.novos.length) {
+      const base = Math.max(-1, ...(itensAtuais || []).map(i => i.ordem ?? 0)) + 1;
+      const { error } = await supabase.from('marketing_card_checklist')
+        .insert(v.novos.map((n, k) => ({ ...n, card_id: card.id, feito: false, ordem: base + k })));
+      if (error) throw error;
+    }
+    if (v.remover.length) {
+      const { error } = await supabase.from('marketing_card_checklist').delete().in('id', v.remover).eq('card_id', card.id);
+      if (error) throw error;
+      // Remover o último item aberto pode completar o checklist → o gatilho fecha o card.
+      await avisarSeChecklistConcluiu(card.id, estadoAntes);
+    }
+    if (v.prazo_entrega !== undefined && camp) {
+      const { data: c2, error } = await supabase.from('marketing_campanhas')
+        .update({ prazo_entrega: v.prazo_entrega, updated_at: new Date().toISOString() })
+        .eq('id', camp.id).select('id, titulo, solicitacao_id, solicitante_id, prazo_entrega').single();
+      if (error) throw error;
+      if (L.dataSP(camp.prazo_entrega) !== v.prazo_entrega) await avisarPrazoAjustado(c2);
+    }
+
+    // Avisa só quem ENTROU agora (dono novo ou item novo/realocado).
+    const antes = new Set([card.atribuido_a, ...(itensAtuais || []).map(i => i.membro_id)].filter(Boolean));
+    const entraram = pessoas.filter(p => p && !antes.has(p));
+    if (entraram.length) await avisarAtribuidos({ ...card, ...v.card }, entraram);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error('[MARKETING-LINHA] editar tarefa:', e.message);
+    res.status(500).json({ error: 'Não foi possível salvar a tarefa', detalhe: e.message });
   }
 });
 

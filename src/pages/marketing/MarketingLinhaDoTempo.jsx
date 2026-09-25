@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, AlertTriangle, Loader2, Maximize2, CalendarCheck, Minus, Plus, RefreshCw } from 'lucide-react';
+import { AlertCircle, AlertTriangle, Loader2, Maximize2, CalendarCheck, Minus, Plus, RefreshCw, ListPlus } from 'lucide-react';
 import { toast } from 'sonner';
 import { marketingLinha } from '../../api';
 import MarketingPagina from './MarketingPagina';
@@ -11,6 +11,7 @@ import { BlocosFrentes, NotaPerfil, BlocoSerie } from './linha/QuadroFrentes';
 import CartaoTarefa from './linha/CartaoTarefa';
 import CartaoEtapa from './linha/CartaoEtapa';
 import ModalTarefa from './linha/ModalTarefa';
+import EditorTarefa from './linha/EditorTarefa';
 import './linha/linha.css';
 
 // Linha do tempo do Marketing (Fase 3). Canvas infinito: semanas do ano nas
@@ -93,6 +94,7 @@ export default function MarketingLinhaDoTempo() {
   const [aberta, setAberta] = useState(null);
   const [esconder, setEsconder] = useState(false);
   const [tarefaId, setTarefaId] = useState(null);
+  const [editor, setEditor] = useState(null); // { modo, pendente?, tarefa? }
   const iniciadoAno = useRef(null);
 
   const carregar = useCallback(async (silencioso = false) => {
@@ -179,6 +181,9 @@ export default function MarketingLinhaDoTempo() {
           <div className="flex flex-wrap items-center gap-2">
             <Button size="sm" variant="outline" onClick={() => pz.fit(layout.CW, layout.CH)}><Maximize2 className="h-4 w-4 mr-1" /> Ajustar</Button>
             <Button size="sm" variant="outline" onClick={irParaHoje}><CalendarCheck className="h-4 w-4 mr-1" /> Ir para hoje</Button>
+            {dados.perfil?.lider && (
+              <Button size="sm" onClick={() => setEditor({ modo: 'nova' })}><ListPlus className="h-4 w-4 mr-1" /> Nova tarefa</Button>
+            )}
             <div className="flex items-center gap-1">
               <Button size="icon" variant="outline" className="h-8 w-8" onClick={() => pz.zoomStep(1 / 1.2)} aria-label="Diminuir zoom"><Minus className="h-4 w-4" /></Button>
               <span ref={pz.labelRef} className="w-12 text-center text-xs tabular-nums text-muted-foreground">100%</span>
@@ -230,7 +235,7 @@ export default function MarketingLinhaDoTempo() {
                 )}
                 {layout.nos.map(no => (no.tipo === 'etapa'
                   ? <CartaoEtapa key={no.key} no={no} semanaAtual={layout.semanaAtual} membros={dados.membros} onAbrir={(t) => setTarefaId(t.id)} />
-                  : <CartaoTarefa key={no.key} no={no} membros={dados.membros} onAbrir={(t) => setTarefaId(t.id)} />
+                  : <CartaoTarefa key={no.key} no={no} membros={dados.membros} onAbrir={(t) => (t.frente === 'pen' ? setEditor({ modo: 'alocar', pendente: t }) : setTarefaId(t.id))} />
                 ))}
               </div>
               <div className="pointer-events-none absolute bottom-3 left-1/2 hidden -translate-x-1/2 rounded-full border border-border bg-card/90 px-3 py-1 text-[11px] text-muted-foreground md:block">
@@ -247,6 +252,20 @@ export default function MarketingLinhaDoTempo() {
           dados={dados}
           onClose={() => setTarefaId(null)}
           onChanged={() => carregar(true)}
+          onEditar={dados.perfil?.lider ? () => { setEditor({ modo: 'editar', tarefa: tarefaAberta }); setTarefaId(null); } : undefined}
+        />
+      )}
+
+      {editor && dados && (
+        <EditorTarefa
+          {...editor}
+          dados={dados}
+          onClose={() => setEditor(null)}
+          onSalvo={async () => {
+            toast.success(editor.modo === 'alocar' ? 'Pedido alocado' : editor.modo === 'nova' ? 'Tarefa criada' : 'Tarefa atualizada');
+            setEditor(null);
+            await carregar(true);
+          }}
         />
       )}
     </MarketingPagina>
