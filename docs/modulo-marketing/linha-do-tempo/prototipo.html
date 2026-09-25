@@ -1,0 +1,1248 @@
+<title>Linha do Marketing 2027</title>
+<style>
+:root {
+  --ground: #eef2f1;
+  --paper: #ffffff;
+  --paper-2: #f6faf9;
+  --ink: #102a28;
+  --ink-2: #3d5450;
+  --ink-3: #6b8782;
+  --line: #d6e1dd;
+  --line-2: #e7eeec;
+  --accent: #00a693;
+  --accent-deep: #00766a;
+  --accent-soft: #d6ebe6;
+  --grid: rgba(16,42,40,0.07);
+  --bar-bg: rgba(255,255,255,.86);
+  --shadow: 0 1px 2px rgba(16,42,40,.04), 0 8px 24px -16px rgba(16,42,40,.18);
+  --shadow-up: 0 12px 30px -10px rgba(16,42,40,.35);
+  --red: #c4453b;
+  --red-soft: rgba(196,69,59,.09);
+  --amber: #bd861c;
+  --amber-soft: rgba(189,134,28,.14);
+  --green: #1f9d6b;
+  --on-status: #ffffff;
+  --note: #fbf3cf;
+  --note-ink: #4d4424;
+  --ln-ins: #00a693;
+  --ln-sis: #2f5d74;
+  --ln-int: #7a6fb0;
+  --ln-rot: #bd861c;
+  --ln-sem: #c4453b;
+  --scrim: rgba(16,42,40,.42);
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "Cascadia Code", "JetBrains Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --ground: #0e1817; --paper: #15221f; --paper-2: #1a2a27; --ink: #e4efec; --ink-2: #b3c6c1; --ink-3: #82a09a;
+    --line: #2a3d39; --line-2: #22332f; --accent: #2cc4ae; --accent-deep: #5fd8c5; --accent-soft: #173a34;
+    --grid: rgba(220,240,235,0.07); --bar-bg: rgba(21,34,31,.88);
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -16px rgba(0,0,0,.6); --shadow-up: 0 12px 30px -10px rgba(0,0,0,.7);
+    --red: #e0645a; --red-soft: rgba(224,100,90,.12); --amber: #d9a43e; --amber-soft: rgba(217,164,62,.16); --green: #3bb885; --on-status: #0e1817;
+    --note: #3a3520; --note-ink: #e8dfb8;
+    --ln-ins: #2cc4ae; --ln-sis: #6ea3bd; --ln-int: #a499d6; --ln-rot: #d9a43e; --ln-sem: #e0645a; --scrim: rgba(0,0,0,.6);
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --ground: #0e1817; --paper: #15221f; --paper-2: #1a2a27; --ink: #e4efec; --ink-2: #b3c6c1; --ink-3: #82a09a;
+  --line: #2a3d39; --line-2: #22332f; --accent: #2cc4ae; --accent-deep: #5fd8c5; --accent-soft: #173a34;
+  --grid: rgba(220,240,235,0.07); --bar-bg: rgba(21,34,31,.88);
+  --shadow: 0 1px 2px rgba(0,0,0,.3), 0 8px 24px -16px rgba(0,0,0,.6); --shadow-up: 0 12px 30px -10px rgba(0,0,0,.7);
+  --red: #e0645a; --red-soft: rgba(224,100,90,.12); --amber: #d9a43e; --amber-soft: rgba(217,164,62,.16); --green: #3bb885; --on-status: #0e1817;
+  --note: #3a3520; --note-ink: #e8dfb8;
+  --ln-ins: #2cc4ae; --ln-sis: #6ea3bd; --ln-int: #a499d6; --ln-rot: #d9a43e; --ln-sem: #e0645a; --scrim: rgba(0,0,0,.6);
+}
+
+html, body { height: 100%; }
+* { box-sizing: border-box; }
+body { background: var(--ground); color: var(--ink); font-family: var(--sans); overflow: hidden; }
+button, input, select, textarea { font: inherit; color: inherit; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.fx-root { height: 100%; display: flex; flex-direction: column; background: radial-gradient(var(--grid) 1px, transparent 1px); background-size: 26px 26px; background-color: var(--ground); }
+
+/* barra (igual ao /atlas/fluxograma) */
+.fx-bar { flex: none; display: flex; align-items: center; gap: 8px 10px; padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--bar-bg); backdrop-filter: blur(3px); flex-wrap: wrap; z-index: 6; }
+.fx-title { font-weight: 750; letter-spacing: -.01em; margin-right: 4px; font-size: 14px; }
+.fx-title b { font-family: var(--mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .16em; color: var(--accent-deep); font-weight: 600; display: block; }
+.fx-btn { font-size: 12.5px; padding: 5px 11px; border: 1px solid var(--line); background: var(--paper); color: var(--ink-2); border-radius: 8px; cursor: pointer; }
+.fx-btn:hover { border-color: var(--accent); color: var(--accent-deep); }
+.fx-btn.primary { background: var(--accent-deep); border-color: var(--accent-deep); color: var(--paper); font-weight: 650; }
+.fx-btn.primary:hover { background: var(--accent); border-color: var(--accent); color: var(--paper); }
+.fx-zoom { font-family: var(--mono); font-size: 12px; color: var(--ink-3); min-width: 46px; text-align: center; }
+.fx-sep { width: 1px; height: 22px; background: var(--line); }
+.seg { display: flex; gap: 2px; background: var(--paper-2); border: 1px solid var(--line); border-radius: 9px; padding: 2px; }
+.seg button { border: 0; background: transparent; border-radius: 7px; padding: 4px 10px; cursor: pointer; font-size: 12.5px; color: var(--ink-2); }
+.seg button[aria-pressed="true"] { background: var(--paper); color: var(--accent-deep); font-weight: 650; box-shadow: 0 0 0 1.5px var(--accent) inset; }
+.ctl { display: inline-flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-2); }
+.ctl input[type="checkbox"] { width: 15px; height: 15px; accent-color: var(--accent); margin: 0; }
+.ctl input[type="range"] { width: 110px; accent-color: var(--accent); }
+.ctl output { font-family: var(--mono); font-size: 11.5px; color: var(--ink); font-variant-numeric: tabular-nums; min-width: 92px; }
+.fx-legend { display: flex; gap: 12px; flex-wrap: wrap; margin-left: auto; align-items: center; }
+.fx-legend span { display: inline-flex; align-items: center; gap: 5px; font-size: 11px; color: var(--ink-2); }
+.fx-legend i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.lg-red { background: var(--red); } .lg-green { background: var(--green); }
+.lg-late { background: var(--red-soft); border: 1.5px solid var(--red); }
+.lg-now { background: var(--accent-soft); border: 1px dashed var(--accent); }
+.lg-amber { background: var(--amber); }
+
+.fx-viewport { position: relative; flex: 1; overflow: hidden; cursor: grab; touch-action: none; }
+.fx-viewport.panning { cursor: grabbing; }
+.fx-canvas { position: absolute; top: 0; left: 0; transform-origin: 0 0; will-change: transform; }
+.fx-hint { position: absolute; bottom: 12px; left: 50%; transform: translateX(-50%); font-size: 11px; color: var(--ink-3); background: var(--bar-bg); border: 1px solid var(--line); border-radius: 99px; padding: 5px 12px; white-space: nowrap; pointer-events: none; }
+@media (max-width: 760px) { .fx-hint, .fx-legend { display: none; } }
+
+/* objetos do quadro */
+.abs { position: absolute; }
+.yr { display: grid; gap: 6px; pointer-events: none; }
+.yr b { font-size: 112px; font-weight: 800; letter-spacing: -.05em; line-height: .8; font-variant-numeric: tabular-nums; }
+.yr span { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: .18em; color: var(--accent-deep); font-weight: 600; }
+.yr em { font-style: normal; font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--ink-3); border: 1px dashed var(--line); border-radius: 6px; padding: 2px 7px; justify-self: start; }
+
+.vdiv { width: 0; border-left: 1px dashed var(--line); }
+.band { border: 1px dashed transparent; border-radius: 16px; }
+.band.now { background: color-mix(in srgb, var(--accent-soft) 55%, transparent); border-color: var(--accent); }
+.band.late { background: var(--red-soft); border: 1.5px solid var(--red); }
+.colhead { display: grid; gap: 2px; pointer-events: none; }
+.colhead .mo { font-style: normal; font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .16em; color: var(--accent-deep); font-weight: 600; min-height: 14px; }
+.colhead b { font-size: 16px; font-weight: 750; letter-spacing: -.01em; }
+.colhead span { font-family: var(--mono); font-size: 12px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+.colhead em { font-style: normal; justify-self: start; margin-top: 4px; font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .1em; font-weight: 600; border-radius: 5px; padding: 2px 7px; }
+.colhead.now em { background: var(--accent-soft); color: var(--accent-deep); }
+.colhead.late b, .colhead.late span { color: var(--red); }
+.colhead.late em { background: var(--red); color: var(--on-status); }
+
+/* quadrados macro e de versão */
+.blk { border: 0; border-radius: 16px; padding: 14px 16px; display: grid; gap: 4px; align-content: start; text-align: left; cursor: pointer; color: var(--on-status); box-shadow: var(--shadow); transition: box-shadow .15s, transform .15s; }
+.blk.red { background: var(--red); --st: var(--red); }
+.blk.green { background: var(--green); --st: var(--green); }
+.blk:hover { transform: translateY(-1px); box-shadow: var(--shadow-up); }
+.blk.exp { box-shadow: 0 0 0 4px var(--ground), 0 0 0 6.5px var(--st), var(--shadow-up); }
+.blk .k { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .14em; opacity: .85; font-weight: 600; }
+.blk .nm { font-weight: 800; font-size: 19px; letter-spacing: -.015em; }
+.blk .ds { font-size: 12px; line-height: 1.35; opacity: .92; }
+.blk .st { margin-top: 4px; font-family: var(--mono); font-size: 11px; font-weight: 600; min-height: 14px; }
+.blk .ar { position: absolute; right: 14px; top: 12px; font-family: var(--mono); font-size: 16px; transition: transform .2s; }
+.blk.exp .ar { transform: translateX(4px); }
+.blk.sem { outline: 2px dashed color-mix(in srgb, var(--on-status) 55%, transparent); outline-offset: -7px; }
+.blk.vb { padding: 12px 14px; z-index: 2; }
+.blk.vb .nm { font-size: 17px; }
+.blk .pg { height: 5px; border-radius: 3px; background: color-mix(in srgb, var(--on-status) 30%, transparent); overflow: hidden; margin-top: 4px; }
+.blk .pg i { display: block; height: 100%; background: var(--on-status); }
+.blk .nx { font-size: 11px; opacity: .92; line-height: 1.3; }
+
+.note { background: var(--note); color: var(--note-ink); border-radius: 4px; padding: 14px 14px 16px; font-size: 12.5px; line-height: 1.5; box-shadow: var(--shadow); transform: rotate(-.6deg); }
+.note b { font-weight: 700; }
+.note .t { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .14em; font-weight: 700; display: block; margin-bottom: 6px; }
+
+/* cards (mesma linguagem do fx-node) */
+.fx-node { background: var(--paper); border: 1.5px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); transition: box-shadow .15s, border-color .15s, opacity .15s; z-index: 2; text-align: left; padding: 0; overflow: hidden; cursor: pointer; }
+.fx-node:hover { border-color: var(--lc); box-shadow: var(--shadow-up); }
+.fx-node.dim { opacity: .28; }
+.fx-node .nd-bar { height: 5px; background: var(--lc); }
+.fx-node.fut { border-style: dashed; box-shadow: none; background: var(--paper-2); }
+.fx-node.fut .nd-bar { opacity: .35; }
+.fx-node.fut .fx-nd-title { color: var(--ink-2); }
+.fx-node.c-sem { border-color: color-mix(in srgb, var(--ln-sem) 45%, var(--line)); }
+.fx-nd-body { padding: 9px 12px 11px; display: grid; gap: 3px; }
+.fx-nd-top { display: flex; align-items: baseline; justify-content: space-between; gap: 6px; }
+.fx-nd-title { font-weight: 700; font-size: 13.5px; letter-spacing: -.01em; line-height: 1.2; }
+.fx-nd-val { font-family: var(--mono); font-size: 8.5px; text-transform: uppercase; letter-spacing: .08em; padding: 2px 6px; border-radius: 99px; background: var(--accent-soft); color: var(--accent-deep); flex: none; }
+.fx-nd-sub { font-size: 11px; color: var(--ink-2); line-height: 1.3; }
+.fx-nd-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; gap: 6px; font-family: var(--mono); font-size: 9.5px; color: var(--ink-3); }
+.fx-nd-own { font-family: var(--mono); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; font-weight: 600; color: var(--accent-deep); background: var(--accent-soft); padding: 2px 6px; border-radius: 5px; }
+.fx-nd-cta { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .08em; font-weight: 700; color: var(--ln-sem); }
+.readbtn { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .07em; font-weight: 600; border: 1px solid var(--line); background: var(--paper); color: var(--ink-2); border-radius: 6px; padding: 2px 7px; cursor: pointer; }
+.readbtn:hover { border-color: var(--lc); color: var(--ink); }
+.prog { display: flex; align-items: center; gap: 7px; margin-top: 6px; }
+.prog .tr { flex: 1; height: 5px; border-radius: 3px; background: var(--line-2); overflow: hidden; }
+.prog .tr i { display: block; height: 100%; background: var(--lc); }
+.prog span { font-family: var(--mono); font-size: 10px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+.l-ins { --lc: var(--ln-ins); } .l-sis { --lc: var(--ln-sis); } .l-int { --lc: var(--ln-int); } .l-rot { --lc: var(--ln-rot); } .l-sem { --lc: var(--ln-sem); }
+
+.subs { list-style: none; margin: 0; padding: 9px 12px 11px 24px; display: grid; gap: 5px; position: relative; border-top: 1px dashed var(--line); }
+.subs::before { content: ""; position: absolute; left: 16px; top: 9px; bottom: 22px; border-left: 1.5px solid var(--line); }
+.subs li { position: relative; display: flex; align-items: center; gap: 7px; background: var(--paper-2); border: 1px solid var(--line-2); border-radius: 8px; padding: 5px 7px; font-size: 12px; transition: opacity .3s, transform .3s; cursor: default; }
+.subs li::before { content: ""; position: absolute; left: -8px; top: 50%; width: 7px; border-top: 1.5px solid var(--line); }
+.subs li.leaving { opacity: 0; transform: translateX(10px); }
+.subs label { display: flex; align-items: center; gap: 7px; flex: 1; cursor: pointer; min-width: 0; }
+.subs input { width: 15px; height: 15px; accent-color: var(--green); flex: none; margin: 0; }
+.subs .h, .m-list .h { font-family: var(--mono); font-size: 10px; color: var(--ink-3); font-variant-numeric: tabular-nums; }
+
+.av { flex: none; width: 20px; height: 20px; border-radius: 50%; display: inline-grid; place-items: center; font-size: 8.5px; font-weight: 700; color: #fff; background: var(--pc); font-family: var(--sans); letter-spacing: 0; }
+.av.lg { width: 34px; height: 34px; font-size: 12px; }
+.p-pedro { --pc: #3d5450; } .p-leticia { --pc: #b4507a; } .p-caua { --pc: #2f5d74; }
+.p-lorena { --pc: #7a6fb0; } .p-allan { --pc: #9a6b1a; } .p-aline { --pc: #4f7d6f; }
+
+/* arestas */
+.fx-edges { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; z-index: 1; }
+.fx-edges path { fill: none; stroke: var(--lc); transition: opacity .15s; }
+.fx-edges .spine { stroke-width: 3.6; }
+.fx-edges .br { stroke-width: 2; }
+.fx-edges .br.fut { stroke-dasharray: 4 5; opacity: .6; }
+.fx-edges .spine.fut { stroke-dasharray: 2 6; opacity: .7; stroke-width: 2.4; }
+.fx-edges circle { fill: var(--lc); stroke: var(--ground); stroke-width: 3; }
+.fx-edges circle.late { fill: var(--red); }
+.fx-edges circle.fut { fill: var(--paper); stroke: var(--lc); stroke-width: 2; }
+.fx-edges .dim { opacity: .12; }
+.fx-edges .hot { stroke-width: 3.4; }
+
+/* planner */
+.pp { background: var(--paper); border: 1.5px solid var(--line); border-radius: 14px; box-shadow: var(--shadow); padding: 12px 14px; display: grid; grid-template-columns: auto 1fr; gap: 3px 10px; align-content: start; }
+.pp .av { grid-row: span 2; }
+.pp .nm { font-weight: 750; font-size: 15px; letter-spacing: -.01em; }
+.pp .rl { font-size: 11.5px; color: var(--ink-3); }
+.pp .wk { grid-column: 1 / -1; margin-top: 6px; display: flex; justify-content: space-between; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); }
+.pp .bar { grid-column: 1 / -1; height: 6px; border-radius: 3px; background: var(--line-2); overflow: hidden; }
+.pp .bar i { display: block; height: 100%; background: var(--ok); }
+.ld { --ok: var(--accent); } .ld.warn { --ok: var(--amber); } .ld.over { --ok: var(--red); }
+.pc { border: 1.5px solid var(--line); background: var(--paper); border-radius: 12px; padding: 9px 11px; display: grid; gap: 5px; align-content: start; cursor: pointer; text-align: left; box-shadow: var(--shadow); z-index: 2; }
+.pc:hover { border-color: var(--ok); }
+.pc .n { display: flex; align-items: baseline; gap: 5px; }
+.pc .n b { font-size: 22px; font-weight: 800; letter-spacing: -.02em; font-variant-numeric: tabular-nums; color: var(--ink); }
+.pc .n span { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+.pc .tr { height: 6px; border-radius: 3px; background: var(--line-2); overflow: hidden; }
+.pc .tr i { display: block; height: 100%; background: var(--ok); }
+.pc .it { font-size: 10.5px; color: var(--ink-3); line-height: 1.3; }
+.pc.warn { background: var(--amber-soft); border-color: var(--amber); }
+.pc.over { background: var(--red-soft); border-color: var(--red); }
+.pc.over .n b { color: var(--red); }
+
+/* modal */
+.scrim { position: fixed; inset: 0; background: var(--scrim); z-index: 50; display: grid; place-items: center; padding: 16px; }
+.modal { background: var(--paper); color: var(--ink); border-radius: 16px; width: min(540px, 100%); max-height: 90vh; overflow: auto; box-shadow: 0 24px 60px -20px rgba(0,0,0,.45); border: 1px solid var(--line); }
+.modal.wide { width: min(700px, 100%); }
+.modal .nd-bar { height: 7px; background: var(--lc, var(--accent)); }
+.m-hd { padding: 16px 18px 12px; display: grid; gap: 5px; border-bottom: 1px solid var(--line-2); }
+.m-hd .id { font-family: var(--mono); font-size: 11px; color: var(--ink-3); letter-spacing: .06em; }
+.m-hd h2 { margin: 0; font-size: 20px; letter-spacing: -.015em; text-wrap: balance; }
+.m-hd .ctx { font-size: 13px; color: var(--ink-2); }
+.m-facts { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; color: var(--ink-2); margin-top: 4px; }
+.m-facts b { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--ink-3); font-weight: 600; margin-right: 5px; }
+.m-sec { padding: 12px 18px 4px; display: grid; gap: 6px; }
+.m-sec h3 { margin: 0; font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .14em; color: var(--ink-3); font-weight: 600; }
+.m-sec p { margin: 0; font-size: 14px; line-height: 1.55; color: var(--ink); max-width: 62ch; white-space: pre-wrap; }
+.m-sec .quote { border-left: 3px solid var(--line); padding: 2px 0 2px 12px; color: var(--ink-2); font-size: 13.5px; }
+.m-sec .quote small { display: block; margin-top: 4px; font-size: 11.5px; color: var(--ink-3); }
+.m-list { list-style: none; margin: 0; padding: 4px 18px 12px; display: grid; gap: 6px; }
+.m-list li { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line-2); border-radius: 10px; padding: 8px 10px; background: var(--paper-2); min-height: 40px; }
+.m-list label { display: flex; align-items: center; gap: 10px; flex: 1; cursor: pointer; font-size: 13.5px; }
+.m-list .ro { flex: 1; font-size: 13.5px; }
+.m-list input { width: 17px; height: 17px; accent-color: var(--green); margin: 0; }
+.m-list li.is-done .sn { text-decoration: line-through; color: var(--ink-3); }
+.m-list .who-n { font-size: 11.5px; color: var(--ink-3); white-space: nowrap; }
+.m-list li.row-btn { cursor: pointer; }
+.m-list li.row-btn:hover { border-color: var(--accent); }
+.pill { font-family: var(--mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .07em; font-weight: 600; padding: 2px 6px; border-radius: 5px; white-space: nowrap; }
+.pill.op { background: var(--line-2); color: var(--ink-2); }
+.pill.lt { background: var(--red); color: var(--on-status); }
+.m-ft { padding: 10px 18px 16px; display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 12px; color: var(--ink-3); flex-wrap: wrap; }
+.m-ft .acts { display: flex; gap: 8px; margin-left: auto; }
+.mine-h { display: flex; align-items: center; gap: 10px; background: var(--accent-soft); color: var(--accent-deep); border-radius: 10px; padding: 9px 12px; font-size: 13px; }
+.mine-h b { font-size: 18px; font-variant-numeric: tabular-nums; }
+
+/* editor */
+.ed-body { padding: 14px 18px 4px; display: grid; gap: 12px; }
+.fld { display: grid; gap: 5px; }
+.fld > span { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--ink-3); font-weight: 600; }
+.fld input, .fld select, .fld textarea, .it input, .it select { border: 1px solid var(--line); background: var(--paper); border-radius: 8px; padding: 7px 9px; font-size: 13.5px; min-width: 0; width: 100%; }
+.fld textarea { resize: vertical; line-height: 1.45; }
+.fld input:focus, .fld select:focus, .fld textarea:focus, .it input:focus, .it select:focus { outline: 2px solid var(--accent); outline-offset: 0; border-color: var(--accent); }
+.fld .ro { font-size: 13.5px; padding: 7px 0; }
+.row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+@media (max-width: 520px) { .row2 { grid-template-columns: 1fr; } }
+.wkinfo { font-family: var(--mono); font-size: 11.5px; color: var(--accent-deep); margin-top: -4px; }
+.req { margin: 12px 18px 0; background: var(--paper-2); border: 1px dashed var(--line); border-radius: 12px; padding: 11px 13px; display: grid; gap: 4px; font-size: 13px; line-height: 1.5; }
+.req b { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .12em; color: var(--ink-3); font-weight: 600; }
+.req small { color: var(--ink-3); font-size: 11.5px; }
+.items { display: grid; gap: 6px; }
+.it { display: grid; grid-template-columns: 1fr 128px 74px 30px; gap: 6px; align-items: center; }
+.it .x { border: 1px solid var(--line); background: var(--paper); border-radius: 8px; height: 34px; cursor: pointer; color: var(--ink-3); }
+.it .x:hover { border-color: var(--red); color: var(--red); }
+@media (max-width: 520px) { .it { grid-template-columns: 1fr 1fr 64px 30px; } .it .it-t { grid-column: 1 / -1; } }
+.loads { display: grid; gap: 7px; }
+.lrow { display: grid; grid-template-columns: 20px 76px 1fr auto; gap: 8px; align-items: center; font-size: 12px; }
+.lrow .tr { height: 7px; border-radius: 4px; background: var(--line-2); overflow: hidden; position: relative; }
+.lrow .tr i { position: absolute; top: 0; bottom: 0; background: var(--ok); }
+.lrow .tr i.add { opacity: .45; }
+.lrow .v { font-family: var(--mono); font-size: 11px; color: var(--ink-2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.lrow.over .v { color: var(--red); font-weight: 700; }
+.ed-err { margin: 0; color: var(--red); font-size: 12.5px; font-weight: 600; }
+.ed-empty { font-size: 12px; color: var(--ink-3); }
+
+/* versão · séries */
+.srow { display: grid; gap: 7px; padding: 10px 0; border-bottom: 1px solid var(--line-2); }
+.srow:last-child { border-bottom: 0; }
+.srow .hd { display: flex; justify-content: space-between; gap: 10px; font-size: 13.5px; }
+.srow .hd b { font-weight: 700; }
+.srow .hd span { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.chips { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+.chips.lbl { margin-bottom: -2px; }
+.chips.lbl span { font-family: var(--mono); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
+
+/* etiqueta de culto */
+.tag { display: inline-flex; align-items: center; font-family: var(--mono); font-size: 9px; text-transform: uppercase; letter-spacing: .08em; font-weight: 700; padding: 2px 6px; border-radius: 5px; color: #fff; background: var(--vc); flex: none; }
+.t-cbrio { --vc: #2f5d74; } .t-ami { --vc: #7b52b9; } .t-kids { --vc: #d0652a; }
+.strand { border-top: 1px dashed var(--line); }
+.strand .sh { all: unset; box-sizing: border-box; width: 100%; display: flex; align-items: center; gap: 7px; padding: 7px 12px; font-size: 11px; color: var(--ink-2); cursor: pointer; }
+.strand .sh .mini { flex: 1; height: 4px; border-radius: 2px; background: var(--line-2); overflow: hidden; min-width: 20px; }
+.strand .sh .mini i { display: block; height: 100%; background: var(--vc); }
+.strand .sh .ct { font-family: var(--mono); font-size: 10px; font-variant-numeric: tabular-nums; }
+.strand .sh .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); flex: none; }
+.strand .sh .dot.late { background: var(--red); } .strand .sh .dot.now { background: var(--accent); } .strand .sh .dot.fut { background: transparent; border: 1.5px solid var(--line); }
+.strand .subs { border-top: 0; padding-top: 0; }
+.blk .vchips { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 4px; }
+.blk .vchips span { font-family: var(--mono); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; padding: 2px 6px; border-radius: 5px; background: color-mix(in srgb, var(--on-status) 22%, transparent); }
+.blk .vchips span.late { background: var(--on-status); color: var(--red); }
+.blk .vchips span.off { opacity: .45; }
+.cols3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; padding: 12px 18px; }
+.cols3 .c { border: 1px solid var(--line-2); border-radius: 12px; background: var(--paper-2); padding: 10px; display: grid; gap: 7px; align-content: start; }
+.cols3 .c .ch { display: flex; align-items: center; justify-content: space-between; gap: 6px; font-size: 11.5px; color: var(--ink-2); }
+.cols3 .c ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 5px; }
+.cols3 .c li { display: flex; align-items: center; gap: 7px; font-size: 12.5px; background: var(--paper); border: 1px solid var(--line-2); border-radius: 8px; padding: 6px 8px; }
+.cols3 .c li label { display: flex; align-items: center; gap: 7px; flex: 1; cursor: pointer; }
+.cols3 .c li input { width: 15px; height: 15px; accent-color: var(--green); margin: 0; }
+.cols3 .c li.is-done span.sn { text-decoration: line-through; color: var(--ink-3); }
+.cols3 .c .h { font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
+.cols3 .c .off { font-size: 12px; color: var(--ink-3); }
+@media (max-width: 620px) { .cols3 { grid-template-columns: 1fr; } }
+.chip { border: 1.5px solid var(--line); border-radius: 8px; padding: 5px 6px; font-size: 10.5px; line-height: 1.2; text-align: left; background: var(--paper); cursor: pointer; display: grid; gap: 1px; }
+.chip small { font-family: var(--mono); font-size: 9px; color: var(--ink-3); }
+.chip.ok { background: var(--green); border-color: var(--green); color: var(--on-status); }
+.chip.ok small { color: var(--on-status); opacity: .85; }
+.chip.late { background: var(--red); border-color: var(--red); color: var(--on-status); }
+.chip.late small { color: var(--on-status); opacity: .85; }
+.chip.now { border-color: var(--accent); background: var(--accent-soft); }
+.chip.fut { border-style: dashed; color: var(--ink-3); background: var(--paper-2); }
+.chip.none { visibility: hidden; }
+@media (max-width: 520px) { .chips { grid-template-columns: repeat(4, 1fr); } .chips.lbl { display: none; } }
+
+/* matriz */
+.mtx { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.mtx th, .mtx td { padding: 6px 8px; border-bottom: 1px solid var(--line-2); text-align: left; vertical-align: middle; }
+.mtx th { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--ink-3); font-weight: 600; }
+.mtx td.ph { font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--accent-deep); font-weight: 600; padding-top: 12px; }
+.mtx tr.geral td { background: var(--accent-soft); font-weight: 650; }
+.mtx .p { display: inline-flex; align-items: center; gap: 6px; }
+.mtx-wrap { overflow-x: auto; padding: 4px 18px 8px; }
+
+.toast { position: fixed; left: 50%; bottom: calc(24px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); background: var(--ink); color: var(--paper); padding: 9px 16px; border-radius: 10px; font-size: 13px; z-index: 60; box-shadow: var(--shadow-up); max-width: calc(100% - 32px); }
+
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<div class="fx-root">
+  <div class="fx-bar">
+    <span class="fx-title"><b>Marketing · 2027</b>Linha do tempo da equipe</span>
+    <div class="seg" role="group" aria-label="Ver como" id="who"></div>
+    <div class="seg" role="group" aria-label="Visão" id="tabs">
+      <button type="button" data-tab="linha">Linha do tempo</button><button type="button" data-tab="planner">Planner</button>
+    </div>
+    <span class="ctl" id="imWrap">Institucionais <span class="seg" role="group" aria-label="Como abrir Institucionais" id="insMode"><button type="button" data-im="serie">Por série</button><button type="button" data-im="versao">Por versão</button></span></span>
+    <span class="fx-sep"></span>
+    <button class="fx-btn primary" type="button" data-act="nova" id="btnNova">+ Nova tarefa</button>
+    <button class="fx-btn" type="button" data-act="matriz">Responsabilidades</button>
+    <label class="ctl" for="hideDone" id="hideWrap"><input type="checkbox" id="hideDone" checked> Esconder semanas sem pendência</label>
+    <label class="ctl" for="today">Hoje <input type="range" id="today" min="1" max="53" value="12"> <output id="todayOut"></output></label>
+    <span class="fx-sep"></span>
+    <button class="fx-btn" type="button" data-act="hoje">Ir para hoje</button>
+    <button class="fx-btn" type="button" data-act="fit">Ajustar à tela</button>
+    <button class="fx-btn" type="button" data-act="zin" aria-label="Aumentar zoom">+</button><span class="fx-zoom" id="zoomLbl">100%</span><button class="fx-btn" type="button" data-act="zout" aria-label="Diminuir zoom">−</button>
+    <button class="fx-btn" type="button" data-act="reset" title="Volta aos dados de exemplo">Restaurar exemplo</button>
+    <span class="fx-legend" id="legend"></span>
+  </div>
+  <div class="fx-viewport" id="viewport"><div class="fx-canvas" id="canvas"></div>
+    <div class="fx-hint" id="hint">Arraste o fundo pra mover · scroll pra zoom · clique num quadrado pra abrir a linha do tempo</div>
+  </div>
+</div>
+
+<div class="scrim" id="scrim" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mTitle" id="modal"></div>
+</div>
+<div class="toast" id="toast" hidden></div>
+
+<script>
+(function () {
+  const DAY = 86400000;
+  const D = s => { const [y, m, d] = s.split('-').map(Number); return Date.UTC(y, m - 1, d); };
+  const pad = n => String(n).padStart(2, '0');
+  const fmt = t => { const d = new Date(t); return pad(d.getUTCDate()) + '/' + pad(d.getUTCMonth() + 1); };
+  const iso = t => new Date(t).toISOString().slice(0, 10);
+  const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  const hrs = h => (Math.round(h * 10) / 10).toString().replace('.', ',') + 'h';
+  const MONTHS = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+
+  // Semanas de domingo a sábado · semana 1 = 01/01 (sex) – 02/01 (sáb)
+  const START = D('2027-01-01'), END = D('2027-12-31');
+  const WEEKS = [{ n: 1, start: START, end: D('2027-01-02') }];
+  for (let s = D('2027-01-03'), n = 2; s <= END; s += 7 * DAY, n++) WEEKS.push({ n, start: s, end: Math.min(s + 6 * DAY, END) });
+  const weekOf = t => (WEEKS.find(w => t >= w.start && t <= w.end) || WEEKS[WEEKS.length - 1]).n;
+  const wEnd = n => WEEKS[n - 1].end;
+
+  const PEOPLE = {
+    pedro:   { name: 'Pedro Paiva',     first: 'Pedro',   ini: 'PP', role: 'Líder do Marketing', lider: true },
+    leticia: { name: 'Letícia Baldner', first: 'Letícia', ini: 'LB', role: 'Social media', cap: 30 },
+    caua:    { name: 'Cauã Pedreti',    first: 'Cauã',    ini: 'CP', role: 'Designer', cap: 40 },
+    lorena:  { name: 'Lorena Pariz',    first: 'Lorena',  ini: 'LP', role: 'Social media', cap: 40 },
+    allan:   { name: 'Allan Santana',   first: 'Allan',   ini: 'AS', role: 'Videomaker', cap: 40 },
+    aline:   { name: 'Aline',           first: 'Aline',   ini: 'AL', role: 'Fotógrafa · domingos', cap: 6 },
+  };
+  const PROFILES = ['pedro', 'leticia', 'caua'];
+  const TEAM = ['caua', 'leticia', 'lorena', 'allan', 'aline'];
+  const LANES = [
+    { key: 'ins', name: 'Institucionais', desc: 'Séries com ciclo criativo · CBRio, AMI e Kids' },
+    { key: 'sis', name: 'Sistema',        desc: 'Solicitações feitas pelo formulário' },
+    { key: 'int', name: 'Interno',        desc: 'Demandas do Pedro para a equipe' },
+    { key: 'rot', name: 'Rotina',         desc: 'O que cada pessoa faz na semana' },
+  ];
+  const SEM = { key: 'sem', name: 'Sem responsável', desc: 'Pedidos do formulário esperando o Pedro alocar' };
+  const LANE_NAME = { ins: 'Institucionais', sis: 'Sistema', int: 'Interno', rot: 'Rotina', sem: 'Sem responsável' };
+
+  // ---------- responsabilidades por versão da série ----------
+  const VERSIONS = [
+    { key: 'cbrio', name: 'CBRio', desc: 'Ciclo da igreja', V: 'C' },
+    { key: 'ami',   name: 'AMI',   desc: 'Ciclo do AMI',    V: 'A' },
+    { key: 'kids',  name: 'Kids',  desc: 'Ciclo do Kids',   V: 'K' },
+  ];
+  const PHASES = [
+    { off: -8, t: 'Briefing', short: 'Briefing', brief: 'Alinhar com a liderança o objetivo da série, o público e a mensagem central.',
+      subs: [['brief', 'Reunião de briefing com a liderança', 1.5], ['publico', 'Público, objetivo e mensagem', 1]] },
+    { off: -7, t: 'Brainstorm e conceito', short: 'Brainstorm', brief: 'Gerar ideias com a equipe e fechar o conceito da série em uma frase e um texto curto, com referências visuais.',
+      subs: [['brain', 'Sessão de brainstorm', 1.5], ['conceito', 'Conceito escrito', 1.5], ['refs', 'Referências visuais', 1.5]] },
+    { off: -6, t: 'ID estratégia', short: 'ID estratégia', brief: 'Transformar o conceito em identidade e estratégia: roteiro, logo, cores, tipografia, apresentação visual e o plano de redes.',
+      subs: [['roteiro', 'Roteiro', 2], ['logo', 'Logo', 3], ['cores', 'Cores', 1], ['tipo', 'Tipografia', 1], ['apres', 'Apresentação visual', 2], ['planred', 'Planejamento de redes', 1.5]] },
+    { off: -4, t: 'Produção de peças', short: 'Produção', brief: 'Produzir as peças a partir da identidade aprovada: feed, stories, telão, teaser e impressos.',
+      subs: [['feed', 'Artes de feed', 3], ['stories', 'Stories', 2], ['telao', 'Telão', 1.5], ['teaser', 'Vídeo teaser', 4], ['impressos', 'Impressos', 1.5]] },
+    { off: -2, t: 'Divulgação', short: 'Divulgação', brief: 'Colocar a série na rua: post nas redes, vídeo-chamada no culto, reels e disparo no WhatsApp.',
+      subs: [['post', 'Post nas redes', 1], ['chamada', 'Vídeo-chamada no culto', 2], ['reels', 'Reels', 2], ['disparo', 'Disparo no WhatsApp', .5]] },
+    { off: 0, t: 'Cobertura', short: 'Cobertura', brief: 'Cobrir o domingo de lançamento com fotos, stories ao vivo e material para o aftermovie.',
+      subs: [['fotos', 'Fotos', 1.5], ['aovivo', 'Stories ao vivo', 1.5], ['after', 'Aftermovie', 4]] },
+    { off: 4, t: 'Pós-série', short: 'Pós', brief: 'Fechar a série no último domingo: relatório de alcance e arquivo de mídia organizado no Drive.',
+      subs: [['relat', 'Relatório de alcance', 1.5], ['arquivo', 'Arquivo de mídia', 1]] },
+  ];
+  const CICLO_IGREJA = { geral: 'caua', brief: 'caua', publico: 'caua', brain: 'caua', conceito: 'caua', refs: 'caua', roteiro: 'allan', logo: 'caua', cores: 'caua', tipo: 'caua', apres: 'caua', planred: 'lorena',
+    feed: 'caua', stories: 'lorena', telao: 'caua', teaser: 'allan', impressos: 'caua', post: 'lorena', chamada: 'allan', reels: 'allan', disparo: 'lorena',
+    fotos: 'aline', aovivo: 'lorena', after: 'allan', relat: 'lorena', arquivo: 'allan' };
+  const MATRIX = {
+    cbrio: CICLO_IGREJA,
+    ami: CICLO_IGREJA,
+    kids: { geral: 'leticia', brief: 'leticia', publico: 'leticia', brain: 'leticia', conceito: 'leticia', refs: 'leticia', roteiro: 'allan', logo: 'leticia', cores: 'leticia', tipo: 'leticia', apres: 'leticia', planred: 'leticia',
+      feed: 'leticia', stories: 'leticia', telao: 'leticia', teaser: 'allan', impressos: 'leticia', post: 'lorena', chamada: 'allan', reels: 'allan', disparo: 'leticia',
+      fotos: 'aline', aovivo: 'leticia', after: 'allan', relat: 'leticia', arquivo: 'allan' },
+  };
+  // 12 séries no ano, uma por mês · o ciclo de cada uma é o mesmo nas 3 versões
+  const SERIES = [
+    { code: 'ETN', name: 'Eis que tudo se fez novo', date: '2027-01-10' },
+    { code: 'RAI', name: 'Raízes',                   date: '2027-02-07' },
+    { code: 'CRZ', name: 'Caminho da Cruz',          date: '2027-03-07' },
+    { code: 'TES', name: 'Testemunhas',              date: '2027-04-04' },
+    { code: 'FAM', name: 'Família no centro',        date: '2027-05-02' },
+    { code: 'CHA', name: 'Chamados',                 date: '2027-06-06' },
+    { code: 'FOL', name: 'Fôlego',                   date: '2027-07-04' },
+    { code: 'VDC', name: 'Valores de Cristo',        date: '2027-08-01' },
+    { code: 'SAL', name: 'Sal e luz',                date: '2027-09-05' },
+    { code: 'GRA', name: 'Graça',                    date: '2027-10-03' },
+    { code: 'GRT', name: 'Gratidão',                 date: '2027-11-07' },
+    { code: 'NAT', name: 'Natal: Emanuel',           date: '2027-12-05' },
+  ];
+  const SERIE_BY = Object.fromEntries(SERIES.map(s => [s.code, s]));
+
+  const MIN = [['Kids', 'Culto Kids especial'], ['Jovens', 'Culto de Jovens'], ['Família', 'Encontro de Casais'], ['Integração', 'Café de boas-vindas'],
+               ['Grupos', 'Abertura de semestre dos grupos'], ['Voluntariado', 'Dia do Voluntário'], ['Missões', 'Noite missionária'], ['Louvor', 'Noite de adoração']];
+  const TYPES = {
+    'Arte':  { resp: 'caua',    subs: [['Arte de feed', 'caua', 2], ['Versão story', 'caua', 1], ['Revisão com o solicitante', 'caua', .5]],
+               req: o => `Precisamos de arte para divulgar ${o} no feed e nos stories. A ideia é começar a divulgar uma semana antes.` },
+    'Vídeo': { resp: 'allan',   subs: [['Roteiro', 'allan', 1.5], ['Captação', 'allan', 3], ['Edição', 'allan', 5], ['Legenda e publicação', 'leticia', .5]],
+               req: o => `Queremos um vídeo curto chamando para ${o}, para passar no culto e postar nas redes.` },
+    'Post':  { resp: 'leticia', subs: [['Legenda', 'leticia', 1], ['Arte do post', 'caua', 1.5], ['Agendamento', 'lorena', .5]],
+               req: o => `Pedimos um post nas redes da igreja convidando para ${o}, com data, horário e local.` },
+  };
+  const TYPE_KEYS = Object.keys(TYPES);
+  const PEDRO_BRIEF_SIS = 'Seguir a identidade visual da série do momento. Mandar a primeira versão para aprovação antes de publicar.';
+
+  // ---------- dados de exemplo ----------
+  let seed = 2027, subSeq = 0;
+  const rng = () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+  const SEED_W = 12;
+  function buildData() {
+    seed = 2027; subSeq = 0;
+    const T = [];
+    const add = o => {
+      o.subs = o.subs.map(([t, who, h]) => ({ id: 's' + (subSeq++), t, who, h, done: false }));
+      o.due = o.due || wEnd(o.week);
+      const w = o.week, r = rng(), full = o.lane === 'rot' ? .99 : .975;
+      if (o.lane !== 'sem') {
+        if (w < SEED_W - 1) { if (r < full) o.subs.forEach(s => s.done = true); else o.subs.forEach(s => s.done = rng() < .5); }
+        else if (w === SEED_W - 1) { if (r < .6) o.subs.forEach(s => s.done = true); else o.subs.forEach(s => s.done = rng() < .5); }
+        else if (w === SEED_W) { if (r < .2) o.subs.forEach(s => s.done = true); else o.subs.forEach(s => s.done = rng() < .35); }
+      }
+      T.push(o);
+    };
+    SERIES.forEach(se => {
+      const ew = weekOf(D(se.date));
+      VERSIONS.forEach(v => {
+        const M = MATRIX[v.key];
+        PHASES.forEach((ph, i) => {
+          const week = ew + ph.off;
+          if (week < 1 || week > 53) return;   // essa etapa aconteceu em 2026
+          add({
+            id: `${se.code}-${v.V}-0${i + 1}`, lane: 'ins', ver: v.key, serie: se.code, phase: i,
+            title: ph.t, ctx: `${se.name} · ${v.name}`, when: 'Lançamento em ' + fmt(D(se.date)),
+            week, resp: M.geral, brief: ph.brief,
+            subs: ph.subs.map(([k, t, h]) => [t, M[k], h]),
+          });
+        });
+      });
+    });
+    let sol = 1;
+    for (let w = 1; w <= 53; w++) {
+      const k = 1 + Math.floor(rng() * 2.2);
+      for (let j = 0; j < k; j++) {
+        const [m, occ] = MIN[Math.floor(rng() * MIN.length)];
+        const ty = TYPE_KEYS[Math.floor(rng() * TYPE_KEYS.length)];
+        add({ id: 'SOL-' + String(sol++).padStart(3, '0'), lane: 'sis', title: `${ty} · ${occ}`, ctx: 'Ministério ' + m, when: 'Pedido pelo formulário',
+              week: w, resp: TYPES[ty].resp, req: TYPES[ty].req(occ), reqBy: 'Ministério ' + m, brief: PEDRO_BRIEF_SIS, subs: TYPES[ty].subs });
+      }
+    }
+    // pedidos que chegaram pelo formulário e ainda não têm dono
+    [[10, 'Arte', 'Kids', 'Festa da Família Kids'], [11, 'Vídeo', 'Missões', 'Envio da equipe missionária'], [12, 'Post', 'Integração', 'Café de boas-vindas de março'],
+     [12, 'Arte', 'Jovens', 'Acampamento de Jovens'], [13, 'Post', 'Voluntariado', 'Mutirão de voluntários'], [14, 'Vídeo', 'Grupos', 'Testemunhos dos grupos'],
+     [15, 'Arte', 'Louvor', 'Noite de adoração de abril'], [17, 'Post', 'Família', 'Curso de noivos']].forEach(([w, ty, m, occ]) => {
+      add({ id: 'SOL-' + String(sol++).padStart(3, '0'), lane: 'sem', title: `${ty} · ${occ}`, ctx: 'Ministério ' + m, when: 'Pedido pelo formulário',
+            week: w, resp: null, sug: TYPES[ty].resp, req: TYPES[ty].req(occ), reqBy: 'Ministério ' + m, brief: '', subs: TYPES[ty].subs });
+    });
+    [
+      [3,  'Manual da marca 2027', 'caua', 'Atualizar o manual com a paleta e as tipografias de 2027 e incluir exemplos reais de aplicação.', [['Revisar paleta e tipografia', 'caua', 3], ['Novos exemplos de aplicação', 'caua', 4], ['Aprovação com o Pedro', 'caua', 1]]],
+      [6,  'Banco de fotos organizado', 'allan', 'Deixar as fotos de 2026 encontráveis por ministério, para ninguém mais pedir foto no WhatsApp.', [['Separar fotos de 2026', 'allan', 4], ['Etiquetas por ministério', 'allan', 3], ['Subir no Drive', 'allan', 1]]],
+      [9,  'Templates de stories', 'leticia', 'Criar modelos prontos de aviso e de versículo para a equipe publicar rápido nos domingos.', [['Template de aviso', 'leticia', 2], ['Template de versículo', 'leticia', 2], ['Guia de uso para a equipe', 'leticia', 1.5]]],
+      [11, 'Pautas do 2º trimestre', 'lorena', 'Montar a grade de pautas de abril a junho a partir do calendário da igreja.', [['Levantar datas da igreja', 'lorena', 2], ['Rascunho da grade', 'lorena', 3], ['Validar com o Pedro', 'lorena', 1]]],
+      [13, 'Relatório do 1º trimestre', 'leticia', 'Fechar os números das redes de janeiro a março e comparar com o mesmo período de 2026.', [['Métricas das redes', 'leticia', 3], ['Comparativo com 2026', 'leticia', 2], ['Apresentação', 'leticia', 2]]],
+      [17, 'Padronizar capas do YouTube', 'caua', 'Um modelo único de capa para os cultos e aplicar nos vídeos recentes.', [['Modelo de capa', 'caua', 3], ['Aplicar nos últimos 10 vídeos', 'caua', 4]]],
+      [22, 'Kit de boas-vindas digital', 'leticia', 'Material digital para quem visita a igreja pela primeira vez.', [['Texto de boas-vindas', 'leticia', 2], ['Arte do kit', 'caua', 3], ['Vídeo do pastor', 'allan', 4]]],
+      [26, 'Relatório do 1º semestre', 'leticia', 'Números das redes do semestre e destaques para a reunião de liderança.', [['Métricas das redes', 'leticia', 3], ['Destaques do semestre', 'lorena', 2]]],
+      [30, 'Revisão do tom de voz', 'lorena', 'Revisar como a igreja escreve nas redes e registrar num guia curto.', [['Levantar posts de referência', 'lorena', 2], ['Guia de tom de voz', 'lorena', 4]]],
+      [35, 'Treinamento de câmera para voluntários', 'allan', 'Treinar voluntários para captar vídeo nos cultos de domingo.', [['Roteiro do treino', 'allan', 2], ['Material de apoio', 'caua', 2]]],
+      [39, 'Relatório do 3º trimestre', 'leticia', 'Números das redes de julho a setembro.', [['Métricas das redes', 'leticia', 3], ['Apresentação', 'leticia', 2]]],
+      [44, 'Planejamento 2028', 'lorena', 'Primeira versão do calendário de séries e do orçamento de mídia de 2028.', [['Calendário de séries', 'lorena', 4], ['Orçamento de mídia', 'lorena', 3]]],
+      [48, 'Retrospectiva 2027 em vídeo', 'allan', 'Vídeo de retrospectiva para o último culto do ano.', [['Seleção de cenas', 'allan', 4], ['Edição', 'allan', 8], ['Trilha e legenda', 'leticia', 1]]],
+    ].forEach(([w, t, resp, brief, subs], i) => add({ id: 'INT-' + pad(i + 1), lane: 'int', title: t, ctx: 'Demanda do Pedro', when: 'Registrada pelo Pedro', week: w, resp, brief, subs }));
+    const ROT = {
+      leticia: [['Responder DMs e comentários', 'leticia', 5], ['Stories do culto', 'leticia', 3], ['Métricas da semana', 'leticia', 2]],
+      caua:    [['Arte do culto de domingo', 'caua', 4], ['Slides do telão', 'caua', 2]],
+      lorena:  [['Grade de posts da semana', 'lorena', 10], ['Agendamento', 'lorena', 8]],
+      allan:   [['Corte do culto', 'allan', 6], ['Reels da pregação', 'allan', 4]],
+      aline:   [['Fotos do culto', 'aline', 4]],
+    };
+    for (let w = 1; w <= 53; w++) Object.keys(ROT).forEach(p => add({ id: 'ROT-' + pad(w) + '-' + PEOPLE[p].ini, lane: 'rot', title: 'Rotina · ' + PEOPLE[p].first, ctx: PEOPLE[p].role,
+      when: 'Toda semana', week: w, resp: p, brief: 'Entregas fixas de toda semana.', subs: ROT[p] }));
+    const forceOpen = (id, titles) => { const t = T.find(x => x.id === id); if (t) t.subs.forEach(s => { if (titles.includes(s.t)) s.done = false; }); };
+    forceOpen('CRZ-C-04', ['Telão']);
+    forceOpen('CRZ-K-05', ['Disparo no WhatsApp']);
+    forceOpen('RAI-A-06', ['Aftermovie']);
+    forceOpen('ROT-11-CP', ['Slides do telão']);
+    return T;
+  }
+
+  const TKEY = 'mkt-linha-2027-v4-tasks';
+  let TASKS, BY_ID = {};
+  function loadTasks() {
+    TASKS = null;
+    try { const s = JSON.parse(localStorage.getItem(TKEY) || 'null'); if (s && s.v === 4 && Array.isArray(s.tasks)) TASKS = s.tasks; } catch (e) {}
+    if (!TASKS) TASKS = buildData();
+    subSeq = TASKS.reduce((m, t) => Math.max(m, ...t.subs.map(s => +s.id.slice(1) || 0)), 0) + 1;
+    BY_ID = Object.fromEntries(TASKS.map(t => [t.id, t]));
+  }
+  const saveTasks = () => { try { localStorage.setItem(TKEY, JSON.stringify({ v: 4, tasks: TASKS })); } catch (e) {} };
+  loadTasks();
+
+  // ---------- estado ----------
+  const KEY = 'mkt-linha-2027-v4';
+  const state = { profile: 'pedro', open: 'ins', hideDone: true, todayW: 12, tab: 'linha', insMode: 'serie' };
+  try { Object.assign(state, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) {}
+  if (!PROFILES.includes(state.profile)) state.profile = 'pedro';
+  if (!(state.todayW >= 1 && state.todayW <= 53)) state.todayW = 12;
+  if (state.tab !== 'planner') state.tab = 'linha';
+  if (state.insMode !== 'versao') state.insMode = 'serie';
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (e) {} };
+  const todayTs = () => { const w = WEEKS[state.todayW - 1]; return Math.min(w.start + 3 * DAY, w.end); };
+  const curW = () => state.todayW;
+  const isLider = () => !!PEOPLE[state.profile].lider;
+
+  // ---------- regra de visibilidade ----------
+  // líder vê a TAREFA · responsável vê a tarefa com todas as subtarefas · demais veem só as subtarefas deles
+  function view(t, p) {
+    if (t.lane === 'sem') return PEOPLE[p].lider ? { mode: 'task', subs: t.subs, open: t.subs } : null;
+    if (PEOPLE[p].lider) return { mode: 'task', subs: t.subs, open: t.subs.filter(s => !s.done) };
+    if (t.resp === p)    return { mode: 'branch', subs: t.subs, open: t.subs.filter(s => !s.done) };
+    const mine = t.subs.filter(s => s.who === p);
+    if (!mine.length) return null;
+    return { mode: 'mine', subs: mine, open: mine.filter(s => !s.done) };
+  }
+  const unitOpen = v => v.mode === 'task' ? (v.open.length ? 1 : 0) : v.open.length;
+  const unitTotal = v => v.mode === 'task' ? 1 : v.subs.length;
+
+  function stats(filter, wn) {
+    let open = 0, total = 0;
+    for (const t of TASKS) {
+      if (t.week !== wn || !filter(t)) continue;
+      const v = view(t, state.profile); if (!v) continue;
+      open += unitOpen(v); total += unitTotal(v);
+    }
+    return { open, total };
+  }
+  const inLanes = lanes => t => lanes.includes(t.lane);
+  const isLate = (f, w) => w.n < curW() && stats(f, w.n).open > 0;
+  function status(f, all) {
+    let late = 0, now = 0;
+    for (const w of WEEKS) {
+      if (!all && w.n > curW()) break;
+      const s = stats(f, w.n).open;
+      if (w.n < curW()) late += s; else now += s;
+    }
+    return { late, now, red: late + now > 0 };
+  }
+  function columns(f) {
+    return WEEKS.filter(w => (!state.hideDone || w.n >= curW()) ? true : stats(f, w.n).open > 0);
+  }
+  function load(p, wn, exclId) {
+    let h = 0;
+    for (const t of TASKS) { if (t.lane === 'sem' || t.week !== wn || t.id === exclId) continue; for (const s of t.subs) if (s.who === p) h += +s.h || 0; }
+    return h;
+  }
+  const loadCls = (h, cap) => h > cap ? 'over' : h > cap * .85 ? 'warn' : '';
+
+  // ---------- geometria ----------
+  const BX = 60, BW = 240, BH = 128, BGAP = 36, TOPY = 250;
+  const HY = 150, COLW = 256, SPX = 22, NX = 44, NW = 200;
+  const SBX = BX + BW + 70, SBW = 224, SBH = 132;
+  let X0 = BX + BW + 100;
+  const laneY = i => TOPY + i * (BH + BGAP) + BH / 2;
+  const colX = i => X0 + i * COLW;
+
+  const canvas = document.getElementById('canvas');
+  const viewport = document.getElementById('viewport');
+  let CW = 2000, CH = 1000, COLS = [];
+  const av = (p, lg) => p ? `<span class="av p-${p} ${lg ? 'lg' : ''}" title="${PEOPLE[p].name}">${PEOPLE[p].ini}</span>` : '';
+  const lanesList = () => isLider() ? [...LANES, SEM] : LANES;
+
+  function nodeHtml(t, v, x, i, gi, fut) {
+    const lk = t.lane;
+    const cls = `abs fx-node l-${lk} ${fut ? 'fut' : ''} ${lk === 'sem' ? 'c-sem' : ''}`;
+    const data = `data-node="${t.id}" data-col="${i}" data-g="${gi}" style="left:${x}px;top:0;width:${NW}px"`;
+    const total = t.subs.reduce((a, s) => a + (+s.h || 0), 0);
+    if (lk === 'sem') {
+      return `<button type="button" class="${cls}" data-alloc="${t.id}" ${data}><div class="nd-bar"></div><div class="fx-nd-body">
+        <div class="fx-nd-top"><span class="fx-nd-title">${esc(t.title)}</span><span class="fx-nd-val">${t.id}</span></div>
+        <div class="fx-nd-sub">${esc(t.ctx)} · quer para ${fmt(t.due)}</div>
+        <div class="fx-nd-foot"><span class="fx-nd-cta">Alocar →</span><span>${hrs(total)} estimadas</span></div></div></button>`;
+    }
+    if (v.mode === 'task') {
+      const done = t.subs.length - v.open.length;
+      return `<button type="button" class="${cls}" data-open="${t.id}" ${data}><div class="nd-bar"></div><div class="fx-nd-body">
+        <div class="fx-nd-top"><span class="fx-nd-title">${esc(t.title)}</span><span class="fx-nd-val">${t.id}</span></div>
+        <div class="fx-nd-sub">${esc(t.ctx)}</div>
+        <div class="prog"><div class="tr"><i style="width:${Math.round(done / t.subs.length * 100)}%"></i></div><span>${done}/${t.subs.length}</span></div>
+        <div class="fx-nd-foot"><span>${hrs(total)} · ${t.subs.length} itens</span>${av(t.resp)}</div></div></button>`;
+    }
+    const mineH = v.subs.reduce((a, s) => a + (+s.h || 0), 0);
+    const tag = v.mode === 'branch' ? '<span class="fx-nd-own">Você é responsável</span>' : `<span>Resp. ${esc(PEOPLE[t.resp] ? PEOPLE[t.resp].first : '')} ${av(t.resp)}</span>`;
+    const count = fut ? `${v.subs.length} previstas` : `${v.open.length} de ${v.subs.length} em aberto`;
+    return `<div class="${cls}" data-open="${t.id}" ${data}><div class="nd-bar"></div><div class="fx-nd-body">
+      <div class="fx-nd-top"><span class="fx-nd-title">${esc(t.title)}</span><span class="fx-nd-val">${t.id}</span></div>
+      <div class="fx-nd-sub">${esc(t.ctx)} · ${count}</div>
+      <div class="fx-nd-foot">${tag}<button type="button" class="readbtn" data-open="${t.id}">Ler · ${hrs(mineH)}</button></div></div>
+      <ul class="subs">${v.open.map(s => `<li><label><input type="checkbox" data-t="${t.id}" data-s="${s.id}"><span>${esc(s.t)}</span></label><span class="h">${hrs(+s.h || 0)}</span>${av(s.who)}</li>`).join('')}</ul></div>`;
+  }
+
+  const stText = st => st.red ? [st.late ? `${st.late} atrasada${st.late > 1 ? 's' : ''}` : '', st.now ? `${st.now} nesta semana` : ''].filter(Boolean).join(' · ') : '';
+
+  // cartão de etapa (visão por série): uma faixa por culto, cada faixa é uma tarefa com etiqueta
+  function etapaNode(se, pi, strands, x, i, gi, fut) {
+    const ph = PHASES[pi], lider = isLider();
+    const rows = strands.map(({ V, t, v }) => {
+      const done = v.subs.length - v.open.length;
+      const cls = !v.open.length ? '' : t.week < curW() ? 'late' : t.week === curW() ? 'now' : 'fut';
+      const count = lider ? `${done}/${v.subs.length}` : fut ? `${v.subs.length} previstas` : `${v.open.length} de ${v.subs.length}`;
+      const list = !lider && v.open.length ? `<ul class="subs">${v.open.map(s => `<li><label><input type="checkbox" data-t="${t.id}" data-s="${s.id}"><span>${esc(s.t)}</span></label><span class="h">${hrs(+s.h || 0)}</span>${av(s.who)}</li>`).join('')}</ul>` : '';
+      return `<div class="strand t-${V.key}"><button type="button" class="sh" data-open="${t.id}" aria-label="Abrir ${ph.t} · ${V.name}"><span class="tag t-${V.key}">${V.name}</span>${av(t.resp)}<span class="mini"><i style="width:${Math.round(done / v.subs.length * 100)}%"></i></span><span class="ct">${count}</span><span class="dot ${cls}"></span></button>${list}</div>`;
+    }).join('');
+    return `<div class="abs fx-node l-ins ${fut ? 'fut' : ''}" data-node="${se.code}-${pi}" data-etapa="${se.code}|${pi}" data-col="${i}" data-g="${gi}" style="left:${x}px;top:0;width:${NW}px">
+      <div class="nd-bar"></div><div class="fx-nd-body"><div class="fx-nd-top"><span class="fx-nd-title">${ph.t}</span><span class="fx-nd-val">${se.code}-0${pi + 1}</span></div>
+      <div class="fx-nd-sub">${esc(se.name)} · ${strands.length} ${strands.length > 1 ? 'versões' : 'versão'}</div></div>${rows}</div>`;
+  }
+
+  function serieBlock(se, gi) {
+    const f = t => t.lane === 'ins' && t.serie === se.code;
+    const st = status(f);
+    const chips = VERSIONS.map(V => {
+      const vf = t => f(t) && t.ver === V.key;
+      if (!TASKS.some(t => vf(t) && view(t, state.profile))) return `<span class="off">${V.name}</span>`;
+      return `<span class="${status(vf).late ? 'late' : ''}">${V.name}</span>`;
+    }).join('');
+    const cur = TASKS.filter(t => f(t) && view(t, state.profile) && view(t, state.profile).open.length).sort((a, b) => a.week - b.week)[0];
+    const when = cur ? (cur.week < curW() ? 'Atrasada' : cur.week === curW() ? 'Esta semana' : 'Próxima') : '';
+    return `<button type="button" class="abs blk vb ${st.red ? 'red' : 'green'}" data-serie="${se.code}" data-sub="${gi}" style="left:${SBX}px;top:0;width:${SBW}px;min-height:118px">
+      <span class="k">Lançamento ${fmt(D(se.date))} · sem ${weekOf(D(se.date))}</span><span class="nm">${esc(se.name)}</span><span class="vchips">${chips}</span>
+      ${cur ? `<span class="nx">${when}: ${PHASES[cur.phase].t} · sem ${cur.week}</span>` : ''}<span class="st">${stText(st)}</span></button>`;
+  }
+
+  function lensText() {
+    const p = state.profile, P = PEOPLE[p];
+    if (state.tab === 'planner') return P.lider
+      ? `<span class="t">Planner do ${P.first}</span>Horas previstas de cada pessoa por semana, somando rotina, séries, solicitações e demandas internas. <b>Amarelo</b> passa de 85% da capacidade e <b>vermelho</b> estoura. Pedidos sem responsável não entram na conta.`
+      : `<span class="t">Planner de ${P.first}</span>Suas horas previstas por semana, somando tudo que está no seu nome. Clique numa semana para ver de onde vêm as horas.`;
+    const modo = state.insMode === 'serie'
+      ? ' Institucionais abre <b>por série</b>: cada etapa tem uma tarefa por culto, com etiqueta CBRio, AMI ou Kids.'
+      : ' Institucionais abre <b>por versão</b>: CBRio, AMI e Kids com a própria linha.';
+    if (P.lider) return `<span class="t">Visão do ${P.first}</span>Cada demanda aparece como <b>uma tarefa</b>. Clique para ver as subtarefas e editar.${modo} Em <b>Sem responsável</b> ficam os pedidos do formulário que esperam você alocar.`;
+    const vs = VERSIONS.filter(v => MATRIX[v.key].geral === p).map(v => v.name);
+    return `<span class="t">Visão de ${P.first}</span>${vs.length ? `Responsável geral das etiquetas <b>${vs.join(' e ')}</b>: nelas vê todas as subtarefas.` : ''} No resto, vê só o que está no nome de ${P.first}.${modo} Clique em qualquer cartão para ler a demanda inteira.`;
+  }
+
+  function legendHtml() {
+    return state.tab === 'planner'
+      ? '<span><i class="lg-green" style="background:var(--accent)"></i>Folga</span><span><i class="lg-amber"></i>Acima de 85%</span><span><i class="lg-red"></i>Acima da capacidade</span>'
+      : '<span><i class="lg-red"></i>Em aberto até hoje</span><span><i class="lg-green"></i>Em dia</span><span><i class="lg-late"></i>Semana atrasada</span><span><i class="lg-now"></i>Esta semana</span>';
+  }
+
+  function weekHeaders(f, withBands) {
+    let h = '', lastM = -1;
+    COLS.forEach((w, i) => {
+      const late = f && isLate(f, w), now = w.n === curW();
+      const m = new Date(w.start).getUTCMonth(), mo = m !== lastM ? MONTHS[m] : ''; lastM = m;
+      if (withBands && (late || now)) h += `<div class="abs band ${late ? 'late' : 'now'}" data-full style="left:${colX(i) + 4}px;top:${HY - 16}px;width:${COLW - 8}px"></div>`;
+      h += `<div class="abs vdiv" data-full style="left:${colX(i)}px;top:${HY - 16}px"></div>`;
+      h += `<div class="abs colhead ${late ? 'late' : ''} ${now ? 'now' : ''}" style="left:${colX(i) + SPX}px;top:${HY}px"><i class="mo">${mo}</i><b>Semana ${w.n}</b><span>${fmt(w.start)} – ${fmt(w.end)}</span>${now ? '<em>Esta semana</em>' : late ? '<em>Atrasada</em>' : ''}</div>`;
+    });
+    h += `<div class="abs vdiv" data-full style="left:${colX(COLS.length)}px;top:${HY - 16}px"></div>`;
+    return h;
+  }
+  const yearHtml = () => `<div class="abs yr" style="left:${BX}px;top:34px"><b>2027</b><span>Marketing · ${state.tab === 'planner' ? 'carga horária' : 'linha do tempo'}</span><em>Dados de exemplo</em></div>`;
+
+  function render() {
+    renderBar();
+    if (state.tab === 'planner') renderPlanner(); else renderLine();
+    save();
+  }
+
+  // ---------- linha do tempo ----------
+  function renderLine() {
+    const LL = lanesList();
+    if (state.open === 'sem' && !isLider()) state.open = null;
+    const openLane = LL.find(l => l.key === state.open);
+    X0 = state.open === 'ins' ? SBX + SBW + 80 : BX + BW + 100;
+    const f = inLanes(openLane ? [openLane.key] : LL.map(l => l.key));
+    COLS = columns(f);
+    CW = colX(COLS.length) + 160;
+
+    // grupos: Institucionais abre em CBRio · AMI · Kids; as outras frentes têm um grupo só
+    // Por série: um quadrado por série, as pendências mais próximas em cima
+    let groups = [];
+    if (openLane) {
+      if (openLane.key !== 'ins') groups = [{}];
+      else if (state.insMode === 'versao') groups = VERSIONS.filter(v => TASKS.some(t => t.lane === 'ins' && t.ver === v.key && view(t, state.profile))).map(v => ({ ver: v }));
+      else groups = SERIES.map(se => {
+        let first = Infinity, any = false;
+        TASKS.forEach(t => { if (t.lane !== 'ins' || t.serie !== se.code) return; const v = view(t, state.profile); if (!v) return; any = true; if (v.open.length) first = Math.min(first, t.week); });
+        return { serie: se, first, any };
+      }).filter(g => g.any && (g.first < Infinity || !state.hideDone)).sort((a, b) => a.first - b.first || D(a.serie.date) - D(b.serie.date));
+    }
+    let h = '<svg class="fx-edges" id="edges"></svg>' + yearHtml() + weekHeaders(f, true);
+    LL.forEach((l, i) => {
+      const st = status(inLanes([l.key]), l.key === 'sem');
+      const exp = state.open === l.key;
+      let stTxt = st.red ? [st.late ? `${st.late} atrasada${st.late > 1 ? 's' : ''}` : '', st.now ? `${st.now} nesta semana` : ''].filter(Boolean).join(' · ') : '';
+      if (l.key === 'sem') { const n = TASKS.filter(t => t.lane === 'sem').length; stTxt = n ? `${n} aguardando${st.late ? ` · ${st.late} com data vencida` : ''}` : ''; }
+      h += `<button type="button" class="abs blk ${st.red ? 'red' : 'green'} ${exp ? 'exp' : ''} ${l.key === 'sem' ? 'sem' : ''}" data-lane="${l.key}" aria-expanded="${exp}" style="left:${BX}px;top:${TOPY + i * (BH + BGAP)}px;width:${BW}px;height:${BH}px">
+        <span class="ar">→</span><span class="k">${l.key === 'sem' ? 'Caixa de entrada' : 'Frente ' + (i + 1)}</span><span class="nm">${l.name}</span><span class="ds">${l.desc}</span><span class="st">${stTxt}</span></button>`;
+    });
+    h += `<div class="abs note" style="left:${BX}px;top:${TOPY + LL.length * (BH + BGAP) + 6}px;width:${BW}px">${lensText()}</div>`;
+
+    groups.forEach((g, gi) => {
+      if (g.serie) {
+        h += serieBlock(g.serie, gi);
+        COLS.forEach((w, i) => PHASES.forEach((ph, pi) => {
+          const strands = VERSIONS.map(V => {
+            const t = BY_ID[`${g.serie.code}-${V.V}-0${pi + 1}`];
+            if (!t || t.week !== w.n) return null;
+            const v = view(t, state.profile); return v ? { V, t, v } : null;
+          }).filter(Boolean);
+          if (strands.some(s => s.v.open.length)) h += etapaNode(g.serie, pi, strands, colX(i) + NX, i, gi, w.n > curW());
+        }));
+        return;
+      }
+      if (g.ver) {
+        const vf = t => t.lane === 'ins' && t.ver === g.ver.key;
+        const st = status(vf);
+        let dn = 0, tot = 0;
+        TASKS.forEach(t => { if (!vf(t) || t.week > curW()) return; const v = view(t, state.profile); if (!v) return; tot += unitTotal(v); dn += unitTotal(v) - unitOpen(v); });
+        const nxt = TASKS.filter(t => vf(t) && t.week >= curW() && view(t, state.profile) && view(t, state.profile).open.length).sort((a, b) => a.week - b.week)[0];
+        const stTxt = st.red ? [st.late ? `${st.late} atrasada${st.late > 1 ? 's' : ''}` : '', st.now ? `${st.now} nesta semana` : ''].filter(Boolean).join(' · ') : '';
+        h += `<button type="button" class="abs blk vb ${st.red ? 'red' : 'green'}" data-ver="${g.ver.key}" data-sub="${gi}" style="left:${SBX}px;top:0;width:${SBW}px;min-height:${SBH}px">
+          <span class="k">${g.ver.desc} · resp. ${PEOPLE[MATRIX[g.ver.key].geral].first}</span><span class="nm">${g.ver.name}</span>
+          <span class="pg"><i style="width:${tot ? Math.round(dn / tot * 100) : 100}%"></i></span>
+          <span class="nx">${tot ? Math.round(dn / tot * 100) + '% do que vencia até hoje está feito' : ''}</span>
+          ${nxt ? `<span class="nx">Próximo: ${esc(nxt.ctx.split(' · ')[0])} · ${nxt.title} · sem ${nxt.week}</span>` : ''}
+          <span class="st">${stTxt}</span></button>`;
+      }
+      COLS.forEach((w, i) => {
+        TASKS.filter(t => t.lane === openLane.key && t.week === w.n && (!g.ver || t.ver === g.ver.key)).forEach(t => {
+          const v = view(t, state.profile);
+          if (v && v.open.length) h += nodeHtml(t, v, colX(i) + NX, i, gi, w.n > curW() && t.lane !== 'sem');
+        });
+      });
+    });
+    canvas.innerHTML = h;
+
+    // posiciona: cada grupo ganha uma faixa com a altura da maior pilha de cards
+    CH = TOPY + LL.length * (BH + BGAP) + 300;
+    const edges = [], spines = [];
+    if (openLane) {
+      const li = LL.indexOf(openLane);
+      const byG = groups.map(() => ({}));
+      canvas.querySelectorAll('[data-node]').forEach(el => (byG[+el.dataset.g][el.dataset.col] ||= []).push(el));
+      const GAP = 18;
+      const stackH = els => els.reduce((a, e) => a + e.offsetHeight, 0) + GAP * (els.length - 1);
+      const bands = byG.map((cols, gi) => {
+        let m = 0; Object.values(cols).forEach(els => m = Math.max(m, stackH(els)));
+        const sub = canvas.querySelector(`[data-sub="${gi}"]`);
+        return Math.max(m, sub ? sub.offsetHeight : 0, 60);
+      });
+      const GG = 56, totalH = bands.reduce((a, b) => a + b, 0) + GG * (bands.length - 1);
+      let top = Math.max(HY + 100, laneY(li) - totalH / 2);
+      byG.forEach((cols, gi) => {
+        const yc = groups[0].ver || groups[0].serie ? top + bands[gi] / 2 : laneY(li);
+        const sub = canvas.querySelector(`[data-sub="${gi}"]`);
+        if (sub) sub.style.top = (yc - sub.offsetHeight / 2) + 'px';
+        spines.push({ yc, x0: sub ? SBX + SBW : BX + BW });
+        Object.entries(cols).forEach(([ci, els]) => {
+          let y = Math.max(HY + 100, yc - stackH(els) / 2);
+          els.forEach(el => {
+            el.style.top = y + 'px';
+            edges.push({ ci: +ci, gi, id: el.dataset.node, ty: y + 30, fut: el.classList.contains('fut') });
+            y += el.offsetHeight + GAP; CH = Math.max(CH, y + 120);
+          });
+        });
+        top += bands[gi] + GG; CH = Math.max(CH, top + 80);
+      });
+      drawEdges(li, spines, edges, groups);
+    } else drawEdges(-1);
+    canvas.style.width = CW + 'px'; canvas.style.height = CH + 'px';
+    canvas.querySelectorAll('[data-full]').forEach(el => el.style.height = (CH - HY - 10) + 'px');
+    const svg = document.getElementById('edges'); svg.setAttribute('width', CW); svg.setAttribute('height', CH);
+  }
+
+  const orth = (sx, sy, tx, ty, mx, r = 10) => {
+    if (Math.abs(ty - sy) < 2) return `M${sx},${sy} L${tx},${ty}`;
+    const d = ty > sy ? 1 : -1;
+    return `M${sx},${sy} L${mx - r},${sy} Q${mx},${sy} ${mx},${sy + d * r} L${mx},${ty - d * r} Q${mx},${ty} ${mx + r},${ty} L${tx},${ty}`;
+  };
+
+  function drawEdges(li, spines, edges, groups) {
+    const svg = document.getElementById('edges');
+    if (li < 0 || !spines.length) { svg.innerHTML = ''; return; }
+    const lk = 'l-' + state.open;
+    const xNow = COLS.findIndex(w => w.n > curW());
+    const splitX = xNow < 0 ? colX(COLS.length) : colX(xNow) + SPX;
+    const xEnd = colX(COLS.length) - 20;
+    let s = '';
+    const multi = groups[0] && (groups[0].ver || groups[0].serie);
+    spines.forEach((sp, gi) => {
+      if (multi) s += `<path class="${lk} spine" d="${orth(BX + BW, laneY(li), SBX, sp.yc, BX + BW + 34)}"/>`;
+      s += `<path class="${lk} spine" d="M${sp.x0},${sp.yc} L${Math.min(splitX, xEnd)},${sp.yc}"/>`;
+      if (splitX < xEnd && state.open !== 'sem') s += `<path class="${lk} spine fut" d="M${splitX},${sp.yc} L${xEnd},${sp.yc}"/>`;
+      else if (splitX < xEnd) s += `<path class="${lk} spine" d="M${splitX},${sp.yc} L${xEnd},${sp.yc}"/>`;
+    });
+    edges.forEach(e => {
+      const yc = spines[e.gi].yc, sx = colX(e.ci) + SPX, tx = colX(e.ci) + NX, ty = e.ty, r = 9;
+      let d;
+      if (Math.abs(ty - yc) < 2) d = `M${sx},${yc} L${tx},${ty}`;
+      else { const dir = ty > yc ? 1 : -1; d = `M${sx},${yc} L${sx},${ty - dir * r} Q${sx},${ty} ${sx + r},${ty} L${tx},${ty}`; }
+      s += `<path class="${lk} br ${e.fut ? 'fut' : ''}" data-n="${e.id}" d="${d}"/>`;
+    });
+    spines.forEach((sp, gi) => {
+      const g = groups[gi];
+      const f = t => t.lane === state.open && (!g.ver || t.ver === g.ver.key) && (!g.serie || t.serie === g.serie.code);
+      COLS.forEach((w, i) => {
+        const cls = w.n > curW() && state.open !== 'sem' ? 'fut' : isLate(f, w) ? 'late' : '';
+        s += `<circle class="${lk} ${cls}" cx="${colX(i) + SPX}" cy="${sp.yc}" r="${w.n === curW() ? 7 : 5}"/>`;
+      });
+    });
+    svg.innerHTML = s;
+  }
+
+  // ---------- planner ----------
+  function renderPlanner() {
+    X0 = BX + BW + 100;
+    COLS = WEEKS.slice();
+    CW = colX(COLS.length) + 160;
+    const rows = isLider() ? TEAM : [state.profile];
+    const PH = 112, PG = 22;
+    let h = '<svg class="fx-edges" id="edges"></svg>' + yearHtml() + weekHeaders(null, true);
+    rows.forEach((p, ri) => {
+      const top = TOPY + ri * (PH + PG), cap = PEOPLE[p].cap;
+      const now = load(p, curW());
+      h += `<div class="abs pp ld ${loadCls(now, cap)}" style="left:${BX}px;top:${top}px;width:${BW}px;height:${PH}px">${av(p, true)}<span class="nm">${PEOPLE[p].name}</span><span class="rl">${PEOPLE[p].role} · ${cap}h/sem</span>
+        <span class="wk"><span>Esta semana</span><span>${hrs(now)} de ${cap}h</span></span><span class="bar"><i style="width:${Math.min(100, now / cap * 100)}%"></i></span></div>`;
+      COLS.forEach((w, i) => {
+        const hh = load(p, w.n);
+        if (!hh) return;   // semana sem horas fica em branco
+        const n = TASKS.filter(t => t.lane !== 'sem' && t.week === w.n && t.subs.some(s => s.who === p)).length;
+        h += `<button type="button" class="abs pc ld ${loadCls(hh, cap)}" data-cell="${p}|${w.n}" style="left:${colX(i) + 14}px;top:${top + 6}px;width:${COLW - 28}px;height:${PH - 12}px">
+          <span class="n"><b>${hrs(hh)}</b><span>de ${cap}h</span></span><span class="tr"><i style="width:${Math.min(100, hh / cap * 100)}%"></i></span>
+          <span class="it">${n} demanda${n > 1 ? 's' : ''}${hh > cap ? ` · ${hrs(hh - cap)} acima` : ''}</span></button>`;
+      });
+    });
+    const bottom = TOPY + rows.length * (PH + PG);
+    h += `<div class="abs note" style="left:${BX}px;top:${bottom + 6}px;width:${BW}px">${lensText()}</div>`;
+    canvas.innerHTML = h;
+    CH = bottom + 320;
+    canvas.style.width = CW + 'px'; canvas.style.height = CH + 'px';
+    canvas.querySelectorAll('[data-full]').forEach(el => el.style.height = (CH - HY - 10) + 'px');
+  }
+
+  // destaque ao passar o mouse, como no fluxograma do atlas
+  canvas.addEventListener('mouseover', e => {
+    const n = e.target.closest('[data-node]'); if (!n) return;
+    const id = n.dataset.node;
+    canvas.querySelectorAll('[data-node]').forEach(o => o.classList.toggle('dim', o !== n));
+    canvas.querySelectorAll('.fx-edges .br').forEach(p => { p.classList.toggle('hot', p.dataset.n === id); p.classList.toggle('dim', p.dataset.n !== id); });
+  });
+  canvas.addEventListener('mouseout', e => {
+    const n = e.target.closest('[data-node]'); if (!n || n.contains(e.relatedTarget)) return;
+    canvas.querySelectorAll('.dim, .hot').forEach(o => o.classList.remove('dim', 'hot'));
+  });
+
+  // ---------- barra ----------
+  function renderBar() {
+    document.getElementById('who').innerHTML = PROFILES.map(p =>
+      `<button type="button" data-p="${p}" aria-pressed="${state.profile === p}" title="${PEOPLE[p].role}">${PEOPLE[p].name}</button>`).join('');
+    document.querySelectorAll('#tabs [data-tab]').forEach(b => b.setAttribute('aria-pressed', b.dataset.tab === state.tab));
+    document.getElementById('todayOut').textContent = fmt(todayTs()) + ' · sem ' + state.todayW;
+    document.getElementById('today').value = state.todayW;
+    document.getElementById('hideDone').checked = state.hideDone;
+    document.getElementById('hideWrap').hidden = state.tab === 'planner';
+    document.getElementById('imWrap').hidden = state.tab === 'planner';
+    document.querySelectorAll('#insMode [data-im]').forEach(b => b.setAttribute('aria-pressed', b.dataset.im === state.insMode));
+    document.getElementById('btnNova').hidden = !isLider();
+    document.getElementById('legend').innerHTML = legendHtml();
+    document.getElementById('hint').textContent = state.tab === 'planner'
+      ? 'Arraste o fundo pra mover · scroll pra zoom · clique numa semana pra ver de onde vêm as horas'
+      : 'Arraste o fundo pra mover · scroll pra zoom · clique num quadrado pra abrir a linha do tempo';
+  }
+
+  // ---------- pan / zoom (mesma mecânica do /atlas/fluxograma) ----------
+  let zoom = 1, panX = 0, panY = 0;
+  const zoomLbl = document.getElementById('zoomLbl');
+  const clampZ = z => Math.max(0.2, Math.min(2, z));
+  function applyT() { canvas.style.transform = `translate(${panX}px,${panY}px) scale(${zoom})`; zoomLbl.textContent = Math.round(zoom * 100) + '%'; }
+  function zoomAt(nz, cx, cy) { nz = clampZ(nz); panX = cx - (cx - panX) * (nz / zoom); panY = cy - (cy - panY) * (nz / zoom); zoom = nz; applyT(); }
+  function fit() { const vw = viewport.clientWidth - 40, vh = viewport.clientHeight - 40; zoom = clampZ(Math.min(1, vw / CW, vh / CH)); panX = 20; panY = 20; applyT(); }
+  function start() {
+    const vw = viewport.clientWidth, vh = viewport.clientHeight;
+    zoom = clampZ(Math.min(0.9, vw / (BX + BW + 100 + 4 * COLW + 40), vh / (TOPY + 5 * (BH + BGAP) + 160)));
+    panX = 16 - 20 * zoom; panY = 12; applyT();
+  }
+  function goToday() { const i = COLS.findIndex(w => w.n === curW()); if (i < 0) return; panX = viewport.clientWidth / 2 - (colX(i) + COLW / 2) * zoom; applyT(); }
+  viewport.addEventListener('wheel', e => { e.preventDefault(); const r = viewport.getBoundingClientRect(); zoomAt(zoom * (1 - e.deltaY * 0.0014), e.clientX - r.left, e.clientY - r.top); }, { passive: false });
+
+  const pts = new Map(); let panStart = null, pinch = null, moved = false;
+  viewport.addEventListener('pointerdown', e => {
+    if (e.target.closest('input, label, .fx-hint')) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); moved = false;
+    if (pts.size === 1) panStart = { x: e.clientX - panX, y: e.clientY - panY, ox: e.clientX, oy: e.clientY };
+    else if (pts.size === 2) {
+      const [a, b] = [...pts.values()], r = viewport.getBoundingClientRect();
+      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y), z: zoom, cx: (a.x + b.x) / 2 - r.left, cy: (a.y + b.y) / 2 - r.top }; panStart = null;
+    }
+  });
+  window.addEventListener('pointermove', e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pinch && pts.size === 2) { const [a, b] = [...pts.values()]; zoomAt(pinch.z * Math.hypot(a.x - b.x, a.y - b.y) / pinch.d, pinch.cx, pinch.cy); moved = true; }
+    else if (panStart) {
+      if (!moved && Math.hypot(e.clientX - panStart.ox, e.clientY - panStart.oy) < 5) return;
+      moved = true; viewport.classList.add('panning'); panX = e.clientX - panStart.x; panY = e.clientY - panStart.y; applyT();
+    }
+  });
+  function endPtr(e) { pts.delete(e.pointerId); if (pts.size < 2) pinch = null; if (!pts.size) { panStart = null; viewport.classList.remove('panning'); } }
+  window.addEventListener('pointerup', endPtr);
+  window.addEventListener('pointercancel', endPtr);
+  viewport.addEventListener('click', e => { if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; } }, true);
+
+  // ---------- modais ----------
+  const scrim = document.getElementById('scrim'), modal = document.getElementById('modal');
+  let modalKind = null, modalArg = null, lastFocus = null;
+  function showModal(kind, arg) {
+    if (scrim.hidden) lastFocus = document.activeElement;
+    modalKind = kind; modalArg = arg; paintModal(); scrim.hidden = false;
+    const f = modal.querySelector('[data-autofocus]') || modal.querySelector('[data-close]'); if (f) f.focus();
+  }
+  function paintModal() {
+    if (modalKind === 'task') taskModal(BY_ID[modalArg]);
+    else if (modalKind === 'ver') verModal(modalArg);
+    else if (modalKind === 'serie') serieModal(modalArg);
+    else if (modalKind === 'etapa') etapaModal(modalArg);
+    else if (modalKind === 'cell') cellModal(modalArg);
+    else if (modalKind === 'matriz') matrixModal();
+    else if (modalKind === 'edit') editorModal();
+  }
+  function closeModal() { scrim.hidden = true; modalKind = null; ed = null; if (lastFocus && document.contains(lastFocus)) lastFocus.focus(); }
+  const weekTxt = w => `Semana ${w.n} · ${fmt(w.start)} – ${fmt(w.end)}`;
+
+  function taskModal(t) {
+    const p = state.profile, v = view(t, p) || { mode: 'task', subs: t.subs };
+    const w = WEEKS[t.week - 1], done = t.subs.filter(s => s.done).length, total = t.subs.reduce((a, s) => a + (+s.h || 0), 0);
+    const tag = s => s.done ? '' : t.week < curW() ? '<span class="pill lt">Atrasada</span>' : t.week === curW() ? '<span class="pill op">Esta semana</span>' : '';
+    const list = v.subs;
+    const mineH = v.mode === 'mine' ? list.reduce((a, s) => a + (+s.h || 0), 0) : 0;
+    const req = t.req ? `<div class="m-sec"><h3>Pedido original</h3><p class="quote">${esc(t.req)}<small>${esc(t.reqBy || '')} · pelo formulário</small></p></div>` : '';
+    const brief = t.brief ? `<div class="m-sec"><h3>${t.lane === 'ins' ? 'O que esta etapa entrega' : 'O que o Pedro espera'}</h3><p>${esc(t.brief)}</p></div>` : '';
+    const mine = v.mode === 'mine' ? `<div class="m-sec"><div class="mine-h"><b>${hrs(mineH)}</b> previstas para você nesta demanda</div></div>` : '';
+    modal.className = 'modal l-' + t.lane;
+    modal.innerHTML = `<div class="nd-bar"></div><div class="m-hd"><span class="id">${t.id} · ${LANE_NAME[t.lane]}</span><h2 id="mTitle">${esc(t.title)}</h2><span class="ctx">${esc(t.ctx)} · ${esc(t.when)}</span>
+      <div class="m-facts"><span><b>Semana</b>${weekTxt(w)}</span><span><b>Entrega</b>${fmt(t.due)}</span><span><b>Responsável</b>${t.resp ? PEOPLE[t.resp].name : 'ninguém ainda'}</span>${isLider() || v.mode === 'branch' ? `<span><b>Horas</b>${hrs(total)}</span><span><b>Feito</b>${done} de ${t.subs.length}</span>` : ''}</div></div>
+      ${mine}${brief}${req}
+      <div class="m-sec"><h3>${v.mode === 'mine' ? 'Suas subtarefas' : 'Subtarefas'}</h3></div>
+      <ul class="m-list">${list.map(s => `<li class="${s.done ? 'is-done' : ''}"><label><input type="checkbox" data-t="${t.id}" data-s="${s.id}" ${s.done ? 'checked' : ''}><span class="sn">${esc(s.t)}</span></label><span class="h">${hrs(+s.h || 0)}</span><span class="who-n">${s.who ? PEOPLE[s.who].first : ''}</span>${tag(s)}</li>`).join('')}</ul>
+      <div class="m-ft"><span>${isLider() ? 'No quadro você vê só a tarefa. As subtarefas ficam aqui.' : 'O que você marca sai do quadro e continua listado aqui.'}</span>
+      <span class="acts">${isLider() && t.lane !== 'rot' ? `<button type="button" class="fx-btn" data-edit="${t.id}">Editar</button>` : ''}<button type="button" class="fx-btn" data-close>Fechar</button></span></div>`;
+  }
+
+  function chipHtml(t, ph) {
+    if (!t) return `<span class="chip fut">${ph.short}<small>em 2026</small></span>`;
+    const v = view(t, state.profile);
+    if (!v) return '<span class="chip none"></span>';
+    const open = v.open.length;
+    const cls = !open ? 'ok' : t.week < curW() ? 'late' : t.week === curW() ? 'now' : 'fut';
+    return `<button type="button" class="chip ${cls}" data-open="${t.id}">${ph.short}<small>sem ${t.week}${open && cls !== 'fut' ? ` · ${open} aberta${open > 1 ? 's' : ''}` : ''}</small></button>`;
+  }
+
+  function serieModal(code) {
+    const se = SERIE_BY[code];
+    const rows = VERSIONS.map(V => {
+      const ts = PHASES.map((ph, i) => BY_ID[`${code}-${V.V}-0${i + 1}`]);
+      if (!ts.some(t => t && view(t, state.profile))) return '';
+      return `<div class="srow"><div class="hd"><b><span class="tag t-${V.key}">${V.name}</span> ${PEOPLE[MATRIX[V.key].geral].name}</b><span>${V.desc}</span></div><div class="chips">${PHASES.map((ph, i) => chipHtml(ts[i], ph)).join('')}</div></div>`;
+    }).join('');
+    modal.className = 'modal wide l-ins';
+    modal.innerHTML = `<div class="nd-bar"></div><div class="m-hd"><span class="id">Institucionais · série de ${MONTHS[new Date(D(se.date)).getUTCMonth()].toLowerCase()}</span><h2 id="mTitle">${esc(se.name)}: como está indo</h2>
+      <span class="ctx">Lançamento ${fmt(D(se.date))}. O ciclo é o mesmo para os três cultos; cada etapa tem uma tarefa por etiqueta.</span></div>
+      <div class="m-sec">${rows}</div>
+      <div class="m-ft"><span>Verde feito · vermelho atrasado · contorno esta semana · tracejado previsto. Clique numa etapa para abrir.</span><span class="acts"><button type="button" class="fx-btn" data-close>Fechar</button></span></div>`;
+  }
+
+  function etapaModal(arg) {
+    const [code, pis] = arg.split('|'), pi = +pis, se = SERIE_BY[code], ph = PHASES[pi];
+    const cols = VERSIONS.map(V => {
+      const t = BY_ID[`${code}-${V.V}-0${pi + 1}`];
+      const hd = `<div class="ch"><span class="tag t-${V.key}">${V.name}</span>`;
+      if (!t) return `<div class="c">${hd}</div><span class="off">Aconteceu em 2026</span></div>`;
+      const v = view(t, state.profile);
+      if (!v) return `<div class="c">${hd}</div><span class="off">Fora da sua etiqueta</span></div>`;
+      const done = t.subs.filter(s => s.done).length;
+      return `<div class="c">${hd}<span>${av(t.resp)} ${PEOPLE[t.resp].first} · ${done}/${t.subs.length}</span></div>
+        <div class="ch"><span>Semana ${t.week} · entrega ${fmt(t.due)}</span></div>
+        <ul>${v.subs.map(s => `<li class="${s.done ? 'is-done' : ''}"><label><input type="checkbox" data-t="${t.id}" data-s="${s.id}" ${s.done ? 'checked' : ''}><span class="sn">${esc(s.t)}</span></label><span class="h">${hrs(+s.h || 0)}</span>${av(s.who)}</li>`).join('')}</ul>
+        <button type="button" class="fx-btn" data-open="${t.id}">Abrir tarefa ${V.name}</button></div>`;
+    }).join('');
+    modal.className = 'modal wide l-ins';
+    modal.innerHTML = `<div class="nd-bar"></div><div class="m-hd"><span class="id">${code}-0${pi + 1} · Institucionais · ${esc(se.name)}</span><h2 id="mTitle">${ph.t}</h2><span class="ctx">${esc(ph.brief)}</span></div>
+      <div class="cols3">${cols}</div>
+      <div class="m-ft"><span>Mesma etapa, uma tarefa por culto. Cada pessoa vê a tarefa da sua etiqueta.</span><span class="acts"><button type="button" class="fx-btn" data-close>Fechar</button></span></div>`;
+  }
+
+  function verModal(vk) {
+    const V = VERSIONS.find(v => v.key === vk), M = MATRIX[vk];
+    const rows = SERIES.map(se => `<div class="srow"><div class="hd"><b>${esc(se.name)}</b><span>lançamento ${fmt(D(se.date))}</span></div><div class="chips">${PHASES.map((ph, i) => chipHtml(BY_ID[`${se.code}-${V.V}-0${i + 1}`], ph)).join('')}</div></div>`).join('');
+    modal.className = 'modal wide l-ins';
+    modal.innerHTML = `<div class="nd-bar"></div><div class="m-hd"><span class="id">Institucionais · ${V.desc}</span><h2 id="mTitle">${V.name}: como está indo</h2>
+      <div class="m-facts"><span><b>Responsável geral</b>${PEOPLE[M.geral].name}</span><span><b>Roteiro</b>${PEOPLE[M.roteiro].name}</span><span><b>Post nas redes</b>${PEOPLE[M.post].name}</span></div></div>
+      <div class="m-sec">${rows}</div>
+      <div class="m-ft"><span>Verde feito · vermelho atrasado · contorno esta semana · tracejado previsto. Clique numa etapa para abrir.</span><span class="acts"><button type="button" class="fx-btn" data-close>Fechar</button></span></div>`;
+  }
+
+  function cellModal(arg) {
+    const [p, wn] = arg.split('|'), w = WEEKS[+wn - 1], cap = PEOPLE[p].cap;
+    const items = TASKS.filter(t => t.lane !== 'sem' && t.week === +wn && t.subs.some(s => s.who === p))
+      .map(t => ({ t, h: t.subs.filter(s => s.who === p).reduce((a, s) => a + (+s.h || 0), 0) })).sort((a, b) => b.h - a.h);
+    const tot = items.reduce((a, x) => a + x.h, 0);
+    modal.className = 'modal';
+    modal.innerHTML = `<div class="nd-bar"></div><div class="m-hd"><span class="id">Planner · ${weekTxt(w)}</span><h2 id="mTitle">${PEOPLE[p].name}: ${hrs(tot)} de ${cap}h</h2>
+      <span class="ctx">${tot > cap ? `${hrs(tot - cap)} acima da capacidade. Vale mover alguma demanda de semana ou trocar o responsável.` : `${hrs(cap - tot)} livres nesta semana.`}</span></div>
+      <ul class="m-list" style="padding-top:12px">${items.map(x => `<li class="row-btn l-${x.t.lane}" data-open="${x.t.id}"><span class="ro"><b>${esc(x.t.title)}</b><br><span class="who-n">${x.t.id} · ${LANE_NAME[x.t.lane]} · ${esc(x.t.ctx)}</span></span><span class="h">${hrs(x.h)}</span></li>`).join('')}</ul>
+      <div class="m-ft"><span>Clique numa demanda para abrir${isLider() ? ' e editar' : ''}.</span><span class="acts"><button type="button" class="fx-btn" data-close>Fechar</button></span></div>`;
+  }
+
+  function matrixModal() {
+    const who = p => `<span class="p">${av(p)}${PEOPLE[p].first}</span>`;
+    let rows = `<tr class="geral"><td>Responsável geral</td>${VERSIONS.map(v => `<td>${who(MATRIX[v.key].geral)}</td>`).join('')}</tr>`;
+    PHASES.forEach(ph => {
+      rows += `<tr><td class="ph" colspan="4">${ph.t}</td></tr>`;
+      ph.subs.forEach(([k, t]) => rows += `<tr><td>${t}</td>${VERSIONS.map(v => `<td>${who(MATRIX[v.key][k])}</td>`).join('')}</tr>`);
+    });
+    const none = TEAM.map(p => ({ p, vs: VERSIONS.filter(v => !Object.entries(MATRIX[v.key]).some(([k, x]) => k !== 'geral' && x === p)).map(v => v.name) })).filter(x => x.vs.length && x.vs.length < 3);
+    modal.className = 'modal wide l-ins';
+    modal.innerHTML = `<div class="nd-bar"></div><div class="m-hd"><span class="id">Institucionais · toda série tem versão CBRio, AMI e Kids</span><h2 id="mTitle">Quem faz o quê no ciclo criativo</h2>
+      <span class="ctx">${none.map(x => `${PEOPLE[x.p].first} não tem tarefa em ${x.vs.join(' e ')}.`).join(' ')}</span></div>
+      <div class="mtx-wrap"><table class="mtx"><thead><tr><th>Item</th>${VERSIONS.map(v => `<th>${v.name}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="m-ft"><span>Cada série nova nasce nas 3 versões com estas pessoas. No sistema, esta tabela vira configuração do Pedro.</span><span class="acts"><button type="button" class="fx-btn" data-close>Fechar</button></span></div>`;
+  }
+
+  // ---------- editor do Pedro: alocar, criar e editar ----------
+  let ed = null;
+  function openEditor(mode, id) {
+    const t = id ? BY_ID[id] : null;
+    const draft = t
+      ? { title: t.title, lane: mode === 'alloc' ? 'sis' : t.lane, due: t.due, resp: t.resp || t.sug || '', brief: t.brief || '',
+          items: t.subs.map(s => ({ id: s.id, t: s.t, who: s.who || '', h: +s.h || 0, done: s.done })) }
+      : { title: '', lane: 'int', due: wEnd(Math.min(53, curW() + 1)), resp: '', brief: '', items: [{ t: '', who: '', h: 2, done: false }] };
+    ed = { mode, id, draft, err: '' };
+    showModal('edit');
+  }
+  const opts = (sel, blank) => (blank ? `<option value="">${blank}</option>` : '') + TEAM.map(p => `<option value="${p}" ${sel === p ? 'selected' : ''}>${PEOPLE[p].name}</option>`).join('');
+  function editorModal() {
+    const t = ed.id ? BY_ID[ed.id] : null, d = ed.draft;
+    const head = { alloc: 'Alocar demanda', new: 'Nova tarefa', edit: 'Editar tarefa' }[ed.mode];
+    const laneFld = ed.mode === 'new'
+      ? `<select id="ed-lane"><option value="int" ${d.lane === 'int' ? 'selected' : ''}>Interno</option><option value="sis" ${d.lane === 'sis' ? 'selected' : ''}>Sistema</option></select>`
+      : `<div class="ro">${LANE_NAME[d.lane]}</div>`;
+    modal.className = 'modal wide l-' + (ed.mode === 'alloc' ? 'sem' : d.lane);
+    modal.innerHTML = `<div class="nd-bar"></div><form id="ed" novalidate><div class="m-hd"><span class="id">${t ? t.id + ' · ' + esc(t.ctx) : 'Criada pelo Pedro'}</span><h2 id="mTitle">${head}</h2></div>
+      ${t && t.req ? `<div class="req"><b>Pedido original</b>${esc(t.req)}<small>${esc(t.reqBy || '')} · pediu para ${fmt(t.due)}</small></div>` : ''}
+      <div class="ed-body">
+        <label class="fld"><span>Título</span><input id="ed-title" value="${esc(d.title)}" data-autofocus></label>
+        <div class="row2"><div class="fld"><span>Frente</span>${laneFld}</div>
+          <label class="fld"><span>Entrega</span><input type="date" id="ed-due" min="2027-01-01" max="2027-12-31" value="${iso(d.due)}"></label></div>
+        <div class="wkinfo" id="ed-wk"></div>
+        <label class="fld"><span>Responsável</span><select id="ed-resp">${opts(d.resp, 'Escolha quem vai tocar')}</select></label>
+        <label class="fld"><span>O que você espera de quem vai fazer</span><textarea id="ed-brief" rows="3" placeholder="Ex.: seguir a identidade da série, mandar primeira versão na quarta">${esc(d.brief)}</textarea></label>
+        <div class="fld"><span>Checklist · quem faz · horas na semana</span><div class="items" id="ed-items"></div><div><button type="button" class="fx-btn" data-ed="add">+ Adicionar item</button></div></div>
+        <div class="fld"><span>Carga da semana com esta demanda</span><div class="loads" id="ed-load"></div></div>
+        <p class="ed-err" id="ed-err" ${ed.err ? '' : 'hidden'}>${esc(ed.err)}</p>
+      </div>
+      <div class="m-ft"><span></span><span class="acts"><button type="button" class="fx-btn" data-close>Cancelar</button><button type="submit" class="fx-btn primary" id="ed-submit"></button></span></div></form>`;
+    paintItems(); paintLoad();
+  }
+  function paintItems() {
+    document.getElementById('ed-items').innerHTML = ed.draft.items.map((it, i) => `<div class="it" data-i="${i}">
+      <input class="it-t" aria-label="Item ${i + 1}" placeholder="O que precisa ser feito" value="${esc(it.t)}">
+      <select class="it-w" aria-label="Quem faz o item ${i + 1}">${opts(it.who, 'Quem faz')}</select>
+      <input class="it-h" type="number" min="0" max="60" step="0.5" aria-label="Horas do item ${i + 1}" value="${it.h}">
+      <button type="button" class="x" data-ed="rm" data-i="${i}" aria-label="Remover item ${i + 1}">×</button></div>`).join('') || '<span class="ed-empty">Nenhum item. Adicione pelo menos um.</span>';
+  }
+  function readForm() {
+    const d = ed.draft, g = id => document.getElementById(id);
+    d.title = g('ed-title').value; d.brief = g('ed-brief').value; d.resp = g('ed-resp').value;
+    if (g('ed-lane')) d.lane = g('ed-lane').value;
+    const dv = g('ed-due').value; if (dv) d.due = D(dv);
+    document.querySelectorAll('#ed-items .it').forEach(row => {
+      const it = d.items[+row.dataset.i];
+      it.t = row.querySelector('.it-t').value; it.who = row.querySelector('.it-w').value; it.h = Math.max(0, parseFloat(row.querySelector('.it-h').value) || 0);
+    });
+  }
+  function paintLoad() {
+    const d = ed.draft, wn = weekOf(d.due), w = WEEKS[wn - 1];
+    document.getElementById('ed-wk').textContent = weekTxt(w) + (wn < curW() ? ' · já passou' : wn === curW() ? ' · esta semana' : '');
+    const ppl = [...new Set([d.resp, ...d.items.map(i => i.who)].filter(Boolean))];
+    document.getElementById('ed-load').innerHTML = ppl.length ? ppl.map(p => {
+      const cap = PEOPLE[p].cap, base = load(p, wn, ed.mode === 'new' ? null : ed.id), add = d.items.filter(i => i.who === p).reduce((a, i) => a + i.h, 0), tot = base + add;
+      const bw = Math.min(100, base / cap * 100), aw = Math.max(0, Math.min(100, tot / cap * 100) - bw);
+      return `<div class="lrow ld ${loadCls(tot, cap)}">${av(p)}<span>${PEOPLE[p].first}</span><span class="tr"><i style="left:0;width:${bw}%"></i><i class="add" style="left:${bw}%;width:${aw}%"></i></span>
+        <span class="v">${hrs(base)} + ${hrs(add)} = ${hrs(tot)} de ${cap}h</span></div>`;
+    }).join('') : '<span class="ed-empty">Escolha o responsável e quem faz cada item para ver a carga.</span>';
+    const btn = document.getElementById('ed-submit');
+    btn.textContent = ed.mode === 'alloc' ? (d.resp ? `Alocar para ${PEOPLE[d.resp].first}` : 'Alocar') : ed.mode === 'new' ? 'Criar tarefa' : 'Salvar';
+  }
+  function submitEditor() {
+    readForm();
+    const d = ed.draft, bad = m => { ed.err = m; const e = document.getElementById('ed-err'); e.textContent = m; e.hidden = false; };
+    const items = d.items.filter(i => i.t.trim());
+    if (!d.title.trim()) return bad('Dê um título para a demanda.');
+    if (!(d.due >= START && d.due <= END)) return bad('Escolha uma data de entrega dentro de 2027.');
+    if (!d.resp) return bad('Escolha quem é o responsável.');
+    if (!items.length) return bad('Adicione pelo menos um item no checklist.');
+    if (items.some(i => !i.who)) return bad('Todo item do checklist precisa de alguém para fazer.');
+    let t = ed.id ? BY_ID[ed.id] : null;
+    if (!t) {
+      const pre = d.lane === 'int' ? 'INT-' : 'SOL-';
+      const next = TASKS.filter(x => x.id.startsWith(pre)).reduce((m, x) => Math.max(m, parseInt(x.id.slice(4), 10) || 0), 0) + 1;
+      t = { id: pre + (pre === 'INT-' ? pad(next) : String(next).padStart(3, '0')), lane: d.lane, ctx: d.lane === 'int' ? 'Demanda do Pedro' : 'Pedido do Pedro', when: 'Registrada pelo Pedro', subs: [] };
+      TASKS.push(t); BY_ID[t.id] = t;
+    }
+    t.title = d.title.trim(); t.brief = d.brief.trim(); t.resp = d.resp; t.due = d.due; t.week = weekOf(d.due);
+    if (ed.mode === 'alloc') { t.lane = 'sis'; delete t.sug; }
+    t.subs = items.map(i => ({ id: i.id || 's' + (subSeq++), t: i.t.trim(), who: i.who, h: i.h, done: !!i.done }));
+    saveTasks();
+    const msg = ed.mode === 'alloc' ? `${t.id} alocada para ${PEOPLE[t.resp].first} · semana ${t.week}` : ed.mode === 'new' ? `${t.id} criada para ${PEOPLE[t.resp].first} · semana ${t.week}` : `${t.id} salva`;
+    closeModal(); render(); toast(msg);
+  }
+
+  let toastT;
+  function toast(m) { const el = document.getElementById('toast'); el.textContent = m; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => el.hidden = true, 2600); }
+
+  function toggle(tid, sid, checked, li) {
+    BY_ID[tid].subs.find(x => x.id === sid).done = checked; saveTasks();
+    if (modalKind) { paintModal(); render(); return; }
+    if (li && checked) { li.classList.add('leaving'); setTimeout(render, 320); } else render();
+  }
+
+  // ---------- eventos ----------
+  document.getElementById('who').addEventListener('click', e => { const b = e.target.closest('[data-p]'); if (b) { state.profile = b.dataset.p; render(); } });
+  document.getElementById('tabs').addEventListener('click', e => { const b = e.target.closest('[data-tab]'); if (b && b.dataset.tab !== state.tab) { state.tab = b.dataset.tab; render(); goToday(); } });
+  document.getElementById('insMode').addEventListener('click', e => { const b = e.target.closest('[data-im]'); if (b) { state.insMode = b.dataset.im; state.open = 'ins'; render(); } });
+  document.getElementById('hideDone').addEventListener('change', e => { state.hideDone = e.target.checked; render(); });
+  document.getElementById('today').addEventListener('input', e => { state.todayW = +e.target.value; render(); });
+  document.querySelector('.fx-bar').addEventListener('click', e => {
+    const b = e.target.closest('[data-act]'); if (!b) return;
+    const a = b.dataset.act, cx = viewport.clientWidth / 2, cy = viewport.clientHeight / 2;
+    if (a === 'zin') zoomAt(zoom * 1.2, cx, cy);
+    else if (a === 'zout') zoomAt(zoom / 1.2, cx, cy);
+    else if (a === 'fit') fit();
+    else if (a === 'hoje') goToday();
+    else if (a === 'nova') openEditor('new');
+    else if (a === 'matriz') showModal('matriz');
+    else if (a === 'reset') { try { localStorage.removeItem(TKEY); } catch (err) {} loadTasks(); render(); toast('Dados de exemplo restaurados'); }
+  });
+  canvas.addEventListener('click', e => {
+    if (e.target.closest('input, label')) return;
+    const al = e.target.closest('[data-alloc]'); if (al) { openEditor('alloc', al.dataset.alloc); return; }
+    const op = e.target.closest('[data-open]'); if (op) { showModal('task', op.dataset.open); return; }
+    const vb = e.target.closest('[data-ver]'); if (vb) { showModal('ver', vb.dataset.ver); return; }
+    const sb = e.target.closest('[data-serie]'); if (sb) { showModal('serie', sb.dataset.serie); return; }
+    const et = e.target.closest('[data-etapa]'); if (et) { if (isLider()) showModal('etapa', et.dataset.etapa); else { const o = et.querySelector('[data-open]'); if (o) showModal(et.querySelectorAll('[data-open]').length > 1 ? 'etapa' : 'task', et.querySelectorAll('[data-open]').length > 1 ? et.dataset.etapa : o.dataset.open); } return; }
+    const ce = e.target.closest('[data-cell]'); if (ce) { showModal('cell', ce.dataset.cell); return; }
+    const ln = e.target.closest('[data-lane]'); if (ln) { const k = ln.dataset.lane; state.open = state.open === k ? null : k; render(); }
+  });
+  canvas.addEventListener('change', e => { const c = e.target.closest('input[data-s]'); if (c) toggle(c.dataset.t, c.dataset.s, c.checked, c.closest('li')); });
+  modal.addEventListener('change', e => {
+    const c = e.target.closest('input[data-s]'); if (c) { toggle(c.dataset.t, c.dataset.s, c.checked); return; }
+    if (modalKind === 'edit') { readForm(); paintLoad(); }
+  });
+  modal.addEventListener('input', e => { if (modalKind === 'edit' && e.target.closest('.it-h, #ed-due')) { readForm(); paintLoad(); } });
+  modal.addEventListener('submit', e => { e.preventDefault(); submitEditor(); });
+  modal.addEventListener('click', e => {
+    if (e.target.closest('[data-close]')) { closeModal(); return; }
+    const edb = e.target.closest('[data-ed]');
+    if (edb) {
+      readForm();
+      if (edb.dataset.ed === 'add') ed.draft.items.push({ t: '', who: ed.draft.resp || '', h: 1, done: false });
+      else ed.draft.items.splice(+edb.dataset.i, 1);
+      paintItems(); paintLoad();
+      if (edb.dataset.ed === 'add') { const last = document.querySelector('#ed-items .it:last-child .it-t'); if (last) last.focus(); }
+      return;
+    }
+    const edt = e.target.closest('[data-edit]'); if (edt) { openEditor('edit', edt.dataset.edit); return; }
+    if (e.target.closest('input, label')) return;
+    const op = e.target.closest('[data-open]'); if (op) showModal('task', op.dataset.open);
+  });
+  scrim.addEventListener('click', e => { if (e.target === scrim) closeModal(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !scrim.hidden) closeModal(); });
+
+  render();
+  start();
+})();
+</script>

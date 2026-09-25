@@ -21727,3 +21727,22 @@ O RG legado segue **fisicamente no `rh-fotos`**, servido por signed URL de 1h.
 Quando a equipe reenviar aquele documento pela ficha (agora o upload vai direto
 para o `documentos-rh`), o objeto antigo pode ser apagado e
 `BUCKET_DOCS_RH_LEGADO` sai do código. **É 1 arquivo.**
+
+## Marketing · LINHA DO TEMPO · plano por fases + 5 migrations (2026-09-25 · migrations `20260925100000…140000` · NÃO aplicadas)
+
+Aba nova `/marketing/linha-do-tempo` que deve substituir o Kanban se a equipe adotar.
+Plano completo: `docs/modulo-marketing/linha-do-tempo/README.md` · protótipo aprovado
+("por série"): `docs/modulo-marketing/linha-do-tempo/prototipo.html`.
+
+- **Regra do Marcos:** toda série tem o MESMO ciclo rodando junto para CBRio, AMI e Kids ⇒
+  cada etapa gera **1 card por culto** (`marketing_kanban_cards.culto`). CBRio/AMI: Cauã
+  geral + Allan roteiro · Kids: Letícia geral + Lorena post nas redes.
+- **Fase 0 primeiro:** `docs/modulo-marketing/linha-do-tempo/00_verificacao_banco_vivo.sql`
+  (só leitura). As tabelas do ciclo (`events`, `cycle_phase_tasks`…) foram criadas fora do git.
+- **Aplicar na ordem, cada uma com a sua fase:** F1 fundação (datas de conclusão, horas e dono
+  por item do checklist, histórico de prazo) → F2 ciclo por culto (reescreve
+  `fn_marketing_cards_cycle_phase_sync`; o ciclo só FECHA o card) → F3 checklist fecha o card +
+  rotina (**muda o Kanban**, aplicar junto do deploy) → F4 roteamento do formulário (tabela
+  nasce vazia) → F5 views de atraso.
+- ⚠️ **Líder ≠ nível de módulo:** o `AREA_MODULO_BOOST` dá nível 5 para a equipe toda. Líder na
+  linha do tempo = `marketing_membros.habilidade='coordenador'` ou role admin/diretor.
