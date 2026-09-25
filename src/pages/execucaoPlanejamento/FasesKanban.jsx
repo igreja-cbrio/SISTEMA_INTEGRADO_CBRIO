@@ -12,19 +12,32 @@
 // pointer events, limiar clique×arrasto, auto-scroll) em vez do HTML5
 // nativo de Projetos.jsx, documentado como quebrado em touch/mobile.
 //
-// Evento vinculado (event_cycles/event_cycle_phases) usa um vocabulário
-// PRÓPRIO de status de tarefa (a_fazer/em_andamento/concluida, sem
-// "bloqueada") — normalizado aqui pra caber nas mesmas 4 colunas; mover um
-// card de evento pra "Bloqueada" não tem correspondente no cycle_phase_tasks
-// e é recusado com aviso, em vez de fingir suporte que a API não tem.
+// ⚠️ `cycle_phase_tasks.status` usa o MESMO vocabulário hifenizado de
+// `project_tasks` (pendente/em-andamento/concluida/bloqueada — conferido
+// contra o CHECK constraint vivo no banco, não deduzido de comentário
+// antigo). Não existe tradução a_fazer/em_andamento aqui: as 4 colunas
+// deste Kanban servem os dois vínculos sem normalização.
+//
+// Criação/edição de tarefa (+ Tarefa): para PROJETO, `project_tasks` não tem
+// coluna de fase — a associação é a mesma heurística de texto que
+// Projetos.jsx já lê (`descrição contém "Fase: <nome>"`), só que agora
+// escrita pelo formulário via um seletor de fase, em vez de exigir que
+// alguém digite a marca à mão. Para EVENTO, `cycle_phase_tasks.event_phase_id`
+// é FK real — o seletor grava o id da fase diretamente.
 // =====================================================================
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { toast } from 'sonner';
-import { Lock } from 'lucide-react';
+import { Lock, Plus } from 'lucide-react';
 import { projects as projectsApi, cycles as cyclesApi, planejamentoAnual as planApi } from '../../api';
 import { C, cardStyle, btn, hint } from '../planejamentoAnual/comum';
 import { useArrastoKanban } from '../marketing/useArrastoKanban';
 import FaseStepper from '../../components/FaseStepper';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { DatePicker } from '@/components/ui/date-picker';
 
 const COLUNAS = [
   { key: 'pendente', label: 'Pendente', cor: C.t3 },
@@ -60,8 +73,8 @@ function statusDaFase(nomeFase, cards) {
   return 'pendente';
 }
 
-// ── Projeto: o vocabulário de status JÁ é o das 4 colunas ───────────────
-function statusDeTarefaProjeto(t) { return COLUNAS.some((c) => c.key === t.status) ? t.status : 'pendente'; }
+// Vocabulário de status já é o das 4 colunas — vale pros dois vínculos.
+function statusDeTarefa(t) { return COLUNAS.some((c) => c.key === t.status) ? t.status : 'pendente'; }
 
 // Mesma heurística de Projetos.jsx:1568 (getTasksForPhase), invertida: pra
 // CADA tarefa, acha a 1ª fase cujo critério bate (descrição "Fase: X" ou
@@ -81,13 +94,50 @@ function faseDaTarefaProjeto(t, fases) {
   return null;
 }
 
-// ── Evento: vocabulário próprio (a_fazer/em_andamento/concluida) ───────
-const NORMALIZA_EVENTO = { a_fazer: 'pendente', em_andamento: 'em-andamento', concluida: 'concluida' };
-const DENORMALIZA_EVENTO = { pendente: 'a_fazer', 'em-andamento': 'em_andamento', concluida: 'concluida' };
-function statusDeTarefaEvento(t) { return NORMALIZA_EVENTO[t.status] || 'pendente'; }
 function faseDaTarefaEvento(t, fases) {
   const f = fases.find((ph) => ph.id === t.event_phase_id);
   return f ? (f.nome_fase || `Fase ${f.numero_fase}`) : null;
+}
+
+// ── Fase ↔ Tarefa (formulário "+ Tarefa") ───────────────────────────────
+// Sentinela do <Select> pra "sem fase" — Radix não aceita SelectItem com
+// value="". Só existe pro lado PROJETO: evento sempre exige uma fase real
+// (event_phase_id é NOT NULL em cycle_phase_tasks).
+const SEM_FASE = '__sem_fase__';
+
+const PRIORIDADE_PROJETO = [
+  { valor: 'baixa', rotulo: 'Baixa' }, { valor: 'media', rotulo: 'Média' },
+  { valor: 'alta', rotulo: 'Alta' }, { valor: 'urgente', rotulo: 'Urgente' },
+];
+// cycle_phase_tasks_prioridade_check só aceita estes 3 (sem "urgente").
+const PRIORIDADE_EVENTO = [
+  { valor: 'baixa', rotulo: 'Baixa' }, { valor: 'normal', rotulo: 'Normal' }, { valor: 'alta', rotulo: 'Alta' },
+];
+// cycle_phase_tasks_area_check — lista fechada, conferida no banco.
+const AREA_EVENTO_OPCOES = [
+  { valor: 'marketing', rotulo: 'Marketing' }, { valor: 'adm', rotulo: 'Administrativo' },
+  { valor: 'compras', rotulo: 'Compras' }, { valor: 'financeiro', rotulo: 'Financeiro' },
+  { valor: 'manutencao', rotulo: 'Manutenção' }, { valor: 'limpeza', rotulo: 'Limpeza' },
+  { valor: 'cozinha', rotulo: 'Cozinha' }, { valor: 'producao', rotulo: 'Produção' },
+];
+
+function normDate(d) { return d ? String(d).slice(0, 10) : ''; }
+
+// Projeto não tem coluna de fase — lê/escreve a marca "Fase: <nome>" no
+// início da descrição (mesma convenção que Projetos.jsx já entende).
+function extrairFaseEDescricao(descricaoBruta, nomesFases) {
+  const desc = descricaoBruta || '';
+  for (const nome of nomesFases) {
+    const marca = `Fase: ${nome}`;
+    if (desc === marca) return { fase: nome, resto: '' };
+    if (desc.startsWith(marca + '\n')) return { fase: nome, resto: desc.slice(marca.length + 1) };
+  }
+  return { fase: null, resto: desc };
+}
+function montarDescricaoComFase(faseNome, resto) {
+  const corpo = (resto || '').trim();
+  if (!faseNome) return corpo;
+  return corpo ? `Fase: ${faseNome}\n${corpo}` : `Fase: ${faseNome}`;
 }
 
 export default function FasesKanban({ proposta, onMaterializado }) {
@@ -98,6 +148,8 @@ export default function FasesKanban({ proposta, onMaterializado }) {
   const [faseSelecionada, setFaseSelecionada] = useState(null);
   const [materializando, setMaterializando] = useState(false);
   const [iniciandoFases, setIniciandoFases] = useState(false);
+  const [modalTarefa, setModalTarefa] = useState(null); // null fechado · {} nova · {...raw} editar
+  const [salvandoTarefa, setSalvandoTarefa] = useState(false);
   const containerRef = useRef(null);
 
   const carregar = useCallback(async () => {
@@ -111,7 +163,7 @@ export default function FasesKanban({ proposta, onMaterializado }) {
         setFasesBrutas([...fases].sort((a, b) => (a.order_index || 0) - (b.order_index || 0)));
         setCards(tarefas.map((t) => ({
           id: t.id, titulo: t.title || t.name || 'Tarefa',
-          status: statusDeTarefaProjeto(t), fase: faseDaTarefaProjeto(t, fases),
+          status: statusDeTarefa(t), fase: faseDaTarefaProjeto(t, fases), raw: t,
         })));
       } else {
         const ciclo = await cyclesApi.get(vinculo.id);
@@ -120,7 +172,7 @@ export default function FasesKanban({ proposta, onMaterializado }) {
         setFasesBrutas([...fases].sort((a, b) => (a.numero_fase || 0) - (b.numero_fase || 0)));
         setCards(tarefas.map((t) => ({
           id: t.id, titulo: t.titulo || 'Tarefa',
-          status: statusDeTarefaEvento(t), fase: faseDaTarefaEvento(t, fases),
+          status: statusDeTarefa(t), fase: faseDaTarefaEvento(t, fases), raw: t,
         })));
       }
     } catch {
@@ -169,25 +221,81 @@ export default function FasesKanban({ proposta, onMaterializado }) {
     : null;
 
   const moverCard = useCallback(async (cardId, novoEstado) => {
-    if (novoEstado === null) return; // foi só um toque — nada a fazer aqui
     const card = cards.find((c) => c.id === cardId);
-    if (!card || card.status === novoEstado) return;
-    if (vinculo.tipo === 'evento' && !DENORMALIZA_EVENTO[novoEstado]) {
-      toast.error('Este status não existe para tarefas de ciclo de evento.');
-      return;
-    }
+    if (!card) return;
+    if (novoEstado === null) { setModalTarefa(card.raw || { id: cardId }); return; } // foi um toque — abre pra editar
+    if (card.status === novoEstado) return;
     setCards((cs) => cs.map((c) => (c.id === cardId ? { ...c, status: novoEstado } : c)));
     try {
       if (vinculo.tipo === 'projeto') {
         await projectsApi.updateTaskStatus(cardId, novoEstado);
       } else {
-        await cyclesApi.updateTask(cardId, { status: DENORMALIZA_EVENTO[novoEstado] });
+        await cyclesApi.updateTask(cardId, { status: novoEstado });
       }
     } catch (e) {
       toast.error(e.message || 'Não foi possível mover o card');
       carregar();
     }
   }, [cards, vinculo.tipo, carregar]);
+
+  const abrirNovaTarefa = useCallback(() => {
+    if (vinculo.tipo === 'projeto') {
+      setModalTarefa({ faseValor: nomeDaFaseSelecionada || SEM_FASE });
+    } else {
+      setModalTarefa({ event_phase_id: faseSelecionada || fasesStepper[0]?.id || '' });
+    }
+  }, [vinculo.tipo, nomeDaFaseSelecionada, faseSelecionada, fasesStepper]);
+
+  const salvarTarefa = useCallback(async (form) => {
+    setSalvandoTarefa(true);
+    try {
+      if (vinculo.tipo === 'projeto') {
+        const payload = {
+          name: form.name,
+          responsible: form.responsible || '',
+          start_date: form.start_date || null,
+          deadline: form.deadline || null,
+          status: form.status || 'pendente',
+          priority: form.priority || 'media',
+          description: montarDescricaoComFase(form.faseValor === SEM_FASE ? null : form.faseValor, form.descricao),
+        };
+        if (form.id) await projectsApi.updateTask(form.id, payload);
+        else await projectsApi.createTask(vinculo.id, payload);
+      } else {
+        const payload = {
+          event_id: vinculo.id,
+          event_phase_id: form.event_phase_id,
+          titulo: form.titulo,
+          area: form.area,
+          prazo: form.prazo || null,
+          responsavel_nome: form.responsavel_nome || '',
+          status: form.status || 'pendente',
+          prioridade: form.prioridade || 'baixa',
+          descricao: form.descricao || '',
+        };
+        if (form.id) await cyclesApi.updateTask(form.id, payload);
+        else await cyclesApi.createTask(payload);
+      }
+      setModalTarefa(null);
+      toast.success(form.id ? 'Tarefa atualizada' : 'Tarefa criada');
+      await carregar();
+    } catch (e) {
+      toast.error(e.message || 'Não foi possível salvar a tarefa');
+    } finally { setSalvandoTarefa(false); }
+  }, [vinculo.tipo, vinculo.id, carregar]);
+
+  const excluirTarefa = useCallback(async (taskId) => {
+    setSalvandoTarefa(true);
+    try {
+      if (vinculo.tipo === 'projeto') await projectsApi.removeTask(taskId);
+      else await cyclesApi.deleteTask(taskId);
+      setModalTarefa(null);
+      toast.success('Tarefa excluída');
+      await carregar();
+    } catch (e) {
+      toast.error(e.message || 'Não foi possível excluir a tarefa');
+    } finally { setSalvandoTarefa(false); }
+  }, [vinculo.tipo, carregar]);
 
   const arrastoK = useArrastoKanban({ onMover: moverCard, habilitado: Boolean(vinculo.tipo) });
 
@@ -263,6 +371,14 @@ export default function FasesKanban({ proposta, onMaterializado }) {
               </button>
             </div>
           )}
+        {fasesStepper.length > 0 && (
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+            <p style={{ ...hint, margin: 0 }}>Clique num card pra editar · arraste pra mudar o status.</p>
+            <button style={{ ...btn('primary'), padding: '5px 11px', fontSize: 12 }} onClick={abrirNovaTarefa}>
+              <Plus size={13} /> Tarefa
+            </button>
+          </div>
+        )}
         <div
           ref={arrastoK.containerRef}
           className={`flex gap-3 overflow-x-auto pb-2 ${arrastoK.arrastando ? 'select-none' : ''}`}
@@ -322,6 +438,194 @@ export default function FasesKanban({ proposta, onMaterializado }) {
           Movendo…
         </div>
       )}
+      <TarefaModal
+        open={Boolean(modalTarefa)}
+        data={modalTarefa}
+        vinculoTipo={vinculo.tipo}
+        fasesStepper={fasesStepper}
+        salvando={salvandoTarefa}
+        onClose={() => setModalTarefa(null)}
+        onSave={salvarTarefa}
+        onDelete={excluirTarefa}
+      />
     </div>
+  );
+}
+
+// =====================================================================
+// Modal de criar/editar tarefa. Um formulário só, que se adapta ao vínculo:
+// PROJETO grava a fase como texto na descrição (project_tasks não tem
+// coluna de fase); EVENTO grava event_phase_id, que é FK real.
+// =====================================================================
+function TarefaModal({ open, data, vinculoTipo, fasesStepper, salvando, onClose, onSave, onDelete }) {
+  const [form, setForm] = useState({});
+  const [confirmandoExcluir, setConfirmandoExcluir] = useState(false);
+  const ehEvento = vinculoTipo === 'evento';
+  const nomesFases = useMemo(() => fasesStepper.map((f) => f.nome), [fasesStepper]);
+
+  useEffect(() => {
+    if (!data) return;
+    setConfirmandoExcluir(false);
+    if (ehEvento) {
+      setForm({
+        id: data.id, titulo: data.titulo || '', responsavel_nome: data.responsavel_nome || '',
+        prazo: normDate(data.prazo), status: data.status || 'pendente', prioridade: data.prioridade || 'baixa',
+        area: data.area || '', event_phase_id: data.event_phase_id || '', descricao: data.descricao || '',
+      });
+    } else {
+      const { fase, resto } = extrairFaseEDescricao(data.description, nomesFases);
+      setForm({
+        id: data.id, name: data.name || '', responsible: data.responsible || '',
+        start_date: normDate(data.start_date), deadline: normDate(data.deadline),
+        status: data.status || 'pendente', priority: data.priority || 'media',
+        faseValor: data.faseValor || fase || SEM_FASE, descricao: resto,
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, ehEvento]);
+
+  if (!open) return null;
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+  const editando = Boolean(form.id);
+
+  const handleSalvar = () => {
+    if (ehEvento) {
+      if (!form.titulo?.trim()) { toast.error('Título é obrigatório'); return; }
+      if (!form.event_phase_id) { toast.error('Escolha a fase'); return; }
+      if (!form.area) { toast.error('Escolha a área'); return; }
+    } else if (!form.name?.trim()) { toast.error('Nome é obrigatório'); return; }
+    onSave(form);
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(v) => { if (!v) onClose(); }}>
+      <DialogContent className="max-h-[85vh] flex flex-col gap-0 p-0">
+        <DialogHeader className="p-6 pb-3">
+          <DialogTitle>{editando ? 'Editar Tarefa' : 'Nova Tarefa'}</DialogTitle>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto min-h-0 px-6 space-y-3">
+          <div className="space-y-1">
+            <Label>{ehEvento ? 'Título *' : 'Nome *'}</Label>
+            {ehEvento ? (
+              <Input value={form.titulo || ''} onChange={(e) => set('titulo', e.target.value)} />
+            ) : (
+              <Input value={form.name || ''} onChange={(e) => set('name', e.target.value)} />
+            )}
+          </div>
+
+          <div className="space-y-1">
+            <Label>Fase{ehEvento ? ' *' : ''}</Label>
+            <Select
+              value={ehEvento ? (form.event_phase_id || '') : (form.faseValor || SEM_FASE)}
+              onValueChange={(v) => set(ehEvento ? 'event_phase_id' : 'faseValor', v)}
+            >
+              <SelectTrigger><SelectValue placeholder="Selecione…" /></SelectTrigger>
+              <SelectContent>
+                {!ehEvento && <SelectItem value={SEM_FASE}>Sem fase</SelectItem>}
+                {fasesStepper.map((f) => (
+                  <SelectItem key={f.id} value={ehEvento ? f.id : f.nome}>{f.nome}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>Responsável</Label>
+              <Input
+                value={(ehEvento ? form.responsavel_nome : form.responsible) || ''}
+                onChange={(e) => set(ehEvento ? 'responsavel_nome' : 'responsible', e.target.value)}
+              />
+            </div>
+            {ehEvento && (
+              <div className="space-y-1">
+                <Label>Área *</Label>
+                <Select value={form.area || ''} onValueChange={(v) => set('area', v)}>
+                  <SelectTrigger><SelectValue placeholder="Selecione…" /></SelectTrigger>
+                  <SelectContent>
+                    {AREA_EVENTO_OPCOES.map((a) => <SelectItem key={a.valor} value={a.valor}>{a.rotulo}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            {!ehEvento && (
+              <div className="space-y-1">
+                <Label>Início</Label>
+                <DatePicker value={form.start_date || ''} onChange={(v) => set('start_date', v)} />
+              </div>
+            )}
+            <div className="space-y-1">
+              <Label>Prazo</Label>
+              <DatePicker
+                value={(ehEvento ? form.prazo : form.deadline) || ''}
+                onChange={(v) => set(ehEvento ? 'prazo' : 'deadline', v)}
+              />
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1">
+              <Label>Status</Label>
+              <Select value={form.status || 'pendente'} onValueChange={(v) => set('status', v)}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {COLUNAS.map((c) => <SelectItem key={c.key} value={c.key}>{c.label}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <Label>Prioridade</Label>
+              <Select
+                value={(ehEvento ? form.prioridade : form.priority) || (ehEvento ? 'baixa' : 'media')}
+                onValueChange={(v) => set(ehEvento ? 'prioridade' : 'priority', v)}
+              >
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {(ehEvento ? PRIORIDADE_EVENTO : PRIORIDADE_PROJETO).map((p) => (
+                    <SelectItem key={p.valor} value={p.valor}>{p.rotulo}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="space-y-1 pb-4">
+            <Label>Descrição</Label>
+            <Textarea value={form.descricao || ''} onChange={(e) => set('descricao', e.target.value)} />
+          </div>
+        </div>
+
+        <DialogFooter className="p-6 pt-3 border-t">
+          {editando && (
+            confirmandoExcluir ? (
+              <button
+                type="button"
+                style={{ ...btn('danger'), marginRight: 'auto' }}
+                disabled={salvando}
+                onClick={() => onDelete(form.id)}
+              >
+                Confirmar exclusão
+              </button>
+            ) : (
+              <button
+                type="button"
+                style={{ ...btn('ghost'), marginRight: 'auto', color: C.red }}
+                onClick={() => setConfirmandoExcluir(true)}
+              >
+                Excluir
+              </button>
+            )
+          )}
+          <button type="button" style={btn('ghost')} onClick={onClose}>Cancelar</button>
+          <button type="button" style={btn('primary')} disabled={salvando} onClick={handleSalvar}>
+            {salvando ? 'Salvando…' : 'Salvar'}
+          </button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
