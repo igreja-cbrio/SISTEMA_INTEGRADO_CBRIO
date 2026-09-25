@@ -191,10 +191,19 @@ DECLARE
   v_pad    record;
   v_card   uuid;
   v_n      int := 0;
+  v_feita  timestamptz;
 BEGIN
   SELECT * INTO f FROM public.event_cycle_phases WHERE id = p_phase_id;
   IF NOT FOUND THEN RETURN 0; END IF;
   SELECT category_id INTO v_cat FROM public.events WHERE id = f.event_id;
+
+  -- Fase que o modelo antigo JÁ concluiu (tarefa de marketing 'concluida' nesta fase):
+  -- o card novo nasce concluído, com a data real. Sem isso, as séries em curso
+  -- ganhariam cards atrasados de fases que a equipe já entregou (Fase 0 · 25/09).
+  -- Fase passada e NÃO concluída continua aberta: o atraso é verdade.
+  SELECT max(t.updated_at) INTO v_feita
+    FROM public.cycle_phase_tasks t
+   WHERE t.event_phase_id = f.id AND lower(t.area) = 'marketing' AND t.status = 'concluida';
 
   FOR v_culto IN SELECT * FROM public.fn_marketing_cultos_do_evento(f.event_id) LOOP
     -- padrão do culto ganha do genérico · fase sem padrão = o Marketing não tem tarefa nela
@@ -210,14 +219,15 @@ BEGIN
     INSERT INTO public.marketing_kanban_cards (
       origem, event_id, event_phase_id, culto, titulo,
       etiqueta_tipo_id, atribuido_a, visibilidade,
-      data_inicio, data_fim, prazo_preliminar, estado
+      data_inicio, data_fim, prazo_preliminar, estado, concluido_em
     ) VALUES (
       'evento', f.event_id, f.id, v_culto, f.nome_fase,
       v_pad.etiqueta_tipo_id, v_pad.atribuido_a, v_pad.visibilidade,
       f.data_inicio_prevista::date, f.data_fim_prevista::date,
       CASE WHEN f.data_fim_prevista IS NOT NULL
            THEN (f.data_fim_prevista::date + time '18:00') AT TIME ZONE 'America/Sao_Paulo' END,
-      'backlog'
+      CASE WHEN v_feita IS NOT NULL THEN 'concluido' ELSE 'backlog' END,
+      v_feita
     )
     ON CONFLICT DO NOTHING
     RETURNING id INTO v_card;
@@ -225,8 +235,12 @@ BEGIN
     IF v_card IS NOT NULL THEN
       v_n := v_n + 1;
       INSERT INTO public.marketing_card_checklist
-        (card_id, grupo, texto, membro_id, esforco_valor, esforco_unidade, exige_registro, prazo)
-      SELECT v_card, f.nome_fase, i.texto, i.membro_id, i.esforco_valor, i.esforco_unidade, i.exige_registro, f.data_fim_prevista::date
+        (card_id, grupo, texto, membro_id, esforco_valor, esforco_unidade, exige_registro, prazo, feito, concluido_em)
+      -- em fase já concluída, o item nasce feito · exceto o que exige registro (o CHECK
+      -- recusa item feito sem texto, e não se inventa conceito/report que ninguém escreveu)
+      SELECT v_card, f.nome_fase, i.texto, i.membro_id, i.esforco_valor, i.esforco_unidade, i.exige_registro, f.data_fim_prevista::date,
+             (v_feita IS NOT NULL AND NOT i.exige_registro),
+             CASE WHEN v_feita IS NOT NULL AND NOT i.exige_registro THEN v_feita END
         FROM public.marketing_ciclo_itens_padrao i
        WHERE i.ativo AND i.category_id = v_cat AND i.nome_fase = f.nome_fase
          AND (i.culto IS NULL OR i.culto = v_culto)
