@@ -262,14 +262,19 @@ describe('ranking e desempate (teste 3 do spec)', () => {
   });
 });
 
-// ── Teste 4 · ressalva não verificada segura o calendário e o custo ─────
-describe('aprovada com ressalvas (teste 4 do spec)', () => {
+// ── Teste 4 · aprovada com ressalvas ENTRA no calendário na hora (2026-09-18) ─
+// [DECISÃO · Marcos] "Aprovada com ressalvas" é aprovada de qualquer forma —
+// a ressalva vira notificação ao proponente + acompanhamento do Pastor
+// (verificar/reabrir), nunca um portão que segura calendário, orçamento ou
+// publicação do ciclo. Substitui o teste 4 original do spec (que esperava o
+// oposto, sob a suposição antiga `ressalvaVerificadaAntesDoCalendario: true`).
+describe('aprovada com ressalvas (2026-09-18: nunca trava calendário/publicação)', () => {
   const p = prop({ estado: 'aprovada_ressalvas', custo: 600, data_inicio: '2027-05-01', precisao_inicio: 'mes' });
   const naoVerificada = [decisao({ decisao: 'aprovada_ressalvas', ressalva_texto: 'Reduzir custo' })];
   const verificada = [decisao({ decisao: 'aprovada_ressalvas', ressalva_texto: 'Reduzir custo', ressalva_cumprida_em: '2027-01-10T12:00:00Z' })];
 
-  it('não verificada: fora do calendário, fora do custo comprometido e trava ativa', () => {
-    expect(noCalendario(p, naoVerificada)).toBe(false);
+  it('não verificada: já está no calendário, já conta no custo comprometido e NÃO trava a publicação', () => {
+    expect(noCalendario(p, naoVerificada)).toBe(true);
     const orc = orcamentoDoPastor({
       propostas: [p],
       avaliacoesPorProposta: { [p.id]: quatroAvaliacoes(4) },
@@ -277,7 +282,7 @@ describe('aprovada com ressalvas (teste 4 do spec)', () => {
       quorum: QUORUM,
       caixaLivre: new Array(12).fill(0),
     });
-    expect(orc.comprometido[4]).toBe(0); // maio
+    expect(orc.comprometido[4]).toBe(600); // maio
     const travas = validarTravas({
       propostas: [p],
       avaliacoesPorProposta: { [p.id]: quatroAvaliacoes(4) },
@@ -286,11 +291,13 @@ describe('aprovada com ressalvas (teste 4 do spec)', () => {
       locaisById: LOCAIS,
       aceites: [],
     });
-    expect(travas.bloqueada).toBe(true);
-    expect(travas.motivos).toContain('1 ressalva(s) não verificada(s)');
+    expect(travas.bloqueada).toBe(false);
+    expect(travas.motivos.join(' ')).not.toMatch(/ressalva/);
+    // a pendência segue visível pro Pastor no detalhe (aba Ressalvas), só não bloqueia
+    expect(travas.detalhe.ressalva).toHaveLength(1);
   });
 
-  it('verificada: entra no calendário E no custo comprometido', () => {
+  it('verificada: segue no calendário e no custo comprometido, e a pendência some do detalhe', () => {
     expect(noCalendario(p, verificada)).toBe(true);
     const orc = orcamentoDoPastor({
       propostas: [p],
@@ -300,6 +307,16 @@ describe('aprovada com ressalvas (teste 4 do spec)', () => {
       caixaLivre: new Array(12).fill(0),
     });
     expect(orc.comprometido[4]).toBe(600);
+    const travas = validarTravas({
+      propostas: [p],
+      avaliacoesPorProposta: { [p.id]: quatroAvaliacoes(4) },
+      decisoesPorProposta: { [p.id]: verificada },
+      quorum: QUORUM,
+      locaisById: LOCAIS,
+      aceites: [],
+    });
+    expect(travas.bloqueada).toBe(false);
+    expect(travas.detalhe.ressalva).toHaveLength(0);
   });
 });
 
@@ -388,14 +405,18 @@ describe('travas de publicação (teste 7 do spec)', () => {
     expect(t.motivos).toEqual(['2 retificação(ões) em andamento']);
   });
 
-  it('trava 4 · ressalva não verificada', () => {
+  // [DECISÃO · Marcos, 2026-09-18] ressalva não verificada NÃO é mais trava
+  // de publicação — vira só um item informativo em detalhe.ressalva.
+  it('ressalva não verificada NÃO bloqueia a publicação (só aparece em detalhe.ressalva)', () => {
     const p = prop({ estado: 'aprovada_ressalvas' });
     const t = validarTravas({
       ...base(),
       propostas: [p],
       decisoesPorProposta: { [p.id]: [decisao({ decisao: 'aprovada_ressalvas', ressalva_texto: 'x' })] },
     });
-    expect(t.motivos).toEqual(['1 ressalva(s) não verificada(s)']);
+    expect(t.motivos).toEqual([]);
+    expect(t.bloqueada).toBe(false);
+    expect(t.detalhe.ressalva).toHaveLength(1);
   });
 
   it('trava 5 · conflito firme não aceito', () => {
