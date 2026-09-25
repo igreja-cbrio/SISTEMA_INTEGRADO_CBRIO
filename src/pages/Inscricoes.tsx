@@ -17,7 +17,7 @@ import InscricoesPortas from './InscricoesPortas';
 import InscricoesQrInventario from './InscricoesQrInventario';
 import InscricoesEmails from './InscricoesEmails';
 import { caminhoPublicoEvento } from '../lib/genesisCba';
-import { rotuloStatusEvento } from '../lib/statusEvento';
+import { rotuloStatusEvento, eventoNaListaAtiva } from '../lib/statusEvento';
 import GenesisPainel from '../components/inscricoes/GenesisPainel';
 import { useAuth } from '../contexts/AuthContext';
 import { Card } from '../components/ui/card';
@@ -1119,6 +1119,7 @@ export default function Inscricoes() {
   const [loading, setLoading] = useState(true);
   const [mesRef, setMesRef] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
   const [modal, setModal] = useState<{ tipo: 'novo' | 'genesis' | 'editar' | 'edicao' | 'serie'; evento?: any; serieId?: string } | null>(null);
+  const [verInativos, setVerInativos] = useState(false);
 
   function carregar() {
     setLoading(true);
@@ -1135,11 +1136,23 @@ export default function Inscricoes() {
     return m;
   }, [eventos]);
 
-  // Aba Eventos agrupada: série recorrente = 1 card com as edições dentro
+  // Aba Eventos agrupada: série recorrente = 1 card com as edições dentro.
+  // Por padrão só o que está em uso (ativo/rascunho); inativos atrás do botão.
+  // Genesis CBA sai do agrupamento: tem card fixo próprio no topo, e cada
+  // Genesis aparece como evento comum dentro dele.
+  const ehDoGenesis = (e: any) => e.serie?.slug_base === 'genesis';
+  const totalInativos = useMemo(() => eventos.filter(e => !eventoNaListaAtiva(e.status)).length, [eventos]);
+  const genesisEdicoes = useMemo(
+    () => eventos.filter(e => ehDoGenesis(e) && (verInativos || eventoNaListaAtiva(e.status)))
+      .sort((a, b) => (b.data || '').localeCompare(a.data || '')),
+    [eventos, verInativos],
+  );
   const { grupos, avulsos } = useMemo(() => {
     const map = new Map<string, { serie: any; edicoes: any[] }>();
     const av: any[] = [];
     eventos.forEach(e => {
+      if (ehDoGenesis(e)) return;
+      if (!verInativos && !eventoNaListaAtiva(e.status)) return;
       if (e.serie_id && e.serie) {
         const g = map.get(e.serie_id) || { serie: e.serie, edicoes: [] };
         g.edicoes.push(e); map.set(e.serie_id, g);
@@ -1147,7 +1160,7 @@ export default function Inscricoes() {
     });
     map.forEach(g => g.edicoes.sort((a, b) => (b.data || '').localeCompare(a.data || '')));
     return { grupos: [...map.values()], avulsos: av };
-  }, [eventos]);
+  }, [eventos, verInativos]);
 
   const grupoAberto = useMemo(
     () => modal?.tipo === 'serie' ? grupos.find(g => g.serie.id === modal.serieId) || null : null,
@@ -1185,6 +1198,49 @@ export default function Inscricoes() {
     else toast.warning('Link copiado, mas o evento está em RASCUNHO — clique em Publicar pra ativar');
   }
 
+  // Linha de evento comum (avulso ou Genesis) — mesma gestão pra todos.
+  const linhaEvento = (e: any) => (
+                // O CARD INTEIRO abre o evento (só o texto abria antes, e sem
+                // afordância nenhuma — o clique na linha não fazia nada e isso
+                // se lê como "o card não é clicável"). Os botões de ação param
+                // a propagação: publicar/copiar/editar não devem navegar.
+                <div key={e.id} role="button" tabIndex={0}
+                  onClick={() => navigate(`/inscricoes/evento/${e.id}`)}
+                  onKeyDown={ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); navigate(`/inscricoes/evento/${e.id}`); } }}
+                  title="Abrir o evento (inscritos, pagamento e sorteio)"
+                  className="rounded-lg border border-border p-3 flex items-center gap-3 flex-wrap cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-colors">
+                  <div className="flex-1 min-w-[220px] text-left">
+                    <div className="font-medium text-sm">{e.nome}</div>
+                    <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
+                      <span className="rounded bg-foreground/8 px-1.5 py-0.5">{e.area}</span>
+                      {e.igreja?.nome && <span className="rounded bg-amber-500/15 text-amber-700 px-1.5 py-0.5">Parceira · {e.igreja.nome}</span>}
+                      {e.data && <span>{fmtData(e.data)}</span>}
+                      <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {e.inscritos}{e.vagas ? `/${e.vagas}` : ''}</span>
+                      <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{rotuloStatusEvento(e.status)}</span>
+                    </div>
+                  </div>
+                  <span className="text-xs text-primary font-medium shrink-0">Abrir →</span>
+                  <div className="flex items-center gap-1.5 shrink-0" onClick={ev => ev.stopPropagation()}>
+                    {e.status === 'rascunho' && (
+                      <Button size="sm" onClick={() => publicar(e)} title="Coloca o formulário no ar agora">
+                        <Megaphone className="h-3.5 w-3.5 mr-1" /> Publicar
+                      </Button>
+                    )}
+                    <Button size="sm" variant="outline" onClick={() => navigate(`/inscricoes/evento/${e.id}`)} title="Inscritos e sorteio">
+                      <Users className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button size="sm" variant="outline" title="Copiar o link público (/evento/…)" onClick={() => copiarLink(e)}>
+                      <Link2 className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setModal({ tipo: 'edicao', evento: e })} title="Copiar formulário e configurações pra próxima data">
+                      <CopyPlus className="h-3.5 w-3.5 mr-1" /> Duplicar evento
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setModal({ tipo: 'editar', evento: e })}>Editar</Button>
+                    <button onClick={() => excluir(e)} className="text-red-500 p-1.5" title="Excluir (soft)"><Trash2 className="h-4 w-4" /></button>
+                  </div>
+                </div>
+  );
+
   const ABAS = [
     { key: 'calendario', label: 'Calendário', on: true },
     { key: 'eventos', label: 'Eventos', on: true },
@@ -1208,11 +1264,6 @@ export default function Inscricoes() {
               longa e ninguém procuraria "totem" ao lado de "Dashboard"). */}
           <Button variant="outline" onClick={() => navigate('/inscricoes/totens')}>
             <MonitorSmartphone className="h-4 w-4 mr-1" /> Totens
-          </Button>
-          {/* Genesis CBA (24/09): série PERMANENTE de eventos em igrejas parceiras —
-              cada Genesis é uma edição (data + igreja sede) dentro dela. */}
-          <Button variant="outline" onClick={() => setModal({ tipo: 'genesis' })}>
-            <Repeat className="h-4 w-4 mr-1" /> Genesis CBA
           </Button>
           <Button onClick={() => setModal({ tipo: 'novo' })}><Plus className="h-4 w-4 mr-1" /> Novo evento</Button>
         </div>
@@ -1270,12 +1321,45 @@ export default function Inscricoes() {
         <>
         <AvisoCredencialPagamento podeForcar={podeEditar} />
         <Card className="glass-solid p-4">
+          <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+            <span className="text-xs text-muted-foreground">{verInativos ? 'Todos os eventos, inclusive os inativos' : 'Eventos ativos e em rascunho'}</span>
+            <Button size="sm" variant="outline" onClick={() => setVerInativos(v => !v)}>
+              {verInativos ? 'Esconder inativos' : `Ver inativos (${totalInativos})`}
+            </Button>
+          </div>
           {loading ? (
             <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
-          ) : eventos.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-6 text-center">Nenhum evento na espinha ainda — crie o primeiro. (Os eventos do módulo antigo migram na próxima entrega, sem perder nada.)</p>
           ) : (
             <div className="space-y-2">
+              {/* Genesis CBA · card FIXO (25/09): aparece mesmo sem nenhum Genesis
+                  criado. Cada Genesis é um evento comum (abrir, link, editar,
+                  inativar), marcado como de igreja parceira — a pessoa inscrita
+                  não vira cadastro nem entra nos números da CBRio. */}
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 space-y-2">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="flex-1 min-w-[220px]">
+                    <div className="font-medium text-sm flex items-center gap-2">
+                      <Repeat className="h-3.5 w-3.5 text-amber-700" /> Genesis CBA
+                      <span className="text-[10px] rounded-full bg-amber-500/15 text-amber-700 px-1.5 py-0.5">Igreja parceira · fora dos números da CBRio</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      Link sempre aberto: <code className="rounded bg-foreground/8 px-1">{window.location.origin}/genesis</code> — mostra o Genesis ativo no momento.
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Button size="sm" variant="outline" title="Copiar o link /genesis"
+                      onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/genesis`); toast.success('Link do Genesis copiado'); }}>
+                      <Link2 className="h-3.5 w-3.5 mr-1" /> Copiar link
+                    </Button>
+                    <Button size="sm" onClick={() => setModal({ tipo: 'genesis' })} title="Criar Genesis, cadastrar igreja sede, ver o resumo">
+                      <Plus className="h-3.5 w-3.5 mr-1" /> Novo Genesis / igrejas
+                    </Button>
+                  </div>
+                </div>
+                {genesisEdicoes.length === 0
+                  ? <p className="text-xs text-muted-foreground">Nenhum Genesis {verInativos ? 'criado' : 'ativo ou em rascunho'} ainda — clique em "Novo Genesis" e escolha a data e a igreja sede.</p>
+                  : <div className="space-y-2">{genesisEdicoes.map(e => linhaEvento(e))}</div>}
+              </div>
               {grupos.map(g => {
                 const totalInscritos = g.edicoes.reduce((s, e) => s + (Number(e.inscritos) || 0), 0);
                 return (
@@ -1299,47 +1383,7 @@ export default function Inscricoes() {
                   </button>
                 );
               })}
-              {avulsos.map(e => (
-                // O CARD INTEIRO abre o evento (só o texto abria antes, e sem
-                // afordância nenhuma — o clique na linha não fazia nada e isso
-                // se lê como "o card não é clicável"). Os botões de ação param
-                // a propagação: publicar/copiar/editar não devem navegar.
-                <div key={e.id} role="button" tabIndex={0}
-                  onClick={() => navigate(`/inscricoes/evento/${e.id}`)}
-                  onKeyDown={ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); navigate(`/inscricoes/evento/${e.id}`); } }}
-                  title="Abrir o evento (inscritos, pagamento e sorteio)"
-                  className="rounded-lg border border-border p-3 flex items-center gap-3 flex-wrap cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-colors">
-                  <div className="flex-1 min-w-[220px] text-left">
-                    <div className="font-medium text-sm">{e.nome}</div>
-                    <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
-                      <span className="rounded bg-foreground/8 px-1.5 py-0.5">{e.area}</span>
-                      {e.igreja?.nome && <span className="rounded bg-amber-500/15 text-amber-700 px-1.5 py-0.5">Parceira · {e.igreja.nome}</span>}
-                      {e.data && <span>{fmtData(e.data)}</span>}
-                      <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {e.inscritos}{e.vagas ? `/${e.vagas}` : ''}</span>
-                      <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{rotuloStatusEvento(e.status)}</span>
-                    </div>
-                  </div>
-                  <span className="text-xs text-primary font-medium shrink-0">Abrir →</span>
-                  <div className="flex items-center gap-1.5 shrink-0" onClick={ev => ev.stopPropagation()}>
-                    {e.status === 'rascunho' && (
-                      <Button size="sm" onClick={() => publicar(e)} title="Coloca o formulário no ar agora">
-                        <Megaphone className="h-3.5 w-3.5 mr-1" /> Publicar
-                      </Button>
-                    )}
-                    <Button size="sm" variant="outline" onClick={() => navigate(`/inscricoes/evento/${e.id}`)} title="Inscritos e sorteio">
-                      <Users className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button size="sm" variant="outline" title="Copiar o link público (/evento/…)" onClick={() => copiarLink(e)}>
-                      <Link2 className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => setModal({ tipo: 'edicao', evento: e })} title="Copiar formulário e configurações pra próxima data">
-                      <CopyPlus className="h-3.5 w-3.5 mr-1" /> Duplicar evento
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => setModal({ tipo: 'editar', evento: e })}>Editar</Button>
-                    <button onClick={() => excluir(e)} className="text-red-500 p-1.5" title="Excluir (soft)"><Trash2 className="h-4 w-4" /></button>
-                  </div>
-                </div>
-              ))}
+              {avulsos.map(e => linhaEvento(e))}
             </div>
           )}
         </Card>
