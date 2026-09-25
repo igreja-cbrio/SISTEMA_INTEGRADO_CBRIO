@@ -187,6 +187,26 @@ router.post('/', authorize('diretor', 'admin'), async (req, res) => {
       if (occs.length > 0) await supabase.from('event_occurrences').insert(occs);
     }
 
+    // Linha do tempo do Marketing (Fase 2): categoria com cultos configurados
+    // (marketing_categoria_cultos · hoje a Série → CBRio, AMI, Kids) nasce com o
+    // ciclo ATIVO — é o que faz as tarefas do Marketing aparecerem sozinhas.
+    // Best-effort: o evento já existe, e falhar aqui não pode desfazê-lo.
+    // ⚠️ Só essas categorias: Feriado ou Rotina de Liturgia não ganham ciclo.
+    let cicloAtivado = false;
+    if (ev.category_id) {
+      try {
+        const { data: cc, error: ccErr } = await supabase.from('marketing_categoria_cultos')
+          .select('category_id').eq('category_id', ev.category_id).limit(1);
+        if (ccErr && ccErr.code !== '42P01') throw ccErr;
+        if (cc?.length) {
+          const { activateCycleForEvent } = require('./cycles');
+          await activateCycleForEvent(ev.id, req.user.userId);
+          cicloAtivado = true;
+        }
+      } catch (e) { console.error('[eventos] ativação automática do ciclo:', e.message); }
+    }
+    ev.ciclo_ativado = cicloAtivado;
+
     await semFalhar(supabase.from('audit_log').insert({ table_name: 'events', record_id: ev.id, event_id: ev.id, action: 'create', description: `Evento criado: ${d.name}`, changed_by: req.user.userId, changed_by_name: req.user.name }), '[eventos]');
 
     notificar({

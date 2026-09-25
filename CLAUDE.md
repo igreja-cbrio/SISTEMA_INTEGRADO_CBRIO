@@ -7520,6 +7520,24 @@ e as migrations F2–F5 (ainda NÃO aplicadas) vivem no PR #3050 (`docs/modulo-m
   `PATCH /cards/:id` grava `atualizado_por` (service_role não tem `auth.uid`), e só o líder muda
   culto/prioridade/visibilidade.
 
+### Fase 2 · a série gera as próprias tarefas (migration `20260925110000`)
+
+- **Uma tarefa por ETAPA × CULTO** (CBRio, AMI, Kids), nascida da fase do evento
+  (`event_cycle_phases`) + a matriz (`marketing_ciclo_padroes` com `culto`/`visibilidade` +
+  `marketing_ciclo_itens_padrao`). Fase sem padrão não gera tarefa. A matriz é editável em
+  `/marketing/admin` → Padrões (responsável, quem vê, subtarefas com esforço em horas ou dias).
+- ⚠️⚠️ **A ativação do ciclo usa as etapas da categoria OU o criativo padrão**
+  (`utils/templatesCiclo`). Medido na Fase 0: as 11 etapas existem só com `category_id` NULL, e a
+  ativação filtrava pela categoria — ativar uma Série criava um ciclo VAZIO, sem erro. Ciclo sem
+  etapa nenhuma agora é erro, não ciclo vazio.
+- `POST /api/events` ativa o ciclo sozinho quando a categoria está em `marketing_categoria_cultos`
+  (hoje só a Série). Feriado, Rotina de Liturgia etc. NÃO ganham ciclo.
+- Kanban e `/cards` escondem as tarefas `so_lider` (Pré Briefing, Debrief) de quem não é líder.
+- O card que nasce da fase tem `event_phase_id` e nenhum `cycle_phase_task_id`; o `enrichCards`
+  monta o mesmo objeto de fase para o Kanban tratar os dois iguais.
+- Etapa que o modelo antigo já tinha concluído nasce concluída (com a data real); o item que
+  exige registro fica aberto (não se inventa texto).
+
 # ⚠️ REGRAS OBRIGATÓRIAS DE SEGURANÇA (não regredir · 2026-05-21)
 
 Esta seção é a lei do projeto após a Auditoria de Segurança 2026-05-21

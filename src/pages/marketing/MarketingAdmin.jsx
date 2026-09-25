@@ -690,10 +690,20 @@ function NovoOverrideForm({ membros, onSuccess }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// Padrões por fase (categoria do evento × fase → etiqueta + dono automáticos)
+// Padrões por etapa do ciclo (categoria × etapa × culto → responsável, quem vê
+// e as subtarefas com que a tarefa nasce) · linha do tempo · 2026-09-25
 // ═══════════════════════════════════════════════════════════════════════
+const CULTOS_LABEL = { cbrio: 'CBRio', ami: 'AMI', kids: 'Kids' };
+const VISIBILIDADE_LABEL = {
+  equipe: 'Equipe vê e marca',
+  lider_move: 'Equipe vê, só o líder marca',
+  so_lider: 'Só o líder vê',
+};
+const nomeMembro = (m) => (m?.profile?.name || m?.nome_display || '—');
+
 function AbaPadroes() {
   const [lista, setLista] = useState([]);
+  const [itens, setItens] = useState([]);
   const [categorias, setCategorias] = useState([]);
   const [tipos, setTipos] = useState([]);
   const [membros, setMembros] = useState([]);
@@ -704,16 +714,18 @@ function AbaPadroes() {
   const carregar = useCallback(async () => {
     setLoading(true);
     try {
-      const [p, c, t, m] = await Promise.all([
+      const [p, c, t, m, i] = await Promise.all([
         api.admin.cicloPadroes.list(),
         api.admin.cicloPadroes.categorias(),
         api.admin.etiquetasTipo.list(),
         api.membros(),
+        api.admin.cicloItens.list(),
       ]);
       setLista(p);
       setCategorias(c);
       setTipos((t || []).filter(x => x.ativo));
       setMembros(m);
+      setItens(i || []);
     } catch (e) { toast.error(e.message); }
     finally { setLoading(false); }
   }, []);
@@ -724,7 +736,7 @@ function AbaPadroes() {
     catch (e) { toast.error(e.message); }
   }
   async function remover(id) {
-    if (!confirm('Remover este padrão?')) return;
+    if (!confirm('Remover este padrão? A etapa deixa de gerar tarefa para este culto.')) return;
     try { await api.admin.cicloPadroes.remove(id); toast.success('Removido'); carregar(); }
     catch (e) { toast.error(e.message); }
   }
@@ -738,20 +750,26 @@ function AbaPadroes() {
     finally { setAplicando(false); }
   }
 
+  // categoria → etapa → { padroes, itens }
   const catMap = Object.fromEntries(categorias.map(c => [c.id, c.name]));
   const grupos = {};
-  for (const p of lista) {
-    const nome = p.categoria?.name || catMap[p.category_id] || '(categoria)';
-    (grupos[nome] = grupos[nome] || []).push(p);
-  }
+  const bucket = (catId, fase) => {
+    const cat = catMap[catId] || '(categoria)';
+    grupos[cat] = grupos[cat] || {};
+    grupos[cat][fase] = grupos[cat][fase] || { catId, padroes: [], itens: [] };
+    return grupos[cat][fase];
+  };
+  for (const p of lista) bucket(p.category_id, p.nome_fase).padroes.push(p);
+  for (const i of itens) if (i.ativo !== false) bucket(i.category_id, i.nome_fase).itens.push(i);
 
   return (
     <div className="space-y-3">
       <div className="flex justify-between items-start gap-3 flex-wrap">
         <div>
-          <p className="text-sm text-muted-foreground">{lista.length} padrões · {categorias.length} categorias</p>
-          <p className="text-xs text-muted-foreground">
-            Por (categoria do evento × fase) · aplica etiqueta + esforço + dono quando nasce o card. Pedro refina no card.
+          <p className="text-sm text-muted-foreground">{lista.length} padrões · {itens.filter(i => i.ativo !== false).length} subtarefas</p>
+          <p className="text-xs text-muted-foreground max-w-2xl">
+            Cada etapa do ciclo gera uma tarefa por culto, com o responsável, quem vê e as subtarefas abaixo.
+            Mudanças valem para as tarefas que nascerem daqui em diante.
           </p>
         </div>
         <div className="flex gap-2">
@@ -761,7 +779,7 @@ function AbaPadroes() {
           <Dialog open={novoOpen} onOpenChange={setNovoOpen}>
             <DialogTrigger asChild><Button size="sm" className="gap-1.5"><Plus className="h-4 w-4" /> Novo padrão</Button></DialogTrigger>
             <DialogContent>
-              <DialogHeader><DialogTitle>Novo padrão por fase</DialogTitle></DialogHeader>
+              <DialogHeader><DialogTitle>Novo padrão por etapa</DialogTitle></DialogHeader>
               <NovoPadraoForm categorias={categorias} tipos={tipos} membros={membros}
                 onSuccess={() => { setNovoOpen(false); carregar(); }} />
             </DialogContent>
@@ -769,17 +787,30 @@ function AbaPadroes() {
         </div>
       </div>
       {loading ? <Loader2 className="h-5 w-5 animate-spin mx-auto my-8 text-muted-foreground" /> : (
-        lista.length === 0 ? (
+        lista.length === 0 && itens.length === 0 ? (
           <Card className="p-6 text-center text-sm text-muted-foreground">
-            Nenhum padrão ainda. Crie o primeiro · ex: (Série × Briefing) → etiqueta "Briefing" + Cauã.
+            Nenhum padrão ainda. Crie o primeiro · ex.: (Série × Briefing × CBRio) → Cauã.
           </Card>
         ) : (
-          <div className="space-y-4">
-            {Object.entries(grupos).map(([cat, itens]) => (
-              <div key={cat} className="space-y-2">
+          <div className="space-y-6">
+            {Object.entries(grupos).map(([cat, fases]) => (
+              <div key={cat} className="space-y-3">
                 <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">{cat}</p>
-                {itens.map(p => (
-                  <PadraoRow key={p.id} padrao={p} tipos={tipos} membros={membros} onSave={salvar} onRemove={remover} />
+                {Object.entries(fases).map(([fase, g]) => (
+                  <Card key={fase} className="p-3 space-y-3">
+                    <p className="font-semibold text-sm">{fase}</p>
+                    <div className="space-y-2">
+                      {g.padroes
+                        .slice().sort((a, b) => (a.culto || '').localeCompare(b.culto || ''))
+                        .map(p => (
+                          <PadraoRow key={p.id} padrao={p} tipos={tipos} membros={membros} onSave={salvar} onRemove={remover} />
+                        ))}
+                      {g.padroes.length === 0 && (
+                        <p className="text-xs text-amber-600">Sem padrão: esta etapa não gera tarefa. As subtarefas abaixo ficam sem uso.</p>
+                      )}
+                    </div>
+                    <ItensEtapa categoryId={g.catId} fase={fase} itens={g.itens} membros={membros} onChange={carregar} />
+                  </Card>
                 ))}
               </div>
             ))}
@@ -792,24 +823,34 @@ function AbaPadroes() {
 
 function PadraoRow({ padrao, tipos, membros, onSave, onRemove }) {
   return (
-    <Card className="p-3 flex flex-wrap items-center gap-3">
-      <Badge variant="secondary" className="min-w-[120px] justify-center">{padrao.nome_fase}</Badge>
-
-      <Select value={padrao.etiqueta_tipo_id || '__none__'}
-        onValueChange={v => onSave(padrao.id, { etiqueta_tipo_id: v === '__none__' ? null : v })}>
-        <SelectTrigger className="w-[200px] h-8 text-xs"><SelectValue placeholder="Etiqueta..." /></SelectTrigger>
-        <SelectContent>
-          <SelectItem value="__none__">(sem etiqueta)</SelectItem>
-          {tipos.map(t => <SelectItem key={t.id} value={t.id}>{t.nome}{t.esforco_max_h ? ` · ${t.esforco_max_h}h` : ''}</SelectItem>)}
-        </SelectContent>
-      </Select>
+    <div className="flex flex-wrap items-center gap-2 rounded-md border p-2">
+      <Badge variant="secondary" className="min-w-[88px] justify-center">
+        {padrao.culto ? CULTOS_LABEL[padrao.culto] : 'Todos os cultos'}
+      </Badge>
 
       <Select value={padrao.atribuido_a || '__none__'}
         onValueChange={v => onSave(padrao.id, { atribuido_a: v === '__none__' ? null : v })}>
-        <SelectTrigger className="w-[180px] h-8 text-xs"><SelectValue placeholder="Dono..." /></SelectTrigger>
+        <SelectTrigger className="w-[200px] h-8 text-xs"><SelectValue placeholder="Responsável..." /></SelectTrigger>
         <SelectContent>
-          <SelectItem value="__none__">(sem dono)</SelectItem>
-          {membros.map(m => <SelectItem key={m.id} value={m.id}>{(m.profile?.name || m.nome_display || '—')} · {m.habilidade}</SelectItem>)}
+          <SelectItem value="__none__">(sem responsável)</SelectItem>
+          {membros.map(m => <SelectItem key={m.id} value={m.id}>{nomeMembro(m)} · {m.habilidade}</SelectItem>)}
+        </SelectContent>
+      </Select>
+
+      <Select value={padrao.visibilidade || 'equipe'}
+        onValueChange={v => onSave(padrao.id, { visibilidade: v })}>
+        <SelectTrigger className="w-[210px] h-8 text-xs"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          {Object.entries(VISIBILIDADE_LABEL).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
+        </SelectContent>
+      </Select>
+
+      <Select value={padrao.etiqueta_tipo_id || '__none__'}
+        onValueChange={v => onSave(padrao.id, { etiqueta_tipo_id: v === '__none__' ? null : v })}>
+        <SelectTrigger className="w-[170px] h-8 text-xs"><SelectValue placeholder="Etiqueta..." /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__none__">(sem etiqueta)</SelectItem>
+          {tipos.map(t => <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>)}
         </SelectContent>
       </Select>
 
@@ -818,15 +859,115 @@ function PadraoRow({ padrao, tipos, membros, onSave, onRemove }) {
         Ativo
       </label>
 
-      <Button size="icon" variant="outline" onClick={() => onRemove(padrao.id)} className="text-red-600 ml-auto">
+      <Button size="icon" variant="outline" onClick={() => onRemove(padrao.id)} className="text-red-600 ml-auto h-8 w-8">
         <Trash2 className="h-4 w-4" />
       </Button>
-    </Card>
+    </div>
+  );
+}
+
+// Subtarefas com que a tarefa da etapa nasce · quem faz · esforço (horas ou dias)
+function ItensEtapa({ categoryId, fase, itens, membros, onChange }) {
+  const [novoTexto, setNovoTexto] = useState('');
+  const [salvando, setSalvando] = useState(false);
+  const ordenados = itens.slice().sort((a, b) => (a.ordem ?? 0) - (b.ordem ?? 0));
+
+  async function salvar(id, payload) {
+    try { await api.admin.cicloItens.update(id, payload); onChange(); }
+    catch (e) { toast.error(e.message); }
+  }
+  async function remover(id) {
+    if (!confirm('Tirar esta subtarefa da etapa? As tarefas que já existem não mudam.')) return;
+    try { await api.admin.cicloItens.remove(id); onChange(); }
+    catch (e) { toast.error(e.message); }
+  }
+  async function adicionar() {
+    if (!novoTexto.trim()) return;
+    setSalvando(true);
+    try {
+      const ordem = ordenados.length ? Math.max(...ordenados.map(i => i.ordem ?? 0)) + 1 : 1;
+      await api.admin.cicloItens.create({ category_id: categoryId, nome_fase: fase, texto: novoTexto.trim(), ordem });
+      setNovoTexto('');
+      onChange();
+    } catch (e) { toast.error(e.message); }
+    finally { setSalvando(false); }
+  }
+
+  return (
+    <div className="space-y-1.5 border-t pt-2">
+      <p className="text-xs font-medium text-muted-foreground">Subtarefas</p>
+      {ordenados.map(i => <ItemPadraoRow key={i.id} item={i} membros={membros} onSave={salvar} onRemove={remover} />)}
+      {ordenados.length === 0 && <p className="text-xs text-muted-foreground">Nenhuma subtarefa.</p>}
+      <div className="flex gap-2 pt-1">
+        <Input value={novoTexto} onChange={e => setNovoTexto(e.target.value)} placeholder="Nova subtarefa"
+          className="h-8 text-xs" onKeyDown={e => { if (e.key === 'Enter') adicionar(); }} />
+        <Button size="sm" variant="outline" onClick={adicionar} disabled={salvando || !novoTexto.trim()} className="h-8">
+          <Plus className="h-4 w-4" />
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+function ItemPadraoRow({ item, membros, onSave, onRemove }) {
+  const [texto, setTexto] = useState(item.texto);
+  const [esforco, setEsforco] = useState(String(item.esforco_valor ?? 0));
+  useEffect(() => { setTexto(item.texto); setEsforco(String(item.esforco_valor ?? 0)); }, [item.texto, item.esforco_valor]);
+
+  function salvarEsforco() {
+    const v = Number(String(esforco).replace(',', '.'));
+    if (!Number.isFinite(v) || v < 0) { toast.error('Esforço deve ser um número maior ou igual a zero'); setEsforco(String(item.esforco_valor ?? 0)); return; }
+    if (v !== Number(item.esforco_valor)) onSave(item.id, { esforco_valor: v });
+  }
+
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <Input value={texto} onChange={e => setTexto(e.target.value)}
+        onBlur={() => { if (texto.trim() && texto.trim() !== item.texto) onSave(item.id, { texto: texto.trim() }); else setTexto(item.texto); }}
+        className="h-8 text-xs flex-1 min-w-[180px]" />
+
+      <Select value={item.membro_id || '__resp__'}
+        onValueChange={v => onSave(item.id, { membro_id: v === '__resp__' ? null : v })}>
+        <SelectTrigger className="w-[170px] h-8 text-xs"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__resp__">Responsável da tarefa</SelectItem>
+          {membros.map(m => <SelectItem key={m.id} value={m.id}>{nomeMembro(m)}</SelectItem>)}
+        </SelectContent>
+      </Select>
+
+      <Select value={item.culto || '__todos__'}
+        onValueChange={v => onSave(item.id, { culto: v === '__todos__' ? null : v })}>
+        <SelectTrigger className="w-[120px] h-8 text-xs"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="__todos__">Todos os cultos</SelectItem>
+          {Object.entries(CULTOS_LABEL).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
+        </SelectContent>
+      </Select>
+
+      <Input value={esforco} onChange={e => setEsforco(e.target.value)} onBlur={salvarEsforco}
+        inputMode="decimal" className="h-8 text-xs w-[64px]" aria-label="Esforço" />
+      <Select value={item.esforco_unidade || 'horas'} onValueChange={v => onSave(item.id, { esforco_unidade: v })}>
+        <SelectTrigger className="w-[88px] h-8 text-xs"><SelectValue /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value="horas">horas</SelectItem>
+          <SelectItem value="dias">dias</SelectItem>
+        </SelectContent>
+      </Select>
+
+      <label className="flex items-center gap-1.5 text-xs text-muted-foreground" title="Só fecha com texto registrado (ex.: o conceito do briefing)">
+        <input type="checkbox" checked={!!item.exige_registro} onChange={e => onSave(item.id, { exige_registro: e.target.checked })} />
+        Exige registro
+      </label>
+
+      <Button size="icon" variant="outline" onClick={() => onRemove(item.id)} className="text-red-600 h-8 w-8">
+        <Trash2 className="h-4 w-4" />
+      </Button>
+    </div>
   );
 }
 
 function NovoPadraoForm({ categorias, tipos, membros, onSuccess }) {
-  const [form, setForm] = useState({ category_id: '', nome_fase: '', etiqueta_tipo_id: '', atribuido_a: '' });
+  const [form, setForm] = useState({ category_id: '', nome_fase: '', etiqueta_tipo_id: '', atribuido_a: '', culto: '', visibilidade: 'equipe' });
   const [fases, setFases] = useState([]);
   const [loadingFases, setLoadingFases] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -842,8 +983,8 @@ function NovoPadraoForm({ categorias, tipos, membros, onSuccess }) {
   }
 
   async function submit() {
-    if (!form.category_id || !form.nome_fase) { toast.error('Categoria e fase obrigatórias'); return; }
-    if (!form.etiqueta_tipo_id && !form.atribuido_a) { toast.error('Informe ao menos etiqueta ou dono'); return; }
+    if (!form.category_id || !form.nome_fase) { toast.error('Categoria e etapa obrigatórias'); return; }
+    if (!form.etiqueta_tipo_id && !form.atribuido_a) { toast.error('Informe ao menos responsável ou etiqueta'); return; }
     setSubmitting(true);
     try {
       await api.admin.cicloPadroes.create({
@@ -851,6 +992,8 @@ function NovoPadraoForm({ categorias, tipos, membros, onSuccess }) {
         nome_fase: form.nome_fase,
         etiqueta_tipo_id: form.etiqueta_tipo_id || null,
         atribuido_a: form.atribuido_a || null,
+        culto: form.culto || null,
+        visibilidade: form.visibilidade,
       });
       toast.success('Criado');
       onSuccess();
@@ -870,45 +1013,64 @@ function NovoPadraoForm({ categorias, tipos, membros, onSuccess }) {
         </Select>
       </div>
       <div className="space-y-2">
-        <Label>Fase *</Label>
+        <Label>Etapa *</Label>
         <Select value={form.nome_fase} onValueChange={v => setForm(f => ({ ...f, nome_fase: v }))}
           disabled={!form.category_id || loadingFases}>
           <SelectTrigger>
-            <SelectValue placeholder={loadingFases ? 'Carregando...' : (form.category_id ? 'Selecione a fase' : 'Escolha a categoria antes')} />
+            <SelectValue placeholder={loadingFases ? 'Carregando...' : (form.category_id ? 'Selecione a etapa' : 'Escolha a categoria antes')} />
           </SelectTrigger>
           <SelectContent>
             {fases.map(f => <SelectItem key={f.nome} value={f.nome}>{f.numero ? `${f.numero}. ` : ''}{f.nome}</SelectItem>)}
           </SelectContent>
         </Select>
         {form.category_id && !loadingFases && fases.length === 0 && (
-          <p className="text-xs text-amber-600">Sem fases no catálogo dessa categoria · confira os templates do ciclo criativo.</p>
+          <p className="text-xs text-amber-600">Sem etapas no catálogo · confira os modelos do ciclo criativo.</p>
         )}
       </div>
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="space-y-2">
-          <Label>Etiqueta (entregável)</Label>
+          <Label>Culto</Label>
+          <Select value={form.culto || '__todos__'} onValueChange={v => setForm(f => ({ ...f, culto: v === '__todos__' ? '' : v }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__todos__">Todos os cultos</SelectItem>
+              {Object.entries(CULTOS_LABEL).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label>Quem vê</Label>
+          <Select value={form.visibilidade} onValueChange={v => setForm(f => ({ ...f, visibilidade: v }))}>
+            <SelectTrigger><SelectValue /></SelectTrigger>
+            <SelectContent>
+              {Object.entries(VISIBILIDADE_LABEL).map(([k, l]) => <SelectItem key={k} value={k}>{l}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label>Responsável</Label>
+          <Select value={form.atribuido_a || '__none__'}
+            onValueChange={v => setForm(f => ({ ...f, atribuido_a: v === '__none__' ? '' : v }))}>
+            <SelectTrigger><SelectValue placeholder="Opcional" /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">(sem responsável)</SelectItem>
+              {membros.map(m => <SelectItem key={m.id} value={m.id}>{nomeMembro(m)} · {m.habilidade}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        </div>
+        <div className="space-y-2">
+          <Label>Etiqueta</Label>
           <Select value={form.etiqueta_tipo_id || '__none__'}
             onValueChange={v => setForm(f => ({ ...f, etiqueta_tipo_id: v === '__none__' ? '' : v }))}>
             <SelectTrigger><SelectValue placeholder="Opcional" /></SelectTrigger>
             <SelectContent>
               <SelectItem value="__none__">(sem etiqueta)</SelectItem>
-              {tipos.map(t => <SelectItem key={t.id} value={t.id}>{t.nome}{t.esforco_max_h ? ` · ${t.esforco_max_h}h` : ''}</SelectItem>)}
-            </SelectContent>
-          </Select>
-        </div>
-        <div className="space-y-2">
-          <Label>Dono padrão</Label>
-          <Select value={form.atribuido_a || '__none__'}
-            onValueChange={v => setForm(f => ({ ...f, atribuido_a: v === '__none__' ? '' : v }))}>
-            <SelectTrigger><SelectValue placeholder="Opcional" /></SelectTrigger>
-            <SelectContent>
-              <SelectItem value="__none__">(sem dono)</SelectItem>
-              {membros.map(m => <SelectItem key={m.id} value={m.id}>{(m.profile?.name || m.nome_display || '—')} · {m.habilidade}</SelectItem>)}
+              {tipos.map(t => <SelectItem key={t.id} value={t.id}>{t.nome}</SelectItem>)}
             </SelectContent>
           </Select>
         </div>
       </div>
-      <p className="text-xs text-muted-foreground">Informe ao menos um (etiqueta ou dono). O esforço vem da etiqueta.</p>
+      <p className="text-xs text-muted-foreground">"Todos os cultos" vale onde o culto não tem padrão próprio.</p>
       <div className="flex justify-end">
         <Button onClick={submit} disabled={submitting}>{submitting ? 'Criando...' : 'Criar'}</Button>
       </div>
