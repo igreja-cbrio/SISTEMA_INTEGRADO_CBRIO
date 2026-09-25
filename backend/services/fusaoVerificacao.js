@@ -43,7 +43,7 @@ const TABELAS_COM_MEMBRO = Object.freeze([
   'ext_inscricoes', 'face_presencas', 'fin_alertas', 'fin_lancamentos_brutos',
   'fin_regras_classificacao', 'fin_transacoes', 'flx_acoes', 'identidade_pendencias',
   'inscricao_consentimentos', 'inscricoes', 'jornada_encaminhamentos',
-  'kids_responsaveis', 'kids_sala_voluntarios', 'marketing_capacidade_override',
+  'kids_responsaveis', 'kids_sala_voluntarios', 'marketing_capacidade_override', 'marketing_card_checklist',
   'marketing_compromissos_recorrentes', 'marketing_grupo_padrao',
   'marketing_recorrentes_participantes', 'mem_cadastros_pendentes', 'mem_censo_convites',
   'mem_checkins', 'mem_contatos', 'mem_contribuicoes', 'mem_devocionais', 'mem_escalas',
