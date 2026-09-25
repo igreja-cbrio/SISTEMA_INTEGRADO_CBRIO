@@ -13,6 +13,7 @@
  */
 
 const { supabase } = require('../utils/supabase');
+const { DATAS_ABERTAS_PADRAO } = require('../utils/batismoData');
 const { fetchAllRows } = require('../utils/pagination');
 
 /**
@@ -62,12 +63,34 @@ async function ocupacaoPorHorario(dataBatismo) {
  * Devolve `null` em falha — o chamador decide (aqui, falha fechada).
  */
 async function dataProximoBatismo() {
-  const { data, error } = await supabase.rpc('fn_proximo_quarto_domingo');
+  // ⚠️⚠️ Lê o CADASTRO (`fn_batismo_proxima_data`), não mais a fórmula crua.
+  // Desde 25/09/2026 as datas vivem em `batismo_eventos`: a fórmula do 4º
+  // domingo virou o semeador. Trocar AQUI conserta os 10 pontos de chamada de
+  // uma vez — se o gestor fechar uma data, todos passam a respeitar.
+  // A própria função tem a fórmula como rede, então tabela vazia não trava.
+  const { data, error } = await supabase.rpc('fn_batismo_proxima_data');
   if (error) {
-    console.error('[batismoHorarios] fn_proximo_quarto_domingo:', error.message);
+    console.error('[batismoHorarios] fn_batismo_proxima_data:', error.message);
     return null;
   }
   return data || null;
 }
 
-module.exports = { horariosConfigurados, ocupacaoPorHorario, dataProximoBatismo };
+/**
+ * As N próximas datas ABERTAS de batismo, em ordem.
+ *
+ * ⚠️ Falha FECHADA (`null`, não `[]`): lista vazia é indistinguível de "não
+ * consegui ler", e quem recebe `[]` mostra um formulário sem data nenhuma sem
+ * saber que está mostrando um erro.
+ */
+async function datasAbertas(n = DATAS_ABERTAS_PADRAO) {
+  const { data, error } = await supabase.rpc('fn_batismo_datas_abertas', { p_n: n });
+  if (error) {
+    console.error('[batismoHorarios] fn_batismo_datas_abertas:', error.message);
+    return null;
+  }
+  // A RPC devolve linhas {data: 'YYYY-MM-DD'}; normaliza para lista de texto.
+  return (data || []).map((r) => (typeof r === 'string' ? r : r?.data)).filter(Boolean);
+}
+
+module.exports = { horariosConfigurados, ocupacaoPorHorario, dataProximoBatismo, datasAbertas };

@@ -10,7 +10,8 @@ const {
 } = require('../services/inscricaoContrato');
 const { avaliarHorarioBatismo, horariosDisponiveis, normalizarHorario } = require('../utils/batismoHorario');
 const { acessibilidadeBatismo } = require('../utils/acessibilidadeBatismo');
-const { horariosConfigurados, ocupacaoPorHorario } = require('../services/batismoHorarios');
+const { horariosConfigurados, ocupacaoPorHorario, datasAbertas } = require('../services/batismoHorarios');
+const { DATAS_ABERTAS_PADRAO, resolverDataBatismo, mensagemData } = require('../utils/batismoData');
 
 // Limiter GENEROSO do router (padrão grupos/NPS/eventos): o form roda em
 // Wi-Fi único (lounge da igreja num domingo) — 10/15min por IP dava 429 na
@@ -86,8 +87,13 @@ function proximoQuartoDomingoISO() {
 // GET /api/public/batismo/proxima-data
 // Retorna a próxima data agendada (4o domingo do mês) - usada pelo form
 // para mostrar ao usuário quando ele será batizado.
-router.get('/proxima-data', (_req, res) => {
-  res.json({ data_batismo: proximoQuartoDomingoISO() });
+router.get('/proxima-data', async (_req, res) => {
+  // ⚠️ Lê o CADASTRO, igual ao `/horarios`. Enquanto isto lia a fórmula e o
+  // `/horarios` lia a tabela, os dois podiam responder datas diferentes na
+  // mesma tela — e este endpoint é justamente o FALLBACK de quando o outro
+  // falha, ou seja, discordância aparecendo no pior momento.
+  const lista = await datasAbertas(1);
+  res.json({ data_batismo: (lista && lista[0]) || proximoQuartoDomingoISO() });
 });
 
 // GET /api/public/batismo/textos — textos canônicos de consentimento (o
@@ -133,7 +139,15 @@ router.get('/textos', (_req, res) => {
 // Horários ABERTOS e COM VAGA pro próximo batismo · alimenta o seletor do form.
 router.get('/horarios', async (_req, res) => {
   try {
-    const dataBatismo = proximoQuartoDomingoISO();
+    // ⚠️⚠️ AS DATAS VÊM DO CADASTRO (25/09/2026), não mais da fórmula. A
+    // resposta ganhou `datas: [{data_batismo, horarios}]` e MANTEVE
+    // `data_batismo`/`horarios` no topo, apontando para a primeira — assim o
+    // bundle do app que está em campo continua funcionando sem release.
+    const lista3 = await datasAbertas(DATAS_ABERTAS_PADRAO);
+    if (lista3 === null) throw new Error('datas_indisponiveis');
+    // Sem data aberta nenhuma, cai na fórmula: o formulário nunca emudece.
+    const datas = lista3.length ? lista3 : [proximoQuartoDomingoISO()];
+    const dataBatismo = datas[0];
     const configurados = await horariosConfigurados();
     if (configurados === null) throw new Error('catalogo_indisponivel');
     const ocup = await ocupacaoPorHorario(dataBatismo);
@@ -146,7 +160,22 @@ router.get('/horarios', async (_req, res) => {
       const { data: cfg } = await supabase.from('batismo_config').select('grupo_url').eq('id', 1).maybeSingle();
       grupoUrl = cfg?.grupo_url || null;
     } catch { /* sem grupo */ }
-    res.json({ data_batismo: dataBatismo, horarios: lista, grupo_url: grupoUrl });
+    // ⚠️ A ocupação é POR DATA: cada data tem a sua contagem. Reaproveitar a
+    // de `dataBatismo` para as outras mostraria vaga que não existe — e o
+    // limite de 11 por horário é real (confirmado pelo gestor em 25/09).
+    const porData = await Promise.all(datas.map(async (d) => ({
+      data_batismo: d,
+      horarios: d === dataBatismo ? lista : horariosDisponiveis(configurados, await ocupacaoPorHorario(d)),
+    })));
+
+    res.json({
+      // Topo = primeira data. Mantido para o app antigo (contrato de 2026).
+      data_batismo: dataBatismo,
+      horarios: lista,
+      // Campo NOVO. Cliente que não conhece simplesmente ignora.
+      datas: porData,
+      grupo_url: grupoUrl,
+    });
   } catch (e) {
     console.error('[publicBatismo] horarios:', e.message);
     res.status(500).json({ error: 'Erro ao listar horários' });
@@ -290,7 +319,22 @@ router.post('/', async (req, res) => { // limiter geral já está no router.use 
       }
     }
 
-    const dataBatismo = proximoQuartoDomingoISO();
+    // ⚠️⚠️ A DATA ESCOLHIDA PASSA A VALER — mas só depois de CONFERIDA contra a
+    // janela aberta (25/09/2026). Aceitar a data do corpo sem conferir seria
+    // repetir o buraco de 11/08, quando o POST aceitava horário que o catálogo
+    // não tinha e uma cerimônia terminou com 12 pessoas num limite de 11.
+    //
+    // ⚠️ Corpo SEM data cai na primeira aberta, de propósito: é o formulário
+    // antigo em cache e o app que ainda não atualizou. Exigir a data trancaria
+    // quem não recarregou a página.
+    const { data: dataBatismo, motivo: motivoData } = resolverDataBatismo(
+      req.body?.data_batismo,
+      (await datasAbertas(DATAS_ABERTAS_PADRAO)) || [],
+    );
+    if (!dataBatismo) {
+      return res.status(motivoData === 'sem_datas_abertas' ? 503 : 400)
+        .json({ error: mensagemData(motivoData) });
+    }
 
     // Só normaliza aqui — quem CONFERE é o bloco logo antes do insert (a janela
     // de corrida encurta quanto mais perto da gravação).
