@@ -68,11 +68,25 @@ Kids.
 | Brainstorming e Conceito | Cauã · Letícia | Equipe | Defesa · MoodBoard (responsável) · Referências para redes (**Lorena**; o Pedro pode passar alguma para a Letícia) |
 | Identidade e Estratégia | Cauã · Letícia | Equipe | Roteirização (**Allan**) · Logo · Cores · Tipografia · Apresentação visual (responsável) · Planejamento de redes (**Lorena**) |
 | Aprovação | Pedro | **Equipe vê, só o Pedro marca** | Reunião de aprovação · Report da aprovação (**texto obrigatório**) |
-| Execução Estratégica | Cauã · Letícia | Equipe | Institucional · PPT Capa · PPT Miolo · Thumbs · Telas laterais · Horários do culto · Tela generosidade (responsável) · Vídeo Instagram (**Allan**) · Conteúdos para redes: vídeo (**Allan**) e posts (**Lorena**) |
+| Execução Estratégica | Cauã · Letícia | Equipe | Institucional · PPT (capa e miolo) · Thumbs · Telas laterais · Horários do culto · Tela generosidade (responsável) · Vídeo Instagram (**Allan**) · Conteúdos para redes: vídeo (**Allan**) e posts (**Lorena**) |
 | Pré-Testes | Pedro | Equipe vê, só o Pedro marca | Acompanhar os testes do que foi produzido |
+| Dia D | Pedro | Equipe vê, só o Pedro marca | Reunião de feedback no dia do evento |
+| Debrief | Pedro | **Só o Pedro** | Reunião de feedback do Debrief |
+
+Depois do Pré-Testes a equipe sai do processo. Finalizações e Alinhamentos Operacionais Finais
+não geram tarefa de Marketing. Os itens de redes (Allan: vídeo · Lorena: posts) são deles nos 3 cultos.
 
 A matriz está na seed da Fase 2 (`marketing_ciclo_padroes` + `marketing_ciclo_itens_padrao`) e
-o Pedro ajusta pelo Admin. Horas nascem em 0 até o Pedro preencher.
+o Pedro ajusta pelo Admin. O esforço de cada item nasce em 0 até o Pedro preencher.
+
+**Dois tempos diferentes (Marcos, 25/09):**
+
+| | O que é | Onde mora | Quem vê |
+|---|---|---|---|
+| **Esforço + prazo da subtarefa** | Quanto a pessoa trabalha (em **horas ou dias**) e até quando ela entrega aquela parte no sistema. Uma demanda pode ter várias subtarefas, de pessoas diferentes | `marketing_card_checklist.esforco_valor` + `esforco_unidade` + `prazo` | A equipe · alimenta o planner |
+| **Entrega final** | Quando o solicitante recebe. Pode ser semanas depois do esforço (revisão, aprovações) | `marketing_campanhas.prazo_entrega` (já existe) | Solicitações · mudança avisa o solicitante |
+
+O planner converte dias em horas pela capacidade diária da pessoa (`horas_semanais / 5`).
 
 **Ordem das séries.** A série com a pendência mais próxima (mais antiga) fica em cima. Série sem
 nada em aberto some quando "Esconder semanas sem pendência" está marcado.
@@ -96,8 +110,8 @@ mundo da área Marketing. Por isso:
 
 Duas exceções, definidas por `visibilidade` no card:
 
-- **`so_lider`** (Pré-briefing): ninguém além do líder vê.
-- **`lider_move`** (Aprovação, Pré-Testes): o responsável geral do culto vê a tarefa, mas só o
+- **`so_lider`** (Pré-briefing, Debrief): ninguém além do líder vê.
+- **`lider_move`** (Aprovação, Pré-Testes, Dia D): o responsável geral do culto vê a tarefa, mas só o
   líder marca.
 
 Item com `exige_registro` só fecha com texto em `registro`. O banco recusa (CHECK).
@@ -115,16 +129,14 @@ Cada fase é 1 PR. As migrations ficam em `supabase/migrations/` e o Marcos apli
   resultado. Ele confirma:
   - os tipos das tabelas feitas fora do git;
   - o nome da categoria Série;
-  - os **nomes exatos das fases** (a seed da matriz usa "Pré Briefing", "Pré-Testes"…);
+  - os **nomes exatos das fases** (a seed usa "Pré Briefing", "Pré-Testes", "Dia D", "Debrief"…);
   - se as 12 séries de 2027 já existem como `events`. Hoje elas só estão em
     `src/pages/public/novosite/series2027.ts`;
   - os triggers vivos.
-- Ainda com o Marcos/Pedro:
-  - **horas** de cada subtarefa da matriz;
-  - se Finalizações, Alinhamentos, Dia D e Debrief têm tarefa de Marketing;
-  - o campo opcional **"formato"** no formulário, para sugerir a pessoa (ver seção 6).
-- **Pronto quando:** resultado colado e respostas registradas. A matriz já está fechada
-  (seção 2).
+- Decisões fechadas em 25/09 (seção 6). Fica pendente só o **esforço** de cada subtarefa, que o
+  Pedro preenche pelo Admin depois — não bloqueia as migrations.
+- **Pronto quando:** o JSON do `00_verificacao_banco_vivo.sql` foi colado e conferido contra as
+  premissas das migrations (nomes de fase, categoria Série, equipe, triggers).
 
 ### Fase 1 · fundação de dados · `20260925100000_mkt_linha_f1_fundacao.sql`
 
@@ -137,7 +149,7 @@ Não muda nada que o Kanban faz hoje; só passa a gravar mais.
   - `prazo_inicial` (1ª data planejada, gravada uma vez);
   - `concluido_em` (acompanha o estado);
   - `atualizado_por` (o backend grava, porque service_role não tem `auth.uid`).
-- **Checklist vira subtarefa:** `membro_id`, `horas_previstas`, `prazo`, `concluido_em`,
+- **Checklist vira subtarefa:** `membro_id`, `esforco_valor` + `esforco_unidade`, `prazo`, `concluido_em`,
   `concluido_por`, `exige_registro` + `registro`. O banco não deixa fechar um item de registro
   sem texto.
 - **Campanha:** `culto`, `triada_em` / `triada_por` (saiu de Pendentes), `concluida_em`.
@@ -149,7 +161,7 @@ Não muda nada que o Kanban faz hoje; só passa a gravar mais.
   - `PATCH /api/marketing/cards/:id` passa a gravar `atualizado_por = req.user.userId`;
   - `PATCH /checklist/:itemId` aceita que o dono do item (`membro_id`) ou o responsável do card
     marque, e grava `concluido_por` e `registro`. Em card `lider_move`, só o líder marca;
-  - `POST/PATCH` do checklist aceitam `membro_id`, `horas_previstas`, `prazo` e
+  - `POST/PATCH` do checklist aceitam `membro_id`, `esforco_valor` + `esforco_unidade`, `prazo` e
     `exige_registro`.
 - **Pronto quando:** Kanban segue igual e a conferência do fim do arquivo volta zerada.
 
@@ -234,7 +246,8 @@ Toda solicitação passa pelo Pedro, mesmo quando é óbvio para quem vai (post 
 - **Backend** (só líder):
   - `POST /linha/pendentes/:campanhaId/alocar` → cria o card e o checklist.
     - **Exige** responsável (já vem a sugestão), **prioridade**, **descrição do que ele quer** e
-      **horas** por item.
+      **esforço e prazo** por item, e a **data de entrega final** (`prazo_entrega`), que não pode
+      ser anterior ao último prazo de subtarefa.
     - Reaproveita a régua de `POST /campanhas/:id/cards` (`marketing.js:2480`).
     - A campanha vira `ativa`, e o trigger grava `triada_em`.
   - `POST /linha/tarefas` → nova tarefa Interno ou Sistema.
@@ -258,7 +271,7 @@ Toda solicitação passa pelo Pedro, mesmo quando é óbvio para quem vai (post 
     MKT-PRAZO de hoje.
   - `vw_marketing_triagem`: horas até o Pedro alocar.
 - **Backend:** `GET /linha/carga?inicio&fim` → horas por pessoa × semana, contra a capacidade:
-  - soma `horas_previstas` dos itens (item sem dono conta para o responsável do card);
+  - soma o esforço dos itens (dias × `horas_semanais / 5`) (item sem dono conta para o responsável do card);
   - soma `duracao_h` da rotina;
   - capacidade = `marketing_capacidade_override.horas_disponiveis` da semana, ou
     `marketing_membros.horas_semanais`.
@@ -301,21 +314,15 @@ Todas as tabelas novas: RLS ligada, policy só para `service_role`, `REVOKE ALL`
 
 ## 6. Em aberto
 
-1. **Horas das subtarefas.** A matriz nasce com 0h e o Pedro preenche pelo Admin, ou o Marcos
-   passa agora.
-2. **Fases depois do Pré-Testes** (Finalizações, Alinhamentos Operacionais Finais, Dia D,
-   Debrief): o Marketing tem tarefa? Hoje não geram nada.
-3. **Pré-Testes:** ficou como a Aprovação (equipe vê, só o Pedro marca). Confirmar.
-4. **"Conteúdos para redes (Allan e Lorena)"** virou 2 itens, um de cada. **"PPT Miolo Thumbs"**
-   virou PPT Miolo + Thumbs. Confirmar.
-5. **Sugestão da pessoa depende de o formulário dizer o formato.** Hoje ele pede a dor, não a
-   peça (decisão do Pedro em 30/05).
-   - Proposta: campo opcional "que formato você imagina? (post, vídeo, arte, não sei)", usado
-     só para pré-preencher.
-   - Sem ele, o Pendente chega sem sugestão e o Pedro escolhe.
-6. **Séries 2027 como eventos.** Se a Fase 0 mostrar que não existem, cadastrar pelo
+Decididas em 25/09 (Marcos): esforço entra depois, pelo Pedro · depois do Pré-Testes o Marketing
+sai, só o Pedro volta no Dia D (a equipe vê) e no Debrief (só ele) · PPT é um item só (capa e
+miolo), Thumbs é outro · o formulário ganha o campo opcional de formato · a estética própria do
+Marketing fica para depois de tudo funcionando.
+
+1. **Esforço das subtarefas da matriz.** Nasce em 0; o Pedro preenche pelo Admin.
+2. **Séries 2027 como eventos.** Se a Fase 0 mostrar que não existem, cadastrar pelo
    Planejamento Anual (que passa a ativar o ciclo) ou por script.
-7. **Aline sem login.** Itens de fotografia no nome dela não têm quem marque. O responsável do
+3. **Aline sem login.** Itens de fotografia no nome dela não têm quem marque. O responsável do
    card marca por ela, como hoje.
 
 ## 7. Riscos

@@ -119,7 +119,8 @@ CREATE TABLE IF NOT EXISTS public.marketing_ciclo_itens_padrao (
   culto           text CHECK (culto IN ('cbrio', 'ami', 'kids')),
   texto           text NOT NULL,
   membro_id       uuid REFERENCES public.marketing_membros(id) ON DELETE SET NULL,
-  horas_previstas numeric(5,1) NOT NULL DEFAULT 0 CHECK (horas_previstas >= 0),
+  esforco_valor   numeric(6,1) NOT NULL DEFAULT 0 CHECK (esforco_valor >= 0),
+  esforco_unidade text NOT NULL DEFAULT 'horas' CHECK (esforco_unidade IN ('horas', 'dias')),
   exige_registro  boolean NOT NULL DEFAULT false,
   ordem           int  NOT NULL DEFAULT 0,
   ativo           boolean NOT NULL DEFAULT true,
@@ -224,8 +225,8 @@ BEGIN
     IF v_card IS NOT NULL THEN
       v_n := v_n + 1;
       INSERT INTO public.marketing_card_checklist
-        (card_id, grupo, texto, membro_id, horas_previstas, exige_registro, prazo)
-      SELECT v_card, f.nome_fase, i.texto, i.membro_id, i.horas_previstas, i.exige_registro, f.data_fim_prevista::date
+        (card_id, grupo, texto, membro_id, esforco_valor, esforco_unidade, exige_registro, prazo)
+      SELECT v_card, f.nome_fase, i.texto, i.membro_id, i.esforco_valor, i.esforco_unidade, i.exige_registro, f.data_fim_prevista::date
         FROM public.marketing_ciclo_itens_padrao i
        WHERE i.ativo AND i.category_id = v_cat AND i.nome_fase = f.nome_fase
          AND (i.culto IS NULL OR i.culto = v_culto)
@@ -453,7 +454,7 @@ BEGIN
 
   -- fases que não batem com o template são avisadas (nome tem que ser idêntico)
   FOREACH v_fase IN ARRAY ARRAY['Pré Briefing', 'Briefing', 'Brainstorming e Conceito', 'Identidade e Estratégia',
-                                'Aprovação', 'Execução Estratégica', 'Pré-Testes'] LOOP
+                                'Aprovação', 'Execução Estratégica', 'Pré-Testes', 'Dia D', 'Debrief'] LOOP
     IF NOT EXISTS (SELECT 1 FROM public.cycle_phase_templates
                     WHERE nome = v_fase AND (category_id IS NULL OR category_id = v_serie)) THEN
       RAISE NOTICE 'Fase "%" não existe em cycle_phase_templates · a seed grava mesmo assim, conferir o nome', v_fase;
@@ -477,7 +478,10 @@ BEGIN
     (v_serie, 'Execução Estratégica',     'cbrio', v_caua,  'equipe',     true),
     (v_serie, 'Execução Estratégica',     'ami',   v_caua,  'equipe',     true),
     (v_serie, 'Execução Estratégica',     'kids',  v_let,   'equipe',     true),
-    (v_serie, 'Pré-Testes',               NULL,    v_pedro, 'lider_move', true)
+    (v_serie, 'Pré-Testes',               NULL,    v_pedro, 'lider_move', true),
+    -- depois do Pré-Testes a equipe sai do processo; o Pedro volta no Dia D e no Debrief
+    (v_serie, 'Dia D',                    NULL,    v_pedro, 'lider_move', true),
+    (v_serie, 'Debrief',                  NULL,    v_pedro, 'so_lider',   true)
   ON CONFLICT DO NOTHING;
 
   -- subtarefas · membro NULL = responsável da tarefa (Cauã/Letícia, ou Pedro nas fases dele)
@@ -498,8 +502,7 @@ BEGIN
       ('Aprovação',                'Reunião de aprovação',                       NULL,       false, 1),
       ('Aprovação',                'Report da aprovação',                        NULL,       true,  2),
       ('Execução Estratégica',     'Institucional',                              NULL,       false, 1),
-      ('Execução Estratégica',     'PPT Capa',                                   NULL,       false, 2),
-      ('Execução Estratégica',     'PPT Miolo',                                  NULL,       false, 3),
+      ('Execução Estratégica',     'PPT · capa e miolo',                         NULL,       false, 2),
       ('Execução Estratégica',     'Thumbs',                                     NULL,       false, 4),
       ('Execução Estratégica',     'Telas laterais',                             NULL,       false, 5),
       ('Execução Estratégica',     'Horários do culto',                          NULL,       false, 6),
@@ -507,7 +510,9 @@ BEGIN
       ('Execução Estratégica',     'Vídeo Instagram',                            v_allan,    false, 8),
       ('Execução Estratégica',     'Conteúdos para redes · vídeo',               v_allan,    false, 9),
       ('Execução Estratégica',     'Conteúdos para redes · posts',               v_lorena,   false, 10),
-      ('Pré-Testes',               'Acompanhar os testes do que foi produzido',  NULL,       false, 1)
+      ('Pré-Testes',               'Acompanhar os testes do que foi produzido',  NULL,       false, 1),
+      ('Dia D',                    'Reunião de feedback no dia do evento',       NULL,       false, 1),
+      ('Debrief',                  'Reunião de feedback do Debrief',             NULL,       false, 1)
     ) AS x(fase, texto, membro, registro, ordem)
    WHERE NOT EXISTS (
      SELECT 1 FROM public.marketing_ciclo_itens_padrao i

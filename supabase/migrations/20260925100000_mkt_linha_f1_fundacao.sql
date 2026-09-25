@@ -141,7 +141,8 @@ CREATE TRIGGER tg_marketing_card_prazo_log
 -- ── 4. Checklist vira subtarefa ──────────────────────────────────────────
 ALTER TABLE public.marketing_card_checklist
   ADD COLUMN IF NOT EXISTS membro_id       uuid REFERENCES public.marketing_membros(id) ON DELETE SET NULL,
-  ADD COLUMN IF NOT EXISTS horas_previstas numeric(5,1) NOT NULL DEFAULT 0 CHECK (horas_previstas >= 0),
+  ADD COLUMN IF NOT EXISTS esforco_valor   numeric(6,1) NOT NULL DEFAULT 0 CHECK (esforco_valor >= 0),
+  ADD COLUMN IF NOT EXISTS esforco_unidade text NOT NULL DEFAULT 'horas' CHECK (esforco_unidade IN ('horas', 'dias')),
   ADD COLUMN IF NOT EXISTS prazo           date,
   ADD COLUMN IF NOT EXISTS concluido_em    timestamptz,
   ADD COLUMN IF NOT EXISTS concluido_por   uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
@@ -160,8 +161,10 @@ COMMENT ON COLUMN public.marketing_card_checklist.registro IS
 
 COMMENT ON COLUMN public.marketing_card_checklist.membro_id IS
   'Quem faz esta subtarefa. NULL = o responsável do card. A linha do tempo mostra ao liderado só as subtarefas dele (ou todas, se ele for o responsável do card).';
-COMMENT ON COLUMN public.marketing_card_checklist.horas_previstas IS
-  'Horas que a pessoa deve gastar nesta subtarefa na semana do card. Soma no planner de carga horária.';
+COMMENT ON COLUMN public.marketing_card_checklist.esforco_valor IS
+  'Tempo de TRABALHO da pessoa nesta subtarefa, na unidade de esforco_unidade. Não é o prazo de entrega final da demanda (esse é marketing_campanhas.prazo_entrega, o que o solicitante vê). O planner converte dias em horas pela capacidade diária da pessoa.';
+COMMENT ON COLUMN public.marketing_card_checklist.prazo IS
+  'Até quando ESTA pessoa entrega ESTA subtarefa dentro do sistema. Uma demanda pode ter várias subtarefas, de pessoas diferentes, com prazos diferentes; a entrega final ao solicitante é outra data (marketing_campanhas.prazo_entrega).';
 
 CREATE INDEX IF NOT EXISTS idx_mkt_checklist_membro_aberto
   ON public.marketing_card_checklist (membro_id) WHERE NOT feito;

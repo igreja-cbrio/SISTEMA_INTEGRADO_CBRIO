@@ -13,7 +13,8 @@
 -- → marketing_etiquetas_tipo.habilidade_padrao → a única pessoa ativa com essa
 -- habilidade. Sem formato, ou com 2+ pessoas na habilidade → sem sugestão.
 -- ⚠ O formulário hoje NÃO manda marketing_tipo_id (pede a dor, não a peça).
---   Ver README · decisão em aberto sobre um campo opcional "formato".
+--   O formulário ganha o campo OPCIONAL "que formato você imagina?" (decisão do
+--   Marcos, 25/09) · quem só descreve a dor chega sem sugestão e o Pedro decide.
 -- ════════════════════════════════════════════════════════════════════════
 
 BEGIN;
@@ -82,7 +83,7 @@ AS $function$
 $function$;
 
 COMMENT ON FUNCTION public.fn_marketing_cards_solicitacao_sync() IS
-  'Linha do tempo (2026-09-25): solicitação marketing aprovada → campanha em triagem ("Pendentes"), com sugerido_membro_id pelo formato pedido. O Pedro sempre aloca (prioridade, descrição, horas).';
+  'Linha do tempo (2026-09-25): solicitação marketing aprovada → campanha em triagem ("Pendentes"), com sugerido_membro_id pelo formato pedido. O Pedro sempre aloca (prioridade, descrição, esforço e prazo de cada subtarefa, e a data de entrega final em prazo_entrega).';
 
 -- Pendentes que já existem ganham a sugestão, quando houver formato
 UPDATE public.marketing_campanhas c
