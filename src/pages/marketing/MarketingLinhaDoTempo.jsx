@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AlertCircle, AlertTriangle, Loader2, Maximize2, CalendarCheck, Minus, Plus, RefreshCw, ListPlus } from 'lucide-react';
+import { createPortal } from 'react-dom';
+import { useNavigate } from 'react-router-dom';
+import { AlertCircle, AlertTriangle, Loader2, Maximize2, CalendarCheck, Minus, Plus, RefreshCw, ListPlus, X } from 'lucide-react';
 import { toast } from 'sonner';
 import { marketingLinha } from '../../api';
-import MarketingPagina from './MarketingPagina';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import { useCanvasPanZoom } from './linha/useCanvasPanZoom';
@@ -14,7 +15,10 @@ import ModalTarefa from './linha/ModalTarefa';
 import EditorTarefa from './linha/EditorTarefa';
 import './linha/linha.css';
 
-// Linha do tempo do Marketing (Fase 3). Canvas infinito: semanas do ano nas
+// Demandas do Marketing (a "linha do tempo" · Fase 3). Abre em TELA CHEIA, por
+// cima do menu e do cabeçalho do sistema, sempre no tema claro; só sai pelo X.
+// Portal no <body> de propósito: `position: fixed` dentro do AppShell se ancora
+// em qualquer ancestral com backdrop-filter (tema Vidro) em vez da janela. Canvas infinito: semanas do ano nas
 // colunas, as 4 frentes à esquerda. Os dados vêm já recortados pelo perfil de
 // quem vê (GET /marketing/linha); a tela só posiciona.
 
@@ -96,6 +100,24 @@ export default function MarketingLinhaDoTempo() {
   const [tarefaId, setTarefaId] = useState(null);
   const [editor, setEditor] = useState(null); // { modo, pendente?, tarefa? }
   const iniciadoAno = useRef(null);
+  const navigate = useNavigate();
+
+  // Tema claro só enquanto a tela está aberta; ao sair, volta o que estava (sem
+  // gravar preferência — quem decide o tema do sistema é o ThemeContext).
+  useEffect(() => {
+    const html = document.documentElement;
+    const temaAntes = html.getAttribute('data-theme');
+    const escuroAntes = html.classList.contains('dark');
+    const overflowAntes = document.body.style.overflow;
+    html.setAttribute('data-theme', 'light');
+    html.classList.remove('dark');
+    document.body.style.overflow = 'hidden';
+    return () => {
+      if (temaAntes) html.setAttribute('data-theme', temaAntes); else html.removeAttribute('data-theme');
+      html.classList.toggle('dark', escuroAntes);
+      document.body.style.overflow = overflowAntes;
+    };
+  }, []);
 
   const carregar = useCallback(async (silencioso = false) => {
     if (!silencioso) setCarregando(true);
@@ -149,8 +171,21 @@ export default function MarketingLinhaDoTempo() {
     </label>
   );
 
-  return (
-    <MarketingPagina subtitulo="Linha do tempo · semanas do ano por frente de trabalho" acoes={acoes}>
+  return createPortal(
+    <div className="fixed inset-0 z-[900] flex flex-col bg-white text-foreground" role="dialog" aria-label="Demandas do Marketing">
+      <div className="flex items-center gap-3 border-b border-border px-4 py-2.5">
+        <div className="min-w-0">
+          <p className="text-[11px] uppercase tracking-wider text-muted-foreground">Marketing</p>
+          <h1 className="text-lg font-semibold leading-tight">Demandas</h1>
+        </div>
+        <div className="ml-auto flex items-center gap-2">
+          {acoes}
+          <Button size="icon" variant="ghost" onClick={() => navigate('/marketing')} aria-label="Fechar demandas" title="Fechar">
+            <X className="h-5 w-5" />
+          </Button>
+        </div>
+      </div>
+      <div className="flex-1 min-h-0 overflow-auto p-3">
       {carregando && !dados && (
         <div className="flex justify-center py-16"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /></div>
       )}
@@ -169,7 +204,7 @@ export default function MarketingLinhaDoTempo() {
       )}
 
       {dados && layout && (
-        <div className="space-y-3">
+        <div className="flex h-full flex-col gap-3">
           {(dados.avisos || []).length > 0 && (
             <div className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300 space-y-1">
               {dados.avisos.map((a, i) => (
@@ -209,13 +244,13 @@ export default function MarketingLinhaDoTempo() {
             </div>
           </div>
 
-          <div className="mkt-linha rounded-xl border border-border overflow-hidden">
-            <div ref={pz.viewportRef} className="ml-viewport" style={{ height: 'calc(100vh - 300px)', minHeight: 480 }}>
+          <div className="mkt-linha flex-1 min-h-0 rounded-xl border border-border overflow-hidden">
+            <div ref={pz.viewportRef} className="ml-viewport" style={{ height: '100%', minHeight: 420 }}>
               <div ref={pz.canvasRef} className="ml-canvas" style={{ width: layout.CW, height: layout.CH }}>
                 <Arestas layout={layout} aberta={aberta} CW={layout.CW} CH={layout.CH} />
                 <div className="ml-abs ml-yr" style={{ left: G.BX, top: 34 }}>
                   <b>{dados.ano}</b>
-                  <span>Marketing · linha do tempo</span>
+                  <span>Marketing · demandas</span>
                 </div>
                 <Cabecalhos layout={layout} CH={layout.CH} />
                 <BlocosFrentes dados={dados} aberta={aberta} onToggle={setAberta} />
@@ -268,6 +303,8 @@ export default function MarketingLinhaDoTempo() {
           }}
         />
       )}
-    </MarketingPagina>
+      </div>
+    </div>,
+    document.body,
   );
 }
