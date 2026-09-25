@@ -279,7 +279,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 .srow .hd { display: flex; justify-content: space-between; gap: 10px; font-size: 13.5px; }
 .srow .hd b { font-weight: 700; }
 .srow .hd span { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
-.chips { display: grid; grid-template-columns: repeat(7, 1fr); gap: 5px; }
+.chips { display: grid; grid-template-columns: repeat(9, 1fr); gap: 5px; }
 .chips.lbl { margin-bottom: -2px; }
 .chips.lbl span { font-family: var(--mono); font-size: 9px; text-transform: uppercase; letter-spacing: .06em; color: var(--ink-3); }
 
@@ -421,10 +421,15 @@ button, input, select, textarea { font: inherit; color: inherit; }
     { off: -5, t: 'Aprovação', short: 'Aprovação', lead: true, vis: 'lider_move', brief: 'Reunião de aprovação e report do que foi decidido. O responsável acompanha, quem marca é o Pedro.',
       subs: [['reuniao', 'Reunião de aprovação', 1.5, 'pedro'], ['report', 'Report da aprovação', 1, 'pedro']] },
     { off: -4, t: 'Execução Estratégica', short: 'Execução', brief: 'Produzir as peças a partir da identidade aprovada.',
-      subs: [['inst', 'Institucional', 3, 'R'], ['pptcapa', 'PPT Capa', 1.5, 'R'], ['pptmiolo', 'PPT Miolo', 2, 'R'], ['thumbs', 'Thumbs', 1.5, 'R'], ['laterais', 'Telas laterais', 1.5, 'R'],
+      subs: [['inst', 'Institucional', 3, 'R'], ['ppt', 'PPT · capa e miolo', 3.5, 'R'], ['thumbs', 'Thumbs', 1.5, 'R'], ['laterais', 'Telas laterais', 1.5, 'R'],
              ['horarios', 'Horários do culto', 1, 'R'], ['generos', 'Tela generosidade', 1, 'R'], ['videoig', 'Vídeo Instagram', 5, 'allan'], ['redesvid', 'Conteúdos para redes · vídeo', 4, 'allan'], ['redespost', 'Conteúdos para redes · posts', 4, 'lorena']] },
     { off: -2, t: 'Pré-Testes', short: 'Pré-Testes', lead: true, vis: 'lider_move', brief: 'O Pedro acompanha os testes de tudo o que foi produzido antes de ir para o culto.',
       subs: [['testes', 'Acompanhar os testes do que foi produzido', 2, 'pedro']] },
+    // depois do Pré-Testes a equipe sai; o Pedro volta no Dia D (a equipe vê) e no Debrief (só ele)
+    { off: 0, t: 'Dia D', short: 'Dia D', lead: true, vis: 'lider_move', brief: 'Reunião de feedback no dia do evento. A equipe vê, só o Pedro marca.',
+      subs: [['diad', 'Reunião de feedback no dia do evento', 1, 'pedro']] },
+    { off: 1, t: 'Debrief', short: 'Debrief', lead: true, vis: 'so_lider', brief: 'Reunião de feedback do Debrief. Só o Pedro vê.',
+      subs: [['debrief', 'Reunião de feedback do Debrief', 1, 'pedro']] },
   ];
   const mkMatrix = geral => Object.assign({ geral }, ...PHASES.flatMap(ph => ph.subs.map(([k, , , w]) => ({ [k]: w === 'R' ? geral : w }))));
   const MATRIX = { cbrio: mkMatrix('caua'), ami: mkMatrix('caua'), kids: mkMatrix('leticia') };
@@ -541,16 +546,16 @@ button, input, select, textarea { font: inherit; color: inherit; }
     return T;
   }
 
-  const TKEY = 'mkt-linha-2027-v5-tasks';
+  const TKEY = 'mkt-linha-2027-v6-tasks';
   let TASKS, BY_ID = {};
   function loadTasks() {
     TASKS = null;
-    try { const s = JSON.parse(localStorage.getItem(TKEY) || 'null'); if (s && s.v === 5 && Array.isArray(s.tasks)) TASKS = s.tasks; } catch (e) {}
+    try { const s = JSON.parse(localStorage.getItem(TKEY) || 'null'); if (s && s.v === 6 && Array.isArray(s.tasks)) TASKS = s.tasks; } catch (e) {}
     if (!TASKS) TASKS = buildData();
     subSeq = TASKS.reduce((m, t) => Math.max(m, ...t.subs.map(s => +s.id.slice(1) || 0)), 0) + 1;
     BY_ID = Object.fromEntries(TASKS.map(t => [t.id, t]));
   }
-  const saveTasks = () => { try { localStorage.setItem(TKEY, JSON.stringify({ v: 5, tasks: TASKS })); } catch (e) {} };
+  const saveTasks = () => { try { localStorage.setItem(TKEY, JSON.stringify({ v: 6, tasks: TASKS })); } catch (e) {} };
   loadTasks();
 
   // ---------- estado ----------
