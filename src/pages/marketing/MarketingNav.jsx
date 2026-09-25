@@ -19,7 +19,7 @@ export default function MarketingNav() {
   const items = [
     { path: '/marketing',                  label: 'Dashboard',  icon: LayoutDashboard },
     { path: '/marketing/kanban',           label: 'Kanban',     icon: Kanban },
-    { path: '/marketing/linha-do-tempo',   label: 'Linha do tempo', icon: GanttChart },
+    { path: '/marketing/demandas',         label: 'Demandas', icon: GanttChart },
     ...(isCoord ? [{ path: '/marketing/planner', label: 'Planner', icon: CalendarRange }] : []),
     // Aba "App" (17/08) · reúne Comunicados + Destaques da Home + Fotos de
     // Batismo, que antes eram 3 lugares diferentes pra publicar no MESMO app.

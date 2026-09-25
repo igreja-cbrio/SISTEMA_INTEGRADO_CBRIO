@@ -901,7 +901,8 @@ function AppRoutes() {
             que agora abre o dashboard, com o Kanban a um clique no cabeçalho. */}
         <Route path="/marketing" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingDashboard /></Suspense></ModuleGuard>} />
         <Route path="/marketing/kanban" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingKanban /></Suspense></ModuleGuard>} />
-        <Route path="/marketing/linha-do-tempo" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingLinhaDoTempo /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/demandas" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingLinhaDoTempo /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/linha-do-tempo" element={<Navigate to="/marketing/demandas" replace />} />
         <Route path="/marketing/dashboard" element={<Navigate to="/marketing" replace />} />
         <Route path="/marketing/calendario" element={<Navigate to="/marketing/kanban" replace />} />
         <Route path="/marketing/planner" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingPlanner /></Suspense></ModuleGuard>} />
