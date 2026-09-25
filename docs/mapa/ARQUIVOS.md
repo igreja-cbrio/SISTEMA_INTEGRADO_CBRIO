@@ -386,7 +386,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/marketing/MarketingDashboard` | tela ERP | marketing | `/marketing` |
 | `src/pages/marketing/MarketingGenerosidade` | tela ERP | marketing | `/marketing/generosidade` |
 | `src/pages/marketing/MarketingKanban` | tela ERP | marketing | `/marketing/kanban` |
-| `src/pages/marketing/MarketingLinhaDoTempo` | tela ERP | marketing | `/marketing/linha-do-tempo` |
+| `src/pages/marketing/MarketingLinhaDoTempo` | tela ERP | marketing | `/marketing/demandas` |
 | `src/pages/marketing/MarketingPlanner` | tela ERP | marketing | `/marketing/planner` |
 | `src/pages/MinhasTarefas` | tela ERP | — | `/tarefas` |
 | `src/pages/ministerial/Batismos` | tela ERP | batismo | `/batismo` |

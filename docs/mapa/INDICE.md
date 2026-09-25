@@ -41,7 +41,7 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **kids** | `/ministerial/totem-kids` `/ministerial/kids` `/ministerial/totem-kids/criancas` … | `totemKids.js` | [kids](kids.md) |
 | **links** | — | `links.js` | [links](links.md) |
 | **logistica** | — | `logistica.js` | [logistica](logistica.md) |
-| **marketing** | `/marketing` `/marketing/kanban` `/marketing/linha-do-tempo` … | `batismoFotos.js` `comunicados.js` | [marketing](marketing.md) |
+| **marketing** | `/marketing` `/marketing/kanban` `/marketing/demandas` … | `batismoFotos.js` `comunicados.js` | [marketing](marketing.md) |
 | **membresia** | — | `jornada.js` `lgpd.js` | [membresia](membresia.md) |
 | **membros** | — | `membresia.js` `pessoas.js` | [membros](membros.md) |
 | **membros-financeiro** | — | `membresia.js` | [membros-financeiro](membros-financeiro.md) |

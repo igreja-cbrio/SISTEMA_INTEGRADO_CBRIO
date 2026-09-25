@@ -14,7 +14,7 @@
 |---|---|---|
 | `/marketing` | `src/pages/marketing/MarketingDashboard` | 1 |
 | `/marketing/kanban` | `src/pages/marketing/MarketingKanban` | 1 |
-| `/marketing/linha-do-tempo` | `src/pages/marketing/MarketingLinhaDoTempo` | 1 |
+| `/marketing/demandas` | `src/pages/marketing/MarketingLinhaDoTempo` | 1 |
 | `/marketing/planner` | `src/pages/marketing/MarketingPlanner` | 1 |
 | `/marketing/admin` | `src/pages/marketing/MarketingAdmin` | 5 |
 | `/marketing/analytics` | `src/pages/marketing/MarketingAnalytics` | 1 |
