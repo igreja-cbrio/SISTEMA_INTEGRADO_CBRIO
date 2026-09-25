@@ -164,6 +164,7 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 - `fin_plano_contas`
 - `fin_transacoes`
 - `insc_eventos`
+- `marketing_categoria_cultos`
 - `meetings`
 - `pcs_criterios`
 - `pcs_graus`

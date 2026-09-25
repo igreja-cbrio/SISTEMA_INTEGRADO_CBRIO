@@ -80,6 +80,7 @@ Guard: `authorizeModule('events', 2)`
 - `event_task_subtasks`
 - `event_tasks`
 - `events`
+- `marketing_categoria_cultos`
 - `meetings`
 - `pendencies`
 - `simple_event_task_templates`

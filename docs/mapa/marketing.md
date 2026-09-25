@@ -25,10 +25,11 @@
 - `backend/routes/destaques.js`
 - `backend/routes/marketing.js`
 Guard: `authorizeModule('marketing', 1 | 3 | 5)`
-<details><summary>Endpoints (78)</summary>
+<details><summary>Endpoints (82)</summary>
 - `DELETE /api/batismo-fotos/:data/fotos/:nome`
 - `DELETE /api/comunicados/:id`
 - `DELETE /api/destaques/:id`
+- `DELETE /api/marketing/admin/ciclo-itens/:id`
 - `DELETE /api/marketing/admin/ciclo-padroes/:id`
 - `DELETE /api/marketing/admin/membros/:id`
 - `DELETE /api/marketing/admin/overrides/:id`
@@ -41,6 +42,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `GET /api/batismo-fotos/:data/fotos`
 - `GET /api/comunicados`
 - `GET /api/destaques`
+- `GET /api/marketing/admin/ciclo-itens`
 - `GET /api/marketing/admin/ciclo-padroes`
 - `GET /api/marketing/admin/ciclo-padroes/categorias`
 - `GET /api/marketing/admin/ciclo-padroes/fases`
@@ -69,6 +71,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `GET /api/marketing/kanban`
 - `GET /api/marketing/membros`
 - `GET /api/marketing/planner`
+- `PATCH /api/marketing/admin/ciclo-itens/:id`
 - `PATCH /api/marketing/admin/ciclo-padroes/:id`
 - `PATCH /api/marketing/admin/etiquetas/destino/:id`
 - `PATCH /api/marketing/admin/etiquetas/tipo/:id`
@@ -89,6 +92,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `POST /api/comunicados/upload-foto`
 - `POST /api/destaques`
 - `POST /api/destaques/:id/imagem`
+- `POST /api/marketing/admin/ciclo-itens`
 - `POST /api/marketing/admin/ciclo-padroes`
 - `POST /api/marketing/admin/ciclo-padroes/aplicar`
 - `POST /api/marketing/admin/etiquetas/destino`
@@ -139,6 +143,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `marketing_campanhas`
 - `marketing_capacidade_override`
 - `marketing_card_checklist`
+- `marketing_ciclo_itens_padrao`
 - `marketing_ciclo_padroes`
 - `marketing_compromissos_recorrentes`
 - `marketing_entregaveis`
