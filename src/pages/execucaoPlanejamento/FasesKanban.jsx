@@ -156,7 +156,7 @@ export default function FasesKanban({ proposta, onMaterializado }) {
     setIniciandoFases(true);
     try {
       for (let i = 0; i < PHASE_NAMES_PROJETO.length; i++) {
-        await projectsApi.createPhase(vinculo.id, { name: PHASE_NAMES_PROJETO[i], order_index: i, status: 'pendente' });
+        await projectsApi.createPhase(vinculo.id, { name: PHASE_NAMES_PROJETO[i], phase_order: i + 1, status: 'pendente' });
       }
       await carregar();
     } catch (e) {

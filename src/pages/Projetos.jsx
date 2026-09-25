@@ -489,7 +489,7 @@ export default function Projetos() {
         { name: 'Encerramento', phase_order: 7 },
       ];
       for (let i = 0; i < defaultPhases.length; i++) {
-        await projects.createPhase(detail.id, { name: defaultPhases[i].name, order_index: i, status: 'pendente' });
+        await projects.createPhase(detail.id, { name: defaultPhases[i].name, phase_order: defaultPhases[i].phase_order, status: 'pendente' });
       }
       refreshDetail();
     } catch (e) { setError(e.message); }
