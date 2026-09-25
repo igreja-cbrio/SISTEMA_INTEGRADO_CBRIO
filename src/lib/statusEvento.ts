@@ -13,3 +13,11 @@ export function rotuloStatusEvento(status?: string | null): string {
   const s = String(status || '');
   return ROTULO_STATUS_EVENTO[s] || s;
 }
+
+// Lista de Eventos (25/09/2026 · pedido do Marcos): por padrão mostra só o que
+// está em uso — ativo e rascunho (rascunho é evento sendo montado, não
+// inativo). Inativo e arquivado ficam atrás do botão "Ver inativos".
+export function eventoNaListaAtiva(status?: string | null): boolean {
+  const s = String(status || '');
+  return s === 'publicado' || s === 'rascunho';
+}
