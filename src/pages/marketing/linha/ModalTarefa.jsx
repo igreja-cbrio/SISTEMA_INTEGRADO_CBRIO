@@ -24,7 +24,7 @@ function Fato({ rotulo, children }) {
   );
 }
 
-export default function ModalTarefa({ tarefa, dados, onClose, onChanged }) {
+export default function ModalTarefa({ tarefa, dados, onClose, onChanged, onEditar }) {
   const [marcando, setMarcando] = useState(null);
   const [override, setOverride] = useState({});
   const [erro, setErro] = useState(null);
@@ -215,7 +215,8 @@ export default function ModalTarefa({ tarefa, dados, onClose, onChanged }) {
           </section>
         </div>
 
-        <div className="flex justify-end pt-2">
+        <div className="flex justify-end gap-2 pt-2">
+          {onEditar && !ehRotina && <Button variant="outline" onClick={onEditar}>Editar</Button>}
           <Button variant="outline" onClick={onClose}>Fechar</Button>
         </div>
       </DialogContent>

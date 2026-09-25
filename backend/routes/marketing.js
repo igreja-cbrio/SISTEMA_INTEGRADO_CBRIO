@@ -46,6 +46,7 @@ router.use(authenticate);
 // levelOf e contextoSubtarefa moram em services/marketingContexto (a linha do
 // tempo usa a mesma régua de líder).
 const { levelOf, contextoSubtarefa } = require('../services/marketingContexto');
+const { avisarEntregue, avisarSeChecklistConcluiu, avisarPrazoAjustado } = require('../services/marketingAvisos');
 
 function isAdminLike(req) {
   if (['admin', 'diretor'].includes(req.user.role)) return true;
@@ -722,41 +723,8 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
   }
 });
 
-// Aviso de entrega ao solicitante · a MESMA mensagem pelos dois caminhos que
-// concluem um card: arrastar no Kanban (PATCH /cards/:id) e o checklist completo
-// (o gatilho fn_marketing_checklist_fecha_card, que roda no banco e não avisa
-// ninguém sozinho). chaveDedup por card: fechar, reabrir e fechar não repete.
-function avisarEntregue(card, sol) {
-  if (!sol?.solicitante_id) return;
-  notificar({
-    modulo: 'marketing',
-    tipo: 'marketing_card_entregue',
-    titulo: `Entregue: ${sol.titulo_solicitacao}`,
-    mensagem: 'Sua solicitação foi marcada como entregue. Avalie em 30 segundos.',
-    link: '/solicitacoes',
-    severidade: 'info',
-    chaveDedup: `marketing_card_entregue_${card.id}`,
-    targetIds: [sol.solicitante_id],
-  }).catch(err => console.error('[MARKETING] notify entregue:', err.message));
-}
-
-// O checklist mexeu: se o gatilho levou o card a 'concluido' (antes não estava),
-// avisa o solicitante. Best-effort: o item já está gravado e o aviso não pode
-// desfazê-lo. Erro de consulta só loga (é o mesmo tratamento do PATCH /cards).
-async function avisarSeChecklistConcluiu(cardId, estadoAntes) {
-  if (estadoAntes === 'concluido') return;
-  try {
-    const { data: card, error } = await supabase
-      .from('marketing_kanban_cards')
-      .select('id, estado, campanha_id, solicitacao_id')
-      .eq('id', cardId).is('deleted_at', null).maybeSingle();
-    if (error) throw error;
-    if (!card || card.estado !== 'concluido') return;
-    const sol = await solicitanteDoCard(card);
-    if (sol?.erro) { console.error('[MARKETING] solicitante do card (não avisou):', sol.motivo); return; }
-    avisarEntregue(card, sol);
-  } catch (e) { console.error('[MARKETING] aviso pós-checklist:', e.message); }
-}
+// avisarEntregue / avisarSeChecklistConcluiu moram em services/marketingAvisos
+// (a linha do tempo dispara os mesmos avisos).
 
 // Solicitante aprova entrega · card vira concluído (Spec 012)
 // Endpoint dedicado pq solicitante não tem permissão geral de UPDATE no card.
@@ -2661,29 +2629,8 @@ router.patch('/campanhas/:id', authorizeModule('marketing', 5), async (req, res)
     const { data, error } = await supabase
       .from('marketing_campanhas').update(update).eq('id', req.params.id).select('*').single();
     if (error) throw error;
-    // Se o Pedro definiu/mudou o prazo de entrega e ele difere da data que o cliente
-    // pediu, avisa o solicitante (o Pedro vai conversar e dar a 1a devolutiva).
-    if (prazo_entrega !== undefined && data?.solicitacao_id && data?.solicitante_id) {
-      try {
-        const { data: sol } = await supabase.from('solicitacoes')
-          .select('data_necessaria, titulo').eq('id', data.solicitacao_id).maybeSingle();
-        const pedida = sol?.data_necessaria ? new Date(sol.data_necessaria).toISOString().slice(0, 10) : null;
-        const nova = data.prazo_entrega ? new Date(data.prazo_entrega).toISOString().slice(0, 10) : null;
-        if (nova && pedida && nova !== pedida) {
-          const fmt = (d) => d.split('-').reverse().join('/');
-          notificar({
-            modulo: 'marketing',
-            tipo: 'marketing_prazo_ajustado',
-            titulo: `Prazo ajustado: ${sol?.titulo || data.titulo}`,
-            mensagem: `A equipe de Marketing ajustou a entrega de ${fmt(pedida)} para ${fmt(nova)}. O Pedro vai falar com você sobre isso.`,
-            link: '/solicitacoes',
-            severidade: 'info',
-            chaveDedup: `mkt_prazo_${data.id}_${nova}`,
-            targetIds: [data.solicitante_id],
-          }).catch(err => console.error('[MARKETING] notify prazo ajustado:', err.message));
-        }
-      } catch (nerr) { console.error('[MARKETING] prazo ajustado block:', nerr.message); }
-    }
+    // Entrega final diferente da data pedida → avisa o solicitante.
+    if (prazo_entrega !== undefined) await avisarPrazoAjustado(data);
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

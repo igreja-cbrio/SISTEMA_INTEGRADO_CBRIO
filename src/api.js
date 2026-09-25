@@ -2605,6 +2605,10 @@ export const marketingLinha = {
     put(`/marketing/linha/rotina/${encodeURIComponent(compromissoId)}/${encodeURIComponent(semanaInicio)}`, { membro_id: membroId }),
   desmarcarRotina: (compromissoId, semanaInicio, membroId) =>
     del(`/marketing/linha/rotina/${encodeURIComponent(compromissoId)}/${encodeURIComponent(semanaInicio)}?membro_id=${encodeURIComponent(membroId)}`),
+  // Fase 4 · editor do líder
+  alocar: (campanhaId, body) => post(`/marketing/linha/pendentes/${encodeURIComponent(campanhaId)}/alocar`, body),
+  criarTarefa: (body) => post('/marketing/linha/tarefas', body),
+  editarTarefa: (id, body) => patch(`/marketing/linha/tarefas/${encodeURIComponent(id)}`, body),
 };
 
 export const solicitacoes = {
