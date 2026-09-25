@@ -7495,6 +7495,31 @@ porta. Outros: `graphify god-nodes` (hubs · `notificar()` com 101 arestas,
 ⚠️ `explain`/`affected` pedem o **id do nó** (`backend_routes_grupos_aprovarpedidocore`),
 não o caminho do arquivo; nome ambíguo devolve a lista de candidatos.
 
+## Marketing · LINHA DO TEMPO · Fase 1 no ar (2026-09-25 · migration `20260925100000` APLICADA)
+
+Primeira fase da aba que vai substituir o Kanban do Marketing. Plano completo, matriz do ciclo
+e as migrations F2–F5 (ainda NÃO aplicadas) vivem no PR #3050 (`docs/modulo-marketing/linha-do-tempo/`).
+
+- **Subtarefa (checklist) ganhou dono e tempo:** `membro_id`, `esforco_valor` + `esforco_unidade`
+  (`horas` | `dias`), `prazo`, `concluido_em/por`, `exige_registro` + `registro`.
+- ⚠️⚠️ **DOIS TEMPOS, nunca um:** esforço + prazo da SUBTAREFA (quanto a pessoa trabalha e até
+  quando entrega aquela parte) × **entrega FINAL** da demanda (`marketing_campanhas.prazo_entrega`,
+  a data que o solicitante vê em Solicitações). Algo de 2 dias pode ser entregue em 3 semanas.
+- **Card:** `culto` (cbrio/ami/kids), `prioridade`, `visibilidade` (`equipe` · `so_lider` ·
+  `lider_move`), `prazo_inicial`, `concluido_em`, `atualizado_por` + `marketing_card_prazo_historico`.
+- ⚠️⚠️ **Líder ≠ nível de módulo:** o `AREA_MODULO_BOOST` dá nível 5 à equipe inteira. Líder =
+  role admin/diretor OU `marketing_membros.habilidade = 'coordenador'`
+  (`contextoSubtarefa` em `routes/marketing.js`). Nunca usar `isAdminLike` para isso.
+- **Régua PURA `backend/utils/marketingChecklist.js`** (`src/test/marketingChecklist.test.ts`):
+  - quem MARCA: líder sempre · em `lider_move`/`so_lider` SÓ o líder · em `equipe`, o dono do item,
+    o responsável do card ou nível ≥3 (o Kanban de hoje não perdeu ninguém);
+  - quem EDITA a estrutura: líder ou nível ≥3 (em card do líder, só o líder);
+  - valor inválido é **400, nunca coerção** (`'2'` não vira 2 · `'dia'` não vira `horas`);
+  - item com `exige_registro` não fecha sem texto (o banco também recusa por CHECK).
+- `PATCH /checklist/:itemId` desceu para `authorizeModule('marketing', 1)` — a régua decide.
+  `PATCH /cards/:id` grava `atualizado_por` (service_role não tem `auth.uid`), e só o líder muda
+  culto/prioridade/visibilidade.
+
 # ⚠️ REGRAS OBRIGATÓRIAS DE SEGURANÇA (não regredir · 2026-05-21)
 
 Esta seção é a lei do projeto após a Auditoria de Segurança 2026-05-21

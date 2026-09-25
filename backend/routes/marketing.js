@@ -26,6 +26,7 @@ const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const spMarketing = require('../services/sharepointMarketing');
 const arrecadacaoCampanhas = require('../services/campanhaArrecadacao');
+const regraSubtarefa = require('../utils/marketingChecklist');
 const {
   CAMPANHA_INICIO,
   agruparArrecadacaoMensal,
@@ -64,6 +65,24 @@ async function meuMembroId(req) {
     .eq('ativo', true)
     .is('deleted_at', null);
   return (data || []).map(m => m.id);
+}
+
+// Contexto de quem está logado para a régua da subtarefa (utils/marketingChecklist).
+// ⚠️ Líder vem da HABILIDADE, não do nível: o boost da área dá nível 5 à equipe toda.
+async function contextoSubtarefa(req) {
+  const { data, error } = await supabase
+    .from('marketing_membros')
+    .select('id, habilidade')
+    .eq('profile_id', req.user.userId)
+    .eq('ativo', true)
+    .is('deleted_at', null);
+  if (error) throw error;
+  const membros = data || [];
+  return {
+    lider: regraSubtarefa.ehLider({ role: req.user.role, habilidades: membros.map(m => m.habilidade) }),
+    nivel: levelOf(req),
+    meusMembroIds: membros.map(m => m.id),
+  };
 }
 
 // Dias úteis (seg-sex) inclusive entre duas datas YYYY-MM-DD · null se invalido.
@@ -589,7 +608,19 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
       if (estado) update.estado = estado;
     }
 
+    // Linha do tempo (Fase 1): culto, prioridade e visibilidade · só o líder muda.
+    const pedeCamposLider = ['culto', 'prioridade', 'visibilidade'].some(k => (req.body || {})[k] !== undefined);
+    if (pedeCamposLider) {
+      const ctx = await contextoSubtarefa(req);
+      if (!ctx.lider) return res.status(403).json({ error: 'Só o líder do Marketing muda culto, prioridade e visibilidade' });
+      const { campos, erro } = regraSubtarefa.camposCardLider(req.body);
+      if (erro) return res.status(400).json({ error: erro });
+      Object.assign(update, campos);
+    }
+
     if (!Object.keys(update).length) return res.status(400).json({ error: 'Nada para atualizar' });
+    // service_role não tem auth.uid() · é daqui que o histórico de prazo sabe quem mudou
+    update.atualizado_por = req.user.userId;
 
     const { data, error } = await supabase
       .from('marketing_kanban_cards')
@@ -2190,23 +2221,76 @@ router.post('/cards/:id/checklist', authorizeModule('marketing', 3), async (req,
   try {
     const { texto, grupo } = req.body || {};
     if (!texto || !texto.trim()) return res.status(400).json({ error: 'texto obrigatorio' });
+    const { campos, erro } = regraSubtarefa.camposSubtarefa(req.body || {});
+    if (erro) return res.status(400).json({ error: erro });
+    delete campos.registro; // item nasce aberto; o registro é escrito ao concluir
+    const { data: card, error: eCard } = await supabase
+      .from('marketing_kanban_cards').select('id, visibilidade')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (eCard) throw eCard;
+    if (!card) return res.status(404).json({ error: 'Card não encontrado' });
+    const ctx = await contextoSubtarefa(req);
+    if (!regraSubtarefa.podeEditarItem({ lider: ctx.lider, nivel: ctx.nivel, card })) {
+      return res.status(403).json({ error: 'Só o líder do Marketing altera esta tarefa' });
+    }
     const { data, error } = await supabase
       .from('marketing_card_checklist')
-      .insert({ card_id: req.params.id, texto: texto.trim(), grupo: (grupo && grupo.trim()) || null })
+      .insert({ card_id: req.params.id, texto: texto.trim(), grupo: (grupo && grupo.trim()) || null, ...campos })
       .select('*').single();
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.patch('/checklist/:itemId', authorizeModule('marketing', 3), async (req, res) => {
+// Linha do tempo (Fase 1): o DONO do item e o RESPONSÁVEL do card também marcam
+// (antes só nível 3). Em card lider_move/so_lider, só o líder. A régua é pura:
+// utils/marketingChecklist.
+router.patch('/checklist/:itemId', authorizeModule('marketing', 1), async (req, res) => {
   try {
-    const update = {};
-    const { texto, feito, grupo, ordem } = req.body || {};
+    const body = req.body || {};
+    const { data: item, error: eItem } = await supabase
+      .from('marketing_card_checklist').select('*').eq('id', req.params.itemId).maybeSingle();
+    if (eItem) throw eItem;
+    if (!item) return res.status(404).json({ error: 'Item não encontrado' });
+    const { data: card, error: eCard } = await supabase
+      .from('marketing_kanban_cards').select('id, atribuido_a, visibilidade')
+      .eq('id', item.card_id).is('deleted_at', null).maybeSingle();
+    if (eCard) throw eCard;
+    if (!card) return res.status(404).json({ error: 'Card não encontrado' });
+    const ctx = await contextoSubtarefa(req);
+
+    const { campos, erro } = regraSubtarefa.camposSubtarefa(body);
+    if (erro) return res.status(400).json({ error: erro });
+    const { registro, ...estrutura } = campos;
+
+    const mexeEstrutura = Object.keys(estrutura).length > 0
+      || body.texto !== undefined || body.grupo !== undefined || body.ordem !== undefined;
+    const marca = body.feito !== undefined || registro !== undefined;
+
+    if (mexeEstrutura && !regraSubtarefa.podeEditarItem({ lider: ctx.lider, nivel: ctx.nivel, card })) {
+      return res.status(403).json({ error: 'Só o líder do Marketing altera esta subtarefa' });
+    }
+    if (marca && !regraSubtarefa.podeMarcarItem({ ...ctx, item, card })) {
+      return res.status(403).json({ error: card.visibilidade === 'equipe'
+        ? 'Só quem faz esta subtarefa ou o responsável da tarefa pode marcar'
+        : 'Nesta etapa quem marca é o líder do Marketing' });
+    }
+
+    const update = { ...estrutura };
+    const { texto, feito, grupo, ordem } = body;
     if (texto !== undefined) update.texto = texto;
     if (feito !== undefined) update.feito = !!feito;
     if (grupo !== undefined) update.grupo = (grupo && grupo.trim()) || null;
     if (ordem !== undefined) update.ordem = ordem;
+    if (registro !== undefined) update.registro = registro;
+
+    const feitoFinal = update.feito !== undefined ? update.feito : item.feito;
+    const exigeFinal = update.exige_registro !== undefined ? update.exige_registro : item.exige_registro;
+    const registroFinal = update.registro !== undefined ? update.registro : item.registro;
+    if (regraSubtarefa.faltaRegistro({ exigeRegistro: exigeFinal, feito: feitoFinal, registro: registroFinal })) {
+      return res.status(400).json({ error: 'Escreva o registro antes de concluir este item', codigo: 'registro_obrigatorio' });
+    }
+    if (update.feito === true && !item.feito) update.concluido_por = req.user.userId;
     update.updated_at = new Date().toISOString();
     const { data, error } = await supabase
       .from('marketing_card_checklist')
