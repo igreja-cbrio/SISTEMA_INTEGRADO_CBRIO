@@ -398,8 +398,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
     { key: 'int', name: 'Interno',        desc: 'Demandas do Pedro para a equipe' },
     { key: 'rot', name: 'Rotina',         desc: 'O que cada pessoa faz na semana' },
   ];
-  const SEM = { key: 'sem', name: 'Sem responsável', desc: 'Pedidos do formulário esperando o Pedro alocar' };
-  const LANE_NAME = { ins: 'Institucionais', sis: 'Sistema', int: 'Interno', rot: 'Rotina', sem: 'Sem responsável' };
+  const SEM = { key: 'sem', name: 'Pendentes', desc: 'Pedidos do formulário esperando o Pedro etiquetar e alocar' };
+  const LANE_NAME = { ins: 'Institucionais', sis: 'Sistema', int: 'Interno', rot: 'Rotina', sem: 'Pendentes' };
 
   // ---------- responsabilidades por versão da série ----------
   const VERSIONS = [
@@ -407,32 +407,27 @@ button, input, select, textarea { font: inherit; color: inherit; }
     { key: 'ami',   name: 'AMI',   desc: 'Ciclo do AMI',    V: 'A' },
     { key: 'kids',  name: 'Kids',  desc: 'Ciclo do Kids',   V: 'K' },
   ];
+  // As 7 etapas do ciclo real em que o Marketing tem tarefa · iguais nas 3 versões (nenhuma a mais, nenhuma a menos)
+  // who: 'R' = responsável da versão (Cauã em CBRio e AMI · Letícia no Kids) · vis: so_lider = só o Pedro vê · lider_move = o responsável vê, só o Pedro marca
   const PHASES = [
-    { off: -8, t: 'Briefing', short: 'Briefing', brief: 'Alinhar com a liderança o objetivo da série, o público e a mensagem central.',
-      subs: [['brief', 'Reunião de briefing com a liderança', 1.5], ['publico', 'Público, objetivo e mensagem', 1]] },
-    { off: -7, t: 'Brainstorm e conceito', short: 'Brainstorm', brief: 'Gerar ideias com a equipe e fechar o conceito da série em uma frase e um texto curto, com referências visuais.',
-      subs: [['brain', 'Sessão de brainstorm', 1.5], ['conceito', 'Conceito escrito', 1.5], ['refs', 'Referências visuais', 1.5]] },
-    { off: -6, t: 'ID estratégia', short: 'ID estratégia', brief: 'Transformar o conceito em identidade e estratégia: roteiro, logo, cores, tipografia, apresentação visual e o plano de redes.',
-      subs: [['roteiro', 'Roteiro', 2], ['logo', 'Logo', 3], ['cores', 'Cores', 1], ['tipo', 'Tipografia', 1], ['apres', 'Apresentação visual', 2], ['planred', 'Planejamento de redes', 1.5]] },
-    { off: -4, t: 'Produção de peças', short: 'Produção', brief: 'Produzir as peças a partir da identidade aprovada: feed, stories, telão, teaser e impressos.',
-      subs: [['feed', 'Artes de feed', 3], ['stories', 'Stories', 2], ['telao', 'Telão', 1.5], ['teaser', 'Vídeo teaser', 4], ['impressos', 'Impressos', 1.5]] },
-    { off: -2, t: 'Divulgação', short: 'Divulgação', brief: 'Colocar a série na rua: post nas redes, vídeo-chamada no culto, reels e disparo no WhatsApp.',
-      subs: [['post', 'Post nas redes', 1], ['chamada', 'Vídeo-chamada no culto', 2], ['reels', 'Reels', 2], ['disparo', 'Disparo no WhatsApp', .5]] },
-    { off: 0, t: 'Cobertura', short: 'Cobertura', brief: 'Cobrir o domingo de lançamento com fotos, stories ao vivo e material para o aftermovie.',
-      subs: [['fotos', 'Fotos', 1.5], ['aovivo', 'Stories ao vivo', 1.5], ['after', 'Aftermovie', 4]] },
-    { off: 4, t: 'Pós-série', short: 'Pós', brief: 'Fechar a série no último domingo: relatório de alcance e arquivo de mídia organizado no Drive.',
-      subs: [['relat', 'Relatório de alcance', 1.5], ['arquivo', 'Arquivo de mídia', 1]] },
+    { off: -9, t: 'Pré Briefing', short: 'Pré Briefing', lead: true, vis: 'so_lider', brief: 'Marcar a reunião de briefing desta versão. Tarefa do Pedro, não aparece para a equipe.',
+      subs: [['marcar', 'Marcar a reunião de briefing', .5, 'pedro']] },
+    { off: -8, t: 'Briefing', short: 'Briefing', brief: 'Registrar o conceito decidido na reunião de briefing. O texto fica documentado na tarefa.',
+      subs: [['conceito', 'Registrar o conceito decidido', 1.5, 'R']] },
+    { off: -7, t: 'Brainstorming e Conceito', short: 'Brainstorm', brief: 'Defender o conceito, montar o moodboard e levantar as referências para as redes.',
+      subs: [['defesa', 'Defesa', 2, 'R'], ['mood', 'MoodBoard', 3, 'R'], ['refs', 'Referências para redes', 2, 'lorena']] },
+    { off: -6, t: 'Identidade e Estratégia', short: 'Identidade', brief: 'Transformar o conceito em identidade: roteiro, logo, cores, tipografia, apresentação visual e o planejamento de redes.',
+      subs: [['roteiro', 'Roteirização', 3, 'allan'], ['logo', 'Logo', 4, 'R'], ['cores', 'Cores', 1, 'R'], ['tipo', 'Tipografia', 1, 'R'], ['apres', 'Apresentação visual', 3, 'R'], ['planred', 'Planejamento de redes', 2, 'lorena']] },
+    { off: -5, t: 'Aprovação', short: 'Aprovação', lead: true, vis: 'lider_move', brief: 'Reunião de aprovação e report do que foi decidido. O responsável acompanha, quem marca é o Pedro.',
+      subs: [['reuniao', 'Reunião de aprovação', 1.5, 'pedro'], ['report', 'Report da aprovação', 1, 'pedro']] },
+    { off: -4, t: 'Execução Estratégica', short: 'Execução', brief: 'Produzir as peças a partir da identidade aprovada.',
+      subs: [['inst', 'Institucional', 3, 'R'], ['pptcapa', 'PPT Capa', 1.5, 'R'], ['pptmiolo', 'PPT Miolo', 2, 'R'], ['thumbs', 'Thumbs', 1.5, 'R'], ['laterais', 'Telas laterais', 1.5, 'R'],
+             ['horarios', 'Horários do culto', 1, 'R'], ['generos', 'Tela generosidade', 1, 'R'], ['videoig', 'Vídeo Instagram', 5, 'allan'], ['redesvid', 'Conteúdos para redes · vídeo', 4, 'allan'], ['redespost', 'Conteúdos para redes · posts', 4, 'lorena']] },
+    { off: -2, t: 'Pré-Testes', short: 'Pré-Testes', lead: true, vis: 'lider_move', brief: 'O Pedro acompanha os testes de tudo o que foi produzido antes de ir para o culto.',
+      subs: [['testes', 'Acompanhar os testes do que foi produzido', 2, 'pedro']] },
   ];
-  const CICLO_IGREJA = { geral: 'caua', brief: 'caua', publico: 'caua', brain: 'caua', conceito: 'caua', refs: 'caua', roteiro: 'allan', logo: 'caua', cores: 'caua', tipo: 'caua', apres: 'caua', planred: 'lorena',
-    feed: 'caua', stories: 'lorena', telao: 'caua', teaser: 'allan', impressos: 'caua', post: 'lorena', chamada: 'allan', reels: 'allan', disparo: 'lorena',
-    fotos: 'aline', aovivo: 'lorena', after: 'allan', relat: 'lorena', arquivo: 'allan' };
-  const MATRIX = {
-    cbrio: CICLO_IGREJA,
-    ami: CICLO_IGREJA,
-    kids: { geral: 'leticia', brief: 'leticia', publico: 'leticia', brain: 'leticia', conceito: 'leticia', refs: 'leticia', roteiro: 'allan', logo: 'leticia', cores: 'leticia', tipo: 'leticia', apres: 'leticia', planred: 'leticia',
-      feed: 'leticia', stories: 'leticia', telao: 'leticia', teaser: 'allan', impressos: 'leticia', post: 'lorena', chamada: 'allan', reels: 'allan', disparo: 'leticia',
-      fotos: 'aline', aovivo: 'leticia', after: 'allan', relat: 'leticia', arquivo: 'allan' },
-  };
+  const mkMatrix = geral => Object.assign({ geral }, ...PHASES.flatMap(ph => ph.subs.map(([k, , , w]) => ({ [k]: w === 'R' ? geral : w }))));
+  const MATRIX = { cbrio: mkMatrix('caua'), ami: mkMatrix('caua'), kids: mkMatrix('leticia') };
   // 12 séries no ano, uma por mês · o ciclo de cada uma é o mesmo nas 3 versões
   const SERIES = [
     { code: 'ETN', name: 'Eis que tudo se fez novo', date: '2027-01-10' },
@@ -491,7 +486,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
           add({
             id: `${se.code}-${v.V}-0${i + 1}`, lane: 'ins', ver: v.key, serie: se.code, phase: i,
             title: ph.t, ctx: `${se.name} · ${v.name}`, when: 'Lançamento em ' + fmt(D(se.date)),
-            week, resp: M.geral, brief: ph.brief,
+            week, resp: ph.lead ? 'pedro' : M.geral, geral: M.geral, vis: ph.vis || null, brief: ph.brief,
             subs: ph.subs.map(([k, t, h]) => [t, M[k], h]),
           });
         });
@@ -539,23 +534,23 @@ button, input, select, textarea { font: inherit; color: inherit; }
     for (let w = 1; w <= 53; w++) Object.keys(ROT).forEach(p => add({ id: 'ROT-' + pad(w) + '-' + PEOPLE[p].ini, lane: 'rot', title: 'Rotina · ' + PEOPLE[p].first, ctx: PEOPLE[p].role,
       when: 'Toda semana', week: w, resp: p, brief: 'Entregas fixas de toda semana.', subs: ROT[p] }));
     const forceOpen = (id, titles) => { const t = T.find(x => x.id === id); if (t) t.subs.forEach(s => { if (titles.includes(s.t)) s.done = false; }); };
-    forceOpen('CRZ-C-04', ['Telão']);
-    forceOpen('CRZ-K-05', ['Disparo no WhatsApp']);
-    forceOpen('RAI-A-06', ['Aftermovie']);
+    forceOpen('CRZ-C-04', ['Logo']);
+    forceOpen('CRZ-K-06', ['Tela generosidade']);
+    forceOpen('RAI-A-06', ['Vídeo Instagram']);
     forceOpen('ROT-11-CP', ['Slides do telão']);
     return T;
   }
 
-  const TKEY = 'mkt-linha-2027-v4-tasks';
+  const TKEY = 'mkt-linha-2027-v5-tasks';
   let TASKS, BY_ID = {};
   function loadTasks() {
     TASKS = null;
-    try { const s = JSON.parse(localStorage.getItem(TKEY) || 'null'); if (s && s.v === 4 && Array.isArray(s.tasks)) TASKS = s.tasks; } catch (e) {}
+    try { const s = JSON.parse(localStorage.getItem(TKEY) || 'null'); if (s && s.v === 5 && Array.isArray(s.tasks)) TASKS = s.tasks; } catch (e) {}
     if (!TASKS) TASKS = buildData();
     subSeq = TASKS.reduce((m, t) => Math.max(m, ...t.subs.map(s => +s.id.slice(1) || 0)), 0) + 1;
     BY_ID = Object.fromEntries(TASKS.map(t => [t.id, t]));
   }
-  const saveTasks = () => { try { localStorage.setItem(TKEY, JSON.stringify({ v: 4, tasks: TASKS })); } catch (e) {} };
+  const saveTasks = () => { try { localStorage.setItem(TKEY, JSON.stringify({ v: 5, tasks: TASKS })); } catch (e) {} };
   loadTasks();
 
   // ---------- estado ----------
@@ -576,13 +571,16 @@ button, input, select, textarea { font: inherit; color: inherit; }
   function view(t, p) {
     if (t.lane === 'sem') return PEOPLE[p].lider ? { mode: 'task', subs: t.subs, open: t.subs } : null;
     if (PEOPLE[p].lider) return { mode: 'task', subs: t.subs, open: t.subs.filter(s => !s.done) };
+    if (t.vis === 'so_lider') return null;
+    if (t.vis === 'lider_move') return t.geral === p ? { mode: 'branch', ro: true, subs: t.subs, open: t.subs.filter(s => !s.done) } : null;
     if (t.resp === p)    return { mode: 'branch', subs: t.subs, open: t.subs.filter(s => !s.done) };
     const mine = t.subs.filter(s => s.who === p);
     if (!mine.length) return null;
     return { mode: 'mine', subs: mine, open: mine.filter(s => !s.done) };
   }
-  const unitOpen = v => v.mode === 'task' ? (v.open.length ? 1 : 0) : v.open.length;
-  const unitTotal = v => v.mode === 'task' ? 1 : v.subs.length;
+  const unitOpen = v => v.ro ? 0 : v.mode === 'task' ? (v.open.length ? 1 : 0) : v.open.length;
+  const unitTotal = v => v.ro ? 0 : v.mode === 'task' ? 1 : v.subs.length;
+  const lock = t => t.vis === 'lider_move' && !isLider() ? 'disabled title="Só o Pedro marca"' : '';
 
   function stats(filter, wn) {
     let open = 0, total = 0;
@@ -648,13 +646,13 @@ button, input, select, textarea { font: inherit; color: inherit; }
         <div class="fx-nd-foot"><span>${hrs(total)} · ${t.subs.length} itens</span>${av(t.resp)}</div></div></button>`;
     }
     const mineH = v.subs.reduce((a, s) => a + (+s.h || 0), 0);
-    const tag = v.mode === 'branch' ? '<span class="fx-nd-own">Você é responsável</span>' : `<span>Resp. ${esc(PEOPLE[t.resp] ? PEOPLE[t.resp].first : '')} ${av(t.resp)}</span>`;
+    const tag = v.ro ? '<span class="fx-nd-own">Só o Pedro marca</span>' : v.mode === 'branch' ? '<span class="fx-nd-own">Você é responsável</span>' : `<span>Resp. ${esc(PEOPLE[t.resp] ? PEOPLE[t.resp].first : '')} ${av(t.resp)}</span>`;
     const count = fut ? `${v.subs.length} previstas` : `${v.open.length} de ${v.subs.length} em aberto`;
     return `<div class="${cls}" data-open="${t.id}" ${data}><div class="nd-bar"></div><div class="fx-nd-body">
       <div class="fx-nd-top"><span class="fx-nd-title">${esc(t.title)}</span><span class="fx-nd-val">${t.id}</span></div>
       <div class="fx-nd-sub">${esc(t.ctx)} · ${count}</div>
       <div class="fx-nd-foot">${tag}<button type="button" class="readbtn" data-open="${t.id}">Ler · ${hrs(mineH)}</button></div></div>
-      <ul class="subs">${v.open.map(s => `<li><label><input type="checkbox" data-t="${t.id}" data-s="${s.id}"><span>${esc(s.t)}</span></label><span class="h">${hrs(+s.h || 0)}</span>${av(s.who)}</li>`).join('')}</ul></div>`;
+      <ul class="subs">${v.open.map(s => `<li><label><input type="checkbox" data-t="${t.id}" data-s="${s.id}" ${lock(t)}><span>${esc(s.t)}</span></label><span class="h">${hrs(+s.h || 0)}</span>${av(s.who)}</li>`).join('')}</ul></div>`;
   }
 
   const stText = st => st.red ? [st.late ? `${st.late} atrasada${st.late > 1 ? 's' : ''}` : '', st.now ? `${st.now} nesta semana` : ''].filter(Boolean).join(' · ') : '';
@@ -666,7 +664,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
       const done = v.subs.length - v.open.length;
       const cls = !v.open.length ? '' : t.week < curW() ? 'late' : t.week === curW() ? 'now' : 'fut';
       const count = lider ? `${done}/${v.subs.length}` : fut ? `${v.subs.length} previstas` : `${v.open.length} de ${v.subs.length}`;
-      const list = !lider && v.open.length ? `<ul class="subs">${v.open.map(s => `<li><label><input type="checkbox" data-t="${t.id}" data-s="${s.id}"><span>${esc(s.t)}</span></label><span class="h">${hrs(+s.h || 0)}</span>${av(s.who)}</li>`).join('')}</ul>` : '';
+      const list = !lider && v.open.length ? `<ul class="subs">${v.open.map(s => `<li><label><input type="checkbox" data-t="${t.id}" data-s="${s.id}" ${lock(t)}><span>${esc(s.t)}</span></label><span class="h">${hrs(+s.h || 0)}</span>${av(s.who)}</li>`).join('')}</ul>` : '';
       return `<div class="strand t-${V.key}"><button type="button" class="sh" data-open="${t.id}" aria-label="Abrir ${ph.t} · ${V.name}"><span class="tag t-${V.key}">${V.name}</span>${av(t.resp)}<span class="mini"><i style="width:${Math.round(done / v.subs.length * 100)}%"></i></span><span class="ct">${count}</span><span class="dot ${cls}"></span></button>${list}</div>`;
     }).join('');
     return `<div class="abs fx-node l-ins ${fut ? 'fut' : ''}" data-node="${se.code}-${pi}" data-etapa="${se.code}|${pi}" data-col="${i}" data-g="${gi}" style="left:${x}px;top:0;width:${NW}px">
@@ -692,12 +690,12 @@ button, input, select, textarea { font: inherit; color: inherit; }
   function lensText() {
     const p = state.profile, P = PEOPLE[p];
     if (state.tab === 'planner') return P.lider
-      ? `<span class="t">Planner do ${P.first}</span>Horas previstas de cada pessoa por semana, somando rotina, séries, solicitações e demandas internas. <b>Amarelo</b> passa de 85% da capacidade e <b>vermelho</b> estoura. Pedidos sem responsável não entram na conta.`
+      ? `<span class="t">Planner do ${P.first}</span>Horas previstas de cada pessoa por semana, somando rotina, séries, solicitações e demandas internas. <b>Amarelo</b> passa de 85% da capacidade e <b>vermelho</b> estoura. Pedidos em Pendentes não entram na conta.`
       : `<span class="t">Planner de ${P.first}</span>Suas horas previstas por semana, somando tudo que está no seu nome. Clique numa semana para ver de onde vêm as horas.`;
     const modo = state.insMode === 'serie'
       ? ' Institucionais abre <b>por série</b>: cada etapa tem uma tarefa por culto, com etiqueta CBRio, AMI ou Kids.'
       : ' Institucionais abre <b>por versão</b>: CBRio, AMI e Kids com a própria linha.';
-    if (P.lider) return `<span class="t">Visão do ${P.first}</span>Cada demanda aparece como <b>uma tarefa</b>. Clique para ver as subtarefas e editar.${modo} Em <b>Sem responsável</b> ficam os pedidos do formulário que esperam você alocar.`;
+    if (P.lider) return `<span class="t">Visão do ${P.first}</span>Cada demanda aparece como <b>uma tarefa</b>. Clique para ver as subtarefas e editar.${modo} Em <b>Pendentes</b> ficam os pedidos do formulário, já com a pessoa sugerida, esperando você etiquetar a prioridade, a descrição e as horas.`;
     const vs = VERSIONS.filter(v => MATRIX[v.key].geral === p).map(v => v.name);
     return `<span class="t">Visão de ${P.first}</span>${vs.length ? `Responsável geral das etiquetas <b>${vs.join(' e ')}</b>: nelas vê todas as subtarefas.` : ''} No resto, vê só o que está no nome de ${P.first}.${modo} Clique em qualquer cartão para ler a demanda inteira.`;
   }
@@ -1000,14 +998,14 @@ button, input, select, textarea { font: inherit; color: inherit; }
     const list = v.subs;
     const mineH = v.mode === 'mine' ? list.reduce((a, s) => a + (+s.h || 0), 0) : 0;
     const req = t.req ? `<div class="m-sec"><h3>Pedido original</h3><p class="quote">${esc(t.req)}<small>${esc(t.reqBy || '')} · pelo formulário</small></p></div>` : '';
-    const brief = t.brief ? `<div class="m-sec"><h3>${t.lane === 'ins' ? 'O que esta etapa entrega' : 'O que o Pedro espera'}</h3><p>${esc(t.brief)}</p></div>` : '';
+    const brief = t.brief ? `<div class="m-sec"><h3>${t.lane === 'ins' ? 'O que esta etapa entrega' : 'O que o Pedro espera'}${t.prio ? ` · prioridade ${PRIO[t.prio].toLowerCase()}` : ''}</h3><p>${esc(t.brief)}</p></div>` : '';
     const mine = v.mode === 'mine' ? `<div class="m-sec"><div class="mine-h"><b>${hrs(mineH)}</b> previstas para você nesta demanda</div></div>` : '';
     modal.className = 'modal l-' + t.lane;
     modal.innerHTML = `<div class="nd-bar"></div><div class="m-hd"><span class="id">${t.id} · ${LANE_NAME[t.lane]}</span><h2 id="mTitle">${esc(t.title)}</h2><span class="ctx">${esc(t.ctx)} · ${esc(t.when)}</span>
       <div class="m-facts"><span><b>Semana</b>${weekTxt(w)}</span><span><b>Entrega</b>${fmt(t.due)}</span><span><b>Responsável</b>${t.resp ? PEOPLE[t.resp].name : 'ninguém ainda'}</span>${isLider() || v.mode === 'branch' ? `<span><b>Horas</b>${hrs(total)}</span><span><b>Feito</b>${done} de ${t.subs.length}</span>` : ''}</div></div>
       ${mine}${brief}${req}
       <div class="m-sec"><h3>${v.mode === 'mine' ? 'Suas subtarefas' : 'Subtarefas'}</h3></div>
-      <ul class="m-list">${list.map(s => `<li class="${s.done ? 'is-done' : ''}"><label><input type="checkbox" data-t="${t.id}" data-s="${s.id}" ${s.done ? 'checked' : ''}><span class="sn">${esc(s.t)}</span></label><span class="h">${hrs(+s.h || 0)}</span><span class="who-n">${s.who ? PEOPLE[s.who].first : ''}</span>${tag(s)}</li>`).join('')}</ul>
+      <ul class="m-list">${list.map(s => `<li class="${s.done ? 'is-done' : ''}"><label><input type="checkbox" data-t="${t.id}" data-s="${s.id}" ${lock(t)} ${s.done ? 'checked' : ''}><span class="sn">${esc(s.t)}</span></label><span class="h">${hrs(+s.h || 0)}</span><span class="who-n">${s.who ? PEOPLE[s.who].first : ''}</span>${tag(s)}</li>`).join('')}</ul>
       <div class="m-ft"><span>${isLider() ? 'No quadro você vê só a tarefa. As subtarefas ficam aqui.' : 'O que você marca sai do quadro e continua listado aqui.'}</span>
       <span class="acts">${isLider() && t.lane !== 'rot' ? `<button type="button" class="fx-btn" data-edit="${t.id}">Editar</button>` : ''}<button type="button" class="fx-btn" data-close>Fechar</button></span></div>`;
   }
@@ -1046,7 +1044,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
       const done = t.subs.filter(s => s.done).length;
       return `<div class="c">${hd}<span>${av(t.resp)} ${PEOPLE[t.resp].first} · ${done}/${t.subs.length}</span></div>
         <div class="ch"><span>Semana ${t.week} · entrega ${fmt(t.due)}</span></div>
-        <ul>${v.subs.map(s => `<li class="${s.done ? 'is-done' : ''}"><label><input type="checkbox" data-t="${t.id}" data-s="${s.id}" ${s.done ? 'checked' : ''}><span class="sn">${esc(s.t)}</span></label><span class="h">${hrs(+s.h || 0)}</span>${av(s.who)}</li>`).join('')}</ul>
+        <ul>${v.subs.map(s => `<li class="${s.done ? 'is-done' : ''}"><label><input type="checkbox" data-t="${t.id}" data-s="${s.id}" ${lock(t)} ${s.done ? 'checked' : ''}><span class="sn">${esc(s.t)}</span></label><span class="h">${hrs(+s.h || 0)}</span>${av(s.who)}</li>`).join('')}</ul>
         <button type="button" class="fx-btn" data-open="${t.id}">Abrir tarefa ${V.name}</button></div>`;
     }).join('');
     modal.className = 'modal wide l-ins';
@@ -1060,7 +1058,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
     const rows = SERIES.map(se => `<div class="srow"><div class="hd"><b>${esc(se.name)}</b><span>lançamento ${fmt(D(se.date))}</span></div><div class="chips">${PHASES.map((ph, i) => chipHtml(BY_ID[`${se.code}-${V.V}-0${i + 1}`], ph)).join('')}</div></div>`).join('');
     modal.className = 'modal wide l-ins';
     modal.innerHTML = `<div class="nd-bar"></div><div class="m-hd"><span class="id">Institucionais · ${V.desc}</span><h2 id="mTitle">${V.name}: como está indo</h2>
-      <div class="m-facts"><span><b>Responsável geral</b>${PEOPLE[M.geral].name}</span><span><b>Roteiro</b>${PEOPLE[M.roteiro].name}</span><span><b>Post nas redes</b>${PEOPLE[M.post].name}</span></div></div>
+      <div class="m-facts"><span><b>Responsável geral</b>${PEOPLE[M.geral].name}</span><span><b>Roteiro</b>${PEOPLE[M.roteiro].name}</span><span><b>Posts nas redes</b>${PEOPLE[M.redespost].name}</span></div></div>
       <div class="m-sec">${rows}</div>
       <div class="m-ft"><span>Verde feito · vermelho atrasado · contorno esta semana · tracejado previsto. Clique numa etapa para abrir.</span><span class="acts"><button type="button" class="fx-btn" data-close>Fechar</button></span></div>`;
   }
@@ -1097,13 +1095,14 @@ button, input, select, textarea { font: inherit; color: inherit; }
   function openEditor(mode, id) {
     const t = id ? BY_ID[id] : null;
     const draft = t
-      ? { title: t.title, lane: mode === 'alloc' ? 'sis' : t.lane, due: t.due, resp: t.resp || t.sug || '', brief: t.brief || '',
+      ? { title: t.title, lane: mode === 'alloc' ? 'sis' : t.lane, due: t.due, resp: t.resp || t.sug || '', brief: t.brief || '', prio: t.prio || '',
           items: t.subs.map(s => ({ id: s.id, t: s.t, who: s.who || '', h: +s.h || 0, done: s.done })) }
-      : { title: '', lane: 'int', due: wEnd(Math.min(53, curW() + 1)), resp: '', brief: '', items: [{ t: '', who: '', h: 2, done: false }] };
+      : { title: '', lane: 'int', due: wEnd(Math.min(53, curW() + 1)), resp: '', brief: '', prio: '', items: [{ t: '', who: '', h: 2, done: false }] };
     ed = { mode, id, draft, err: '' };
     showModal('edit');
   }
-  const opts = (sel, blank) => (blank ? `<option value="">${blank}</option>` : '') + TEAM.map(p => `<option value="${p}" ${sel === p ? 'selected' : ''}>${PEOPLE[p].name}</option>`).join('');
+  const PRIO = { alta: 'Alta', media: 'Média', baixa: 'Baixa' };
+  const opts = (sel, blank) => (blank ? `<option value="">${blank}</option>` : '') + (sel === 'pedro' ? ['pedro', ...TEAM] : TEAM).map(p => `<option value="${p}" ${sel === p ? 'selected' : ''}>${PEOPLE[p].name}</option>`).join('');
   function editorModal() {
     const t = ed.id ? BY_ID[ed.id] : null, d = ed.draft;
     const head = { alloc: 'Alocar demanda', new: 'Nova tarefa', edit: 'Editar tarefa' }[ed.mode];
@@ -1118,7 +1117,8 @@ button, input, select, textarea { font: inherit; color: inherit; }
         <div class="row2"><div class="fld"><span>Frente</span>${laneFld}</div>
           <label class="fld"><span>Entrega</span><input type="date" id="ed-due" min="2027-01-01" max="2027-12-31" value="${iso(d.due)}"></label></div>
         <div class="wkinfo" id="ed-wk"></div>
-        <label class="fld"><span>Responsável</span><select id="ed-resp">${opts(d.resp, 'Escolha quem vai tocar')}</select></label>
+        <div class="row2"><label class="fld"><span>Responsável${ed.mode === 'alloc' && t && t.sug ? ' · sugerido pelo formato' : ''}</span><select id="ed-resp">${opts(d.resp, 'Escolha quem vai tocar')}</select></label>
+          <label class="fld"><span>Prioridade</span><select id="ed-prio"><option value="">Escolha</option>${Object.entries(PRIO).map(([k, n]) => `<option value="${k}" ${d.prio === k ? 'selected' : ''}>${n}</option>`).join('')}</select></label></div>
         <label class="fld"><span>O que você espera de quem vai fazer</span><textarea id="ed-brief" rows="3" placeholder="Ex.: seguir a identidade da série, mandar primeira versão na quarta">${esc(d.brief)}</textarea></label>
         <div class="fld"><span>Checklist · quem faz · horas na semana</span><div class="items" id="ed-items"></div><div><button type="button" class="fx-btn" data-ed="add">+ Adicionar item</button></div></div>
         <div class="fld"><span>Carga da semana com esta demanda</span><div class="loads" id="ed-load"></div></div>
@@ -1136,7 +1136,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   }
   function readForm() {
     const d = ed.draft, g = id => document.getElementById(id);
-    d.title = g('ed-title').value; d.brief = g('ed-brief').value; d.resp = g('ed-resp').value;
+    d.title = g('ed-title').value; d.brief = g('ed-brief').value; d.resp = g('ed-resp').value; d.prio = g('ed-prio').value;
     if (g('ed-lane')) d.lane = g('ed-lane').value;
     const dv = g('ed-due').value; if (dv) d.due = D(dv);
     document.querySelectorAll('#ed-items .it').forEach(row => {
@@ -1147,7 +1147,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
   function paintLoad() {
     const d = ed.draft, wn = weekOf(d.due), w = WEEKS[wn - 1];
     document.getElementById('ed-wk').textContent = weekTxt(w) + (wn < curW() ? ' · já passou' : wn === curW() ? ' · esta semana' : '');
-    const ppl = [...new Set([d.resp, ...d.items.map(i => i.who)].filter(Boolean))];
+    const ppl = [...new Set([d.resp, ...d.items.map(i => i.who)].filter(p => p && PEOPLE[p].cap))];
     document.getElementById('ed-load').innerHTML = ppl.length ? ppl.map(p => {
       const cap = PEOPLE[p].cap, base = load(p, wn, ed.mode === 'new' ? null : ed.id), add = d.items.filter(i => i.who === p).reduce((a, i) => a + i.h, 0), tot = base + add;
       const bw = Math.min(100, base / cap * 100), aw = Math.max(0, Math.min(100, tot / cap * 100) - bw);
@@ -1166,6 +1166,9 @@ button, input, select, textarea { font: inherit; color: inherit; }
     if (!d.resp) return bad('Escolha quem é o responsável.');
     if (!items.length) return bad('Adicione pelo menos um item no checklist.');
     if (items.some(i => !i.who)) return bad('Todo item do checklist precisa de alguém para fazer.');
+    if (d.lane !== 'ins' && !d.prio) return bad('Etiquete a prioridade.');
+    if (d.lane !== 'ins' && !d.brief.trim()) return bad('Descreva o que você espera de quem vai fazer.');
+    if (d.lane !== 'ins' && items.some(i => !(i.h > 0))) return bad('Diga quantas horas você espera em cada item.');
     let t = ed.id ? BY_ID[ed.id] : null;
     if (!t) {
       const pre = d.lane === 'int' ? 'INT-' : 'SOL-';
@@ -1173,7 +1176,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
       t = { id: pre + (pre === 'INT-' ? pad(next) : String(next).padStart(3, '0')), lane: d.lane, ctx: d.lane === 'int' ? 'Demanda do Pedro' : 'Pedido do Pedro', when: 'Registrada pelo Pedro', subs: [] };
       TASKS.push(t); BY_ID[t.id] = t;
     }
-    t.title = d.title.trim(); t.brief = d.brief.trim(); t.resp = d.resp; t.due = d.due; t.week = weekOf(d.due);
+    t.title = d.title.trim(); t.brief = d.brief.trim(); t.prio = d.prio; t.resp = d.resp; t.due = d.due; t.week = weekOf(d.due);
     if (ed.mode === 'alloc') { t.lane = 'sis'; delete t.sug; }
     t.subs = items.map(i => ({ id: i.id || 's' + (subSeq++), t: i.t.trim(), who: i.who, h: i.h, done: !!i.done }));
     saveTasks();
