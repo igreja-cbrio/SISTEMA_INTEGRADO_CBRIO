@@ -2597,6 +2597,16 @@ export const marketing = {
   },
 };
 
+// Linha do tempo do Marketing (Fase 3 · 2026-09-25). Marcar subtarefa de card
+// continua em marketing.checklist.update; aqui só a leitura e a rotina.
+export const marketingLinha = {
+  get: (ano) => get(`/marketing/linha${ano ? `?ano=${encodeURIComponent(ano)}` : ''}`),
+  marcarRotina: (compromissoId, semanaInicio, membroId) =>
+    put(`/marketing/linha/rotina/${encodeURIComponent(compromissoId)}/${encodeURIComponent(semanaInicio)}`, { membro_id: membroId }),
+  desmarcarRotina: (compromissoId, semanaInicio, membroId) =>
+    del(`/marketing/linha/rotina/${encodeURIComponent(compromissoId)}/${encodeURIComponent(semanaInicio)}?membro_id=${encodeURIComponent(membroId)}`),
+};
+
 export const solicitacoes = {
   list:           (params) => get('/solicitacoes' + (params ? '?' + new URLSearchParams(params) : '')),
   create:         (data) => post('/solicitacoes', data),

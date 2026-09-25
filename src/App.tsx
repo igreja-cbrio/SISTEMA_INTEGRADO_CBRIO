@@ -315,6 +315,7 @@ const TotemKidsVinculos = lazyWithRetry(() => import('./pages/ministerial/totemK
 const TotemKidsPortao = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsPortao'));
 const MarketingDashboard = lazyWithRetry(() => import('./pages/marketing/MarketingDashboard'));
 const MarketingKanban = lazyWithRetry(() => import('./pages/marketing/MarketingKanban'));
+const MarketingLinhaDoTempo = lazyWithRetry(() => import('./pages/marketing/MarketingLinhaDoTempo'));
 const MarketingPlanner = lazyWithRetry(() => import('./pages/marketing/MarketingPlanner'));
 const MarketingAdmin = lazyWithRetry(() => import('./pages/marketing/MarketingAdmin'));
 const MarketingAnalytics = lazyWithRetry(() => import('./pages/marketing/MarketingAnalytics'));
@@ -900,6 +901,7 @@ function AppRoutes() {
             que agora abre o dashboard, com o Kanban a um clique no cabeçalho. */}
         <Route path="/marketing" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingDashboard /></Suspense></ModuleGuard>} />
         <Route path="/marketing/kanban" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingKanban /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/linha-do-tempo" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingLinhaDoTempo /></Suspense></ModuleGuard>} />
         <Route path="/marketing/dashboard" element={<Navigate to="/marketing" replace />} />
         <Route path="/marketing/calendario" element={<Navigate to="/marketing/kanban" replace />} />
         <Route path="/marketing/planner" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingPlanner /></Suspense></ModuleGuard>} />
