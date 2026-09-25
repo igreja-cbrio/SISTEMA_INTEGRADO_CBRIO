@@ -289,6 +289,8 @@ app.use('/api/whatsapp-grupos', require('./routes/whatsappGrupos'));
 app.use('/api/whatsapp-cron', require('./routes/whatsappCron'));
 app.use('/api/solicitacoes', require('./routes/solicitacoes'));
 app.use('/api/producao', require('./routes/producao'));
+// Linha do tempo (Fase 3) · montada ANTES do router geral do Marketing
+app.use('/api/marketing/linha', require('./routes/marketingLinha'));
 app.use('/api/marketing', require('./routes/marketing'));
 app.use('/api/cerebro', require('./routes/cerebro'));
 app.use('/api/voluntariado', require('./routes/voluntariado'));

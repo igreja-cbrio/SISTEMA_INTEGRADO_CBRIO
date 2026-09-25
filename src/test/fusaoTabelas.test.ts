@@ -34,7 +34,9 @@ const ehBackup = (t: string) => /^_bk_|^bkp_|_backup$/.test(t);
  * esconderijo onde a próxima tabela esquecida se acomoda.
  */
 const NAO_E_VINCULO: Record<string, string> = {
-  // (vazio hoje · 14/09/2026)
+  // 25/09/2026 · migration 20260925170000: o membro_id aponta para
+  // marketing_membros (a equipe do Marketing), não para mem_membros.
+  marketing_rotina_execucoes: 'membro_id referencia marketing_membros(id), não mem_membros',
 };
 
 function tabelasComMembroIdNasMigrations(): Set<string> {

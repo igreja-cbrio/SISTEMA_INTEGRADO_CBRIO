@@ -85,6 +85,7 @@ const DOMINIO_POR_PATH: Record<string, { dom: Dominio; slug?: string }> = {
   // `marketing` >= 1 fora do Criativo (pastor-senior, diretor-administrativo,
   // diretor-ministerial têm nível 1). Não remover junto com o item de menu.
   '/marketing/app': { dom: 'criativo' },
+  '/marketing/linha-do-tempo': { dom: 'criativo' },
   // Os dois endereços antigos ficam mapeados de propósito: são `Navigate` hoje,
   // mas link salvo e atalho antigo ainda passam por aqui.
   '/admin/destaques': { dom: 'criativo' },

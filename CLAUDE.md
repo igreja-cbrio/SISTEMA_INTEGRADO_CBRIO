@@ -7550,6 +7550,29 @@ e as migrations F2–F5 (ainda NÃO aplicadas) vivem no PR #3050 (`docs/modulo-m
 - Etapa que o modelo antigo já tinha concluído nasce concluída (com a data real); o item que
   exige registro fica aberto (não se inventa texto).
 
+### Fase 3 · a aba Linha do tempo (migration `20260925170000` · aplicar JUNTO com o deploy)
+
+- ⚠️ O número é **170000**, não o `120000` do plano: aquele já era de `devocional_itens_video`.
+- **Gatilho `fn_marketing_checklist_fecha_card`**: todas as subtarefas feitas ⇒ card `concluido`;
+  alguém DESMARCA uma ⇒ volta a `producao`. ⚠️ Só o desmarcar explícito reabre — as 39 etapas
+  fechadas em lote em 25/09 têm item de registro aberto e não podem reabrir sozinhas. Vale também
+  no Kanban (é por isso que migration e deploy vão juntos).
+- ⚠️⚠️ **O gatilho roda no banco e NÃO avisa ninguém**: o aviso de entrega ao solicitante
+  (`marketing_card_entregue`) é do backend. `avisarSeChecklistConcluiu` (em `routes/marketing.js`,
+  awaited) é chamado pelo `PATCH /checklist/:itemId` e pelo `DELETE` de item, com a MESMA
+  `avisarEntregue` do `PATCH /cards/:id`. Marcar subtarefa pela linha do tempo usa ESSE PATCH —
+  não existe porta de escrita própria da linha.
+- **`GET /api/marketing/linha?ano=`** (`routes/marketingLinha.js`, montada ANTES do router geral):
+  semanas + 4 frentes já recortadas pelo perfil. Régua pura em `utils/marketingLinha.js`
+  (`src/test/marketingLinha.test.ts`): semana dom→sáb **dentro do ano** (semana 1 pode ter 1 dia) ·
+  timestamptz lido em BRT · Institucionais = card com evento · Sistema = veio de campanha/solicitação
+  · Interno = resto · pendência só até a semana atual (depois é previsto).
+- **Rotina** = `marketing_rotina_execucoes` (compromisso × pessoa × domingo da semana; sem linha =
+  aberto). `PUT|DELETE /linha/rotina/:compromissoId/:semanaInicio` — a própria pessoa ou o líder.
+  ⚠️ Só é cobrada a partir de `ROTINA_DESDE` (2026-09-27): cobrar o passado pintaria tudo de vermelho.
+- `levelOf`/`contextoSubtarefa` saíram de `routes/marketing.js` para `services/marketingContexto.js`
+  (a linha usa a mesma régua de líder).
+
 # ⚠️ REGRAS OBRIGATÓRIAS DE SEGURANÇA (não regredir · 2026-05-21)
 
 Esta seção é a lei do projeto após a Auditoria de Segurança 2026-05-21

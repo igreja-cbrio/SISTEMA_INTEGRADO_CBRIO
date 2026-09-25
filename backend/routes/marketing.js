@@ -43,12 +43,9 @@ router.use(authenticate);
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function levelOf(req) {
-  const modulePerms = req.user.granular?.modulePerms || {};
-  const mkt = modulePerms.marketing || modulePerms.Marketing;
-  if (!mkt) return 0;
-  return Math.max(mkt.leitura || 0, mkt.escrita || 0);
-}
+// levelOf e contextoSubtarefa moram em services/marketingContexto (a linha do
+// tempo usa a mesma régua de líder).
+const { levelOf, contextoSubtarefa } = require('../services/marketingContexto');
 
 function isAdminLike(req) {
   if (['admin', 'diretor'].includes(req.user.role)) return true;
@@ -65,24 +62,6 @@ async function meuMembroId(req) {
     .eq('ativo', true)
     .is('deleted_at', null);
   return (data || []).map(m => m.id);
-}
-
-// Contexto de quem está logado para a régua da subtarefa (utils/marketingChecklist).
-// ⚠️ Líder vem da HABILIDADE, não do nível: o boost da área dá nível 5 à equipe toda.
-async function contextoSubtarefa(req) {
-  const { data, error } = await supabase
-    .from('marketing_membros')
-    .select('id, habilidade')
-    .eq('profile_id', req.user.userId)
-    .eq('ativo', true)
-    .is('deleted_at', null);
-  if (error) throw error;
-  const membros = data || [];
-  return {
-    lider: regraSubtarefa.ehLider({ role: req.user.role, habilidades: membros.map(m => m.habilidade) }),
-    nivel: levelOf(req),
-    meusMembroIds: membros.map(m => m.id),
-  };
 }
 
 // Dias úteis (seg-sex) inclusive entre duas datas YYYY-MM-DD · null se invalido.
@@ -694,19 +673,7 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
 
     // Notificação · entregue (estado=concluido) · solicitante avisado
     if (update.estado === 'concluido' && atual.estado !== 'concluido' && solDoCard) {
-      const sol = { solicitante_id: solDoCard.solicitante_id, titulo: solDoCard.titulo_solicitacao };
-      if (sol?.solicitante_id) {
-        notificar({
-          modulo: 'marketing',
-          tipo: 'marketing_card_entregue',
-          titulo: `Entregue: ${sol.titulo}`,
-          mensagem: 'Sua solicitação foi marcada como entregue. Avalie em 30 segundos.',
-          link: '/solicitacoes',
-          severidade: 'info',
-          chaveDedup: `marketing_card_entregue_${data.id}`,
-          targetIds: [sol.solicitante_id],
-        }).catch(err => console.error('[MARKETING] notify entregue:', err.message));
-      }
+      avisarEntregue(data, solDoCard);
     }
 
     // Notificação · prazo confirmado (Pedro definiu prazo) · solicitante avisado
@@ -754,6 +721,42 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
     res.status(500).json({ error: e.message });
   }
 });
+
+// Aviso de entrega ao solicitante · a MESMA mensagem pelos dois caminhos que
+// concluem um card: arrastar no Kanban (PATCH /cards/:id) e o checklist completo
+// (o gatilho fn_marketing_checklist_fecha_card, que roda no banco e não avisa
+// ninguém sozinho). chaveDedup por card: fechar, reabrir e fechar não repete.
+function avisarEntregue(card, sol) {
+  if (!sol?.solicitante_id) return;
+  notificar({
+    modulo: 'marketing',
+    tipo: 'marketing_card_entregue',
+    titulo: `Entregue: ${sol.titulo_solicitacao}`,
+    mensagem: 'Sua solicitação foi marcada como entregue. Avalie em 30 segundos.',
+    link: '/solicitacoes',
+    severidade: 'info',
+    chaveDedup: `marketing_card_entregue_${card.id}`,
+    targetIds: [sol.solicitante_id],
+  }).catch(err => console.error('[MARKETING] notify entregue:', err.message));
+}
+
+// O checklist mexeu: se o gatilho levou o card a 'concluido' (antes não estava),
+// avisa o solicitante. Best-effort: o item já está gravado e o aviso não pode
+// desfazê-lo. Erro de consulta só loga (é o mesmo tratamento do PATCH /cards).
+async function avisarSeChecklistConcluiu(cardId, estadoAntes) {
+  if (estadoAntes === 'concluido') return;
+  try {
+    const { data: card, error } = await supabase
+      .from('marketing_kanban_cards')
+      .select('id, estado, campanha_id, solicitacao_id')
+      .eq('id', cardId).is('deleted_at', null).maybeSingle();
+    if (error) throw error;
+    if (!card || card.estado !== 'concluido') return;
+    const sol = await solicitanteDoCard(card);
+    if (sol?.erro) { console.error('[MARKETING] solicitante do card (não avisou):', sol.motivo); return; }
+    avisarEntregue(card, sol);
+  } catch (e) { console.error('[MARKETING] aviso pós-checklist:', e.message); }
+}
 
 // Solicitante aprova entrega · card vira concluído (Spec 012)
 // Endpoint dedicado pq solicitante não tem permissão geral de UPDATE no card.
@@ -2277,7 +2280,7 @@ router.patch('/checklist/:itemId', authorizeModule('marketing', 1), async (req, 
     if (eItem) throw eItem;
     if (!item) return res.status(404).json({ error: 'Item não encontrado' });
     const { data: card, error: eCard } = await supabase
-      .from('marketing_kanban_cards').select('id, atribuido_a, visibilidade')
+      .from('marketing_kanban_cards').select('id, atribuido_a, visibilidade, estado')
       .eq('id', item.card_id).is('deleted_at', null).maybeSingle();
     if (eCard) throw eCard;
     if (!card) return res.status(404).json({ error: 'Card não encontrado' });
@@ -2322,17 +2325,27 @@ router.patch('/checklist/:itemId', authorizeModule('marketing', 1), async (req, 
       .eq('id', req.params.itemId)
       .select('*').single();
     if (error) throw error;
+    // AWAITED: em serverless o container congela ao responder, e o aviso de
+    // entrega é o único caminho pelo qual o solicitante fica sabendo.
+    if (update.feito !== undefined) await avisarSeChecklistConcluiu(card.id, card.estado);
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 router.delete('/checklist/:itemId', authorizeModule('marketing', 3), async (req, res) => {
   try {
+    // Apagar o último item aberto também fecha o card (gatilho da Fase 3).
+    const { data: item } = await supabase
+      .from('marketing_card_checklist').select('card_id').eq('id', req.params.itemId).maybeSingle();
+    const { data: cardAntes } = item
+      ? await supabase.from('marketing_kanban_cards').select('estado').eq('id', item.card_id).maybeSingle()
+      : { data: null };
     const { error } = await supabase
       .from('marketing_card_checklist')
       .delete()
       .eq('id', req.params.itemId);
     if (error) throw error;
+    if (item) await avisarSeChecklistConcluiu(item.card_id, cardAntes?.estado);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
