@@ -20,4 +20,13 @@ assert.ok(!V.caminhoEhDoItem(id, `itens/${id}/../outro/1.mp4`));
 assert.ok(!V.caminhoEhDoItem(id, `itens/${id}/1.exe`));
 assert.ok(!V.caminhoEhDoItem(id, null));
 
-console.log('✓ devocional-video: 13 asserções');
+// Link do YouTube: todos os formatos viram o canônico; o resto é recusado.
+const CANON = 'https://www.youtube.com/watch?v=e2-TJDiAS0U';
+for (const u of ['https://www.youtube.com/watch?v=e2-TJDiAS0U', 'https://youtu.be/e2-TJDiAS0U?si=x',
+  'https://www.youtube.com/live/e2-TJDiAS0U', 'https://m.youtube.com/shorts/e2-TJDiAS0U',
+  'https://youtube.com/watch?feature=share&v=e2-TJDiAS0U']) assert.strictEqual(V.linkDoYoutube(u), CANON, u);
+assert.strictEqual(V.linkDoYoutube('https://vimeo.com/1'), null);
+assert.strictEqual(V.linkDoYoutube('https://www.youtube.com/watch?v=curto'), null);
+assert.strictEqual(V.linkDoYoutube(null), null);
+
+console.log('✓ devocional-video: 21 asserções');

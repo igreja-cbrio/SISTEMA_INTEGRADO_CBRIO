@@ -713,6 +713,20 @@ router.put('/itens/:id', authorize('admin', 'diretor'), async (req, res) => {
     // de subir pelo link assinado; `null` = tirar o vídeo. A URL pública é
     // montada AQUI, nunca aceita do cliente.
     let pathAntigo = null;
+    // Link do YouTube (25/09): vira o vídeo do item e APOSENTA o arquivo que
+    // houvesse (o app toca um ou outro, nunca os dois).
+    if (req.body.video_url !== undefined && req.body.video_path === undefined) {
+      const link = req.body.video_url === null ? null : devVideo.linkDoYoutube(req.body.video_url);
+      if (req.body.video_url !== null && !link) {
+        return res.status(400).json({ error: 'Cole um link do YouTube (youtube.com/watch?v=… ou youtu.be/…).' });
+      }
+      const { data: atual, error: eAtual } = await supabase
+        .from('devocional_itens').select('video_path').eq('id', req.params.id).maybeSingle();
+      if (eAtual) throw eAtual;
+      pathAntigo = atual?.video_path || null;
+      patch.video_path = null;
+      patch.video_url = link;
+    }
     if (req.body.video_path !== undefined) {
       const novo = req.body.video_path;
       if (novo !== null && !devVideo.caminhoEhDoItem(req.params.id, novo)) {

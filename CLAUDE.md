@@ -21,6 +21,18 @@ decisões/time-lapse do sistema). Regras de manutenção:
   vivo (lição `cui_atendimentos`: achado de auditoria baseado em arquivo de
   migration que nunca foi aplicado em prod).
 
+## ⚠️ DEVOCIONAL · vídeo do YOUTUBE toca DENTRO do app (2026-09-25 · migration `20260925150000`)
+
+Pedido do Marcos: *"a pessoa clica para ver mas não sai do app, nós apenas
+passamos um vídeo do YouTube lá"*. "Editar item" ganhou **Usar link** ao lado do
+envio de arquivo; o `PUT /itens/:id` aceita `video_url` (só YouTube, via
+`linkDoYoutube` — espelho de `idDoYoutube` do app) e guarda o link CANÔNICO
+`watch?v=<id>`, aposentando o arquivo que houvesse (apagado do Storage).
+- `20260925150000` é DADO: põe o culto de **1 Crônicas** (vídeo `e2-TJDiAS0U`,
+  série QUARTA COM DEUS do módulo Online) no item de quarta 02/09 do Quarta com
+  Deus. ⚠️ Depende da `20260925120000`. Só grava onde `video_url IS NULL`.
+- ⚠️ Vídeo PRIVADO não toca embutido; "não listado" toca.
+
 ## ⚠️ DEVOCIONAL · VÍDEO no item (2026-09-25 · migration `20260925120000`)
 
 Pedido do Marcos: *"subir vídeos nas devocionais, ter uma boa visualização,
