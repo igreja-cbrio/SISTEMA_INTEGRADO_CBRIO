@@ -439,6 +439,8 @@ export default function EventoExterno() {
   const navigate = useNavigate();
   const { C } = usePublicTheme();
   const [evento, setEvento] = useState<any>(null);
+  // Evento de igreja parceira com capa: a capa é a arte completa (ver o <img>).
+  const capaEhArte = !!(evento?.capa_url && evento?.igreja_parceira);
   const [carregando, setCarregando] = useState(true);
   const [nomeCompleto, setNomeCompleto] = useState('');
   const [telefone, setTelefone] = useState('');
@@ -604,9 +606,14 @@ export default function EventoExterno() {
         border: `1px solid ${C.cardBorder}`, borderRadius: 20,
         padding: 'clamp(20px, 4.5vw, 32px) clamp(16px, 4vw, 28px)',
       }}>
+        {/* Igreja PARCEIRA (Genesis CBA · 25/09): a capa é a ARTE inteira do
+            evento (nome, data, hora, local já estão nela) — sai sem corte e o
+            cabeçalho em texto não se repete embaixo. */}
         {evento?.capa_url && (
           <img src={evento.capa_url} alt={evento?.nome || 'capa'}
-            style={{ width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 14, marginBottom: 18, display: 'block' }} />
+            style={capaEhArte
+              ? { width: '100%', height: 'auto', borderRadius: 14, marginBottom: 18, display: 'block' }
+              : { width: '100%', maxHeight: 220, objectFit: 'cover', borderRadius: 14, marginBottom: 18, display: 'block' }} />
         )}
         <div style={{ textAlign: 'center', marginBottom: 22 }}>
           {!evento?.capa_url && <img src="/logo-cbrio-icon.png" alt="CBRio" style={{ width: 64, height: 64, marginBottom: 10, display: 'inline-block' }} />}
@@ -616,6 +623,7 @@ export default function EventoExterno() {
             <p style={{ color: C.text3, fontSize: 14 }}>{erro}</p>
           ) : (
             <>
+              {!capaEhArte && <>
               <h1 style={{ fontSize: 'clamp(22px, 6vw, 27px)', fontWeight: 800, margin: 0, letterSpacing: -0.5, background: 'linear-gradient(90deg, #00B39D, #00d9bd)', WebkitBackgroundClip: 'text', backgroundClip: 'text', color: 'transparent' }}>
                 {evento?.nome}
               </h1>
@@ -630,6 +638,7 @@ export default function EventoExterno() {
                 </p>
               )}
               {evento?.local && <p style={{ fontSize: 13, color: C.text3, marginTop: 8 }}>{evento.local}</p>}
+              </>}
               {evento?.descricao && <p style={{ fontSize: 13, color: C.text3, marginTop: 8, lineHeight: 1.5, whiteSpace: 'pre-line' }}>{evento.descricao}</p>}
               {/* Grupo de dúvidas (21/08): fica no CABEÇALHO de propósito —
                   aparece na escolha Pix×cartão, no formulário e na tela de
