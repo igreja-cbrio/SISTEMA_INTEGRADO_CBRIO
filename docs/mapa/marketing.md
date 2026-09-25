@@ -14,6 +14,7 @@
 |---|---|---|
 | `/marketing` | `src/pages/marketing/MarketingDashboard` | 1 |
 | `/marketing/kanban` | `src/pages/marketing/MarketingKanban` | 1 |
+| `/marketing/linha-do-tempo` | `src/pages/marketing/MarketingLinhaDoTempo` | 1 |
 | `/marketing/planner` | `src/pages/marketing/MarketingPlanner` | 1 |
 | `/marketing/admin` | `src/pages/marketing/MarketingAdmin` | 5 |
 | `/marketing/analytics` | `src/pages/marketing/MarketingAnalytics` | 1 |
@@ -24,8 +25,9 @@
 - `backend/routes/comunicados.js`
 - `backend/routes/destaques.js`
 - `backend/routes/marketing.js`
+- `backend/routes/marketingLinha.js`
 Guard: `authorizeModule('marketing', 1 | 3 | 5)`
-<details><summary>Endpoints (82)</summary>
+<details><summary>Endpoints (85)</summary>
 - `DELETE /api/batismo-fotos/:data/fotos/:nome`
 - `DELETE /api/comunicados/:id`
 - `DELETE /api/destaques/:id`
@@ -38,6 +40,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `DELETE /api/marketing/cards/:id`
 - `DELETE /api/marketing/checklist/:itemId`
 - `DELETE /api/marketing/entregaveis/:id`
+- `DELETE /api/marketing/linha/rotina/:compromissoId/:semanaInicio`
 - `GET /api/batismo-fotos`
 - `GET /api/batismo-fotos/:data/fotos`
 - `GET /api/comunicados`
@@ -69,6 +72,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `GET /api/marketing/fila/posicao/:cardId`
 - `GET /api/marketing/generosidade`
 - `GET /api/marketing/kanban`
+- `GET /api/marketing/linha`
 - `GET /api/marketing/membros`
 - `GET /api/marketing/planner`
 - `PATCH /api/marketing/admin/ciclo-itens/:id`
@@ -108,12 +112,14 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `POST /api/marketing/cards/:id/entregaveis`
 - `PUT /api/comunicados/:id`
 - `PUT /api/destaques/:id`
+- `PUT /api/marketing/linha/rotina/:compromissoId/:semanaInicio`
 </details>
 
 **Réguas puras (backend/utils)**
 
 - `backend/utils/marketingChecklist.js`
 - `backend/utils/marketingCores.js`
+- `backend/utils/marketingLinha.js`
 - `backend/utils/marketingOcupacao.js`
 - `backend/utils/marketingSemanas.js`
 - `backend/utils/supabase.js`
@@ -121,6 +127,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 **Serviços**
 
 - `backend/services/campanhaArrecadacao.js`
+- `backend/services/marketingContexto.js`
 - `backend/services/marketingGenerosidade.js`
 - `backend/services/marketingSolicitante.js`
 - `backend/services/notificar.js`
@@ -152,6 +159,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `marketing_kanban_cards`
 - `marketing_membros`
 - `marketing_recorrentes_participantes`
+- `marketing_rotina_execucoes`
 - `profiles`
 - `solicitacoes`
 - `vw_fin_decendio`

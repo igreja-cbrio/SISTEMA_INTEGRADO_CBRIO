@@ -41,7 +41,7 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **kids** | `/ministerial/totem-kids` `/ministerial/kids` `/ministerial/totem-kids/criancas` … | `totemKids.js` | [kids](kids.md) |
 | **links** | — | `links.js` | [links](links.md) |
 | **logistica** | — | `logistica.js` | [logistica](logistica.md) |
-| **marketing** | `/marketing` `/marketing/kanban` `/marketing/planner` … | `batismoFotos.js` `comunicados.js` | [marketing](marketing.md) |
+| **marketing** | `/marketing` `/marketing/kanban` `/marketing/linha-do-tempo` … | `batismoFotos.js` `comunicados.js` | [marketing](marketing.md) |
 | **membresia** | — | `jornada.js` `lgpd.js` | [membresia](membresia.md) |
 | **membros** | — | `membresia.js` `pessoas.js` | [membros](membros.md) |
 | **membros-financeiro** | — | `membresia.js` | [membros-financeiro](membros-financeiro.md) |
@@ -74,7 +74,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **200** arquivos, **183** com teste.
+`backend/utils/` tem **201** arquivos, **184** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -202,6 +202,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/marcoAtribuicao.js` | `src/test/marcoAtribuicao.test.ts` |
 | `backend/utils/marketingChecklist.js` | `src/test/marketingChecklist.test.ts` |
 | `backend/utils/marketingCores.js` | `src/test/marketingCores.test.ts` |
+| `backend/utils/marketingLinha.js` | `src/test/marketingLinha.test.ts` |
 | `backend/utils/marketingOcupacao.js` | `src/test/marketingOcupacao.test.ts` |
 | `backend/utils/marketingSemanas.js` | `src/test/marketingSemanas.test.ts` |
 | `backend/utils/marketingSolicitante.js` | `src/test/marketingSolicitante.test.ts` |

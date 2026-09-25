@@ -13,7 +13,7 @@
 **Um `grep` aqui responde "onde mora X".** É para isto que este arquivo existe:
 chegar com um nome e sair com um caminho, sem varrer o repositório.
 
-457 arquivos.
+460 arquivos.
 
 | arquivo | tipo | módulo | rota / teste |
 |---|---|---|---|
@@ -68,6 +68,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/routes/links.js` | rota backend | links | `/api/links` |
 | `backend/routes/logistica.js` | rota backend | logistica | `/api/logistica` |
 | `backend/routes/marketing.js` | rota backend | marketing | `/api/marketing` |
+| `backend/routes/marketingLinha.js` | rota backend | marketing | `/api/marketing/linha` |
 | `backend/routes/meetings.js` | rota backend | — | `/api/meetings` |
 | `backend/routes/membresia.js` | rota backend | membresia | `/api/membresia` |
 | `backend/routes/ml.js` | rota backend | — | `/api/ml` |
@@ -265,6 +266,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `backend/utils/marcoAtribuicao.js` | régua pura | — | `src/test/marcoAtribuicao.test.ts` |
 | `backend/utils/marketingChecklist.js` | régua pura | — | `src/test/marketingChecklist.test.ts` |
 | `backend/utils/marketingCores.js` | régua pura | — | `src/test/marketingCores.test.ts` |
+| `backend/utils/marketingLinha.js` | régua pura | — | `src/test/marketingLinha.test.ts` |
 | `backend/utils/marketingOcupacao.js` | régua pura | — | `src/test/marketingOcupacao.test.ts` |
 | `backend/utils/marketingSemanas.js` | régua pura | — | `src/test/marketingSemanas.test.ts` |
 | `backend/utils/marketingSolicitante.js` | régua pura | — | `src/test/marketingSolicitante.test.ts` |
@@ -383,6 +385,7 @@ chegar com um nome e sair com um caminho, sem varrer o repositório.
 | `src/pages/marketing/MarketingDashboard` | tela ERP | marketing | `/marketing` |
 | `src/pages/marketing/MarketingGenerosidade` | tela ERP | marketing | `/marketing/generosidade` |
 | `src/pages/marketing/MarketingKanban` | tela ERP | marketing | `/marketing/kanban` |
+| `src/pages/marketing/MarketingLinhaDoTempo` | tela ERP | marketing | `/marketing/linha-do-tempo` |
 | `src/pages/marketing/MarketingPlanner` | tela ERP | marketing | `/marketing/planner` |
 | `src/pages/MinhasTarefas` | tela ERP | — | `/tarefas` |
 | `src/pages/ministerial/Batismos` | tela ERP | batismo | `/batismo` |
