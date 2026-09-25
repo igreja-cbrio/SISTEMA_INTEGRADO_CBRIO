@@ -1,6 +1,26 @@
 const router = require('express').Router();
 const { authenticate, authorizeCycle, authorize, apenasColaborador } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { escolherTemplates } = require('../utils/templatesCiclo');
+
+// Modelos da categoria, ou o criativo padrão (category_id NULL) quando ela não tem.
+// Ver utils/templatesCiclo · sem isso a Série ativava um ciclo VAZIO.
+async function lerTemplatesCiclo(tabela, select, categoryId, apenasAtivos) {
+  let proprios = [];
+  if (categoryId) {
+    let q = supabase.from(tabela).select(select).eq('category_id', categoryId);
+    if (apenasAtivos) q = q.eq('ativo', true);
+    const { data, error } = await q.order(tabela === 'cycle_phase_templates' ? 'numero' : 'sort_order');
+    if (error) throw error;
+    proprios = data || [];
+  }
+  if (proprios.length) return escolherTemplates(proprios, []).templates;
+  let q = supabase.from(tabela).select(select).is('category_id', null);
+  if (apenasAtivos) q = q.eq('ativo', true);
+  const { data, error } = await q.order(tabela === 'cycle_phase_templates' ? 'numero' : 'sort_order');
+  if (error) throw error;
+  return escolherTemplates([], data || []).templates;
+}
 // Templates agora vem do banco (adm_task_templates)
 const { SHAREPOINT_CONFIGURED } = require('../services/storageService');
 
@@ -196,17 +216,17 @@ async function activateCycleForEvent(eventId, userId) {
     const { data: existing } = await supabase.from('event_cycles').select('id').eq('event_id', eventId).maybeSingle();
     if (existing) throw new Error('Ciclo já ativado para este evento');
 
+    // Os modelos vêm ANTES de criar o ciclo: sem etapa nenhuma, o ciclo não nasce
+    // (antes nascia vazio e a tela dizia "ativado").
+    const templates = await lerTemplatesCiclo('cycle_phase_templates', '*', event.category_id, false);
+    if (!templates.length) throw new Error('Nenhuma etapa de ciclo cadastrada para esta categoria');
+
     const diaDDate = event.date;
     const { data: cycle, error: cycleErr } = await supabase.from('event_cycles')
       .insert({ event_id: eventId, ativado_por: userId, data_dia_d: diaDDate })
       .select().single();
     if (cycleErr) throw cycleErr;
 
-    // Filtrar templates por categoria do evento (NULL = criativo padrão)
-    let tplQuery = supabase.from('cycle_phase_templates').select('*').order('numero');
-    if (event.category_id) tplQuery = tplQuery.eq('category_id', event.category_id);
-    else tplQuery = tplQuery.is('category_id', null);
-    const { data: templates } = await tplQuery;
     const phases = templates.map(t => ({
       event_id: eventId, template_id: t.id, numero_fase: t.numero,
       nome_fase: t.nome, area: t.area, momento_chave: t.momento_chave, status: 'pendente',
@@ -254,10 +274,7 @@ async function activateCycleForEvent(eventId, userId) {
     });
 
     // Criar tarefas detalhadas com subtarefas do banco (filtrado por categoria)
-    let admTplQuery = supabase.from('adm_task_templates').select('*, adm_task_template_subtasks(*)').eq('ativo', true).order('sort_order');
-    if (event.category_id) admTplQuery = admTplQuery.eq('category_id', event.category_id);
-    else admTplQuery = admTplQuery.is('category_id', null);
-    const { data: admTemplates } = await admTplQuery;
+    const admTemplates = await lerTemplatesCiclo('adm_task_templates', '*, adm_task_template_subtasks(*)', event.category_id, true);
     for (const tmpl of (admTemplates || [])) {
       const faseNome = etapaToFase[tmpl.etapa] || tmpl.etapa;
       const phaseId = phaseMap[faseNome] || null;
