@@ -3,9 +3,11 @@
 -- (Marcos 2026-09-25 · plano em docs/modulo-marketing/linha-do-tempo/README.md)
 --
 -- O que entra (nada disso muda o que o Kanban faz hoje):
---   1. Etiqueta de CULTO (cbrio · ami · kids) no card e na campanha.
---   2. Checklist vira SUBTAREFA: quem faz (membro_id), horas previstas, prazo
---      e quando foi concluída (concluido_em / concluido_por).
+--   1. Etiqueta de CULTO (cbrio · ami · kids) no card e na campanha, mais
+--      prioridade e visibilidade (equipe · so_lider · lider_move) no card.
+--   2. Checklist vira SUBTAREFA: quem faz (membro_id), horas previstas, prazo,
+--      quando foi concluída (concluido_em / concluido_por) e registro de texto
+--      obrigatório quando o item pede (conceito do briefing, report).
 --   3. Datas para os indicadores de atraso:
 --        card     · prazo_inicial (1ª data planejada, nunca muda) · concluido_em
 --        campanha · triada_em / triada_por (saiu do "Sem responsável") · concluida_em
@@ -35,6 +37,15 @@ ALTER TABLE public.marketing_kanban_cards
   ADD COLUMN IF NOT EXISTS prazo_inicial  date,
   ADD COLUMN IF NOT EXISTS concluido_em   timestamptz,
   ADD COLUMN IF NOT EXISTS atualizado_por uuid REFERENCES public.profiles(id) ON DELETE SET NULL;
+
+-- Prioridade (o Pedro etiqueta ao alocar um Pendente) e visibilidade da tarefa
+ALTER TABLE public.marketing_kanban_cards
+  ADD COLUMN IF NOT EXISTS prioridade   text CHECK (prioridade IN ('baixa', 'normal', 'alta', 'urgente')),
+  ADD COLUMN IF NOT EXISTS visibilidade text NOT NULL DEFAULT 'equipe'
+    CHECK (visibilidade IN ('equipe', 'so_lider', 'lider_move'));
+
+COMMENT ON COLUMN public.marketing_kanban_cards.visibilidade IS
+  'equipe = regra normal (responsável vê tudo, demais só os seus itens) · so_lider = só o líder vê (ex.: Pré-briefing, marcar as reuniões) · lider_move = o responsável geral do culto vê, mas só o líder marca (ex.: Aprovação).';
 
 COMMENT ON COLUMN public.marketing_kanban_cards.prazo_inicial IS
   'Primeira data planejada da tarefa. Gravada uma vez (trigger) e nunca mais muda: base do indicador "atraso contra o plano original".';
@@ -133,7 +144,19 @@ ALTER TABLE public.marketing_card_checklist
   ADD COLUMN IF NOT EXISTS horas_previstas numeric(5,1) NOT NULL DEFAULT 0 CHECK (horas_previstas >= 0),
   ADD COLUMN IF NOT EXISTS prazo           date,
   ADD COLUMN IF NOT EXISTS concluido_em    timestamptz,
-  ADD COLUMN IF NOT EXISTS concluido_por   uuid REFERENCES public.profiles(id) ON DELETE SET NULL;
+  ADD COLUMN IF NOT EXISTS concluido_por   uuid REFERENCES public.profiles(id) ON DELETE SET NULL,
+  ADD COLUMN IF NOT EXISTS exige_registro  boolean NOT NULL DEFAULT false,
+  ADD COLUMN IF NOT EXISTS registro        text;
+
+-- item que exige registro (conceito do briefing, report da aprovação) só fecha com texto
+ALTER TABLE public.marketing_card_checklist
+  DROP CONSTRAINT IF EXISTS marketing_checklist_registro_check;
+ALTER TABLE public.marketing_card_checklist
+  ADD CONSTRAINT marketing_checklist_registro_check
+  CHECK (NOT feito OR NOT exige_registro OR COALESCE(btrim(registro), '') <> '');
+
+COMMENT ON COLUMN public.marketing_card_checklist.registro IS
+  'Texto registrado no item: o conceito decidido no briefing, o report da aprovação. Obrigatório para marcar quando exige_registro.';
 
 COMMENT ON COLUMN public.marketing_card_checklist.membro_id IS
   'Quem faz esta subtarefa. NULL = o responsável do card. A linha do tempo mostra ao liderado só as subtarefas dele (ou todas, se ele for o responsável do card).';

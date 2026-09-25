@@ -21734,15 +21734,19 @@ Aba nova `/marketing/linha-do-tempo` que deve substituir o Kanban se a equipe ad
 Plano completo: `docs/modulo-marketing/linha-do-tempo/README.md` · protótipo aprovado
 ("por série"): `docs/modulo-marketing/linha-do-tempo/prototipo.html`.
 
-- **Regra do Marcos:** toda série tem o MESMO ciclo rodando junto para CBRio, AMI e Kids ⇒
-  cada etapa gera **1 card por culto** (`marketing_kanban_cards.culto`). CBRio/AMI: Cauã
-  geral + Allan roteiro · Kids: Letícia geral + Lorena post nas redes.
+- **Regra do Marcos:** toda série tem o MESMO ciclo para CBRio, AMI e Kids ⇒ **1 card por fase
+  do ciclo × culto** (`event_phase_id` + `culto`), gerado pelo Marketing a partir de
+  `event_cycle_phases` + matriz (`marketing_ciclo_padroes` / `marketing_ciclo_itens_padrao`),
+  NÃO de `cycle_phase_tasks`. Responsável: Cauã em CBRio e AMI, Letícia no Kids; Pré-briefing
+  só o Pedro vê; Aprovação e Pré-Testes a equipe vê, só o Pedro marca. Matriz completa no README.
+- **Formulário → Pendentes** (ex-"Sem responsável"): tudo passa pelo Pedro, com
+  `sugerido_membro_id`; ele etiqueta prioridade, descrição e horas antes de ir para Sistema.
 - **Fase 0 primeiro:** `docs/modulo-marketing/linha-do-tempo/00_verificacao_banco_vivo.sql`
   (só leitura). As tabelas do ciclo (`events`, `cycle_phase_tasks`…) foram criadas fora do git.
 - **Aplicar na ordem, cada uma com a sua fase:** F1 fundação (datas de conclusão, horas e dono
   por item do checklist, histórico de prazo) → F2 ciclo por culto (reescreve
   `fn_marketing_cards_cycle_phase_sync`; o ciclo só FECHA o card) → F3 checklist fecha o card +
-  rotina (**muda o Kanban**, aplicar junto do deploy) → F4 roteamento do formulário (tabela
-  nasce vazia) → F5 views de atraso.
+  rotina (**muda o Kanban**, aplicar junto do deploy) → F4 Pendentes com pessoa sugerida →
+  F5 views de atraso.
 - ⚠️ **Líder ≠ nível de módulo:** o `AREA_MODULO_BOOST` dá nível 5 para a equipe toda. Líder na
   linha do tempo = `marketing_membros.habilidade='coordenador'` ou role admin/diretor.
