@@ -27,7 +27,7 @@
 - `backend/routes/marketing.js`
 - `backend/routes/marketingLinha.js`
 Guard: `authorizeModule('marketing', 1 | 3 | 5)`
-<details><summary>Endpoints (85)</summary>
+<details><summary>Endpoints (88)</summary>
 - `DELETE /api/batismo-fotos/:data/fotos/:nome`
 - `DELETE /api/comunicados/:id`
 - `DELETE /api/destaques/:id`
@@ -89,6 +89,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `PATCH /api/marketing/cards/:id/sugerir-revisao`
 - `PATCH /api/marketing/checklist/:itemId`
 - `PATCH /api/marketing/ciclo-criativo/batch`
+- `PATCH /api/marketing/linha/tarefas/:id`
 - `POST /api/batismo-fotos/:data/fotos`
 - `POST /api/comunicados`
 - `POST /api/comunicados/:id/arquivar`
@@ -110,6 +111,8 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `POST /api/marketing/cards`
 - `POST /api/marketing/cards/:id/checklist`
 - `POST /api/marketing/cards/:id/entregaveis`
+- `POST /api/marketing/linha/pendentes/:campanhaId/alocar`
+- `POST /api/marketing/linha/tarefas`
 - `PUT /api/comunicados/:id`
 - `PUT /api/destaques/:id`
 - `PUT /api/marketing/linha/rotina/:compromissoId/:semanaInicio`
@@ -117,6 +120,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 
 **Réguas puras (backend/utils)**
 
+- `backend/utils/marketingAlocacao.js`
 - `backend/utils/marketingChecklist.js`
 - `backend/utils/marketingCores.js`
 - `backend/utils/marketingLinha.js`
@@ -127,6 +131,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 **Serviços**
 
 - `backend/services/campanhaArrecadacao.js`
+- `backend/services/marketingAvisos.js`
 - `backend/services/marketingContexto.js`
 - `backend/services/marketingGenerosidade.js`
 - `backend/services/marketingSolicitante.js`
