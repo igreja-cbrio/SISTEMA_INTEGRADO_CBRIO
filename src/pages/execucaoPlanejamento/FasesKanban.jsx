@@ -97,6 +97,7 @@ export default function FasesKanban({ proposta, onMaterializado }) {
   const [fasesBrutas, setFasesBrutas] = useState([]); // fases cruas do vínculo (projeto.phases | ciclo.phases)
   const [faseSelecionada, setFaseSelecionada] = useState(null);
   const [materializando, setMaterializando] = useState(false);
+  const [iniciandoFases, setIniciandoFases] = useState(false);
   const containerRef = useRef(null);
 
   const carregar = useCallback(async () => {
@@ -145,6 +146,23 @@ export default function FasesKanban({ proposta, onMaterializado }) {
       return { id: f.id, nome, abrev: abrevDoNome(nome), status: statusDaFase(nome, cards) };
     });
   }, [fasesBrutas, cards, vinculo.tipo]);
+
+  // Projetos materializados ANTES desta correção (ou que por algum motivo
+  // ficaram sem fase) não têm o que o stepper desenhe — oferece o mesmo
+  // "Iniciar Fases" de Projetos.jsx em vez de deixar a aba só com o Kanban
+  // vazio e sem explicação.
+  const iniciarFasesPadrao = useCallback(async () => {
+    if (vinculo.tipo !== 'projeto') return;
+    setIniciandoFases(true);
+    try {
+      for (let i = 0; i < PHASE_NAMES_PROJETO.length; i++) {
+        await projectsApi.createPhase(vinculo.id, { name: PHASE_NAMES_PROJETO[i], order_index: i, status: 'pendente' });
+      }
+      await carregar();
+    } catch (e) {
+      toast.error(e.message || 'Não foi possível iniciar as fases do projeto');
+    } finally { setIniciandoFases(false); }
+  }, [vinculo.tipo, vinculo.id, carregar]);
 
   const nomeDaFaseSelecionada = faseSelecionada
     ? fasesStepper.find((f) => f.id === faseSelecionada)?.nome
@@ -226,7 +244,7 @@ export default function FasesKanban({ proposta, onMaterializado }) {
         <p style={{ fontSize: 13, color: C.t3 }}>Carregando fases…</p>
       ) : (
         <>
-          {fasesStepper.length > 0 && (
+          {fasesStepper.length > 0 ? (
             <div style={cardStyle}>
               <FaseStepper fases={fasesStepper} selecionada={faseSelecionada} onSelecionar={setFaseSelecionada} />
               {faseSelecionada && (
@@ -236,6 +254,13 @@ export default function FasesKanban({ proposta, onMaterializado }) {
                   </button>
                 </div>
               )}
+            </div>
+          ) : vinculo.tipo === 'projeto' && (
+            <div style={{ ...cardStyle, textAlign: 'center', padding: 16 }}>
+              <p style={{ ...hint, margin: '0 0 8px' }}>Este projeto ainda não tem as fases iniciadas.</p>
+              <button style={btn('primary')} onClick={iniciarFasesPadrao} disabled={iniciandoFases}>
+                {iniciandoFases ? 'Iniciando…' : 'Iniciar Fases (7 fases)'}
+              </button>
             </div>
           )}
         <div

@@ -21,6 +21,27 @@ decisões/time-lapse do sistema). Regras de manutenção:
   vivo (lição `cui_atendimentos`: achado de auditoria baseado em arquivo de
   migration que nunca foi aplicado em prod).
 
+## ⚠️ DEVOCIONAL · VÍDEO no item (2026-09-25 · migration `20260925120000`)
+
+Pedido do Marcos: *"subir vídeos nas devocionais, ter uma boa visualização,
+colocar fullscreen"*. "Editar item" (`DevocionalAdmin.tsx`) ganhou **Vídeo**.
+
+- ⚠️⚠️ **O arquivo NÃO passa pela API** (o Vercel corta o corpo em ~4,5 MB).
+  `POST /devocional-planos/itens/:id/video/upload` só emite link ASSINADO
+  (`createSignedUploadUrl`, bucket público `devocional-videos`, 500 MB); o
+  navegador sobe direto por XHR (com progresso) e o `PUT /itens/:id` grava
+  `video_path` — a `video_url` é montada NO SERVIDOR.
+- ⚠️ `caminhoEhDoItem` (`backend/utils/devocionalVideo.js`, no gate): o caminho
+  tem que ser `itens/<ESTE id>/<n>.<ext>`. Sem isso um item apontaria pro vídeo
+  de outro e, ao trocar, APAGARIA o arquivo dele.
+- O vídeo é salvo **na hora do envio**, separado do "Salvar" do texto — nenhum
+  arquivo fica no Storage sem item. O antigo é apagado DEPOIS do update.
+- Sem a migration: as rotas respondem **503** dizendo qual migration falta; o
+  app cai no select sem `video_url` (42703) e segue funcionando.
+- ⚠️ Prefira **MP4 (H.264)**: `.mov` do iPhone costuma ser HEVC e pode não
+  tocar no Android. O limite GLOBAL de upload do projeto Supabase pode ser menor
+  que os 500 MB do bucket — se der 413, é ele.
+
 ## ⚠️⚠️ DEVOCIONAL · o APP lê e grava DIRETO em 7 tabelas — grants + RLS (2026-09-23 · migration `20260923180000`)
 
 A casa nova do Devocional no app (Bíblia · Planos · Comentários · Anotações ·
