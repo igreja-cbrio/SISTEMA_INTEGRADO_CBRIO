@@ -22,6 +22,7 @@ const { moduloDoContexto } = require('./whatsappModulo');
 // dispara existe e pode voltar a rodar a qualquer momento.
 const ROTULOS = [
   ['grupos.pedido_novo_lider', 'Grupos · aviso ao líder de um novo pedido'],
+  ['grupos.link_pedido_lider', 'Grupos · aviso ao líder de pedido do link da sala'],
   ['grupos.inscricao_confirmada', 'Grupos · confirmação de inscrição'],
   ['grupos.pedido_aprovado', 'Grupos · pedido aprovado pelo líder'],
   ['grupos.confira_lista', 'Grupos · confira a lista do seu grupo'],

@@ -103,4 +103,21 @@ const itemVarredura = CATALOGO.find((i) => i.id === VARREDURA_ID);
 assert.equal(itemVarredura.envTemplate, null,
   'a varredura é e-mail — declarar envTemplate pintaria de vermelho um disparo configurado');
 
+// ── O aviso à liderança do PEDIDO DO LINK (26/09) · id vem da régua PURA ────
+// `utils/pedidoLinkGrupo` declara DISPARO_ID e CONTEXTO; o remetente
+// (services/pedidoLinkGrupo.js, que carrega o Supabase) é conferido por TEXTO.
+const { DISPARO_ID: LINK_ID, CONTEXTO: LINK_CONTEXTO } = require('../utils/pedidoLinkGrupo');
+const linkSrc = semComentarios(
+  fs.readFileSync(path.join(__dirname, 'pedidoLinkGrupo.js'), 'utf8'),
+);
+assert.ok(linkSrc.includes('disparoDesligado(DISPARO_ID)'),
+  'o remetente do aviso de pedido do link (services/pedidoLinkGrupo.js) não consulta disparoDesligado(DISPARO_ID) — o switch não desligaria nada');
+assert.ok(linkSrc.includes('contexto: CONTEXTO'),
+  'o remetente do aviso de pedido do link não grava `contexto: CONTEXTO` na fila — o histórico do item viria vazio');
+assert.ok(IDS_CATALOGO.includes(LINK_ID),
+  `"${LINK_ID}" não está no catálogo (${IDS_CATALOGO.join(', ')}) — o switch não apareceria na tela`);
+const itemLink = CATALOGO.find((i) => i.id === LINK_ID);
+assert.equal(itemLink.contexto, LINK_CONTEXTO,
+  `o contexto do catálogo ("${itemLink.contexto}") tem que ser o que o remetente grava na fila ("${LINK_CONTEXTO}")`);
+
 console.log('disparoInterruptor: OK');

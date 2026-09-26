@@ -422,6 +422,30 @@ async function publicoVisitantePesquisa() {
   return publicoPesquisaVisitante();
 }
 
+// Pedido do LINK DA SALA do grupo online pelo WhatsApp (26/09): disparo
+// REATIVO — sai na hora em que a pessoa pergunta "cadê o link?". O "público" é
+// a leitura de quantos pedidos o gancho registrou nos últimos 30 dias
+// (`wa_grupo_link_pedidos` · 1 linha por conversa × grupo × dia BRT).
+// ⚠️ Tabela ausente (migration 20260926120000 pendente) devolve 0 declarado,
+// nunca erro: a tela lista o item mesmo antes da migration.
+async function publicoGruposLinkPedido() {
+  const desde = new Date(Date.now() - 30 * 86400000).toISOString();
+  const { count, error } = await supabase.from('wa_grupo_link_pedidos')
+    .select('id', { count: 'exact', head: true })
+    .gte('criado_em', desde);
+  const qtd = error ? 0 : (count || 0);
+  return {
+    total: qtd,
+    pessoas: [],
+    universo: {
+      rotulo: error
+        ? 'pedidos do link registrados (tabela ainda não criada — migration 20260926120000)'
+        : 'pedidos do link da sala registrados nos últimos 30 dias',
+      qtd,
+    },
+  };
+}
+
 async function publicoCampanhaAgradecimento() {
   const { data: campanhas } = await supabase.from('camp_campanhas')
     .select('id, nome, digito, data_inicio, data_fim')
@@ -632,6 +656,23 @@ const CATALOGO = [
     },
     tabelaPropria: 'camp_agradecimentos',
     publico: publicoCampanhaAgradecimento,
+  },
+  {
+    id: 'grupos_link_pedido',
+    nome: 'Aviso à liderança: pedido do link do grupo online (WhatsApp)',
+    quando: 'Reativo · na hora em que alguém pergunta pelo WhatsApp da CBRio o link do encontro do grupo online',
+    regra: 'A pessoa escreve pedindo o link da sala e o sistema acha UM grupo ONLINE dela (vínculo ativo ou '
+      + 'pedido de entrada pendente/aprovado dos últimos 90 dias). Avisa quem responde pelo grupo — sino do '
+      + 'ERP, app do membro e WhatsApp da líder (template grupos_link_pedido_lider, só com o template APROVADO '
+      + 'na Meta). 1 aviso por conversa × grupo × dia. ⚠️ O sistema NUNCA manda o link da sala: quem manda é a '
+      + 'liderança. Desligar aqui cala só o WhatsApp da líder — sino e app continuam.',
+    fonte: 'POST /api/whatsapp/webhook → services/ganchosGrupoWhatsapp.js → services/pedidoLinkGrupo.js',
+    contexto: 'grupos.link_pedido_lider',
+    // ⚠️ `envTemplate` NULL de propósito: o nome é FIXO no código
+    // (`grupos_link_pedido_lider` · env WHATSAPP_TEMPLATE_GRUPOS_LINK_PEDIDO só
+    // como override) — mesma decisão do convertido_boas_vindas.
+    envTemplate: null,
+    publico: publicoGruposLinkPedido,
   },
   {
     id: 'visitante_pesquisa',

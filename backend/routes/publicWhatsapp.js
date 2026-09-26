@@ -664,6 +664,27 @@ async function processarMensagem(m, cfg, pnid = null, erroCfg = null) {
     // abrindo o menu de setores contra a lei de 12/08 ("não quero bot"), que é
     // exatamente o que aconteceu com a Thalya em 25/08.
     if (!freioBot.botPodeResponder({ cfg, erroConfig: erroCfg })) {
+      // ── GANCHOS DETERMINÍSTICOS DE GRUPO (Matheus · 26/09/2026) ─────────
+      // "Cadê o link do meu grupo?" avisa a liderança do grupo ONLINE e
+      // "quero trocar de grupo" vira PEDIDO PENDENTE à coordenação. Rodam
+      // ANTES do bot de IA e independem de `bot_ia.ativo` (régua fechada, sem
+      // IA — não dependem de crédito da Anthropic). ⚠️ Com a config ILEGÍVEL
+      // ninguém fala, nem eles (a lei do freio de 26/08).
+      // ⚠️ O bot NUNCA envia o link da sala nem move ninguém de grupo — só
+      // avisa quem decide. Gancho que assumiu é como `responder` do bot: a
+      // pessoa foi atendida e a equipe só é acionada quando ele pede.
+      if (!erroCfg) {
+        const gancho = await require('../services/ganchosGrupoWhatsapp')
+          .tratarGanchos({ telefone, texto, messageId, phoneNumberId: pnid, enviarTexto })
+          .catch(e => { console.error('[whatsapp webhook] ganchos:', e.message); return { tratado: false }; });
+        if (gancho?.tratado) {
+          if (gancho.acionarEquipe) {
+            await require('../services/waEquipe').atribuirPelaEquipe({ telefone, origem: 'inbox' });
+          }
+          return;
+        }
+      }
+
       // ── BOT DE IA POR ÁREA (Marcos · 08/09/2026) ─────────────────────────
       // Com o MENU calado, quem pode falar é o bot de IA por área — e só se
       // `whatsapp_config.bot_ia.ativo` for true (o serviço é fail-closed:

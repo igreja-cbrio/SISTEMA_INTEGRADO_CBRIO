@@ -202,4 +202,6 @@ async function sugerirAgenda(conversaId, { somenteSeReconhecer = false } = {}) {
   };
 }
 
-module.exports = { sugerirAgenda, grupoDaConversa, ancoraDoGrupo, localDoGrupo };
+// `liderDoGrupo` sai exportado pro gancho do link (services/pedidoLinkGrupo) —
+// uma consulta só pra "quem lidera este grupo", não uma 2ª.
+module.exports = { sugerirAgenda, grupoDaConversa, ancoraDoGrupo, localDoGrupo, liderDoGrupo };
