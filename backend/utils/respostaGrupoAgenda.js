@@ -150,10 +150,20 @@ function montarRespostaAgenda({
  *
  * ⚠️ Grupo PRESENCIAL não tem link: ali a resposta é o ENDEREÇO. Falar de link
  * para quem vai a um endereço é resposta que não serve pra nada.
+ *
+ * ⚠️⚠️ `liderAvisada` (26/09/2026 · gancho de `services/pedidoLinkGrupo.js`):
+ * quando o sistema AVISOU a liderança do pedido, o texto pode dizer isso. Mas
+ * SÓ quando algum canal saiu DE FATO (sino, app ou WhatsApp) — quem decide é
+ * `utils/pedidoLinkGrupo.algumCanalSaiu`, nunca o chamador por conta própria.
+ * Dizer "já avisamos" sem ter avisado é a caixa verde do censo de 05/08: a
+ * pessoa para de insistir esperando um contato que ninguém foi chamado a fazer.
+ * `pedidoRepetido` = o aviso já tinha saído mais cedo HOJE (dedup do dia).
+ * Vale só no ramo ONLINE — presencial não tem link a avisar.
  */
 function montarRespostaLink({
   nome = '', grupoNome = '', online = false, local = '',
   liderNome = '', liderTelefone = '', proximaISO = null, horario = '',
+  liderAvisada = false, pedidoRepetido = false,
 } = {}) {
   const oi = primeiroNomeDe(nome) ? `Oi, ${primeiroNomeDe(nome)}!` : 'Oi!';
   const lider = primeiroNomeDe(String(liderNome || '').trim());
@@ -161,7 +171,20 @@ function montarRespostaLink({
   const quando = quandoPorExtenso(proximaISO, horario);
   const l = [oi, ''];
 
-  if (online) {
+  if (online && liderAvisada === true) {
+    // ⚠️ `=== true`: quem passa algo truthy por engano (o objeto de canais, uma
+    // string de status) não pode transformar o texto em promessa.
+    const aviso = pedidoRepetido
+      ? 'Seu pedido do link já foi repassado à liderança do grupo'
+      : 'Já avisamos a liderança do grupo que você pediu o link do encontro';
+    l.push(lider
+      ? `${aviso}: a ${lider} vai entrar em contato com você.`
+      : `${aviso} — ela vai entrar em contato com você.`);
+    if (lider && tel) {
+      l.push('');
+      l.push(`Se quiser adiantar, o contato dela é ${tel}.`);
+    }
+  } else if (online) {
     l.push(lider
       // ⚠️ "vai falar com você" — sem PRAZO. Prometer "hoje" ou "logo" é
       // prometer o tempo de uma pessoa que não foi consultada.

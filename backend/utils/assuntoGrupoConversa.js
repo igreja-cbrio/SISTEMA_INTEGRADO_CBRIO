@@ -42,6 +42,22 @@ function normalizar(t) {
  */
 const JA_RESOLVEU = /\b(ja (consegui|recebi|entrei|achei|to no|estou no)|consegui (o |a )?(link|acesso|entrar)|recebi (o |a )?link|obrigad[oa] pelo link)\b/;
 
+/**
+ * ⚠️ "Link" de OUTRA COISA — não é o link da sala do grupo (26/09/2026).
+ *
+ * Desde que a régua passou a disparar um AVISO À LIDERANÇA do grupo (o gancho
+ * de `services/pedidoLinkGrupo.js`), casar "me manda o link do pix" como
+ * pedido de link de grupo deixou de custar uma sugestão recusada e passou a
+ * custar um WhatsApp para a líder pedindo que ela mande um link que ninguém
+ * pediu. Então o trecho "link do/da/pra <coisa que não é o grupo>" é REMOVIDO
+ * do texto antes de procurar o pedido — o resto da mensagem continua sendo
+ * avaliado normalmente (uma pergunta de agenda no mesmo texto segue valendo).
+ *
+ * ⚠️ `reuniao`, `encontro`, `sala`, `grupo` NÃO estão aqui de propósito: são
+ * exatamente o link que a régua existe para achar.
+ */
+const LINK_DE_OUTRA_COISA = /\blink (?:d[oa]s? |de |pr[oa] |para (?:o |a )?)?(?:pix|youtube|live|transmiss\w*|culto|next|inscric\w*|doac\w*|oferta|dizimo|batismo|retiro|evento|pagamento|app|aplicativo|formulario|site|instagram|campanha|cadastro)\b/g;
+
 /** Está perguntando pelo LINK / como entra / se deve procurar a liderança. */
 const PEDE_LINK = [
   /\blink\b/,
@@ -84,8 +100,11 @@ function assuntoDaMensagem(texto) {
   const t = normalizar(texto);
   if (!t) return null;
   if (JA_RESOLVEU.test(t)) return null;
-  if (casaAlguma(t, PEDE_LINK)) return 'link';
-  if (casaAlguma(t, PEDE_AGENDA)) return 'agenda';
+  // ⚠️ `replace` com a regex /g não guarda estado entre chamadas (é o `test` com
+  // /g que guarda `lastIndex`) — por isso ela só é usada em `replace`.
+  const semOutrosLinks = t.replace(LINK_DE_OUTRA_COISA, ' ');
+  if (casaAlguma(semOutrosLinks, PEDE_LINK)) return 'link';
+  if (casaAlguma(semOutrosLinks, PEDE_AGENDA)) return 'agenda';
   return null;
 }
 
