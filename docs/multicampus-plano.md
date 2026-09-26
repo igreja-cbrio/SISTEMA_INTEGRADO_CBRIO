@@ -1,12 +1,47 @@
 # Multi-campus · documento de design (ADR)
 
-> Status: **planejamento retomado** · Revisão: 2026-09-26
+> Status: **implementação em andamento · PR aberta** · Revisão: 2026-09-26
 > Origem: gestão + Claude Code (2026-07-01). Alvo atualizado:
 > **possível segundo campus físico em março de 2027**.
 
 Referência viva do projeto que torna o ERP da CBRio **multi-campus** (multi-sede
 física), preservando o campus atual (Sede) sem regressão. Escrito antes da
 primeira migration — a Fase 0 concreta sai deste doc.
+
+---
+
+## Continuidade da implementação (2026-09-26)
+
+Pedido atual: implementar o suporte multicampus e manter a PR aberta para
+continuação por Codex ou Claude. A autorização é de implementação; não ativar
+Campus 2, aplicar migrations em produção ou mergear esta PR durante o trabalho.
+
+- Branch remota: `codex/multicampus-implementacao`.
+- Worktree inicial: `/Users/MatheusToscano/Documents/wt-multicampus-implementacao`.
+- Base inicial: `d081d6116` (main). Não trabalhar na checkout antiga do diretório
+  principal: ela pertence a outra tarefa e contém alterações preservadas.
+- Documento canônico de escopo: este arquivo, seção 0. Demais seções antigas são
+  históricas quando conflitarem com a auditoria de setembro.
+- Não incluir a avaliação 360 (#2959): é outra entrega, aguardando aprovação.
+- Fazer commits e pushes a cada bloco validado; atualizar este checkpoint e a
+  descrição da PR com evidência e pendências, sem declarar multicampus concluído
+  enquanto houver módulos, canais ou migrações não cobertos.
+
+### Estado recuperável
+
+- [x] Branch isolada criada a partir da main atual.
+- [ ] Inventário executável de tabelas, rotas, RPCs, clientes diretos e jobs.
+- [ ] Contrato de contexto/autorização e estratégia de transição da Sede.
+- [ ] Contexto de campus no backend, frontend e clientes móveis.
+- [ ] Schema de atos, vínculos, agregados, unicidades e agenda por campus.
+- [ ] Isolamento API e RLS por módulo; portas públicas, arquivos e jobs.
+- [ ] Indicadores/consolidados reconciliados; módulos administrativos centrais.
+- [ ] Testes de negação, regressão, troca de campus e compatibilidade.
+- [ ] Ensaio de ativação documentado; PR revisável e aberta.
+
+Próxima ação ao retomar: ler o diff e o checkpoint mais recente desta branch,
+validar quais testes/migrations realmente existem e continuar os itens abertos.
+Nenhuma migration desta implementação foi aplicada em produção.
 
 ---
 
