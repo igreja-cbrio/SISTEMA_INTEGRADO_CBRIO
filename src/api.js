@@ -1,3 +1,4 @@
+import { createCampusRequest, getCampusHeader } from './lib/campusSession';
 import { supabase } from './supabaseClient';
 // Mesma régua de retry das portas públicas de pesquisa (censo e NPS).
 import { fetchPublicoComRetry as npsFetchRetry } from './lib/censoApi';
@@ -74,13 +75,81 @@ async function getToken() {
   return _cachedToken;
 }
 
-const headers = async () => {
+// Portas públicas resolvem o campus pelo recurso/token no servidor.
+const isPublicPath = (path) => path.startsWith('/public/');
+const headers = async (path = '') => {
   const token = await getToken();
   return {
     'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    ...(token ? { Authorization: `Bearer ${token}`, ...(!isPublicPath(path) ? getCampusHeader() : {}) } : {}),
   };
 };
+
+// Captura a geração ANTES de buscar o token e mantém a proteção até consumir
+// JSON, arquivo ou stream. Não intercepta o fetch global nem chamadas públicas.
+async function authenticatedFetch(path, options = {}) {
+  const scope = isPublicPath(path) ? null : createCampusRequest();
+  const controller = new AbortController();
+  const cancel = () => controller.abort();
+  const sources = [scope?.signal, options.signal].filter(Boolean);
+  sources.forEach(signal => {
+    if (signal.aborted) cancel();
+    else signal.addEventListener('abort', cancel, { once: true });
+  });
+  const finish = () => {
+    sources.forEach(signal => signal.removeEventListener('abort', cancel));
+    scope?.release();
+  };
+  try {
+    const authHeaders = await headers(path);
+    scope?.assertCurrent();
+    if (options.body instanceof FormData) delete authHeaders['Content-Type'];
+    const response = await fetch(`${API}${path}`, {
+      ...options, headers: { ...options.headers, ...authHeaders }, signal: controller.signal,
+    });
+    scope?.assertCurrent();
+    let stream;
+    return new Proxy(response, {
+      get(target, property) {
+        scope?.assertCurrent();
+        if (['json', 'text', 'blob', 'arrayBuffer'].includes(property)) return async () => {
+          try {
+            const value = await target[property]();
+            scope?.assertCurrent();
+            return value;
+          } catch (error) { scope?.assertCurrent(); throw error; }
+          finally { finish(); }
+        };
+        if (property === 'body' && target.body) {
+          if (!stream) {
+            const reader = target.body.getReader();
+            stream = new ReadableStream({
+              async pull(output) {
+                try {
+                  const chunk = await reader.read();
+                  scope?.assertCurrent();
+                  if (chunk.done) { output.close(); finish(); }
+                  else output.enqueue(chunk.value);
+                } catch (error) {
+                  try { scope?.assertCurrent(); } catch (changed) { error = changed; }
+                  output.error(error); finish();
+                }
+              },
+              async cancel(reason) { try { await reader.cancel(reason); } finally { finish(); } },
+            });
+          }
+          return stream;
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+  } catch (error) {
+    finish();
+    scope?.assertCurrent();
+    throw error;
+  }
+}
 
 // Sessão morta (token inválido/expirado/de outro ambiente): limpa a sessão do
 // Supabase e manda pro login, em vez de deixar a tela travada com mensagem de
@@ -99,7 +168,6 @@ async function handleDeadSession() {
 }
 
 async function request(path, opts = {}) {
-  const h = await headers();
   // Timeout (default 30s · configurável por opts.timeout) pra um backend/rede
   // lento não deixar a UI "carregando pra sempre". requestFile já usa esse padrão.
   const { timeout = 30000, ...rest } = opts;
@@ -108,8 +176,9 @@ async function request(path, opts = {}) {
   const timer = setTimeout(() => controller.abort(), timeout);
   let res;
   try {
-    res = await fetch(`${API}${path}`, { ...rest, headers: { ...h, ...rest.headers }, signal: controller.signal });
+    res = await authenticatedFetch(path, { ...rest, signal: controller.signal });
   } catch (cause) {
+    if (cause?.code === 'CAMPUS_CONTEXT_CHANGED') throw cause;
     if (cause?.name === 'AbortError') {
       const error = Object.assign(new Error('Tempo esgotado ao falar com o servidor. Recarregue a página ou tente de novo.'), { code: 'API_TIMEOUT' });
       captureApiError(error, { path, method, kind: 'timeout', code: error.code });
@@ -129,7 +198,7 @@ async function request(path, opts = {}) {
   }
 
   if (res.status === 401) {
-    const body = await res.json().catch(() => ({}));
+    const body = await res.json().catch(error => { if (error?.code === 'CAMPUS_CONTEXT_CHANGED') throw error; return {}; });
     console.warn('[API] 401', { path, reason: body.reason, detail: body.detail });
     // invalid_token = tinha um token, mas o servidor recusou (expirado / de
     // outro ambiente). Sessão morta → desloga e manda pro login (self-heal).
@@ -147,7 +216,7 @@ async function request(path, opts = {}) {
     throw error;
   }
   if (!res.ok) {
-    const err = await res.json().catch(() => ({ error: 'Erro desconhecido' }));
+    const err = await res.json().catch(error => { if (error?.code === 'CAMPUS_CONTEXT_CHANGED') throw error; return { error: 'Erro desconhecido' }; });
     const error = new Error(err.error || `HTTP ${res.status}`);
     // Preserve all extra fields from error body (alreadyCheckedIn, volunteerName, etc.)
     Object.assign(error, err);
@@ -166,6 +235,7 @@ async function request(path, opts = {}) {
   try {
     return await res.json();
   } catch (cause) {
+    if (cause?.code === 'CAMPUS_CONTEXT_CHANGED') throw cause;
     const error = Object.assign(new Error('Resposta inválida recebida do servidor.'), { code: 'API_INVALID_JSON', status: res.status, cause });
     captureApiError(error, { path, method, kind: 'protocol', status: res.status, code: error.code });
     throw error;
@@ -212,9 +282,11 @@ export const face = {
   // Carrega a foto do membro pelo MESMO domínio (proxy) → blob → object URL.
   // Evita CORS (foto do PCO/app cross-origin tornaria o canvas "tainted").
   fotoBlobUrl: async (membroId) => {
-    const token = await getToken();
-    const res = await fetch(`${API}/face/membros/${membroId}/foto`, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
-    if (!res.ok) throw new Error('Falha ao carregar a foto');
+    const res = await authenticatedFetch(`/face/membros/${membroId}/foto`);
+    if (!res.ok) {
+      await res.body?.cancel();
+      throw new Error('Falha ao carregar a foto');
+    }
     return URL.createObjectURL(await res.blob());
   },
   enroll: (membroId, descriptor, consentimento) => post(`/face/membros/${membroId}/enroll`, { descriptor, consentimento }),
@@ -728,9 +800,10 @@ export const decisaoCulto = {
 
 export const next = {
   // Public (sem auth) — para o formulário
-  publicEventos: () => fetch(`${API}/public/next/eventos`).then(r => r.json()),
+  publicEventos: (campus) => fetch(`${API}/public/next/eventos?campus=${encodeURIComponent(campus || '')}`).then(r => r.json()),
   // Domingos que a pessoa pode escolher no formulário (1 turma por domingo · 09:30)
-  publicTurmas: () => fetch(`${API}/public/next/turmas`).then(async r => {
+  publicCampi: () => fetch(`${API}/public/next/campi`).then(async r => { const j=await r.json(); if(!r.ok) throw new Error(j.error || 'Não foi possível carregar os campi.'); return j; }),
+  publicTurmas: (campus) => fetch(`${API}/public/next/turmas?campus=${encodeURIComponent(campus || '')}`).then(async r => {
     const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
   }),
   // Textos canônicos de consentimento (o snapshot gravado é sempre o do backend)
@@ -1312,17 +1385,15 @@ export const agents = {
    * Chat SSE stream. Returns the raw Response so the caller can read the stream.
    */
   chat: async ({ message, module, sessionId }) => {
-    const token = await getToken();
-    const res = await fetch(`${API}/agents/chat`, {
+    const res = await authenticatedFetch('/agents/chat', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({ message, module, sessionId }),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
+      const err = await res.json().catch(error => { if (error?.code === 'CAMPUS_CONTEXT_CHANGED') throw error; return {}; });
       throw new Error(err.error || `HTTP ${res.status}`);
     }
     return res; // caller reads SSE stream
@@ -1332,17 +1403,15 @@ export const agents = {
    * Mesmo contrato SSE do chat. Usado pelo Supervisor.
    */
   ask: async ({ message, sessionId }) => {
-    const token = await getToken();
-    const res = await fetch(`${API}/agents/ask`, {
+    const res = await authenticatedFetch('/agents/ask', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({ message, sessionId }),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
+      const err = await res.json().catch(error => { if (error?.code === 'CAMPUS_CONTEXT_CHANGED') throw error; return {}; });
       throw new Error(err.error || `HTTP ${res.status}`);
     }
     return res;
@@ -1371,17 +1440,15 @@ export const agents = {
     excluirTarefa: (id) => del(`/agent-tasks/tarefas/${id}`),
   },
   tts: async (text, opts = {}) => {
-    const token = await getToken();
-    const res = await fetch(`${API}/agents/tts`, {
+    const res = await authenticatedFetch('/agents/tts', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
       },
       body: JSON.stringify({ text, ...opts }),
     });
     if (!res.ok) {
-      const err = await res.json().catch(() => ({}));
+      const err = await res.json().catch(error => { if (error?.code === 'CAMPUS_CONTEXT_CHANGED') throw error; return {}; });
       const e = new Error(err.error || `HTTP ${res.status}`);
       e.code = err.code;
       e.status = res.status;
@@ -3171,6 +3238,7 @@ export const apresentacaoCriancasPublico = {
 };
 
 export const batismoPublico = {
+  campi: () => get('/public/batismo/campi'),
   // Textos canônicos de consentimento (o snapshot gravado é sempre o do backend)
   textos: async () => {
     const res = await fetch(`${API}/public/batismo/textos`);
@@ -3181,10 +3249,10 @@ export const batismoPublico = {
     if (!res.ok) throw new Error('Erro ao buscar próxima data');
     return res.json();
   },
-  horarios: async () => {
+  horarios: async (campus) => {
     // no-store: o seletor do form sempre reflete o estado atual (aberto/fechado/
     // lotado) que a Integração acabou de mudar — sem cache do navegador.
-    const res = await fetch(`${API}/public/batismo/horarios?t=${Date.now()}`, { cache: 'no-store' });
+    const res = await fetch(`${API}/public/batismo/horarios?campus=${encodeURIComponent(campus || "")}&t=${Date.now()}`, { cache: 'no-store' });
     if (!res.ok) throw new Error('Erro ao buscar horários');
     return res.json();
   },
@@ -3220,10 +3288,9 @@ export const relatorios = {
   baixarXlsx: async ({ tipo, inicio, fim, colunas }) => {
     const qs = new URLSearchParams({ tipo, inicio, fim });
     if (colunas?.length) qs.set('colunas', colunas.join(','));
-    const h = await headers();
-    const res = await fetch(`${API}/relatorios/xlsx?${qs.toString()}`, { headers: h });
+    const res = await authenticatedFetch(`/relatorios/xlsx?${qs.toString()}`);
     if (!res.ok) {
-      const e = await res.json().catch(() => ({}));
+      const e = await res.json().catch(error => { if (error?.code === 'CAMPUS_CONTEXT_CHANGED') throw error; return {}; });
       throw new Error(e.error || 'Erro ao baixar a planilha');
     }
     const blob = await res.blob();
@@ -3381,18 +3448,17 @@ export const cadastroPublico = {
 };
 
 async function requestFile(path, formData, { timeoutMs = 60_000 } = {}) {
-  const token = await getToken();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let res;
   try {
-    res = await fetch(`${API}${path}`, {
+    res = await authenticatedFetch(path, {
       method: 'POST',
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       body: formData,
       signal: controller.signal,
     });
   } catch (cause) {
+    if (cause?.code === 'CAMPUS_CONTEXT_CHANGED') throw cause;
     if (cause?.name === 'AbortError') {
       const error = Object.assign(new Error('Tempo esgotado ao enviar arquivo (60s). Tente novamente.'), { code: 'API_UPLOAD_TIMEOUT' });
       captureApiError(error, { path, method: 'POST', kind: 'timeout', code: error.code });
@@ -3405,7 +3471,7 @@ async function requestFile(path, formData, { timeoutMs = 60_000 } = {}) {
   }
   if (res.status === 401) { if (supabase) await supabase.auth.signOut(); window.location.href = '/login'; throw new Error('Sessão expirada'); }
   if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
+    const body = await res.json().catch(error => { if (error?.code === 'CAMPUS_CONTEXT_CHANGED') throw error; return {}; });
     const error = Object.assign(new Error(body.error || `HTTP ${res.status}`), body, {
       status: res.status,
       requestId: res.headers.get('x-request-id') || body.request_id || null,
@@ -3419,6 +3485,7 @@ async function requestFile(path, formData, { timeoutMs = 60_000 } = {}) {
   try {
     return await res.json();
   } catch (cause) {
+    if (cause?.code === 'CAMPUS_CONTEXT_CHANGED') throw cause;
     const error = Object.assign(new Error('Resposta inválida recebida após o upload.'), { code: 'API_INVALID_JSON', status: res.status, cause });
     captureApiError(error, { path, method: 'POST', kind: 'protocol', status: res.status, code: error.code });
     throw error;
@@ -3643,12 +3710,9 @@ export const voluntariado = {
     services: (year) => get(`/voluntariado/my-services?year=${year}`),
     walletGoogle: () => get('/voluntariado/me/wallet/google'),
     walletApple: async () => {
-      const token = await getToken();
-      const res = await fetch(`${API}/voluntariado/me/wallet/apple`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
-      });
+      const res = await authenticatedFetch('/voluntariado/me/wallet/apple');
       if (!res.ok) {
-        const err = await res.json().catch(() => ({}));
+        const err = await res.json().catch(error => { if (error?.code === 'CAMPUS_CONTEXT_CHANGED') throw error; return {}; });
         throw new Error(err.error || `HTTP ${res.status}`);
       }
       return res.blob();
@@ -4258,7 +4322,7 @@ export const batismoFotos = {
   datas: () => get('/batismo-fotos'),
   fotos: (data) => get(`/batismo-fotos/${data}/fotos`),
   upload: (data, formData) => requestFile(`/batismo-fotos/${data}/fotos`, formData),
-  remove: (data, nome) => del(`/batismo-fotos/${data}/fotos/${encodeURIComponent(nome)}`),
+  remove: (data, nome, origem = "campus") => del(`/batismo-fotos/${data}/fotos/${encodeURIComponent(nome)}?origem=${encodeURIComponent(origem)}`),
 };
 
 export const destaques = {
@@ -4779,9 +4843,11 @@ export const apresentacoes = {
   // Busca HTML completo pra usar em <iframe srcDoc={...}>
   // (iframes não mandam Authorization automaticamente · precisamos do fetch)
   fetchHtml: async (id) => {
-    const h = await headers();
-    const res = await fetch(`${API}/apresentacoes/${id}/render`, { headers: h });
-    if (!res.ok) throw new Error(`Erro ao carregar HTML (${res.status})`);
+    const res = await authenticatedFetch(`/apresentacoes/${id}/render`);
+    if (!res.ok) {
+      await res.body?.cancel();
+      throw new Error(`Erro ao carregar HTML (${res.status})`);
+    }
     return res.text();
   },
   resumoUso: () => get('/apresentacoes/uso/resumo'),
@@ -4841,4 +4907,14 @@ export const visitantes = {
   fluxo: (params) => get('/visitantes/cuidados/fluxo' + (params ? '?' + new URLSearchParams(params) : '')),
   encerrarFluxo: (id, data) => post(`/visitantes/cuidados/${id}/desfecho`, data),
   reabrirFluxo: (id) => del(`/visitantes/cuidados/${id}/desfecho`),
+};
+
+// Administração multicampus: acesso concedido e auditado pelo servidor.
+export const campus = {
+  admin: {
+    estado: () => get('/campus/admin/estado'),
+    usuarios: (busca) => get('/campus/admin/usuarios?busca=' + encodeURIComponent(busca)),
+    vinculos: (usuarioId) => get('/campus/admin/vinculos?usuario_id=' + encodeURIComponent(usuarioId)),
+    salvarVinculos: (body) => put('/campus/admin/vinculos', body),
+  },
 };

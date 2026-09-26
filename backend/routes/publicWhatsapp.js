@@ -297,7 +297,7 @@ async function processarStatuses(statuses) {
       // contexto/telefone/ref_id vêm junto porque o `failed` agora AVISA gente
       // (antes só gravava a coluna e a falha morria em silêncio).
       const { data: envio } = await supabase.from('whatsapp_envios')
-        .select('id, contexto, telefone, ref_id, template')
+        .select('id, contexto, telefone, ref_id, template, igreja_id, escopo_campus')
         .eq('message_id', messageId).maybeSingle();
 
       if (envio) {

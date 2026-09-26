@@ -1,3 +1,5 @@
+const { criarMiddlewareCampus } = require('../middleware/campus');
+const contextoSyncCampus = criarMiddlewareCampus({modulo:'voluntariado',cobertura:{escrita:true,leitura:false}});
 const router = require('express').Router();
 const { authenticate, authorize, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
@@ -60,14 +62,16 @@ function statusDaRodada(r) {
 //   1. fetchAllPlans  → 5 cultos futuros + 3 passados (para escalas/check-in)
 //   2. fetchAllTeamPersons → todas as pessoas das equipes (para vol_profiles)
 // ══════════════════════════════════════════════════════════════
-router.post('/sync', async (req, res) => {
+router.post('/sync', contextoSyncCampus, async (req, res) => {
   try {
-    const r = await executarSyncCompleto();
-    await supabase.from('vol_sync_logs').insert({
-      sync_type: 'manual', services_synced: r.services, schedules_synced: r.schedules,
+    const r = await executarSyncCompleto({contexto:req.campus});
+    const {error:erroLog} = await supabase.from('vol_sync_logs').insert({
+      igreja_id:req.campus.campus_id, sync_type: 'manual', services_synced: r.services, schedules_synced: r.schedules,
       qrcodes_generated: r.qrCodesGenerated, ...statusDaRodada(r), triggered_by: req.user.userId,
     });
+    if (erroLog) throw erroLog;
     res.json({
+      status:statusDaRodada(r).status, pendenciasEquipe:r.pendenciasEquipe,
       success: true, services: r.services, newSchedules: r.schedules,
       qrCodesGenerated: r.qrCodesGenerated, volunteersSynced: r.volunteersSynced,
       avatarsImported: r.avatarsImported, totalMembersFound: r.totalMembersFound,
@@ -76,7 +80,7 @@ router.post('/sync', async (req, res) => {
   } catch (e) {
     if (e.code === 'NO_SERVICE_TYPES') return res.status(400).json({ error: e.message });
     console.error('[VOL SYNC] Error:', e.message);
-    res.status(500).json({ error: 'Erro durante sincronizacao' });
+    res.status(500).json({ error: 'Erro durante a sincronização.' });
   }
 });
 

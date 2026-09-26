@@ -22,7 +22,7 @@ self.addEventListener('push', (event) => {
     icon: payload.icon || '/logo-cbrio-icon.png',
     badge: payload.badge || '/logo-cbrio-icon.png',
     tag: payload.tag,
-    data: { url: payload.url || '/' },
+    data: { url: payload.url || '/', campus_id: payload.campus_id || null },
     requireInteraction: false,
   };
 
@@ -31,7 +31,11 @@ self.addEventListener('push', (event) => {
 
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
-  const targetUrl = (event.notification?.data?.url) || '/';
+  const target = new URL(event.notification?.data?.url || '/', self.location.origin);
+  if (target.origin !== self.location.origin) return;
+  const campus = event.notification?.data?.campus_id;
+  if (typeof campus === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(campus)) target.searchParams.set('campus_id', campus);
+  const targetUrl = target.href;
 
   event.waitUntil((async () => {
     const allClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });

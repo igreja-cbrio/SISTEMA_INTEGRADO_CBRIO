@@ -130,7 +130,7 @@ const OPTIN_SEMPRE = process.env.WHATSAPP_OPTIN_OBRIGATORIO === '1';
 
 // Dispara um template pra um membro. NUNCA quebra o fluxo chamador (fire-and-forget).
 // Retorna {skipped:'...'} quando não há o que fazer.
-async function notificarMembro(membroId, chave, params = [], { idioma = TEMPLATE_LANG } = {}) {
+async function notificarMembro(membroId, chave, params = [], { idioma = TEMPLATE_LANG, campus, refId, chaveDedup } = {}) {
   try {
     const templateName = TEMPLATES_APP[chave];
     if (!templateName) return { skipped: 'template_nao_configurado' }; // no-op até aprovar + setar env
@@ -162,7 +162,9 @@ async function notificarMembro(membroId, chave, params = [], { idioma = TEMPLATE
       params,
       idioma,
       contexto: `app.${chave}`,
-      refId: membroId,
+      refId: refId || membroId,
+      campus,
+      chaveDedup,
     });
     if (!r.sent) {
       console.warn('[WPP] notificarMembro %s não saiu na hora: %j', chave, { reason: r.reason, queued: r.queued });

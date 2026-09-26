@@ -1,4 +1,6 @@
 const { supabase } = require('../utils/supabase');
+const { escopoNotificacao } = require('./campusNotificacaoEscopo');
+const { filtrarDestinatariosCampus } = require('./campusNotificacoes');
 const { enviarPushParaUsers } = require('./webpush');
 const { pushExpoParaUsers } = require('./appPush');
 const { enviarEmail, isConfigured: emailConfigurado } = require('./email');
@@ -137,10 +139,18 @@ async function resolverDestinatarios(modulo, tipo = null) {
  * Cria notificação para múltiplos usuários, com deduplicação.
  * chaveDedup: string única que identifica o evento (ex: "ferias_vencendo_uuid123")
  */
-async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'info', chaveDedup, targetIds, extraTargetIds, email = false, emailsExtra }) {
+async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'info', chaveDedup, targetIds, extraTargetIds, email = false, emailsExtra, campus }) {
+  const escopo = await escopoNotificacao(supabase, modulo, campus);
   let destinatarios = targetIds || await resolverDestinatarios(modulo, tipo);
   if (extraTargetIds?.length) {
     destinatarios = [...new Set([...(destinatarios || []), ...extraTargetIds.filter(Boolean)])];
+  }
+  if (campus) {
+    if (emailsExtra?.length && campus.estado !== 'preparacao') {
+      throw new Error('E-mails avulsos exigem validação explícita de campus.');
+    }
+    destinatarios = await filtrarDestinatariosCampus(supabase, campus, destinatarios);
+    if (chaveDedup) chaveDedup = `${campus.campus_id}:${chaveDedup}`;
   }
   if (!destinatarios.length) {
     console.warn(`[notificar] sem destinatarios · modulo=${modulo} · titulo="${titulo}"`);
@@ -172,6 +182,7 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
 
     const { error } = await supabase.from('notificacoes').insert({
       usuario_id: userId,
+      ...escopo,
       titulo,
       mensagem,
       tipo: tipo || modulo,
@@ -203,6 +214,7 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
       title: titulo,
       body: mensagem,
       url: link || '/',
+      ...(campus ? { campus_id: campus.campus_id } : {}),
       tag: chaveDedup || `${modulo}-${Date.now()}`,
     }).catch(e => console.warn('[notificar push]', e.message));
 
@@ -217,7 +229,7 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
     pushExpoParaUsers(usersInseridos, {
       title: titulo,
       body: mensagem,
-      data: { tipo: tipo || modulo, modulo, link: link || null },
+      data: { tipo: tipo || modulo, modulo, link: link || null, ...(campus ? { campus_id: campus.campus_id } : {}) },
       app: 'staff',
     }).catch(e => console.warn('[notificar push expo]', e.message));
   }

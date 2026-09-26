@@ -62,6 +62,13 @@ const uploadMw = multer({ storage: multer.memoryStorage(), limits: { fileSize: 1
 const sanitizePath = (s) => (s || '').replace(/[^a-zA-Z0-9\-_ ]/g, '').trim();
 
 router.use(authenticate);
+const { criarMiddlewareCampus } = require('../middleware/campus');
+const { filtrarCampus } = require('../utils/campusQuery');
+const { lerTodasPaginas } = require('../utils/campusPaginacao');
+const { listarGruposCampus, lerReferenciasGrupo } = require('../services/gruposCampusLeitura');
+const campusGruposLeitura = criarMiddlewareCampus({ modulo: 'grupos', cobertura: { leitura: true, escrita: false } });
+const campusGruposConsolidacao = criarMiddlewareCampus({ modulo: 'grupos', cobertura: { leitura: false, escrita: true } });
+
 
 // POST /api/grupos/importar-participantes · importa o consolidado (XLSX) de
 // pessoas × grupos. ?dry_run=1 (ou body dry_run) devolve a prévia sem gravar.
@@ -121,49 +128,18 @@ router.put('/temporada-inscricoes', authorizeModule('grupos', 3), async (req, re
 
 // GET /api/grupos — lista todos com contagem de membros e líder
 // varredura 2026-09: A03 GET / sem gate de modulo - select('*') de mem_grupos (endereco/bairro da casa anfitria) pra qualquer conta autenticada
-router.get('/', authorizeModule('grupos', 1), async (req, res) => {
+router.get('/', authorizeModule('grupos', 1), campusGruposLeitura, async (req, res) => {
   try {
-    const { ativo, categoria, bairro, temporada, status_temporada, codigo } = req.query;
-    let q = supabase.from('mem_grupos').select('*').is('deleted_at', null);
-    // ativo=all retorna tudo (ativos + arquivados); default e so ativos
-    if (ativo === 'all') {
-      // sem filtro
-    } else if (ativo !== undefined) {
-      q = q.eq('ativo', ativo === 'true');
-    } else {
-      q = q.eq('ativo', true);
-    }
-    if (categoria) q = q.eq('categoria', categoria);
-    if (bairro) q = q.eq('bairro', bairro);
-    if (temporada) q = q.eq('temporada', temporada);
-    if (status_temporada) q = q.eq('status_temporada', status_temporada);
-    if (codigo) q = q.eq('codigo', codigo);
-    q = q.order('nome');
-    const { data: grupos, error } = await q;
-    if (error) throw error;
-
-    // Buscar contagem de membros ativos por grupo · PAGINADO (o roster passa de
-    // 1000 linhas · sem paginar, o cap do PostgREST subcontava os grupos e
-    // quebrava a ordenação por tamanho). Filtra soft-deletados.
-    const participacoes = [];
-    {
-      let from = 0; const size = 1000;
-      for (;;) {
-        const { data: page, error: eP } = await supabase.from('mem_grupo_membros')
-          .select('grupo_id').is('saiu_em', null).is('deleted_at', null)
-          .range(from, from + size - 1);
-        if (eP) throw eP;
-        participacoes.push(...(page || []));
-        if (!page || page.length < size) break;
-        from += size;
-      }
-    }
+    const grupos = await listarGruposCampus(supabase, req.campus, req.query);
+    const participacoes = await lerReferenciasGrupo(grupos.map(g => g.id), ids =>
+      supabase.from('mem_grupo_membros').select('id, grupo_id').in('grupo_id', ids)
+        .is('saiu_em', null).is('deleted_at', null));
 
     // Buscar dados dos líderes
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
     let lideresMap = {};
     if (liderIds.length > 0) {
-      const { data: lideres } = await supabase.from('mem_membros').select('id, nome, telefone, foto_url').is('deleted_at', null).in('id', liderIds);
+      const lideres = await lerReferenciasGrupo(liderIds, ids => supabase.from('mem_membros').select('id, nome, telefone, foto_url').is('deleted_at', null).in('id', ids));
       (lideres || []).forEach(l => { lideresMap[l.id] = l; });
     }
 
@@ -171,7 +147,7 @@ router.get('/', authorizeModule('grupos', 1), async (req, res) => {
     const origemIds = [...new Set((grupos || []).map(g => g.grupo_origem_id).filter(Boolean))];
     let origensMap = {};
     if (origemIds.length > 0) {
-      const { data: origens } = await supabase.from('mem_grupos').select('id, nome').is('deleted_at', null).in('id', origemIds);
+      const origens = await lerReferenciasGrupo(origemIds, ids => filtrarCampus(supabase.from('mem_grupos').select('id, nome').is('deleted_at', null).in('id', ids), req.campus));
       (origens || []).forEach(o => { origensMap[o.id] = o.nome; });
     }
 
@@ -852,11 +828,11 @@ router.get('/saude/agregado', authorizeModule('grupos', 1), async (req, res) => 
 // Retorna: total_grupos, total_lideres, lideres_treinamento, satisfacao_lideres,
 //          frequência { media_por_encontro, série mensal } e funções (distribuição).
 // varredura 2026-09: A03 GET /kpis/relatorio sem gate de modulo - KPI do modulo era legivel por qualquer conta autenticada
-router.get('/kpis/relatorio', authorizeModule('grupos', 1), async (req, res) => {
+router.get('/kpis/relatorio', authorizeModule('grupos', 1), campusGruposLeitura, async (req, res) => {
   try {
     const { temporada } = req.query;
     const meses = Math.min(Math.max(parseInt(req.query.meses, 10) || 12, 1), 60);
-    const { data, error } = await supabase.rpc('fn_grupos_kpis_relatorio', {
+    const { data, error } = await supabase.rpc('fn_grupos_kpis_relatorio_campus', { p_igreja_id: req.campus.campus_id,
       p_temporada: temporada || null,
       p_meses: meses,
     });
@@ -981,11 +957,11 @@ router.get('/kpis/frequencia-grupos', authorizeModule('grupos', 1), async (req, 
 // temporada bate exatamente com o que vai pro histórico ao consolidar (Marcos
 // 17/07: "indicadores completos · certeza de que coleta certo"). Nível 1.
 // varredura 2026-09: A03 GET /kpis/temporada-metricas sem gate de modulo - metrica da temporada era legivel por qualquer conta autenticada
-router.get('/kpis/temporada-metricas', authorizeModule('grupos', 1), async (req, res) => {
+router.get('/kpis/temporada-metricas', authorizeModule('grupos', 1), campusGruposLeitura, async (req, res) => {
   try {
     const { temporada } = req.query;
     if (!temporada) return res.status(400).json({ error: 'Informe a temporada' });
-    const { data, error } = await supabase.rpc('fn_temporada_metricas', { p_temporada: temporada });
+    const { data, error } = await supabase.rpc('fn_temporada_metricas_campus', { p_igreja_id: req.campus.campus_id, p_temporada: temporada });
     if (error) throw error;
     // fn_temporada_metricas RETURNS TABLE → array com 1 linha.
     const met = (Array.isArray(data) ? data[0] : data) || {};
@@ -997,21 +973,13 @@ router.get('/kpis/temporada-metricas', authorizeModule('grupos', 1), async (req,
     //   por isso NÃO usamos num_membros da RPC (que conta só o roster).
     // - Frequentadores (>=1 presença) / Visitantes (0 presença) DERIVADOS da presença.
     try {
-      const { data: gs } = await supabase.from('mem_grupos')
-        .select('id, lider_id, supervisor_id').eq('temporada', temporada)
-        .eq('ativo', true).is('deleted_at', null).limit(2000);
+      const gs = await listarGruposCampus(supabase, req.campus, { temporada }, 'id, nome, lider_id, supervisor_id');
       const gids = (gs || []).map(g => g.id);
       const pessoas = new Set();            // membro_id distintos
       const conex = new Set();              // 'membro_id|grupo_id' distintos = Inscritos
-      if (gids.length) {
-        for (let off = 0; ; off += 1000) {
-          const { data: pg } = await supabase.from('mem_grupo_membros')
-            .select('membro_id, grupo_id').in('grupo_id', gids)
-            .is('saiu_em', null).is('deleted_at', null).order('id').range(off, off + 999);
-          (pg || []).forEach(v => { if (v.membro_id) { pessoas.add(v.membro_id); conex.add(v.membro_id + '|' + v.grupo_id); } });
-          if (!pg || pg.length < 1000) break;
-        }
-      }
+      const roster = await lerReferenciasGrupo(gids, ids => supabase.from('mem_grupo_membros')
+        .select('id, membro_id, grupo_id').in('grupo_id', ids).is('saiu_em', null).is('deleted_at', null));
+      roster.forEach(v => { if (v.membro_id) { pessoas.add(v.membro_id); conex.add(v.membro_id + '|' + v.grupo_id); } });
       // Líder e supervisor de cada grupo também contam (pessoa + inscrição)
       (gs || []).forEach(g => {
         if (g.lider_id) { pessoas.add(g.lider_id); conex.add(g.lider_id + '|' + g.id); }
@@ -1019,16 +987,14 @@ router.get('/kpis/temporada-metricas', authorizeModule('grupos', 1), async (req,
       });
       // Quem tem >=1 presença (fn_grupos_ultima_frequencia = grupos ativos)
       const comPresenca = new Set();
-      try {
-        const { data: fr } = await supabase.rpc('fn_grupos_ultima_frequencia');
-        (fr || []).forEach(f => { if (pessoas.has(f.membro_id)) comPresenca.add(f.membro_id); });
-      } catch { /* best-effort */ }
+      const fr = await lerTodasPaginas(() => supabase.rpc('fn_grupos_ultima_frequencia_campus', { p_igreja_id: req.campus.campus_id }).order('membro_id'));
+      fr.forEach(f => { if (pessoas.has(f.membro_id)) comPresenca.add(f.membro_id); });
       met.pessoas_distintas = pessoas.size;
       met.inscritos = conex.size;                       // conexões pessoa×grupo (todos os papéis)
       met.frequentadores = comPresenca.size;            // pessoas com >=1 presença
       met.visitantes = pessoas.size - comPresenca.size; // inscritos sem presença ainda
       met.tem_presenca = comPresenca.size > 0;          // frequência já começou?
-    } catch (eCalc) { console.error('[temporada-metricas derivados]', eCalc.message); }
+    } catch (eCalc) { throw eCalc; }
 
     res.json(met);
   } catch (e) {
@@ -1041,11 +1007,11 @@ router.get('/kpis/temporada-metricas', authorizeModule('grupos', 1), async (req,
 // (frequência, inscrições, membresia) + tamanho/média dos grupos, escopadas
 // pela janela de data da temporada (fn_temporada_series · cap-safe em SQL).
 // varredura 2026-09: A03 GET /kpis/temporada-series sem gate de modulo - serie da temporada era legivel por qualquer conta autenticada
-router.get('/kpis/temporada-series', authorizeModule('grupos', 1), async (req, res) => {
+router.get('/kpis/temporada-series', authorizeModule('grupos', 1), campusGruposLeitura, async (req, res) => {
   try {
     const { temporada } = req.query;
     if (!temporada) return res.status(400).json({ error: 'Informe a temporada' });
-    const { data, error } = await supabase.rpc('fn_temporada_series', { p_temporada: temporada });
+    const { data, error } = await supabase.rpc('fn_temporada_series_campus', { p_igreja_id: req.campus.campus_id, p_temporada: temporada });
     if (error) throw error;
     res.json(data || { serie: [], tamanho: null });
   } catch (e) {
@@ -1058,11 +1024,11 @@ router.get('/kpis/temporada-series', authorizeModule('grupos', 1), async (req, r
 // membros (só participantes · nunca liderança) sem NENHUMA presença na temporada,
 // agrupados por grupo · SÓ grupos que registraram encontro (fn_temporada_sem_presenca).
 // Nível 3 (expõe lista de pessoas pra ação de remoção · gate humano na UI).
-router.get('/kpis/sem-presenca', authorizeModule('grupos', 3), async (req, res) => {
+router.get('/kpis/sem-presenca', authorizeModule('grupos', 3), campusGruposLeitura, async (req, res) => {
   try {
     const { temporada } = req.query;
     if (!temporada) return res.status(400).json({ error: 'Informe a temporada' });
-    const { data, error } = await supabase.rpc('fn_temporada_sem_presenca', { p_temporada: temporada });
+    const { data, error } = await supabase.rpc('fn_temporada_sem_presenca_campus', { p_igreja_id: req.campus.campus_id, p_temporada: temporada });
     if (error) throw error;
     res.json(Array.isArray(data) ? data : (data || []));
   } catch (e) {
@@ -1260,25 +1226,17 @@ function distanciaKm(lat1, lng1, lat2, lng2) {
 // Query: lider_nome, categoria, bairro, cep, raio_km, temporada, status_temporada
 // Retorna grupos ATIVOS da temporada filtrada com info do líder
 // varredura 2026-09: A03 GET /buscar sem gate de modulo - busca de grupos com endereco pra qualquer conta autenticada
-router.get('/buscar', authorizeModule('grupos', 1), async (req, res) => {
+router.get('/buscar', authorizeModule('grupos', 1), campusGruposLeitura, async (req, res) => {
   try {
     const { lider_nome, categoria, bairro, cep, raio_km, temporada, status_temporada, q } = req.query;
 
-    let query = supabase.from('mem_grupos').select('*').is('deleted_at', null).eq('ativo', true);
-    if (categoria) query = query.eq('categoria', categoria);
-    if (bairro) query = query.eq('bairro', bairro);
-    if (temporada) query = query.eq('temporada', temporada);
-    if (status_temporada) query = query.eq('status_temporada', status_temporada);
-    query = query.order('nome');
-
-    const { data: grupos, error } = await query;
-    if (error) throw error;
+    const grupos = await listarGruposCampus(supabase, req.campus, { categoria, bairro, temporada, status_temporada });
 
     // Enriquecer com líder
     const liderIds = [...new Set((grupos || []).map(g => g.lider_id).filter(Boolean))];
     let lideresMap = {};
     if (liderIds.length > 0) {
-      const { data: lideres } = await supabase.from('mem_membros').select('id, nome, foto_url').is('deleted_at', null).in('id', liderIds);
+      const lideres = await lerReferenciasGrupo(liderIds, ids => supabase.from('mem_membros').select('id, nome, foto_url').is('deleted_at', null).in('id', ids));
       (lideres || []).forEach(l => { lideresMap[l.id] = l; });
     }
 
@@ -4178,24 +4136,24 @@ router.put('/redes/:id', authorizeModule('grupos', 3), async (req, res) => {
 
 // GET /api/grupos/:id — detalhe com membros
 // varredura 2026-09: A03 GET /:id sem gate de modulo - roster nominal com telefone/e-mail dos participantes pra qualquer conta autenticada
-router.get('/:id', authorizeModule('grupos', 1), async (req, res) => {
+router.get('/:id', authorizeModule('grupos', 1), campusGruposLeitura, async (req, res) => {
   try {
     const id = req.params.id;
 
-    // Round 1: 4 queries que so dependem do id (em paralelo)
-    const [grupoRes, partRes, histRes, multRes] = await Promise.all([
-      supabase.from('mem_grupos').select('*').eq('id', id).single(),
-      supabase.from('mem_grupo_membros')
-        .select('*, mem_membros(id, nome, telefone, email, foto_url, status)') // varredura 2026-09: A03 — sai `data_nascimento` (nenhuma tela do /grupos lê; PII a mais no roster)
-        .eq('grupo_id', id).is('saiu_em', null).order('entrou_em'),
-      supabase.from('mem_grupo_membros')
-        .select('*, mem_membros(id, nome)')
-        .eq('grupo_id', id).not('saiu_em', 'is', null).order('saiu_em', { ascending: false }),
-      supabase.from('mem_grupos').select('id, nome, ativo')
-        .eq('grupo_origem_id', id).order('nome'),
+    const { data: grupo, error: grupoErro } = await filtrarCampus(supabase.from('mem_grupos').select('*'), req.campus)
+      .eq('id', id).is('deleted_at', null).maybeSingle();
+    if (grupoErro) throw grupoErro;
+    if (!grupo) return res.status(404).json({ error: 'Grupo não encontrado' });
+    const [participantes, historico, multiplicacoes] = await Promise.all([
+      lerTodasPaginas(() => supabase.from('mem_grupo_membros')
+        .select('*, mem_membros(id, nome, telefone, email, foto_url, status)')
+        .eq('grupo_id', id).is('deleted_at', null).is('saiu_em', null).order('entrou_em').order('id')),
+      lerTodasPaginas(() => supabase.from('mem_grupo_membros').select('*, mem_membros(id, nome)')
+        .eq('grupo_id', id).is('deleted_at', null).not('saiu_em', 'is', null).order('saiu_em', { ascending: false }).order('id')),
+      lerTodasPaginas(() => filtrarCampus(supabase.from('mem_grupos').select('id, nome, ativo'), req.campus)
+        .eq('grupo_origem_id', id).is('deleted_at', null).order('nome').order('id')),
     ]);
-    if (grupoRes.error) throw grupoRes.error;
-    const grupo = grupoRes.data;
+    const partRes = { data: participantes }, histRes = { data: historico }, multRes = { data: multiplicacoes };
 
     // Round 2: líder e grupo de origem (so se houver — em paralelo)
     // ⚠️ O link da sala vem de `mem_grupo_link` (tabela própria · ver a migration
@@ -4208,7 +4166,7 @@ router.get('/:id', authorizeModule('grupos', 1), async (req, res) => {
         ? supabase.from('mem_membros').select('id, nome, telefone, email, foto_url, deleted_at').eq('id', grupo.lider_id).single()
         : Promise.resolve({ data: null }),
       grupo.grupo_origem_id
-        ? supabase.from('mem_grupos').select('id, nome').eq('id', grupo.grupo_origem_id).single()
+        ? filtrarCampus(supabase.from('mem_grupos').select('id, nome'), req.campus).eq('id', grupo.grupo_origem_id).is('deleted_at', null).maybeSingle()
         : Promise.resolve({ data: null }),
       grupo.supervisor_id
         ? supabase.from('mem_membros').select('id, nome, foto_url').eq('id', grupo.supervisor_id).single()
@@ -4216,6 +4174,7 @@ router.get('/:id', authorizeModule('grupos', 1), async (req, res) => {
       supabase.from('mem_grupo_link').select('link, plataforma').eq('grupo_id', id).maybeSingle()
         .then(r => r, error => ({ data: null, error })),
     ]);
+    for (const resultado of [liderRes, origemRes, supRes]) { if (resultado.error) throw resultado.error; }
     // ⚠️ `link_online: null` significa "não cadastrado"; a tela distingue isso de
     // "não deu pra ler" pelo `link_indisponivel`.
     grupo.link_online = linkRes?.data?.link || null;
@@ -4437,20 +4396,20 @@ router.get('/temporadas/list', authorizeModule('grupos', 1), async (req, res) =>
 // métricas AO VIVO da temporada ativa quando ela ainda não foi consolidada
 // (linha "parcial · em andamento"). Rota estática ANTES de /temporadas/:id.
 // varredura 2026-09: A03 GET /temporadas/consolidado sem gate de modulo - consolidado da temporada pra qualquer conta autenticada
-router.get('/temporadas/consolidado', authorizeModule('grupos', 1), async (req, res) => {
+router.get('/temporadas/consolidado', authorizeModule('grupos', 1), campusGruposLeitura, async (req, res) => {
   try {
-    const { data: congelados, error } = await supabase.from('mem_temporada_consolidado')
-      .select('*').order('data_inicio', { ascending: true });
-    if (error) throw error;
+    const congelados = await lerTodasPaginas(() => filtrarCampus(supabase.from('mem_temporada_consolidado').select('*'), req.campus).order('data_inicio').order('id'));
 
     // Temporada ativa (a "atual") — se ainda não congelada, calcula parcial.
     let atual = null;
-    const { data: temps } = await supabase.from('mem_temporadas')
+    const { data: temps, error: erroTemporada } = await supabase.from('mem_temporadas')
       .select('id, label, data_inicio, data_fim, ativa').eq('ativa', true).limit(1);
+    if (erroTemporada) throw erroTemporada;
     const ativa = (temps || [])[0];
     if (ativa && !(congelados || []).some(c => c.temporada === ativa.id)) {
-      const { data: m, error: eM } = await supabase.rpc('fn_temporada_metricas', { p_temporada: ativa.id });
-      if (!eM && Array.isArray(m) && m[0]) {
+      const { data: m, error: eM } = await supabase.rpc('fn_temporada_metricas_campus', { p_igreja_id: req.campus.campus_id, p_temporada: ativa.id });
+      if (eM) throw eM;
+      if (Array.isArray(m) && m[0]) {
         atual = {
           temporada: ativa.id, temporada_label: ativa.label,
           data_inicio: ativa.data_inicio, data_fim: ativa.data_fim,
@@ -4467,10 +4426,10 @@ router.get('/temporadas/consolidado', authorizeModule('grupos', 1), async (req, 
 
 // POST /api/grupos/temporadas/:id/consolidar — congela os KPIs da temporada
 // (fechamento). Idempotente-seguro: só recalcula/sobrescreve com ?forcar=1.
-router.post('/temporadas/:id/consolidar', authorizeModule('grupos', 5), async (req, res) => {
+router.post('/temporadas/:id/consolidar', authorizeModule('grupos', 5), campusGruposConsolidacao, async (req, res) => {
   try {
     const forcar = req.query.forcar === '1' || req.query.forcar === 'true' || req.body?.forcar === true;
-    const { data, error } = await supabase.rpc('fn_consolidar_temporada', {
+    const { data, error } = await supabase.rpc('fn_consolidar_temporada_campus', { p_igreja_id: req.campus.campus_id,
       p_temporada: req.params.id,
       p_por: req.user.userId || null,
       p_por_nome: req.user.name || null,

@@ -53,7 +53,7 @@ async function registrarPendencia({ tipo, membroId, conflitoId, origem, origemId
   }
 }
 
-async function logHistorico(membroId, acao, observacao) {
+async function logHistorico(membroId, acao, observacao, igrejaId) {
   // Schema VIVO de mem_historico (sondado em prod 2026-07-17 · drift git↔prod):
   // (id, membro_id, tipo NOT NULL + CHECK, descricao NOT NULL, data,
   // registrado_por, created_at, deleted_at). O CHECK de `tipo` aceita 'outro';
@@ -61,6 +61,7 @@ async function logHistorico(membroId, acao, observacao) {
   // silêncio — a tabela estava vazia em prod.
   const { error } = await supabase.from('mem_historico').insert({
     membro_id: membroId,
+    ...(igrejaId ? { igreja_id: igrejaId } : {}),
     tipo: 'outro',
     descricao: `[${acao}] ${observacao}`,
     created_at: new Date().toISOString(),
@@ -82,7 +83,7 @@ async function logHistorico(membroId, acao, observacao) {
 // Retorna { acao } ∈ ja_tinha | cpf_preenchido | conflito_pendencia |
 //   divergente_pendencia | nascimento_divergente_pendencia |
 //   sinal_fraco_ignorado | cpf_invalido | membro_nao_encontrado
-async function reconciliarCpfTardio({ membroId, cpf, origem, origemId, dataNascimento, confianca = 'forte' } = {}) {
+async function reconciliarCpfTardio({ membroId, cpf, origem, origemId, dataNascimento, confianca = 'forte', igrejaId } = {}) {
   const cpf11 = normalizarCpf(cpf);
   if (!membroId || !cpf11 || !cpfValido(cpf11)) return { acao: 'cpf_invalido' };
 
@@ -185,7 +186,7 @@ async function reconciliarCpfTardio({ membroId, cpf, origem, origemId, dataNasci
   }
 
   await logHistorico(membroId, 'cpf_recebido',
-    `CPF recebido tardiamente via ${origem || 'fluxo'}${origemId ? ` (id ${origemId})` : ''} e consolidado no cadastro.`);
+    `CPF recebido tardiamente via ${origem || 'fluxo'}${origemId ? ` (id ${origemId})` : ''} e consolidado no cadastro.`, igrejaId);
   return { acao: 'cpf_preenchido' };
 }
 

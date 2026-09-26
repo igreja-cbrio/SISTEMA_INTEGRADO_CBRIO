@@ -77,31 +77,16 @@ router.get('/aniversarios', requireCron, async (_req, res) => {
 // {{1}} data · {{2}} hora = horario_culto DA INSCRIÇÃO (cada um se batiza no
 // culto que escolheu · 08:30/10:00/...). Bug corrigido 2026-07-27: a hora era
 // FIXA (env/'19h') e o lembrete de 25/07 saiu errado pra turma inteira — duas
-// pessoas responderam corrigindo. Fallback: env WHATSAPP_BATISMO_HORA → 'a confirmar'.
+// pessoas responderam corrigindo. Sem horário na inscrição: 'a confirmar'. Campus acompanha o lembrete.
 router.get('/batismos-lembrete', requireCron, async (_req, res) => {
   try {
     // Interruptor central (aba Comunicação→Disparos · decisão do Marcos 14/08)
     if (await require('../services/comunicacaoDisparosOff').disparoDesligado('batismo_lembrete')) {
       return res.json({ ok: true, pulado: 'desligado_na_comunicacao' });
     }
-    const base = new Date(Date.now() - 3 * 3600 * 1000); // BRT
-    base.setDate(base.getDate() + 1);
-    const amanhaISO = base.toISOString().slice(0, 10);
-    const horaFallback = process.env.WHATSAPP_BATISMO_HORA || 'a confirmar';
-    const { data, error } = await supabase.from('batismo_inscricoes')
-      .select('id, membro_id, data_batismo, horario_culto, status')
-      .is('deleted_at', null).eq('data_batismo', amanhaISO)
-      .not('membro_id', 'is', null)
-      .neq('status', 'realizado').neq('status', 'cancelado');
-    if (error) throw error;
-    let enviados = 0;
-    for (const b of data || []) {
-      const dataFmt = new Date(b.data_batismo + 'T12:00:00').toLocaleDateString('pt-BR');
-      const hora = (b.horario_culto && String(b.horario_culto).trim()) || horaFallback;
-      const r = await wpp.notificarMembro(b.membro_id, 'batismo_lembrete', [dataFmt, hora]);
-      if (r?.sent) enviados++;
-    }
-    res.json({ ok: true, alvo: (data || []).length, enviados });
+    const {lembretesBatismo}=require('../services/campusBatismoLembrete');
+    const resultado=await lembretesBatismo({db:supabase,notificarMembro:wpp.notificarMembro});
+    res.status(resultado.ok?200:503).json(resultado);
   } catch (e) {
     console.error('[wpp-cron] batismos-lembrete:', e.message);
     res.status(500).json({ error: 'Erro no cron de batismos' });

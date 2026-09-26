@@ -1,3 +1,4 @@
+import { getCampusGeneration } from '@/lib/campusSession';
 // Impressão das etiquetas Kids · MVP usa window.print() do navegador.
 //
 // Estrategia:
@@ -431,7 +432,11 @@ function checkinIdValido(id: string | undefined | null): boolean {
   return !!id && UUID_RE.test(id);
 }
 
-function imprimirHtml(html: string, preview = false): Promise<ResultadoImpressao> {
+function exigirGeracao(generation: number) {
+  if (generation !== getCampusGeneration()) throw new Error('O campus mudou. Reabra a etiqueta no campus correto.');
+}
+function imprimirHtml(html: string, preview = false, generation = getCampusGeneration()): Promise<ResultadoImpressao> {
+  exigirGeracao(generation);
   if (preview) {
     // Modo preview · abre popup visível pro usuário conferir layout antes de
     // ir pra impressora. Útil pra teste/debug. Janela um pouco maior que
@@ -480,6 +485,7 @@ function imprimirHtml(html: string, preview = false): Promise<ResultadoImpressao
         resolve({ status });
       };
       try {
+        exigirGeracao(generation);
         // `afterprint` é a melhor confirmação disponível no navegador: indica
         // que o job saiu do diálogo/kiosk e foi aceito pelo fluxo de impressão.
         // A Brother física ainda deve ser conferida pelo operador.
@@ -518,6 +524,7 @@ export function gerarHtmlPreviewAniversario(d: DadosImpressao): string {
 // (responsável + código, sem nome de criança) → 1 só basta pra todos os filhos, e o
 // pai não fica com N recibos pra perder (Marcos 2026-07-16). Layout/texto inalterados.
 export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incluirRecibo = true): Promise<void> {
+  const generation = getCampusGeneration();
   const [barcodeSvg] = await Promise.all([
     gerarBarcodeSvg(d.codigoBarras),
     // Logo do CBKids sai no recibo (v2) e na etiqueta de aniversário —
@@ -531,6 +538,7 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incl
   // impressão roda após o POST) e diz se ainda pode. Fail-open: se a checagem
   // falhar, imprime (não perde o aniversário). Só no check-in — a reimpressão
   // repete o que estava na etiqueta.
+  exigirGeracao(generation);
   let comAniversario = !!d.crianca.aniversarioSemana;
   if (comAniversario && d.criancaId) {
     try {
@@ -546,7 +554,8 @@ export async function imprimirEtiquetas(d: DadosImpressao, preview = false, incl
   if (incluirRecibo) fragmentos.push(htmlEtiquetaResponsavel(d, barcodeSvg));
   if (comAniversario) fragmentos.push(htmlEtiquetaAniversario(d));
 
-  const resultado = await imprimirHtml(documento(fragmentos, d.layout), preview);
+  const resultado = await imprimirHtml(documento(fragmentos, d.layout), preview, generation);
+  exigirGeracao(generation);
   if (preview) return;  // não loga impressão em modo preview
   if (!checkinIdValido(d.checkinId)) return;  // impressão de teste (sem check-in real) · não loga
 
@@ -585,6 +594,7 @@ export async function imprimirEtiquetasLote(
   itens: { d: DadosImpressao; incluirRecibo: boolean }[],
   preview = false,
 ): Promise<void> {
+  const generation = getCampusGeneration();
   if (!itens.length) return;
   if (itens.length === 1) {
     // 1 criança = comportamento individual intacto (mesmo job/log de sempre)
@@ -602,6 +612,7 @@ export async function imprimirEtiquetasLote(
   ]);
 
   // Limite de 2 etiquetas de aniversário/semana · checa por criança (paralelo)
+  exigirGeracao(generation);
   const podeAniversario = await Promise.all(itens.map(async (it) => {
     if (!it.d.crianca.aniversarioSemana) return false;
     if (!it.d.criancaId) return true;
@@ -620,7 +631,8 @@ export async function imprimirEtiquetasLote(
     if (podeAniversario[i]) fragmentos.push(htmlEtiquetaAniversario(d));
   }
 
-  const resultado = await imprimirHtml(documento(fragmentos, primeiro.layout), preview);
+  const resultado = await imprimirHtml(documento(fragmentos, primeiro.layout), preview, generation);
+  exigirGeracao(generation);
   if (preview) return;
 
   const eventos: Record<string, unknown>[] = [];
@@ -657,12 +669,14 @@ export async function imprimirEtiquetasLote(
 
 // Reimpressao (etiqueta rasgou ou impressora falhou) — 1 etiqueta, 1 job.
 export async function reimprimirEtiqueta(d: DadosImpressao, tipo: 'crianca' | 'responsavel', motivo: string): Promise<void> {
+  const generation = getCampusGeneration();
   const [barcodeSvg] = await Promise.all([
     gerarBarcodeSvg(d.codigoBarras),
     tipo === 'responsavel' ? preloadImg(d.logoAniversarioUrl) : Promise.resolve(),
   ]);
   const frag = tipo === 'crianca' ? htmlEtiquetaCrianca(d) : htmlEtiquetaResponsavel(d, barcodeSvg);
-  const resultado = await imprimirHtml(documento([frag], d.layout));
+  const resultado = await imprimirHtml(documento([frag], d.layout), false, generation);
+  exigirGeracao(generation);
   totemKids.etiquetas.log({
     checkin_id: d.checkinId,
     estacao_id: d.estacaoId,
@@ -678,6 +692,7 @@ export async function reimprimirEtiqueta(d: DadosImpressao, tipo: 'crianca' | 'r
 // (2 etiquetas da criança + recibo do responsável + aniversário, se houver),
 // preservando o mesmo código de segurança e sem criar novo check-in.
 export async function reimprimirEtiquetasCompletas(d: DadosImpressao, motivo: string): Promise<void> {
+  const generation = getCampusGeneration();
   const [barcodeSvg] = await Promise.all([
     gerarBarcodeSvg(d.codigoBarras),
     preloadImg(d.crianca.salaLogoUrl),
@@ -690,7 +705,8 @@ export async function reimprimirEtiquetasCompletas(d: DadosImpressao, motivo: st
   const fragCrianca = htmlEtiquetaCrianca(d);
   const fragmentos = [fragCrianca, fragCrianca, htmlEtiquetaResponsavel(d, barcodeSvg)];
   if (d.crianca.aniversarioSemana) fragmentos.push(htmlEtiquetaAniversario(d));
-  const resultado = await imprimirHtml(documento(fragmentos));
+  const resultado = await imprimirHtml(documento(fragmentos), false, generation);
+  exigirGeracao(generation);
   await Promise.all([
     totemKids.etiquetas.log({
       checkin_id: d.checkinId,

@@ -37,8 +37,10 @@ const { BUCKET_DOCS_RH, assinarDocumentosRh } = require('../services/anexosRhDoc
 const { soDigitos, mascaraTelefone } = require('../utils/camposContato');
 const { notificar } = require('../services/notificar');
 const { APP_STAFF } = require('../utils/appPushDestino');
+const { funcionarioDaSessao } = require('../services/staffIdentidade');
 
 router.use(authenticate);
+router.use(require('../middleware/semCache').semCache);
 
 const FOTO_MAX_BYTES = 5 * 1024 * 1024; // 5 MB (mesmo teto do multer do sistema)
 
@@ -63,25 +65,18 @@ function parseDataUrlDocumento(dataUrl) {
 // Resolve o funcionário RH vinculado ao usuário logado (match por e-mail,
 // mesmo critério do middleware authenticate). Ignora desligados/soft-deleted.
 async function resolverFuncionario(email) {
-  if (!email) return null;
-  const { data } = await supabase
-    .from('rh_funcionarios')
-    .select('id, nome, cargo, area, cpf, telefone, data_admissao, status')
-    .ilike('email', email)
-    .in('status', ['ativo', 'ferias', 'licenca'])
-    .is('deleted_at', null)
-    .limit(1)
-    .maybeSingle();
-  return data || null;
+  return funcionarioDaSessao(supabase, email);
 }
 
 async function resolverMembro(membroId) {
   if (!membroId) return null;
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('mem_membros')
     .select('id, cpf, telefone, foto_url')
     .eq('id', membroId)
+    .is('deleted_at', null)
     .maybeSingle();
+  if (error) throw error;
   return data || null;
 }
 
@@ -245,10 +240,7 @@ router.get('/dados-pessoais', async (req, res) => {
     const { data: profile } = await supabase
       .from('profiles').select('id, name, email, telefone, membro_id').eq('id', req.user.userId).single();
     if (!profile) return res.status(404).json({ error: 'Perfil não encontrado' });
-    const { data: func } = await supabase
-      .from('rh_funcionarios')
-      .select('id, nome, cargo, area, data_admissao, tipo_contrato, telefone, cpf, data_nascimento, endereco, filhos, status')
-      .ilike('email', profile.email).in('status', ['ativo', 'ferias', 'licenca']).is('deleted_at', null).limit(1).maybeSingle();
+    const func = await funcionarioDaSessao(supabase, profile.email, 'id, nome, cargo, area, data_admissao, tipo_contrato, telefone, cpf, data_nascimento, endereco, filhos, status');
     const membro = await resolverMembro(profile.membro_id);
     res.json({
       tem_ficha: !!func,

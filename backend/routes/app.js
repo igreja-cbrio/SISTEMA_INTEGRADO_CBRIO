@@ -230,6 +230,36 @@ const limiterNormal = limiterApp({
 // emitir ETag e ninguém percebe até a tela mostrar estado velho.
 router.use(semCache);
 
+const campusApp = require('../services/campusApp').criarCampusApp({ supabase });
+router.get('/campus/contexto', authApp, limiterNormal, campusApp.contexto);
+router.get('/campus/agenda', authApp, limiterNormal, campusApp.agenda);
+router.get('/campus/agenda/:id', authApp, limiterNormal, campusApp.detalhe);
+const batismoCampusPorta = require('../services/campusBatismoPorta');
+const { contextoApp: contextoCampusBatismoApp } = require('../services/campusApp');
+const { responderErroCampus: erroCampusBatismoApp, ErroCampus: ErroCampusBatismoApp } = require('../services/campusContexto');
+const batismoProprio = require('../services/campusBatismoProprio').criarBatismoProprio({db:supabase});
+router.get('/campus/batismo/me',authApp,limiterNormal,batismoProprio.me);
+router.get('/campus/batismo/:id/fotos',authApp,limiterNormal,batismoProprio.fotos);
+router.post('/campus/batismo/:id/checkin',authApp,limiterStrict,batismoProprio.checkin);
+router.get('/campus/batismo/horarios', authApp, limiterNormal, async (req,res)=> {
+  try { res.json(await batismoCampusPorta.catalogo(supabase,await contextoCampusBatismoApp(req,supabase))); }
+  catch(e) { erroCampusBatismoApp(res,e); }
+});
+router.post('/campus/batismo/inscricoes', authApp, limiterStrict, async (req,res)=> {
+  try {
+    const campus=await contextoCampusBatismoApp(req,supabase);
+    const membro=await batismoCampusPorta.membroConfirmado(supabase,req.user.id);
+    if(!membro.cpf || !membro.genero) throw new ErroCampusBatismoApp(400,'membro_cadastro_incompleto','Complete CPF e sexo no seu perfil antes de se inscrever.');
+    // Identidade vem exclusivamente do vínculo confirmado. Nome/CPF/membro_id
+    // enviados pelo cliente não escolhem outra pessoa nem reparam o vínculo.
+    req.batismoCampus=campus; req.batismoMembroConfirmado=membro;
+    req.body={...req.body,nome_completo:membro.nome,cpf:membro.cpf,telefone:membro.telefone,email:membro.email,
+      data_nascimento:membro.data_nascimento || req.body?.data_nascimento,sexo:membro.genero};
+    return require('./publicBatismo').inscrever(req,res);
+  } catch(e) { return erroCampusBatismoApp(res,e); }
+});
+
+
 // ── Versão mínima do app (PÚBLICO) · Onda 3 (07/08/2026) ──────────────────
 //
 // O achado: não existe versão mínima em lugar nenhum, e `runtimeVersion.policy
@@ -914,6 +944,8 @@ router.post('/inscricoes', limiterStrict, tryAuth, async (req, res) => {
       console.warn('[APP] inscricoes · tipo não reconhecido:', tipo);
       return res.status(400).json({ error: `Tipo de inscrição não reconhecido: ${tipo}` });
     }
+
+    if (tipo === 'batismo') return res.status(409).json({ error: 'Atualize o aplicativo para usar a inscrição de Batismo com seleção de campus.', code: 'batismo_atualizacao_necessaria' });
 
     const ehCuidados = TIPOS_CUIDADOS.has(tipo);
     // `let`: o saneamento (mais abaixo) devolve um objeto NOVO.
@@ -4932,32 +4964,7 @@ const { cultoDeAgora } = require('../services/cultoDeAgora');
 const { filtroSoEventosCbrio, idsEventosParceiros } = require('../services/igrejaParceira');
 
 // GET /api/app/culto/agora — Modo Culto: culto de hoje + link ao vivo + se já registrou decisão.
-router.get('/culto/agora', authApp, async (req, res) => {
-  try {
-    const channelId = process.env.YOUTUBE_CHANNEL_ID || 'UCfjMVzaYlCS_VE3JuEJj2vQ';
-    const hoje = hojeBRT();
-    const { culto, ao_vivo } = await cultoDeAgora();
-
-    let jaRegistrou = false;
-    const membro = await resolveMembroApp(req).catch(() => null);
-    if (membro?.id) {
-      const { data: pend } = await supabase
-        .from('app_decisoes').select('id')
-        .eq('membro_id', membro.id).eq('status', 'pendente').is('deleted_at', null)
-        .gte('criada_em', `${hoje}T00:00:00`).limit(1);
-      jaRegistrou = (pend || []).length > 0;
-    }
-    res.json({
-      culto: culto || null,
-      ao_vivo,
-      canal_live: `https://www.youtube.com/channel/${channelId}/live`,
-      jaRegistrou,
-    });
-  } catch (e) {
-    console.error('[APP] culto/agora:', e.message);
-    res.status(500).json({ error: 'Erro ao carregar o culto' });
-  }
-});
+router.get('/culto/agora', authApp, limiterNormal, campusApp.agora);
 
 // POST /api/app/culto/decisao — registra uma decisão de fé na FILA DE REVISÃO.
 // NÃO entra na NSM até a Integração confirmar (decisão da liderança).
@@ -5123,217 +5130,34 @@ async function permissaoModuloApp(req, slug) {
   return { leitura: Number(p.leitura || 0), escrita: Number(p.escrita || 0), superadmin: false };
 }
 
+const gestaoBatismoCampus = require('../services/campusBatismoGestaoApp').criarGestaoBatismoApp({ db: supabase, permissao: permissaoModuloApp });
+const { responderErroCampus: responderGestaoBatismoErro } = require('../services/campusContexto');
 async function autorizarGestaoBatismoApp(req, res, next) {
-  try {
-    const permissao = await permissaoModuloApp(req, 'batismo');
-    if (Math.max(permissao.leitura, permissao.escrita) < 2) {
-      return res.status(403).json({ error: 'Esta área é só para quem gerencia o Batismo.' });
-    }
-    req.batismoPermissao = permissao;
-    next();
-  } catch (e) {
-    console.error('[APP] batismo/permissao:', e.message);
-    res.status(500).json({ error: 'Erro ao verificar a permissão de Batismo.' });
-  }
+  try { const {ctx,p}=await gestaoBatismoCampus.acesso(req);req.campus=ctx;req.batismoPermissao=p;next(); }
+  catch(e) { return responderGestaoBatismoErro(res,e); }
 }
-
-function dataIsoValida(v) { return /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')); }
-function dataBatismoFutura(v) { return dataIsoValida(v) && String(v) >= hojeBRT(); }
-function limparTexto(v, max = 500) {
-  if (v === null || v === undefined) return null;
-  const s = String(v).trim();
-  return s ? s.slice(0, max) : null;
-}
-
-const BATISMO_COLUNAS_APP = [
-  'id', 'membro_id', 'nome', 'sobrenome', 'telefone', 'email', 'cpf',
-  'data_nascimento', 'data_batismo', 'horario_culto', 'status', 'checkin_em',
-  'tamanho_camisa', 'eh_crianca', 'possui_deficiencia',
-  'deficiencia_descricao', 'observacoes', 'endereco', 'area_kpi', 'created_at',
-].join(', ');
-
-router.get('/batismo/papel', authApp, limiterNormal, async (req, res) => {
-  try {
-    const p = await permissaoModuloApp(req, 'batismo');
-    const nivel = Math.max(p.leitura, p.escrita);
-    res.json({ pode_gerenciar: nivel >= 2, nivel, superadmin: p.superadmin });
-  } catch (e) {
-    console.error('[APP] batismo/papel:', e.message);
-    res.status(500).json({ error: 'Erro ao carregar seu acesso ao Batismo.' });
-  }
+router.get('/batismo/papel', authApp, limiterNormal, async (req,res)=>{
+  try { const {ctx,p}=await gestaoBatismoCampus.acesso(req);res.json({pode_gerenciar:true,nivel:Math.max(p.leitura,p.escrita),superadmin:p.superadmin,campus_id:ctx.campus_id}); }
+  catch(e) { if(e.status===403) return res.json({pode_gerenciar:false,nivel:0,superadmin:false});return responderGestaoBatismoErro(res,e); }
 });
-
-router.get('/batismo/gestao', authApp, autorizarGestaoBatismoApp, limiterNormal, async (req, res) => {
-  try {
-    const hoje = hojeBRT();
-    const [datasRes, proxima, horarios] = await Promise.all([
-      supabase.from('batismo_inscricoes').select('data_batismo')
-        .is('deleted_at', null).not('status', 'in', '(cancelado,rejeitado)')
-        .not('data_batismo', 'is', null),
-      dataProximoBatismo(),
-      batismoHorariosConfigurados(),
-    ]);
-    if (datasRes.error) throw datasRes.error;
-    const datasSet = new Set((datasRes.data || []).map(x => x.data_batismo).filter(dataIsoValida));
-    if (dataIsoValida(proxima)) datasSet.add(proxima);
-    // A gestão só precisa das próximas datas: históricos antigos não devem
-    // poluir o seletor nem voltar a ser selecionados por engano.
-    const datas = [...datasSet].filter(d => d >= hoje).sort().slice(0, 3);
-    const datasPermitidas = new Set(datas);
-    const pedida = dataIsoValida(req.query.data) ? String(req.query.data) : null;
-    const selecionada = pedida && datasPermitidas.has(pedida)
-      ? pedida
-      : (datas[0] || (dataIsoValida(proxima) ? proxima : hoje));
-    const [pessoasRes, aprovacoesRes] = await Promise.all([
-      supabase.from('batismo_inscricoes').select(BATISMO_COLUNAS_APP)
-        .eq('data_batismo', selecionada).is('deleted_at', null)
-        .not('status', 'in', '(cancelado,rejeitado)')
-        .order('horario_culto', { ascending: true, nullsFirst: false }).order('nome'),
-      supabase.from('batismo_inscricoes').select(BATISMO_COLUNAS_APP)
-        .eq('status', 'pendente').is('deleted_at', null).order('created_at'),
-    ]);
-    if (pessoasRes.error) throw pessoasRes.error;
-    if (aprovacoesRes.error) throw aprovacoesRes.error;
-    const pessoas = pessoasRes.data || [];
-    res.json({
-      data: selecionada, datas, hoje, pessoas, aprovacoes: aprovacoesRes.data || [],
-      resumo: {
-        previstos: pessoas.length,
-        presentes: pessoas.filter(p => !!p.checkin_em).length,
-        aguardando: (aprovacoesRes.data || []).length,
-      },
-      horarios: Array.isArray(horarios)
-        ? horarios.filter(h => h.aberto !== false).map(h => ({ horario: h.horario, label: h.label || h.horario }))
-        : [],
-    });
-  } catch (e) {
-    console.error('[APP] batismo/gestao:', e.message);
-    res.status(500).json({ error: 'Erro ao carregar a gestão do Batismo.' });
-  }
+router.get('/batismo/gestao', authApp, autorizarGestaoBatismoApp, limiterNormal, async(req,res)=>{
+  try { res.json(await gestaoBatismoCampus.listar(req.campus,req.query.data)); } catch(e) { responderGestaoBatismoErro(res,e); }
 });
-
-router.post('/batismo/gestao/pessoas', authApp, autorizarGestaoBatismoApp, limiterNormal, async (req, res) => {
-  try {
-    const nome = limparTexto(req.body?.nome, 120);
-    const sobrenome = limparTexto(req.body?.sobrenome, 120);
-    const dataBatismo = dataIsoValida(req.body?.data_batismo) ? String(req.body.data_batismo) : await dataProximoBatismo();
-    if (!nome || !sobrenome) return res.status(400).json({ error: 'Nome e sobrenome são obrigatórios.' });
-    if (!dataIsoValida(dataBatismo)) return res.status(400).json({ error: 'Selecione uma data de Batismo.' });
-    if (!dataBatismoFutura(dataBatismo)) return res.status(400).json({ error: 'A data de Batismo já passou.' });
-    const cpf = String(req.body?.cpf || '').replace(/\D/g, '') || null;
-    let membroId = null;
-    try {
-      const vinculo = await acharOuCriarGuardado({
-        cpf, email: limparTexto(req.body?.email, 180), telefone: limparTexto(req.body?.telefone, 40),
-        nome: `${nome} ${sobrenome}`,
-        dataNascimento: dataIsoValida(req.body?.data_nascimento) ? req.body.data_nascimento : null,
-        status: 'visitante', origem: 'batismo_app_gestao',
-      });
-      membroId = vinculo.membro_id || null;
-    } catch (e) { console.warn('[APP] batismo/gestao/pessoas · vínculo:', e.message); }
-    const { data, error } = await supabase.from('batismo_inscricoes').insert({
-      membro_id: membroId, nome, sobrenome,
-      telefone: limparTexto(req.body?.telefone, 40), email: limparTexto(req.body?.email, 180), cpf,
-      data_nascimento: dataIsoValida(req.body?.data_nascimento) ? req.body.data_nascimento : null,
-      data_batismo: dataBatismo, horario_culto: limparTexto(req.body?.horario_culto, 40),
-      tamanho_camisa: limparTexto(req.body?.tamanho_camisa, 12)?.toUpperCase() || null,
-      endereco: limparTexto(req.body?.endereco, 300),
-      observacoes: limparTexto(req.body?.observacoes, 1000),
-      status: 'confirmado', origem: 'app_gestao_batismo', inscrito_por: req.user.id,
-      area_kpi: ['kids', 'sede', 'bridge', 'ami', 'online'].includes(req.body?.area_kpi) ? req.body.area_kpi : 'sede',
-    }).select(BATISMO_COLUNAS_APP).single();
-    if (error) throw error;
-    res.status(201).json(data);
-  } catch (e) {
-    console.error('[APP] batismo/gestao/pessoas POST:', e.message);
-    res.status(500).json({ error: 'Erro ao adicionar a pessoa ao Batismo.' });
-  }
+router.post('/batismo/gestao/pessoas', authApp, autorizarGestaoBatismoApp, limiterNormal, async(req,res)=>{
+  try { res.status(201).json(await gestaoBatismoCampus.criar(req.campus,req.body,req.user.id)); } catch(e) { responderGestaoBatismoErro(res,e); }
 });
-
-router.post('/batismo/gestao/:id/aprovar', authApp, autorizarGestaoBatismoApp, limiterNormal, async (req, res) => {
-  try {
-    const { data: atual, error: buscaErr } = await supabase.from('batismo_inscricoes')
-      .select('id, status, data_batismo').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
-    if (buscaErr) throw buscaErr;
-    if (!atual) return res.status(404).json({ error: 'Inscrição não encontrada.' });
-    if (atual.status !== 'pendente') return res.status(409).json({ error: 'Esta solicitação já foi tratada.' });
-    const dataBatismo = dataIsoValida(req.body?.data_batismo)
-      ? String(req.body.data_batismo) : (atual.data_batismo || await dataProximoBatismo());
-    if (!dataIsoValida(dataBatismo)) return res.status(400).json({ error: 'Selecione a data antes de aprovar.' });
-    if (!dataBatismoFutura(dataBatismo)) return res.status(400).json({ error: 'A data de Batismo já passou.' });
-    const update = { status: 'confirmado', data_batismo: dataBatismo, updated_at: new Date().toISOString() };
-    if (req.body?.horario_culto !== undefined) update.horario_culto = limparTexto(req.body.horario_culto, 40);
-    const { data, error } = await supabase.from('batismo_inscricoes').update(update)
-      .eq('id', req.params.id).eq('status', 'pendente').is('deleted_at', null)
-      .select(BATISMO_COLUNAS_APP).single();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) {
-    console.error('[APP] batismo/gestao/aprovar:', e.message);
-    res.status(500).json({ error: 'Erro ao aprovar a inscrição.' });
-  }
+router.post('/batismo/gestao/:id/aprovar', authApp, autorizarGestaoBatismoApp, limiterNormal, async(req,res)=>{
+  try { res.json(await gestaoBatismoCampus.editar(req.campus,req.params.id,req.body,req.user.id,true)); } catch(e) { responderGestaoBatismoErro(res,e); }
 });
-
-router.put('/batismo/gestao/:id', authApp, autorizarGestaoBatismoApp, limiterNormal, async (req, res) => {
-  try {
-    const update = { updated_at: new Date().toISOString() };
-    for (const [campo, max] of [
-      ['nome', 120], ['sobrenome', 120], ['telefone', 40], ['email', 180],
-      ['observacoes', 1000], ['endereco', 300], ['deficiencia_descricao', 500], ['horario_culto', 40],
-    ]) if (req.body?.[campo] !== undefined) update[campo] = limparTexto(req.body[campo], max);
-    if (req.body?.nome !== undefined && !update.nome) return res.status(400).json({ error: 'Nome é obrigatório.' });
-    if (req.body?.sobrenome !== undefined && !update.sobrenome) return res.status(400).json({ error: 'Sobrenome é obrigatório.' });
-    if (req.body?.data_batismo !== undefined) {
-      if (!dataIsoValida(req.body.data_batismo)) return res.status(400).json({ error: 'Data de Batismo inválida.' });
-      if (!dataBatismoFutura(req.body.data_batismo)) return res.status(400).json({ error: 'A data de Batismo já passou.' });
-      update.data_batismo = req.body.data_batismo;
-    }
-    if (req.body?.data_nascimento !== undefined) update.data_nascimento = dataIsoValida(req.body.data_nascimento) ? req.body.data_nascimento : null;
-    if (req.body?.tamanho_camisa !== undefined) update.tamanho_camisa = limparTexto(req.body.tamanho_camisa, 12)?.toUpperCase() || null;
-    if (req.body?.eh_crianca !== undefined) update.eh_crianca = !!req.body.eh_crianca;
-    if (req.body?.possui_deficiencia !== undefined) update.possui_deficiencia = !!req.body.possui_deficiencia;
-    if (['kids', 'sede', 'bridge', 'ami', 'online'].includes(req.body?.area_kpi)) update.area_kpi = req.body.area_kpi;
-    const { data, error } = await supabase.from('batismo_inscricoes').update(update)
-      .eq('id', req.params.id).is('deleted_at', null).select(BATISMO_COLUNAS_APP).single();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) {
-    console.error('[APP] batismo/gestao/pessoa PUT:', e.message);
-    res.status(500).json({ error: 'Erro ao salvar os dados da pessoa.' });
-  }
+router.put('/batismo/gestao/:id', authApp, autorizarGestaoBatismoApp, limiterNormal, async(req,res)=>{
+  try { res.json(await gestaoBatismoCampus.editar(req.campus,req.params.id,req.body,req.user.id)); } catch(e) { responderGestaoBatismoErro(res,e); }
 });
-
-router.post('/batismo/gestao/:id/checkin', authApp, autorizarGestaoBatismoApp, limiterNormal, async (req, res) => {
-  try {
-    const presente = req.body?.presente !== false;
-    const agora = new Date().toISOString();
-    const update = presente
-      ? { checkin_em: agora, checkin_por: req.user.id, updated_at: agora }
-      : { checkin_em: null, checkin_por: null, updated_at: agora };
-    const { data, error } = await supabase.from('batismo_inscricoes').update(update)
-      .eq('id', req.params.id).is('deleted_at', null).not('status', 'in', '(cancelado,rejeitado)')
-      .select(BATISMO_COLUNAS_APP).single();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) {
-    console.error('[APP] batismo/gestao/checkin:', e.message);
-    res.status(500).json({ error: 'Erro ao atualizar o check-in.' });
-  }
+router.post('/batismo/gestao/:id/checkin', authApp, autorizarGestaoBatismoApp, limiterNormal, async(req,res)=>{
+  try { res.json(await gestaoBatismoCampus.checkin(req.campus,req.params.id,req.body?.presente!==false,req.user.id)); } catch(e) { responderGestaoBatismoErro(res,e); }
 });
-
-// Retira da lista sem apagar PII nem histórico; o cancelamento é reversível no ERP.
-router.delete('/batismo/gestao/:id', authApp, autorizarGestaoBatismoApp, limiterNormal, async (req, res) => {
-  try {
-    const agora = new Date().toISOString();
-    const { data, error } = await supabase.from('batismo_inscricoes')
-      .update({ status: 'cancelado', checkin_em: null, checkin_por: null, updated_at: agora })
-      .eq('id', req.params.id).is('deleted_at', null).select('id').single();
-    if (error) throw error;
-    res.json({ ok: true, id: data.id });
-  } catch (e) {
-    console.error('[APP] batismo/gestao/pessoa DELETE:', e.message);
-    res.status(500).json({ error: 'Erro ao retirar a pessoa deste Batismo.' });
-  }
+// Cancelamento reversível preserva o ato histórico e libera a vaga pela mesma reserva atômica.
+router.delete('/batismo/gestao/:id', authApp, autorizarGestaoBatismoApp, limiterNormal, async(req,res)=>{
+  try { res.json(await gestaoBatismoCampus.retirar(req.campus,req.params.id,req.user.id)); } catch(e) { responderGestaoBatismoErro(res,e); }
 });
 
 async function gruposPapelApp(req) {

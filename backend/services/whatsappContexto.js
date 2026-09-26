@@ -16,6 +16,7 @@
 
 const { supabase } = require('../utils/supabase');
 const { notificar } = require('./notificar');
+const { contextoEventoArmazenado } = require('./campusNotificacaoEscopo');
 
 const { moduloDoContexto, diaBrt } = require('../utils/whatsappModulo');
 
@@ -38,6 +39,7 @@ const { moduloDoContexto, diaBrt } = require('../utils/whatsappModulo');
 async function avisarNaoEntregue(envio, motivo) {
   try {
     const { modulo, link } = moduloDoContexto(envio?.contexto);
+    const campus = await contextoEventoArmazenado(supabase,envio);
 
     // Nome de gente quando dá — "o telefone 21..." não diz a quem avisar. Nos
     // contextos de `notificarMembro` o `ref_id` É o membro.
@@ -58,6 +60,7 @@ async function avisarNaoEntregue(envio, motivo) {
       link,
       severidade: 'aviso',
       chaveDedup: `wpp_nao_entregue_${modulo}_${diaBrt()}`,
+      campus,
     });
   } catch (e) {
     console.warn('[whatsappContexto] aviso de não-entrega:', e.message);

@@ -181,6 +181,8 @@ export default function InscricaoNext() {
     turma_id: '',
     website: '', // honeypot
   });
+  const [campus,setCampus]=useState('');
+  const [campi,setCampi]=useState<{id:string;nome:string;slug:string}[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [sent, setSent] = useState(false);
@@ -199,22 +201,30 @@ export default function InscricaoNext() {
       .catch(() => { /* fallback local */ });
   }, []);
 
-  useEffect(() => {
-    nextApi.publicTurmas()
-      .then((r: any) => {
-        const lista = Array.isArray(r?.turmas) ? r.turmas : [];
-        setTurmas(lista);
-        // ⚠️⚠️ 15/09/2026 (Kevyn): o servidor passou a devolver SÓ a próxima
-        // turma. Com uma opção só não há o que escolher — o campo vira
-        // informação e o id é preenchido aqui. Um <select> de um item pede
-        // um toque que não decide nada.
-        if (lista.length === 1) setForm(f => ({ ...f, turma_id: lista[0].id }));
-      })
-      // ⚠️ Falha de rede NÃO vira "nenhum domingo": o campo fica de fora e a
-      // inscrição segue pelo caminho antigo (o servidor resolve a turma). Sumir
-      // com o campo é melhor que travar a inscrição inteira.
-      .catch(() => { setTurmas([]); setTurmasErro(true); });
-  }, []);
+  useEffect(()=>{
+    let ativo=true;
+    nextApi.publicCampi().then((r:any)=>{
+      if(!ativo)return;
+      setCampi(r.campi);
+      const solicitado=new URLSearchParams(window.location.search).get('campus');
+      const c=solicitado?r.campi.find((x:any)=>x.id===solicitado||x.slug===solicitado):r.estado==='preparacao'?r.campi.find((x:any)=>x.id===r.campus_legado_id):null;
+      if(c)setCampus(c.id);
+      else if(solicitado)setError('Campus não encontrado. Escolha uma opção disponível.');
+    }).catch(()=>{if(ativo)setError('Não foi possível carregar os campi. Recarregue a página.');});
+    return ()=>{ativo=false;};
+  },[]);
+  useEffect(()=>{
+    let ativo=true;
+    setTurmas(null);setTurmasErro(false);setForm(f=>({...f,turma_id:''}));
+    if(!campus)return ()=>{ativo=false;};
+    nextApi.publicTurmas(campus).then((r:any)=>{
+      if(!ativo)return;
+      if(!Array.isArray(r?.turmas))throw new Error('Catálogo inválido');
+      setTurmas(r.turmas);
+      if(r.turmas.length===1)setForm(f=>({...f,turma_id:r.turmas[0].id}));
+    }).catch(()=>{if(ativo){setTurmasErro(true);setError('Não foi possível carregar as datas deste campus. Recarregue a página.');}});
+    return ()=>{ativo=false;};
+  },[campus]);
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     let v = e.target.value;
@@ -227,6 +237,7 @@ export default function InscricaoNext() {
     e.preventDefault();
     if (submittingRef.current) return;
     setError('');
+    if(!campus||turmas===null||turmasErro)return setError('Escolha o campus e aguarde as datas disponíveis.');
     if (!nomeCompletoValido(form.nome_completo)) {
       return setError(temAbreviacaoNome(form.nome_completo)
         ? 'Escreva seu nome completo, sem abreviações'
@@ -248,6 +259,7 @@ export default function InscricaoNext() {
     setLoading(true);
     try {
       await nextApi.publicInscrever({
+        campus,
         nome_completo: form.nome_completo.trim(),
         cpf: form.cpf,
         telefone: form.telefone,
@@ -337,6 +349,7 @@ export default function InscricaoNext() {
             </div>
 
             <form onSubmit={handleSubmit}>
+              <SelectField id="campus" label="Campus do Next" value={campus} onChange={e=>{if(!submittingRef.current)setCampus(e.target.value);}} options={campi.map(c=>({value:c.id,label:c.nome}))} required />
               <SectionTitle>Dados pessoais</SectionTitle>
               <Field id="nome_completo" label="Nome completo (sem abreviar)" value={form.nome_completo} onChange={set('nome_completo')} required autoComplete="name" />
               <Field id="email" label="Email" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />
@@ -448,7 +461,7 @@ export default function InscricaoNext() {
 
               <button
                 type="submit"
-                disabled={loading}
+                disabled={loading || !campus || turmas===null || turmasErro}
                 style={{
                   width: '100%', padding: '14px 20px',
                   background: loading ? 'rgba(0,179,157,0.5)' : '#00B39D',

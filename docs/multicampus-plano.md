@@ -1,6 +1,6 @@
 # Multi-campus · documento de design (ADR)
 
-> Status: **planejamento retomado** · Revisão: 2026-09-26
+> Status: **implementação em andamento · PR aberta** · Revisão: 2026-09-26
 > Origem: gestão + Claude Code (2026-07-01). Alvo atualizado:
 > **possível segundo campus físico em março de 2027**.
 
@@ -10,11 +10,291 @@ primeira migration — a Fase 0 concreta sai deste doc.
 
 ---
 
+## Continuidade da implementação (2026-09-26)
+
+Pedido atual: implementar o suporte multicampus e manter a PR aberta para
+continuação por Codex ou Claude. A autorização é de implementação; não ativar
+Campus 2, aplicar migrations em produção ou mergear esta PR durante o trabalho.
+
+- Branch remota: `codex/multicampus-implementacao`.
+- Worktree inicial: `/Users/MatheusToscano/Documents/wt-multicampus-implementacao`.
+- Base inicial: `d081d6116` (main). Não trabalhar na checkout antiga do diretório
+  principal: ela pertence a outra tarefa e contém alterações preservadas.
+- Documento canônico de escopo: este arquivo, seção 0. Demais seções antigas são
+  históricas quando conflitarem com a auditoria de setembro.
+- Não incluir a avaliação 360 (#2959): é outra entrega, aguardando aprovação.
+- Fazer commits e pushes a cada bloco validado; atualizar este checkpoint e a
+  descrição da PR com evidência e pendências, sem declarar multicampus concluído
+  enquanto houver módulos, canais ou migrações não cobertos.
+
+### Estado recuperável · checkpoint de implementação
+
+- PR aberta: https://github.com/igreja-cbrio/SISTEMA_INTEGRADO_CBRIO/pull/3067.
+- [x] Branch isolada e inventário executável: `node backend/scripts/multicampus-inventario.cjs`.
+  `--check` deve falhar enquanto houver lacunas; isso não é um teste unitário quebrado.
+  Snapshot de metadados sem PII em `backend/scripts/multicampus/catalogo-20260926.json`:
+  546 tabelas e 1.362 policies consultadas em produção. Código tem referências extras,
+  chamadas dinâmicas e fontes históricas; os números dos dois inventários diferem.
+- [x] Contexto de campus por request, separado do objeto de autenticação cacheado.
+  Bootstrap `/api/campus/contexto`, vínculo explícito, negação sem acesso, nenhum
+  `role=admin/diretor` genérico concede todos os campi.
+- [x] Contexto frontend, seletor, nova QueryClient/árvore por usuário+campus,
+  cancelamento de requests e streams, descarte de respostas antigas. Públicos
+  `/public/*` não herdam o campus selecionado na área privada.
+- [x] Administração `/admin/campi`: busca de usuários e vínculos; gravação atômica
+  com auditoria. Sem botão para ativar isolamento nem criação de unidade.
+- [x] Estado persistido de implantação e bloqueio de regressão ao modo legado.
+  **Ensaio e ativo exigem evidência de TODAS as frentes**. Não usar ensaio em
+  produção como atalho para testar dados reais com RLS/RPCs ainda incompletas.
+- [x] Piloto Cultos: chave por campus, agenda local, herança de campus nas decisões,
+  matcher global preservado, fan-out para Cuidados/NSM carimbado, view invoker,
+  capacidade configurável e exclusão lógica atômica. Rotas certificadas no server:
+  GET/POST `/api/kpis/cultos`, PUT/DELETE `/api/kpis/cultos/:id`, GET/POST
+  `/api/kpis/cultos/:id/decisoes-pessoas`. Parâmetro `:id` só aceita UUID.
+- [x] Primeiros destinos: RLS nominal em membros, convertidos, eventos NSM e trilha;
+  leitura própria preservada, campus dos atos independente do campus-base.
+- [x] Cron de agenda paginado por campus, contagem agregada sem truncamento,
+  falhas parciais explícitas e repetição idempotente.
+- [x] Agenda e banner do culto atual no app usam consultas por campus e projeção
+  pública; resolução de membro confirmada sem fallback por contato.
+- [x] Filhos nominais de Cuidados e contatos protegidos por RLS do pai; oito
+  leituras de Cuidados revisadas. Escritas e painéis ainda não certificados.
+- [x] Next: quatro leituras e 17 escritas com campus; criação/presença/exclusão
+  atômicas, transferência preserva histórico e cron exige unidade explícita.
+  Painéis, direcionamentos e outros endpoints continuam pendentes.
+- [x] Grupos: dimensão/RLS e funções de relatório por campus preparadas e testadas;
+  integração das rotas ainda em andamento. NPS sem origem não vira dado local.
+- [x] Notificações aceitam contexto explícito e intersectam destinos; dados
+  sensíveis não vão para destinatário de outro campus. Migração dos demais
+  produtores e armazenamento de notificações ainda pendente.
+- [ ] Demais destinos (`cui_*`, `nsm_*`, membros), views/RPCs e acessos
+  diretos precisam do isolamento completo. Piloto NÃO significa Cultos aprovado
+  para dados reais do Campus 2 enquanto estes consumidores não estiverem seguros.
+- [ ] Restante de Integração, Grupos, Next, Voluntariado, Kids, Batismo e portas
+  públicas; apps Membros/Staff; armazenamentos, jobs, notificações e exports.
+- [ ] Agregados/KPIs/NSM/consolidados e operação administrativa central.
+- [ ] Testes de integração completos, reconciliação histórica e ensaio de ativação.
+
+### Checkpoint adicional · Next e Batismo (27/09/2026)
+
+- Next agora tem 11 leituras e 21 escritas certificadas no catálogo do servidor.
+  Conclusão pessoal pode ser global, mas a RPC só recebe IDs de atos locais e
+  devolve booleanos; observações de aulas manuais permanecem por campus.
+  Migration `20260927080000_multicampus_next_sinais.sql` exige tabela manual vazia
+  (confirmada por consulta somente de leitura). Se houver novo histórico, aborta
+  exigindo mapa explícito; não executar ignorando essa pré-condição.
+- Batismo: catálogo/ocupação paginados por campus e reserva transacional
+  `fn_campus_batismo_reservar`; erro de página não vira vaga disponível.
+  Admin: listagem, horários (listar/criar/editar), listagem do check-in diário,
+  criação e edição de inscrições já usam contexto e consultas locais.
+  Inscrição sem evento/horário permanece sem reserva; atribuição posterior usa
+  a RPC atômica. Identidade passa pelo matcher global, sem falha silenciosa.
+- SQL Batismo: `20260927050000_multicampus_batismo.sql` aditiva e
+  `20260927070000_multicampus_batismo_reserva.sql` service-only. A assinatura
+  da reserva inclui `p_inscrito_por` opcional, preenchido pelo servidor no admin.
+  `backend/scripts/multicampus/cutover-batismo.sql` fica FORA da sequência de
+  migrations: trocar PK antiga por data só após todos os consumidores adaptados.
+- Integração SQL ampliada: 23 migrations em sequência até `180000`, mais `210000`, com
+  fixtures estruturais vivas de Cultos/Pessoas/Cuidados/Grupos/Next/Batismo,
+  Kids e Voluntariado; 13 cenários passaram. Inclui check-in/checkout e
+  consolidação Kids, ponte Servir local, notificações e bloqueio do Storage.
+  O Storage usa adaptador mínimo; biometria, triggers laterais de auditoria,
+  recálculo KPI e concorrência entre conexões permanecem fora do PGlite.
+  O teste separado PostgreSQL 17 confirmou disputa pela última vaga de Batismo.
+  Cutovers de Batismo e Storage continuam FORA das migrations testadas.
+- Ainda pendentes no Batismo: cobertura de convertidos, config por campus,
+  armazenamento/fotos e cutover. Status em massa e exclusão de horários agora
+  usam RPCs atômicas (`20260927110000_multicampus_batismo_admin.sql`);
+  check-in valida identidade do ato local e detecta edição concorrente. Não liberar a frente toda por essas rotas.
+- Kids está em implementação nos mesmos arquivos/branch. Não considerar
+  arquivos não commitados como certificados até a validação e checkpoint.
+
+Kids — checkpoint SQL de 27/09/2026:
+- `20260927090000_multicampus_kids.sql` preserva uma criança global, adiciona
+  `kids_crianca_campi` (vínculo explícito, desativação por `ativo`) e dimensão nos
+  atos/estações/filas. Backfill de vínculo usa presença/atendimento, nunca o campus
+  do responsável. Primeiro ato válido em preparação cria o vínculo atomicamente;
+  depois do ensaio exige vínculo anterior. Crianças sem atos precisam reconciliação.
+- `20260927100000_multicampus_kids_operacoes.sql` instala check-in atômico com
+  responsável canônico autorizado, pais do mesmo campus, capacidade, extras e
+  consumo de código reservado. Código continua globalmente único. Consolidação
+  e decisões respeitam o campus do culto; RPCs globais ambíguas ficam restritas à
+  preparação. Checkout está na `20260927130000_multicampus_kids_checkout.sql`.
+- `campusKidsSql.test.ts` executa schema, índices e triggers reais, junto às
+  migrations anteriores. Cobertura inclui responsável global, duas unidades,
+  RLS, rollback dos extras, código, capacidade e checkout com chamadas/pager.
+  Concorrência real de Kids ainda requer validação fora do PGlite.
+- Integração descobriu outro índice global vivo em Cultos:
+  `cultos_service_type_data_hora_uniq`. A migration 210000 também o converte para
+  campus; regressão comprova mesmo dia/horário em duas unidades, inclusive culto
+  sem tipo. Não corrigir o teste artificialmente variando horário por unidade.
+- Pendências explícitas Kids: vínculo infantil canônico com `mem_membros` (não
+  existe no schema vivo; não inventar match fraco); reconciliação de crianças sem
+  atos; PIN/configuração/etiqueta por campus; reserva offline, lotes familiares,
+  override/manual, token de estação/display, app público, sincronização PCO,
+  storage/fotos e agregados. Nomes de salas/estações mantêm unicidade global até
+  revisar consumidores legados. Configurações singleton deixam de ser legíveis
+  diretamente por autenticados fora da preparação. Nenhuma cobertura completa
+  ou ativação decorre destes testes.
+
+### Next · direcionamento atômico (27/09/2026)
+
+`20260927210000` adiciona origem local e RLS restritiva a
+`jornada_encaminhamentos`, FKs compostas para suas origens e dedup por matrícula,
+destino e campus. `fn_campus_next_direcionar` aceita somente matrícula local
+com identidade canônica previamente resolvida; Batismo usa a reserva oficial,
+Grupos/Voluntariado preservam destinos anteriores e Devocional registra somente
+intenção. Flags e destinos são uma única transação. A resposta contém somente
+IDs e indicadores, sem contatos, CPF ou códigos. Dez testes PostgreSQL cobrem
+rollback inclusive após a reserva de vaga, dedup, campus, preservação de
+inscrição anterior e ausência de PII. Consumidores JS e tokens públicos são
+tratados pelo bloco principal. Conciliação de identidade anterior divergente
+continua humana; nenhuma transação faz fusão automática.
+
+### Voluntariado · checkpoint SQL de 27/09/2026
+
+- Migrations `150000/160000`: perfil global ligado à pessoa canônica, vínculo
+  `vol_profile_campi` explícito e atos com `igreja_id`. Serviços, escalas,
+  check-ins, equipes, disponibilidade, inscrições, históricos e filhos recebem
+  herança, imutabilidade histórica e FKs compostas; policies anteriores são
+  preservadas com restrições adicionais. Vínculo revogado não reativa por ato.
+- PCO usa mapa obrigatório por ID externo em `vol_pco_service_type_campi`.
+  `fn_campus_vol_resolver_servico` serializa plano/chave local, reutiliza serviço
+  sem apagar escala e rejeita ambiguidade para reconciliação humana. Nomes são
+  exibição. Mapa de equipes e deduplicação histórica incluem campus.
+- Ponte de perfil para `mem_voluntarios` recebe campus do vínculo/ato e carimba
+  o evento Servir; nunca move campus-base da pessoa. A unicidade/coorte NSM
+  global foi preservada e permanece pendente de revisão analítica completa.
+- Dezesseis testes PGlite usam catálogo e triggers vivos para validar isolamento,
+  vínculo, origem NSM, PCO idempotente, grants e preservação da identidade.
+  Relatórios SQL legados estão guardados em preparação. Permanecem pendentes
+  consumidores dos relatórios por campus, biometria/token/totem, e-mails, antecedentes, arquivo
+  global de perfis e produtores que ainda não consomem o mapa explicitamente.
+  Não certifica ativação, rollout ou concorrência real PostgreSQL do PCO.
+
+### Notificações · checkpoint de armazenamento e caixa própria
+
+Migration `20260927170000_multicampus_notificacoes.sql` prepara origem imutável
+na notificação. RH, Financeiro e Patrimônio conservam avisos centrais; demais
+avisos históricos pertencem à Sede. Produtor novo sem contexto explícito falha
+fora da preparação, inclusive antes de enviar push/e-mail. Regras de destinatário
+anteriores continuam sendo intersectadas com o acesso ao campus.
+
+Leituras e marcações da caixa própria filtram usuário + (campus selecionado ou
+central). Realtime descarta eventos de outra unidade. Web Push carrega campus;
+o link só troca a seleção após autorização do servidor. Testes: 22 passaram
+(incluindo 3 cenários SQL de RLS, 4 de escopo/realtime e navegação por push).
+Pendentes: demais produtores, gerador periódico, regras administrativas,
+WhatsApp/fila/webhooks e endpoints próprios dos apps. A frente inteira de jobs
+e notificações permanece não certificada.
+
+### Batismo · arquivos, configuração e cobertura
+
+- Configuração agora por campus em `20260927120000_multicampus_batismo_config_storage.sql`,
+  com ponte para singleton legado apenas em preparação. Upload novo no bucket
+  privado `batismos-campi`, por campus/evento; fotos de referência exigem
+  consentimento prévio e pai local. URLs assinadas após autorização.
+- `backend/scripts/multicampus/cutover-batismo-storage.sql` permanece fora das
+  migrations. O bucket legado público tinha zero objetos na consulta viva,
+  mas só pode ser privatizado após atualizar leitores/Edge Functions legados.
+- Cobertura de convertidos (`20260927140000_multicampus_batismo_cobertura.sql`)
+  lista apenas convertidos locais; RPC retorna somente booleanos para identidade
+  canônica global. Não compara nomes sozinhos nem devolve atos de outra unidade.
+- Edição de contato na gestão App preserva funcionalidade via opção interna
+  `editarDadosPessoa`: corrige snapshot, acumula contato secundário e encaminha
+  nascimento divergente para revisão; não troca CPF/vínculo pelo payload.
+- Bloco validado com 26 testes de serviço/SQL. Gestão App e Edge Functions ainda
+  estão sendo concluídos na PR associada; não ativar o domínio inteiro.
+
+Migrations preparadas, **não aplicadas**:
+1. `20260926200000_multicampus_contexto_e_ativacao.sql`: configuração, gate de
+   ativação, helper e administração de vínculos. Deve preceder qualquer deploy
+   deste backend/frontend; configuração ausente falha fechada com 503.
+2. `20260926210000_multicampus_cultos_agenda.sql`: piloto Cultos. Replacements de
+   triggers partem das definições vivas capturadas em 26/09; não substituir por
+   versões antigas das migrations. Backfill recusa uma segunda sede ativa.
+
+3. `20260926220000_multicampus_destinos_decisao.sql`: isolamento nominal dos
+   quatro destinos iniciais e campus de origem nos marcos da trilha.
+
+4. `20260926230000_multicampus_cuidados_filhos.sql`: filhos nominais, J180,
+   comentários e contatos; não certifica agregados/RPCs.
+
+5. `20260927000000_multicampus_next.sql`: dimensão e integridade Next.
+6. `20260927010000_multicampus_grupos.sql`: dimensão/RLS Grupos e matcher SQL
+   com campus explícito; assinatura legada preservada somente em preparação.
+7. `20260927020000_multicampus_next_operacoes.sql`: operações Next atômicas.
+8. `20260927030000_multicampus_cuidados_operacoes.sql`: exclusão lógica com
+   campus e ampliação aditiva da whitelist instalada.
+9. `20260927040000_multicampus_grupos_relatorios.sql`: RPCs Grupos por campus,
+   views invoker, dimensão nos consolidados e origem dos dados brutos de NPS.
+
+
+10. `20260927050000_multicampus_batismo.sql`: preparação aditiva do batismo.
+    UUID canônico de evento, campus, vínculos de inscrição por evento/horário,
+    RPCs locais e RLS restritiva. **Preserva PK(data) e índice global de horário.**
+11. `20260927070000_multicampus_batismo_reserva.sql`: reserva tipada atômica,
+    idempotência por UUID, edição sem contar a própria vaga e bloqueio por
+    evento/horário. Matcher canônico e autorização da porta continuam no backend.
+
+Batismo — decisão de transição (27/09/2026): inspeção somente leitura do banco
+confirmou PK `data`, nenhuma FK externa/view dependente, RPC de datas global e
+índice de horário global. Histórico tinha zero inscrições fora da Sede, zero
+datas sem evento e zero horários sem catálogo. A fase aditiva não permite ainda
+mesma data em dois campi. `backend/scripts/multicampus/cutover-batismo.sql` fica
+FORA das migrations automáticas: exige preparação, cobertura completa e marcador
+`batismo-cutover-revisado`. Só promover após adaptar consumidores, rever FKs e
+obter aprovação para trocar a PK. IDs são canônicos; campos legados permanecem
+sincronizados e nenhum cadastro de pessoa é duplicado por campus.
+
+Validação do batismo: 10 testes PostgreSQL/PGlite passaram (incluem o cutover
+isolado), e teste local PostgreSQL 17 com duas conexões reais confirmou a última
+vaga serializada: primeira reserva confirma, segunda aguarda e falha por falta
+de vaga. Nenhuma migration foi aplicada em produção. RPC de edição recebe o
+registro completo validado, não um patch parcial: backend deve compor valores
+atuais antes da chamada para não limpar campos opcionais. Consentimento,
+check-in e auditoria não são editáveis pelo payload da reserva.
+
+Portas de batismo (checkpoint 27/09): público oferece catálogo de sedes ativas
+em `/public/batismo/campi`; campus explícito por slug/UUID em horários e envio,
+com ausência permitida só na preparação. Catálogo entrega IDs de evento/horário;
+handler compartilhado usa reserva transacional e matcher global no público.
+App usa somente `/app/campus/batismo/horarios` e
+`/app/campus/batismo/inscricoes`, com vínculo confirmado `profiles.membro_id`,
+sem resolver por e-mail, metadados ou ID enviado pelo cliente. Consentimento
+canônico obrigatório; sem fallback da data calculada e sem grupo WhatsApp global
+fora de preparação. Não certificar `/app/inscricoes` inteiro nem os endpoints de
+fotos/acesso públicos, que permanecem pendentes. Validação: 70 testes de serviço,
+handler, UI e regressão passaram, além dos testes SQL. Nenhum efeito em produção.
+
+App: PR rascunho https://github.com/igreja-cbrio/Aplicativo-CBRio/pull/178,
+branch `codex/multicampus-app`, worktree `../wt-app-multicampus`. Depende deste
+backend; não publicar OTA antes das migrations e endpoints correspondentes.
+Staff: PR https://github.com/igreja-cbrio/CBRio-Staff/pull/24, worktree
+`../wt-staff-multicampus`, branch `codex/multicampus-staff`. Transporte/contexto
+e caches implementados (commit `5f2133f`), sem OTA: TypeScript, 97 testes e
+export Android/iOS passaram. Falta validação visual com backend de ensaio.
+Endpoints próprios de RH permanecem centrais.
+
+Validação do terceiro checkpoint em preparação: 278 testes multicampus em
+27 arquivos passaram; Next chegou a 136 testes específicos e de regressão
+aprovados depois da transferência segura. App #178: 450 testes, TypeScript,
+i18n, 110/110 mutantes e export Android/iOS passaram. CI/preview do ERP inicial
+verdes. Suíte completa do estado ampliado em execução; registrar o resultado
+antes de fechar o próximo checkpoint. Nenhuma validação libera produção.
+
+Próxima ação ao retomar: conferir diff/CI desta branch e começar pelos destinos
+RLS/RPC do piloto; o guard global bloqueia superfícies ainda não certificadas em
+ensaio/ativo. **Não ampliar allowlist para fazer uma tela funcionar sem filtrar
+suas consultas, filhos, arquivos e produtores.** Preservar a PR aberta.
+
+---
+
 ## 0. Retomada e plano de entrega (2026-09-26)
 
 **Objetivo atualizado:** preparar o sistema para um possível segundo campus
-físico em março de 2027. O pedido é planejar antes de implementar. Esta revisão
-não aplica migrations, não altera acessos e não ativa um campus novo.
+físico em março de 2027. O diagnóstico abaixo foi preparado antes da implementação. A execução atual
+está registrada no checkpoint acima; nenhuma migration foi aplicada em produção.
 
 Esta seção substitui o diagnóstico e o calendário de julho abaixo. Os registros
 anteriores são contexto de decisões, não prova do estado atual de produção.
@@ -403,3 +683,42 @@ fatos do estado atual (seção 3) e as armadilhas (seção 5) foram **verificado
 contra o repo**, não apenas relatados. Os conselheiros são o mesmo modelo base —
 a convergência reduz pontos cegos de enquadramento, não é prova independente;
 decisões contábeis/segurança devem ser validadas pela gestão.
+
+### WhatsApp e ensaio integrado · checkpoint de 27/09/2026
+
+- `20260927180000_multicampus_whatsapp_envios.sql` prepara origem imutável,
+  RLS adicional e deduplicação por campus/chave. Callback da Meta e avisos de
+  falha recuperam o campus do registro, sem inferir pelo destinatário.
+- Lembrete de Batismo percorre unidades físicas ativas e todas as páginas das
+  inscrições locais de amanhã em Brasília. Dedup inclui inscrição/evento/data;
+  erro de página não dispara uma lista parcial e falha de uma unidade é declarada.
+- Reenvio distribui orçamento entre campus e central; CAS reserva cada linha
+  por dez minutos para impedir dois workers simultâneos. A integração externa
+  não oferece exatamente-uma-vez: interrupção após aceite da Meta e antes da
+  confirmação no banco ainda exige reconciliação operacional, como antes.
+- Testes WhatsApp: 44 passaram (10 novos de origem, paginação, dedup, concorrência
+  e falhas). SQL combinado passou 12 cenários executando 22 migrations até 180000.
+  Não certifica todos os produtores nem o webhook inteiro: demais ramos continuam
+  bloqueados no modo isolado até revisão. Nenhum envio real ou migration aplicada.
+- PRs de continuidade: ERP #3067; Membros #178 (11b216e, 465 testes e exports
+  Android/iOS); Staff #24. Permanecem em draft, sem merge/OTA.
+
+### Next · porta pública e direcionamento atômico
+
+- `20260927210000_multicampus_next_direcionamento.sql` confirma destinos e flags
+  numa única transação. Reutiliza pessoa canônica e reserva de Batismo; um erro
+  posterior desfaz também a vaga. Encaminhamentos ganham origem herdada, FKs,
+  RLS e dedup por matrícula/destino/campus. Não retorna inscrição com PII.
+- QR v2 assinado contém o campus. QR legado só resolve Sede na preparação;
+  validação usa comparação constante e rejeita componentes extras. Inscrição,
+  turmas, lista de presença e walk-in públicos filtram o campus explicitamente.
+- Formulário público exige escolha de campus e descarta catálogo de seleção
+  anterior. Turma inválida não cai silenciosamente em outra unidade ou lista.
+  Falha do matcher não cria matrícula órfã. Histórico pessoal pré-Next usa
+  membro confirmado, sem inferir vínculo por CPF isolado.
+- Testes: 131 na rodada Next/API/superfície, 10 SQL fanout e 13 integração com
+  23 migrations sequenciais. TypeScript real passou. Certificações HTTP exatas
+  são salvas junto ao checkpoint compartilhado de server; não há prefixo liberado.
+- Pendente imediato: endpoints autenticados `/app/next/*`, geofence por campus,
+  inscrições/presença próprias e gestão no App. Root assumiu esse ramo; Kids,
+  Voluntariado e respectivas migrations seguintes permanecem em andamento.

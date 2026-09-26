@@ -13,6 +13,15 @@ const reg = require('../utils/origemRegistro');
 const { carregarSinaisConvertidos } = require('../services/marcosConvertido');
 
 router.use(authenticate);
+const { criarMiddlewareCampus } = require('../middleware/campus');
+const { filtrarCampus } = require('../utils/campusQuery');
+const { lerTodasPaginas } = require('../utils/campusPaginacao');
+const contextoLeituraCuidados = criarMiddlewareCampus({ modulo: 'cuidados', cobertura: { leitura: true, escrita: false } });
+const { criarGuardasRegistro } = require('../services/campusRegistro');
+const guardasVisitas = criarGuardasRegistro({ modulo: 'cuidados', tabela: 'cui_visitas' });
+const guardasPedidos = criarGuardasRegistro({ modulo: 'cuidados', tabela: 'cui_pedidos' });
+const { resolverPessoaRegistro } = require('../services/campusPessoaRegistro');
+const { responderErroCampus, ErroCampus } = require('../services/campusContexto');
 
 // Contato FEITO = o contato foi realizado, independente da resposta da pessoa
 // (regra do Marcos · 2026-06-17). Vale pelo status do dropdown OU pelo
@@ -366,12 +375,10 @@ router.get('/dashboard-series', authorizeModule('cuidados', 1), async (req, res)
 // Acompanhamentos
 // ─────────────────────────────────────────────────────────────
 // varredura 2026-09: A01 — expunha 500 fichas de aconselhamento (nome/telefone/motivo pastoral) a qualquer conta logada; leitura = 1 como GET /visitas.
-router.get('/acompanhamentos', authorizeModule('cuidados', 1), async (req, res) => {
+router.get('/acompanhamentos', authorizeModule('cuidados', 1), contextoLeituraCuidados, async (req, res) => {
   try {
     const { status, search, responsavel, agendamento_from, agendamento_to } = req.query;
-    let q = supabase
-      .from('cui_acompanhamentos')
-      .select('*')
+    let q = filtrarCampus(supabase.from('cui_acompanhamentos').select('*'), req.campus)
       .is('deleted_at', null)
       .limit(500);
     if (status) q = q.eq('status', status);
@@ -684,10 +691,10 @@ router.post('/oracoes/analisar', authorizeModule('cuidados', 2), async (_req, re
 // Jornada 180
 // ─────────────────────────────────────────────────────────────
 // varredura 2026-09: A01 — rota LEGADA (a tela viva usa /j180/*, já guardada); leitura de PII nominal = 1, igual GET /j180/relatorio.
-router.get('/jornada180', authorizeModule('cuidados', 1), async (req, res) => {
+router.get('/jornada180', authorizeModule('cuidados', 1), contextoLeituraCuidados, async (req, res) => {
   try {
     const { etapa, mes } = req.query;
-    let q = supabase.from('cui_jornada180').select('*').is('deleted_at', null).order('data_encontro', { ascending: false }).limit(500);
+    let q = filtrarCampus(supabase.from('cui_jornada180').select('*'), req.campus).is('deleted_at', null).order('data_encontro', { ascending: false }).limit(500);
     if (etapa) q = q.eq('etapa', Number(etapa));
     if (mes) {
       const start = `${mes}-01`;
@@ -749,10 +756,10 @@ async function j180SoftDelete(table, id, res) {
 }
 
 // GET /j180/turmas?area=&incluir_inativas= — turmas + contagem de participantes ativos
-router.get('/j180/turmas', authorizeModule('cuidados', 1), async (req, res) => {
+router.get('/j180/turmas', authorizeModule('cuidados', 1), contextoLeituraCuidados, async (req, res) => {
   try {
     const { area, incluir_inativas } = req.query;
-    let q = supabase.from('cui_j180_turmas').select('*').is('deleted_at', null).order('nome');
+    let q = filtrarCampus(supabase.from('cui_j180_turmas').select('*'), req.campus).is('deleted_at', null).order('nome');
     if (area && J180_AREAS.includes(area)) q = q.eq('area', area);
     if (incluir_inativas !== 'true') q = q.eq('ativo', true);
     const { data: turmas, error } = await q;
@@ -760,8 +767,8 @@ router.get('/j180/turmas', authorizeModule('cuidados', 1), async (req, res) => {
     const ids = (turmas || []).map(t => t.id);
     const countByTurma = new Map();
     if (ids.length) {
-      const { data: membros } = await supabase
-        .from('cui_j180_turma_membros').select('turma_id').in('turma_id', ids).is('saiu_em', null);
+      const membros = await lerTodasPaginas(() => supabase
+        .from('cui_j180_turma_membros').select('turma_id').in('turma_id', ids).is('saiu_em', null).order('id'));
       (membros || []).forEach(m => countByTurma.set(m.turma_id, (countByTurma.get(m.turma_id) || 0) + 1));
     }
     res.json((turmas || []).map(t => ({ ...t, participantes_count: countByTurma.get(t.id) || 0 })));
@@ -771,15 +778,17 @@ router.get('/j180/turmas', authorizeModule('cuidados', 1), async (req, res) => {
 });
 
 // GET /j180/turmas/:id — detalhe (turma + participantes ativos + encontros recentes)
-router.get('/j180/turmas/:id', authorizeModule('cuidados', 1), async (req, res) => {
+router.get('/j180/turmas/:id', authorizeModule('cuidados', 1), contextoLeituraCuidados, async (req, res) => {
   try {
-    const { data: turma, error } = await supabase.from('cui_j180_turmas').select('*').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    const { data: turma, error } = await filtrarCampus(supabase.from('cui_j180_turmas').select('*'), req.campus).eq('id', req.params.id).is('deleted_at', null).maybeSingle();
     if (error) throw error;
     if (!turma) return res.status(404).json({ error: 'Turma não encontrada' });
-    const [{ data: membros }, { data: encontros }] = await Promise.all([
+    const resultados = await Promise.all([
       supabase.from('cui_j180_turma_membros').select('*').eq('turma_id', turma.id).is('saiu_em', null).order('nome'),
       supabase.from('cui_j180_encontros').select('*').eq('turma_id', turma.id).is('deleted_at', null).order('data', { ascending: false }).limit(20),
     ]);
+    if (resultados.some(r => r.error)) throw new Error('Não foi possível carregar os participantes e encontros.');
+    const [{ data: membros }, { data: encontros }] = resultados;
     res.json({ ...turma, membros: membros || [], encontros: encontros || [] });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -867,8 +876,11 @@ router.delete('/j180/membros/:id', authorizeModule('cuidados', 3), async (req, r
 });
 
 // GET /j180/turmas/:id/encontros — encontros + ids dos presentes
-router.get('/j180/turmas/:id/encontros', authorizeModule('cuidados', 1), async (req, res) => {
+router.get('/j180/turmas/:id/encontros', authorizeModule('cuidados', 1), contextoLeituraCuidados, async (req, res) => {
   try {
+    const { data: turma, error: turmaError } = await filtrarCampus(supabase.from('cui_j180_turmas').select('id'), req.campus).eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (turmaError) throw turmaError;
+    if (!turma) return res.status(404).json({ error: 'Turma não encontrada' });
     const { data: encontros, error } = await supabase
       .from('cui_j180_encontros').select('*').eq('turma_id', req.params.id).is('deleted_at', null)
       .order('data', { ascending: false }).limit(50);
@@ -876,8 +888,8 @@ router.get('/j180/turmas/:id/encontros', authorizeModule('cuidados', 1), async (
     const ids = (encontros || []).map(e => e.id);
     const presPorEncontro = new Map();
     if (ids.length) {
-      const { data: pres } = await supabase
-        .from('cui_j180_encontro_presencas').select('encontro_id, turma_membro_id, presente').in('encontro_id', ids);
+      const pres = await lerTodasPaginas(() => supabase
+        .from('cui_j180_encontro_presencas').select('encontro_id, turma_membro_id, presente').in('encontro_id', ids).order('id'));
       (pres || []).forEach(p => {
         const arr = presPorEncontro.get(p.encontro_id) || [];
         if (p.presente) arr.push(p.turma_membro_id);
@@ -1214,10 +1226,10 @@ router.get('/convertidos/atendentes', authorizeModule('cuidados', 1), async (_re
 });
 
 // varredura 2026-09: A01 — até 2000 fichas de convertido (nome, CPF, telefone, tags de triagem, observação pastoral) abertas a qualquer conta logada; leitura = 1 e a única tela já é ModuleGuard cuidados.
-router.get('/convertidos', authorizeModule('cuidados', 1), async (req, res) => {
+router.get('/convertidos', authorizeModule('cuidados', 1), contextoLeituraCuidados, async (req, res) => {
   try {
     const { from, to, tag, encontro_marcado, atendido, encontro_from, encontro_to } = req.query;
-    let q = supabase.from('cui_convertidos').select('*').is('deleted_at', null).limit(2000);
+    let q = filtrarCampus(supabase.from('cui_convertidos').select('*'), req.campus).is('deleted_at', null).limit(2000);
     if (from) q = q.gte('data_culto', from);
     if (to) q = q.lte('data_culto', to);
     if (tag) q = q.contains('tags', [tag]);
@@ -1248,8 +1260,7 @@ router.get('/convertidos', authorizeModule('cuidados', 1), async (req, res) => {
       const ids = [...new Set(linhas.map(c => c.culto_id).filter(Boolean))];
       const nomePorId = new Map();
       for (let i = 0; i < ids.length; i += 200) {
-        const { data: cultos, error: ec } = await supabase
-          .from('cultos').select('id, nome').in('id', ids.slice(i, i + 200));
+        const { data: cultos, error: ec } = await filtrarCampus(supabase.from('cultos').select('id, nome'), req.campus).in('id', ids.slice(i, i + 200));
         if (ec) throw ec;
         for (const cu of cultos || []) nomePorId.set(cu.id, cu.nome);
       }
@@ -1622,10 +1633,10 @@ router.post('/convertidos/:id/direcionar', authorizeModule('cuidados', 3), async
 const VISITA_TIPOS = ['visita_domiciliar', 'visita_hospitalar', 'funeral', 'casamento', 'aconselhamento', 'outro'];
 const VISITA_STATUS = ['agendada', 'realizada', 'cancelada'];
 
-router.get('/visitas', authorizeModule('cuidados', 1), async (req, res) => {
+router.get('/visitas', authorizeModule('cuidados', 1), contextoLeituraCuidados, async (req, res) => {
   try {
     const { status, tipo, search } = req.query;
-    let q = supabase.from('cui_visitas').select('*').is('deleted_at', null)
+    let q = filtrarCampus(supabase.from('cui_visitas').select('*'), req.campus).is('deleted_at', null)
       .order('data_visita', { ascending: false }).limit(1000);
     if (status) q = q.eq('status', status);
     if (tipo) q = q.eq('tipo', tipo);
@@ -1636,14 +1647,15 @@ router.get('/visitas', authorizeModule('cuidados', 1), async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/visitas', authorizeModule('cuidados', 3), async (req, res) => {
+router.post('/visitas', authorizeModule('cuidados', 3), guardasVisitas.contexto, guardasVisitas.payload, guardasVisitas.membro, async (req, res) => {
   try {
     const b = req.body || {};
     if (!b.nome) return res.status(400).json({ error: 'Nome obrigatório' });
     const payload = {
+      igreja_id: req.campus.campus_id,
       nome: b.nome,
       membro_id: b.membro_id || null,
-      telefone: b.telefone || null,
+      telefone: String(b.telefone || '').replace(/\D/g, '') || null,
       data_visita: b.data_visita || new Date().toISOString().slice(0, 10),
       tipo: VISITA_TIPOS.includes(b.tipo) ? b.tipo : 'visita_domiciliar',
       tipo_outro: b.tipo === 'outro' ? (b.tipo_outro || null) : null,
@@ -1652,17 +1664,15 @@ router.post('/visitas', authorizeModule('cuidados', 3), async (req, res) => {
       observacao: b.observacao || null,
       created_by: req.user.userId || req.user.id || null,
     };
-    if (!payload.membro_id && b.cpf) {
-      const m = await findMembroByCpf(b.cpf);
-      if (m) payload.membro_id = m.id;
-    }
+    payload.membro_id = await resolverPessoaRegistro(b, req.campus, 'cuidados_visita');
+
     const { data, error } = await supabase.from('cui_visitas').insert(payload).select().single();
     if (error) throw error;
     res.status(201).json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (e instanceof ErroCampus) return responderErroCampus(res, e); res.status(500).json({ error: e.message }); }
 });
 
-router.patch('/visitas/:id', authorizeModule('cuidados', 3), async (req, res) => {
+router.patch('/visitas/:id', authorizeModule('cuidados', 3), guardasVisitas.contexto, guardasVisitas.payload, guardasVisitas.registro, guardasVisitas.membro, async (req, res) => {
   try {
     const b = req.body || {};
     const patch = {};
@@ -1672,20 +1682,32 @@ router.patch('/visitas/:id', authorizeModule('cuidados', 3), async (req, res) =>
     if (patch.tipo && !VISITA_TIPOS.includes(patch.tipo)) delete patch.tipo;
     if (patch.status && !VISITA_STATUS.includes(patch.status)) delete patch.status;
     if (patch.tipo && patch.tipo !== 'outro') patch.tipo_outro = null; // limpa descrição livre se não for "Outro"
+    if ('telefone' in patch) patch.telefone = String(patch.telefone || '').replace(/\D/g, '') || null;
+    if (['nome','telefone','membro_id','cpf','email','data_nascimento'].some(k => k in b)) {
+      patch.membro_id = await resolverPessoaRegistro({ ...req.registroCampus, ...patch, cpf: b.cpf, email: b.email, data_nascimento: b.data_nascimento }, req.campus, 'cuidados_visita_edicao', {
+        membroVinculado: req.registroCampus.membro_id,
+      });
+    }
     patch.updated_at = new Date().toISOString();
-    const { data, error } = await supabase.from('cui_visitas')
-      .update(patch).eq('id', req.params.id).is('deleted_at', null).select().single();
+    let consulta = supabase.from('cui_visitas')
+      .update(patch).eq('igreja_id', req.campus.campus_id).eq('id', req.params.id).is('deleted_at', null);
+    if ('membro_id' in patch) consulta = req.registroCampus.membro_id
+      ? consulta.eq('membro_id', req.registroCampus.membro_id) : consulta.is('membro_id', null);
+    const { data, error } = await consulta.select().maybeSingle();
     if (error) throw error;
+    if (!data) return res.status(409).json({ error: 'Visita alterada; atualize os dados e tente novamente.' });
     res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (e instanceof ErroCampus) return responderErroCampus(res, e); res.status(500).json({ error: e.message }); }
 });
 
-router.delete('/visitas/:id', authorizeModule('cuidados', 3), async (req, res) => {
+router.delete('/visitas/:id', authorizeModule('cuidados', 3), guardasVisitas.contexto, guardasVisitas.registro, async (req, res) => {
   try {
-    const { error } = await supabase.from('cui_visitas')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', req.params.id).is('deleted_at', null);
+    const { data, error } = await supabase.rpc('fn_campus_soft_delete_cuidados', {
+      p_tabela: 'cui_visitas', p_id: req.params.id, p_igreja_id: req.campus.campus_id,
+      p_usuario_id: req.user?.id || req.user?.userId || null,
+    });
     if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Registro não encontrado.' });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1835,10 +1857,10 @@ router.delete('/atendimento-comentarios/:id', authorizeModule('cuidados', 3), as
 // ─────────────────────────────────────────────────────────────
 const PEDIDO_STATUS = ['pendente', 'em_andamento', 'concluido'];
 
-router.get('/pedidos', authorizeModule('cuidados', 1), async (req, res) => {
+router.get('/pedidos', authorizeModule('cuidados', 1), contextoLeituraCuidados, async (req, res) => {
   try {
     const { status } = req.query;
-    let q = supabase.from('cui_pedidos').select('*').is('deleted_at', null)
+    let q = filtrarCampus(supabase.from('cui_pedidos').select('*'), req.campus).is('deleted_at', null)
       .order('created_at', { ascending: false }).limit(500);
     if (status && PEDIDO_STATUS.includes(status)) q = q.eq('status', status);
     const { data, error } = await q;
@@ -1856,18 +1878,17 @@ router.get('/pedidos', authorizeModule('cuidados', 1), async (req, res) => {
   }
 });
 
-router.post('/pedidos', authorizeModule('cuidados', 2), async (req, res) => {
+router.post('/pedidos', authorizeModule('cuidados', 2), guardasPedidos.contexto, guardasPedidos.payload, guardasPedidos.membro, async (req, res) => {
   try {
     const d = req.body || {};
     if (!d.nome && !d.telefone && !d.membro_id) return res.status(400).json({ error: 'Informe ao menos nome ou telefone.' });
-    let membro_id = d.membro_id || null;
-    if (!membro_id && d.cpf) { const m = await findMembroByCpf(d.cpf); if (m) membro_id = m.id; }
+    const membro_id = await resolverPessoaRegistro(d, req.campus, 'cuidados_pedido');
     const pedido = await registrarPedidoCuidado({
-      canal: 'manual', tipo: d.tipo, membro_id, nome: d.nome, telefone: d.telefone,
+      campus: req.campus, canal: 'manual', tipo: d.tipo, membro_id, nome: d.nome, telefone: d.telefone,
       email: d.email, mensagem: d.mensagem, criado_por: req.user?.id || req.user?.userId || null,
     });
     res.status(201).json(pedido);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (e instanceof ErroCampus) return responderErroCampus(res, e); res.status(500).json({ error: e.message }); }
 });
 
 router.patch('/pedidos/:id', authorizeModule('cuidados', 3), async (req, res) => {
@@ -1888,12 +1909,14 @@ router.patch('/pedidos/:id', authorizeModule('cuidados', 3), async (req, res) =>
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.delete('/pedidos/:id', authorizeModule('cuidados', 3), async (req, res) => {
+router.delete('/pedidos/:id', authorizeModule('cuidados', 3), guardasPedidos.contexto, guardasPedidos.registro, async (req, res) => {
   try {
-    const { error } = await supabase.from('cui_pedidos')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', req.params.id).is('deleted_at', null);
+    const { data, error } = await supabase.rpc('fn_campus_soft_delete_cuidados', {
+      p_tabela: 'cui_pedidos', p_id: req.params.id, p_igreja_id: req.campus.campus_id,
+      p_usuario_id: req.user?.id || req.user?.userId || null,
+    });
     if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Registro não encontrado.' });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

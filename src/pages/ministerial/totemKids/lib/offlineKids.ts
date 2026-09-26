@@ -21,8 +21,11 @@
  *  pager, errar para menos perde uma criança que não sabe dizer o próprio nome.
  * ════════════════════════════════════════════════════════════════════════════
  */
-import { ehFalhaDeRedeOuServidor, ehDuplicado } from '@/lib/falhaDeRede';
+import { ehFalhaDeRedeOuServidor } from '@/lib/falhaDeRede';
+import { createCampusRequest, getCampusHeader, getCampusOwner, isCampusSessionReady } from '@/lib/campusSession';
 
+const K_CONSUMIDOS = 'kids_offline_consumidos';
+const K_EXCECOES = 'kids_offline_excecoes';
 const K_CODIGOS = 'kids_offline_codigos';
 const K_FILA = 'kids_offline_fila';
 const K_ESTACAO = 'kids_offline_estacao_ref';
@@ -51,7 +54,9 @@ export interface ItemFila {
   crianca_nome: string;
   sala_id: string | null;
   sessao_id: string;
+  responsavel_id: string;
   responsavel_nome: string;
+  cultos_extras?: string[];
   responsavel_telefone?: string | null;
   checkin_at: string;        // quando ACONTECEU, não quando sincronizou
   impresso: boolean;
@@ -59,12 +64,28 @@ export interface ItemFila {
   erro?: string | null;
 }
 
-function ler<T>(chave: string, padrao: T): T {
-  try { const v = localStorage.getItem(chave); return v ? (JSON.parse(v) as T) : padrao; }
+function escopoAtual(): string {
+  const owner=getCampusOwner(),campus=getCampusHeader()['X-Campus-Id'];
+  if(!isCampusSessionReady() || !owner || !campus || campus==='consolidado') throw new Error('Selecione um campus autenticado antes de usar o modo offline.');
+  return `kids_v2:${encodeURIComponent(owner)}:${encodeURIComponent(campus)}:`;
+}
+function ler<T>(chave: string, padrao: T, escopo=escopoAtual()): T {
+  try { const v = localStorage.getItem(escopo+chave); return v ? (JSON.parse(v) as T) : padrao; }
   catch { return padrao; }
 }
-function gravar(chave: string, valor: unknown): void {
-  try { localStorage.setItem(chave, JSON.stringify(valor)); } catch { /* cota cheia */ }
+function gravar(chave: string, valor: unknown, escopo=escopoAtual()): void {
+  // Não imprimir se a custódia não ficou persistida. Falha de quota não pode
+  // permitir reusar um código que já saiu na etiqueta.
+  localStorage.setItem(escopo+chave, JSON.stringify(valor));
+}
+export function possuiFilaLegada(): boolean {
+  try { const v=JSON.parse(localStorage.getItem(K_FILA)||'[]');return Array.isArray(v)&&v.length>0; } catch { return false; }
+}
+export function falhaCompativelOffline(error: unknown): boolean {
+  const e=error as {code?:string;corpo?:{code?:string}};
+  const code=e?.code || e?.corpo?.code || '';
+  if(code==='CAMPUS_CONTEXT_CHANGED' || code.startsWith('campus_') || code==='kids_fluxo_pendente') return false;
+  return ehFalhaDeRedeOuServidor(error);
 }
 
 /**
@@ -76,7 +97,8 @@ function gravar(chave: string, valor: unknown): void {
 export function estacaoRef(): string {
   let r = ler<string>(K_ESTACAO, '');
   if (!r) {
-    r = `totem-${(globalThis.crypto?.randomUUID?.() || String(Date.now())).slice(0, 8)}`;
+    if (!globalThis.crypto?.randomUUID) throw new Error('Este navegador não permite reservar códigos com segurança.');
+    r = `totem-${globalThis.crypto.randomUUID()}`;
     gravar(K_ESTACAO, r);
   }
   return r;
@@ -89,7 +111,8 @@ export function guardarCodigos(codigos: string[]): void {
   gravar(K_CODIGOS, Array.isArray(codigos) ? codigos : []);
 }
 export function codigosDisponiveis(): string[] {
-  return ler<string[]>(K_CODIGOS, []);
+  const consumidos=new Set(ler<string[]>(K_CONSUMIDOS, []));
+  return ler<string[]>(K_CODIGOS, []).filter(c=>!consumidos.has(c));
 }
 
 /**
@@ -103,6 +126,7 @@ export function sacarCodigo(): string | null {
   const lista = codigosDisponiveis();
   if (!lista.length) return null;
   const codigo = lista[0];
+  gravar(K_CONSUMIDOS, [...new Set([...ler<string[]>(K_CONSUMIDOS, []),codigo])]);
   gravar(K_CODIGOS, lista.slice(1));
   return codigo;
 }
@@ -134,6 +158,7 @@ export function exigePagerOffline(c: Pick<CriancaCache, 'exige_pager'> | null | 
 // ── Fila ────────────────────────────────────────────────────────────────────
 export function fila(): ItemFila[] { return ler<ItemFila[]>(K_FILA, []); }
 export function filaCount(): number { return fila().length; }
+export function excecoes(): ItemFila[] { return ler<ItemFila[]>(K_EXCECOES, []); }
 
 export function enfileirar(item: Omit<ItemFila, 'local_id' | 'tentativas' | 'impresso'>): ItemFila {
   const novo: ItemFila = {
@@ -166,44 +191,60 @@ export interface ResultadoSync {
  * trocá-lo (PR #2849). Se ele gerasse outro, o banco ficaria consistente e o
  * PAPEL NO BOLSO DO PAI ficaria inválido — e ninguém perceberia até a retirada.
  */
+const sincronizacoesAtivas = new Set<string>();
 export async function sincronizar(
   enviar: (payload: Record<string, unknown>) => Promise<unknown>,
 ): Promise<ResultadoSync> {
-  const itens = fila();
+  const escopo = escopoAtual();
+  if (sincronizacoesAtivas.has(escopo)) return { enviados:0,duplicados:0,falharam:0,conflitoDeCodigo:[],pendentes:filaCount() };
+  sincronizacoesAtivas.add(escopo);
+  const scope = createCampusRequest();
+  try {
+  const itens = ler<ItemFila[]>(K_FILA, [], escopo);
   const r: ResultadoSync = { enviados: 0, duplicados: 0, falharam: 0, conflitoDeCodigo: [], pendentes: 0 };
   if (!itens.length) return r;
 
   const restam: ItemFila[] = [];
   for (const item of itens) {
     try {
+      scope.assertCurrent();
       await enviar({
+        estacao_ref: estacaoRef(),
         sessao_id: item.sessao_id,
         crianca_id: item.crianca_id,
         sala_id: item.sala_id,
+        responsavel_id: item.responsavel_id,
+        cultos_extras: item.cultos_extras || [],
         responsavel_nome: item.responsavel_nome,
         responsavel_telefone: item.responsavel_telefone || null,
         codigo_reservado: item.codigo,
         checkin_at: item.checkin_at,
         origem: 'offline',
       });
+      scope.assertCurrent();
       r.enviados += 1;
     } catch (e) {
+      scope.assertCurrent();
       // ⚠️⚠️ A ORDEM IMPORTA, e este teste pegou o erro: o conflito de CÓDIGO
       // TAMBÉM chega como 409, então `ehDuplicado` o capturaria primeiro e o
       // contaria como SUCESSO — o silêncio exato que a regra de custódia
       // proíbe. O conflito é testado ANTES.
-      const corpo = (e as { corpo?: { codigo_conflito?: boolean; codigo_invalido?: boolean } })?.corpo;
+      const erro = e as { codigo_conflito?: boolean; codigo_invalido?: boolean; corpo?: { codigo_conflito?: boolean; codigo_invalido?: boolean } };
+      const corpo = erro?.corpo || erro;
       if (corpo?.codigo_conflito || corpo?.codigo_invalido) {
         // Etiqueta já impressa + servidor recusou o código. Não é retry (não
         // resolve) nem silêncio (pior): vai para a fila de EXCEÇÃO que a tela
         // mostra, para gente resolver ANTES de a criança sair.
         r.conflitoDeCodigo.push(item);
+        const antigas=ler<ItemFila[]>(K_EXCECOES,[],escopo);
+        gravar(K_EXCECOES,[...antigas.filter(i=>i.local_id!==item.local_id),{...item,erro:String((e as Error)?.message || e).slice(0,200)}],escopo);
         continue;
       }
 
       // ⚠️ Duplicado é SUCESSO: o check-in já chegou (reenvio, ou a rede voltou
       // no meio). Retentar para sempre seria o defeito.
-      if (ehDuplicado(e)) { r.duplicados += 1; continue; }
+      // Um 409 pode ser capacidade, vínculo ou código diferente. Só uma
+      // resposta de sucesso comprovada pelo servidor pode remover a fila.
 
       if (ehFalhaDeRedeOuServidor(e)) {
         // ainda sem servidor: fica na fila, sem contar como falha
@@ -215,7 +256,11 @@ export async function sincronizar(
       restam.push({ ...item, tentativas: item.tentativas + 1, erro: String((e as Error)?.message || e).slice(0, 200) });
     }
   }
-  gravar(K_FILA, restam);
-  r.pendentes = restam.length;
+  scope.assertCurrent();
+  const idsIniciais=new Set(itens.map(i=>i.local_id));
+  const novos=ler<ItemFila[]>(K_FILA,[],escopo).filter(i=>!idsIniciais.has(i.local_id));
+  gravar(K_FILA, [...restam,...novos], escopo);
+  r.pendentes = restam.length+novos.length;
   return r;
+  } finally { scope.release(); sincronizacoesAtivas.delete(escopo); }
 }

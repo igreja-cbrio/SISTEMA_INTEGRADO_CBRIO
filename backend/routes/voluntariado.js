@@ -1,3 +1,7 @@
+const { criarMiddlewareCampus } = require('../middleware/campus');
+const { criarLeituraVoluntariado, criarDisponibilidadeVoluntariado } = require('../services/campusVoluntariado');
+const contextoEscritaVoluntariado = criarMiddlewareCampus({ modulo: 'voluntariado', cobertura: { leitura: false, escrita: true } });
+const contextoLeituraVoluntariado = criarMiddlewareCampus({ modulo: 'voluntariado', cobertura: { leitura: true, escrita: false } });
 const router = require('express').Router();
 const { authenticate, authorizeModule, getEffectiveLevel, bustPermissionCaches } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
@@ -63,10 +67,11 @@ router.get('/cron/antecedentes', requireCron, async (req, res) => {
 router.get('/cron/sync', requireCron, async (req, res) => {
   try {
     const r = await executarSyncCompleto();
-    await supabase.from('vol_sync_logs').insert({
-      sync_type: 'automatic', services_synced: r.services, schedules_synced: r.schedules,
-      qrcodes_generated: r.qrCodesGenerated, status: 'success',
-    });
+    const logs = r.estadoCampus === 'preparacao'
+      ? [{sync_type:'automatic',services_synced:r.services,schedules_synced:r.schedules,qrcodes_generated:r.qrCodesGenerated,status:r.tiposComFalha ? 'partial' : 'success'}]
+      : r.resultadosCampus.map(c => ({igreja_id:c.igreja_id,sync_type:'automatic',services_synced:c.services,schedules_synced:c.schedules,
+        qrcodes_generated:0,status:(r.tiposComFalha || c.pendencias) ? 'partial' : 'success'}));
+    if (logs.length) { const {error} = await supabase.from('vol_sync_logs').insert(logs); if (error) throw error; }
 
     // ── CARONA · rastreio dos pedidos do Mercado Livre ──────────────────────
     // ⚠️ SEM SLOT NOVO no vercel.json: são 46 crons e o teto já é problema
@@ -79,8 +84,10 @@ router.get('/cron/sync', requireCron, async (req, res) => {
     // que é o dono desta execução.
     let ml = null;
     try {
-      const mlTracker = require('../services/solicitacoesMlTracker');
-      ml = await mlTracker.processarUpdates({ batchSize: 30, throttleMs: 200 });
+      if (r.estadoCampus === 'preparacao') {
+        const mlTracker = require('../services/solicitacoesMlTracker');
+        ml = await mlTracker.processarUpdates({ batchSize: 30, throttleMs: 200 });
+      } else ml = {ok:false,motivo:'campus_cobertura_pendente'};
     } catch (e) {
       console.error('[vol/cron/sync] carona ml-tracker:', e.message);
       ml = { ok: false, erro: e.message };
@@ -667,11 +674,11 @@ router.post('/frequencia/revincular', authorizeModule('membresia', 2), async (re
 
 // POST /frequencia/sync-pco → traz as escalas recentes do Planning Center pra a
 // frequência (quem serviu nos últimos ~120 dias · ex.: o último domingo).
-router.post('/frequencia/sync-pco', authorizeModule('membresia', 2), async (req, res) => {
+router.post('/frequencia/sync-pco', authorizeModule('membresia', 2), contextoEscritaVoluntariado, async (req, res) => {
   try {
     const { bridgeFrequenciaPCO } = require('../services/voluntariadoFreqPCO');
     const desde = new Date(Date.now() - 120 * 864e5).toISOString();
-    const r = await bridgeFrequenciaPCO(desde);
+    const r = await bridgeFrequenciaPCO(desde, req.campus);
     res.json(r);
   } catch (e) {
     console.error('[vol] sync-pco frequencia', e.message);
@@ -1061,45 +1068,7 @@ router.get('/me/wallet/apple', async (req, res) => {
 });
 
 // Get my upcoming schedules
-router.get('/my-schedules', async (req, res) => {
-  try {
-    const userId = req.user.userId;
-
-    // Get vol_profile
-    const { data: volProfile } = await supabase.from('vol_profiles')
-      .select('id, planning_center_id').eq('auth_user_id', userId).maybeSingle();
-
-    if (!volProfile) return res.json([]);
-
-    // Build query conditions
-    const conditions = [`volunteer_id.eq.${volProfile.id}`];
-    if (volProfile.planning_center_id) {
-      conditions.push(`planning_center_person_id.eq.${volProfile.planning_center_id}`);
-    }
-
-    const { data: schedules } = await supabase.from('vol_schedules')
-      .select('*, service:vol_services!inner(*)')
-      .or(conditions.join(','))
-      .gte('service.scheduled_at', new Date().toISOString())
-      .order('service(scheduled_at)', { ascending: true });
-
-    // Attach check-in status
-    const scheduleIds = (schedules || []).map(s => s.id);
-    let checkIns = [];
-    if (scheduleIds.length > 0) {
-      const { data: ci } = await supabase.from('vol_check_ins').select('schedule_id').in('schedule_id', scheduleIds);
-      checkIns = ci || [];
-    }
-    const checkedIds = new Set(checkIns.map(c => c.schedule_id));
-
-    const result = (schedules || []).map(s => ({
-      ...s,
-      has_checkin: checkedIds.has(s.id),
-    }));
-
-    res.json(result);
-  } catch (e) { res.status(500).json({ error: 'Erro ao buscar minhas escalas' }); }
-});
+router.get('/my-schedules', contextoLeituraVoluntariado, criarLeituraVoluntariado({ supabase, tipo: 'my-schedules' }));
 
 // Respond to schedule (accept/decline)
 //
@@ -1142,105 +1111,17 @@ router.post('/my-schedules/:id/respond', async (req, res) => {
 });
 
 // Get all services for a year with my unavailability flags
-router.get('/my-services', async (req, res) => {
-  try {
-    const { year } = req.query;
-    const targetYear = parseInt(year || new Date().getFullYear());
-    const userId = req.user.userId;
-
-    const { data: volProfile } = await supabase.from('vol_profiles')
-      .select('id').eq('auth_user_id', userId).maybeSingle();
-
-    const { data: services, error } = await supabase.from('vol_services')
-      .select('id, name, service_type_name, service_type_id, scheduled_at')
-      .not('service_type_id', 'is', null)
-      .gte('scheduled_at', `${targetYear}-01-01T00:00:00`)
-      .lte('scheduled_at', `${targetYear}-12-31T23:59:59`)
-      .order('scheduled_at');
-    if (error) return res.status(400).json({ error: error.message });
-
-    if (!volProfile) {
-      return res.json((services || []).map(s => ({ ...s, is_unavailable: false, availability_id: null })));
-    }
-
-    const { data: unavailabilities } = await supabase.from('vol_availability')
-      .select('id, service_id')
-      .eq('volunteer_profile_id', volProfile.id)
-      .not('service_id', 'is', null);
-
-    const availabilityMap = new Map((unavailabilities || []).map(u => [u.service_id, u.id]));
-
-    res.json((services || []).map(s => ({
-      ...s,
-      is_unavailable: availabilityMap.has(s.id),
-      availability_id: availabilityMap.get(s.id) || null,
-    })));
-  } catch (e) { res.status(500).json({ error: 'Erro ao buscar cultos do voluntário' }); }
-});
+router.get('/my-services', contextoLeituraVoluntariado, criarLeituraVoluntariado({ supabase, tipo: 'my-services' }));
 
 // Get my availability
-router.get('/my-availability', async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    const { data: volProfile } = await supabase.from('vol_profiles')
-      .select('id').eq('auth_user_id', userId).maybeSingle();
-    if (!volProfile) return res.json([]);
-
-    const { data, error } = await supabase.from('vol_availability')
-      .select('*').eq('volunteer_profile_id', volProfile.id).order('unavailable_from');
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao buscar disponibilidade' }); }
-});
+router.get('/my-availability', contextoLeituraVoluntariado, criarLeituraVoluntariado({ supabase, tipo: 'my-availability' }));
 
 // Set my availability (create unavailability)
 // Aceita service_id (culto especifico) ou unavailable_from/unavailable_to (faixa de datas)
-router.post('/my-availability', async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    const { service_id, unavailable_from, unavailable_to, reason } = req.body;
-
-    const { data: volProfile } = await supabase.from('vol_profiles')
-      .select('id').eq('auth_user_id', userId).maybeSingle();
-    if (!volProfile) return res.status(404).json({ error: 'Perfil de voluntário não encontrado' });
-
-    let fromDate = unavailable_from;
-    let toDate = unavailable_to;
-
-    if (service_id) {
-      // Disponibilidade por culto especifico: busca a data do culto
-      const { data: service } = await supabase.from('vol_services')
-        .select('scheduled_at').eq('id', service_id).single();
-      if (!service) return res.status(404).json({ error: 'Culto não encontrado' });
-      fromDate = service.scheduled_at.split('T')[0];
-      toDate = fromDate;
-    }
-
-    if (!fromDate) return res.status(400).json({ error: 'service_id ou datas obrigatórios' });
-
-    const { data, error } = await supabase.from('vol_availability')
-      .insert({ volunteer_profile_id: volProfile.id, service_id: service_id || null, unavailable_from: fromDate, unavailable_to: toDate, reason: reason || null })
-      .select().single();
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao registrar indisponibilidade' }); }
-});
+router.post('/my-availability', contextoEscritaVoluntariado, criarDisponibilidadeVoluntariado({ supabase }));
 
 // Delete my availability
-router.delete('/my-availability/:id', async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    const { data: volProfile } = await supabase.from('vol_profiles')
-      .select('id').eq('auth_user_id', userId).maybeSingle();
-    if (!volProfile) return res.status(404).json({ error: 'Perfil não encontrado' });
-
-    // Only delete own availability
-    const { error } = await supabase.from('vol_availability')
-      .delete().eq('id', req.params.id).eq('volunteer_profile_id', volProfile.id);
-    if (error) return res.status(400).json({ error: error.message });
-    res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: 'Erro ao remover indisponibilidade' }); }
-});
+router.delete('/my-availability/:id', contextoEscritaVoluntariado, criarDisponibilidadeVoluntariado({ supabase, excluir: true }));
 
 // Generate self-checkin token for a service (fixed QR code on totem)
 router.get('/self-checkin-qr/:serviceId', async (req, res) => {
@@ -2450,74 +2331,17 @@ router.get('/volunteers-pool', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 // SERVICES
 // ══════════════════════════════════════════════════════════════
-// Anexa scheduled_count em cada culto consultando vol_schedules de uma vez.
-async function attachScheduledCount(services) {
-  if (!services || services.length === 0) return services || [];
-  const ids = services.map(s => s.id);
-  try {
-    const { data: counts } = await supabase
-      .from('vol_schedules')
-      .select('service_id')
-      .in('service_id', ids);
-    const countMap = (counts || []).reduce((acc, r) => {
-      acc[r.service_id] = (acc[r.service_id] || 0) + 1;
-      return acc;
-    }, {});
-    return services.map(s => ({ ...s, scheduled_count: countMap[s.id] || 0 }));
-  } catch {
-    return services.map(s => ({ ...s, scheduled_count: 0 }));
-  }
-}
+router.get('/services', contextoLeituraVoluntariado, criarLeituraVoluntariado({ supabase, tipo: 'services' }));
 
-router.get('/services', async (req, res) => {
-  try {
-    const { data, error } = await supabase.from('vol_services').select('*').order('scheduled_at', { ascending: true });
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(await attachScheduledCount(data));
-  } catch (e) { res.status(500).json({ error: 'Erro ao listar cultos' }); }
-});
+router.get('/services/upcoming', contextoLeituraVoluntariado, criarLeituraVoluntariado({ supabase, tipo: 'upcoming' }));
 
-router.get('/services/upcoming', async (req, res) => {
-  try {
-    const { data, error } = await supabase.from('vol_services').select('*')
-      .gte('scheduled_at', new Date().toISOString()).order('scheduled_at').limit(10);
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(await attachScheduledCount(data));
-  } catch (e) { res.status(500).json({ error: 'Erro ao listar próximos cultos' }); }
-});
-
-router.get('/services/today', async (req, res) => {
-  try {
-    // "Hoje" em BRT: derivado da data atual na TZ America/Sao_Paulo (UTC-3 estavel).
-    const nowBRT = new Date(Date.now() - 3 * 60 * 60 * 1000);
-    const y = nowBRT.getUTCFullYear();
-    const m = String(nowBRT.getUTCMonth() + 1).padStart(2, '0');
-    const d = String(nowBRT.getUTCDate()).padStart(2, '0');
-    const start = `${y}-${m}-${d}T00:00:00-03:00`;
-    const end = `${y}-${m}-${d}T23:59:59-03:00`;
-    const { data, error } = await supabase.from('vol_services').select('*')
-      .gte('scheduled_at', start).lte('scheduled_at', end).order('scheduled_at');
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(await attachScheduledCount(data));
-  } catch (e) { res.status(500).json({ error: 'Erro ao listar cultos de hoje' }); }
-});
+router.get('/services/today', contextoLeituraVoluntariado, criarLeituraVoluntariado({ supabase, tipo: 'today' }));
 
 // Janela de check-in · cultos do período (passado recente + próximos) pra
 // permitir check-in FORA do dia do culto — totem e self check-in usam isto pra
 // listar cultos futuros (ex.: a Quarta de amanhã ou o Domingo que vem). Janela
-// limitada (bounded) pra não estourar o cap do PostgREST no attachScheduledCount.
-router.get('/services/checkin-window', async (req, res) => {
-  try {
-    const back = Math.min(Math.max(Number(req.query.back) || 21, 0), 120);
-    const ahead = Math.min(Math.max(Number(req.query.ahead) || 35, 1), 120);
-    const from = new Date(Date.now() - back * 864e5).toISOString();
-    const to = new Date(Date.now() + ahead * 864e5).toISOString();
-    const { data, error } = await supabase.from('vol_services').select('*')
-      .gte('scheduled_at', from).lte('scheduled_at', to).order('scheduled_at');
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(await attachScheduledCount(data));
-  } catch (e) { res.status(500).json({ error: 'Erro ao listar cultos do período' }); }
-});
+// limitada por período; consultas e contagens locais são paginadas no serviço.
+router.get('/services/checkin-window', contextoLeituraVoluntariado, criarLeituraVoluntariado({ supabase, tipo: 'window' }));
 
 // ══════════════════════════════════════════════════════════════
 // SCHEDULES
@@ -2525,85 +2349,14 @@ router.get('/services/checkin-window', async (req, res) => {
 // Dados do relatório de presença por PERÍODO — busca no servidor com paginação
 // interna (o front buscava TUDO e o PostgREST capa em 1000 · vol_schedules tem
 // 3k+ linhas → escalas de cultos recentes sumiam do relatório · bug 06/07).
-router.get('/relatorio-dados', async (req, res) => {
-  try {
-    const { desde, ate } = req.query;
-    if (!desde || !ate) return res.status(400).json({ error: 'desde e ate são obrigatórios (YYYY-MM-DD)' });
+router.get('/relatorio-dados', contextoLeituraVoluntariado, criarLeituraVoluntariado({ supabase, tipo: 'report' }));
 
-    const { data: services, error: eSvc } = await supabase
-      .from('vol_services').select('*')
-      .gte('scheduled_at', `${desde}T00:00:00-03:00`)
-      .lte('scheduled_at', `${ate}T23:59:59-03:00`)
-      .order('scheduled_at', { ascending: false })
-      .limit(500);
-    if (eSvc) throw eSvc;
-
-    const ids = (services || []).map(s => s.id);
-    const schedules = [];
-    const checkIns = [];
-    for (let i = 0; i < ids.length; i += 50) {
-      const lote = ids.slice(i, i + 50);
-      for (let from = 0; ; from += 1000) {
-        const { data, error } = await supabase.from('vol_schedules')
-          .select('*').in('service_id', lote).order('id').range(from, from + 999);
-        if (error) throw error;
-        schedules.push(...(data || []));
-        if (!data || data.length < 1000) break;
-      }
-      for (let from = 0; ; from += 1000) {
-        const { data, error } = await supabase.from('vol_check_ins')
-          .select('*, volunteer:vol_profiles(id, full_name, planning_center_id), schedule:vol_schedules(id, volunteer_name, volunteer_id, team_name, position_name), service:vol_services(id, name, scheduled_at)')
-          .in('service_id', lote).order('id').range(from, from + 999);
-        if (error) throw error;
-        checkIns.push(...(data || []));
-        if (!data || data.length < 1000) break;
-      }
-    }
-
-    res.json({ services: services || [], schedules, checkIns });
-  } catch (e) {
-    console.error('[vol/relatorio-dados]', e.message);
-    res.status(500).json({ error: 'Erro ao carregar os dados do relatório' });
-  }
-});
-
-router.get('/schedules', async (req, res) => {
-  try {
-    const { service_id, volunteer_id } = req.query;
-    let q = supabase.from('vol_schedules').select('*, service:vol_services(*)').order('team_name');
-    if (service_id) q = q.eq('service_id', service_id);
-    if (volunteer_id) q = q.eq('volunteer_id', volunteer_id);
-    const { data, error } = await q;
-    if (error) return res.status(400).json({ error: error.message });
-
-    // Attach check_ins
-    const scheduleIds = data.map(s => s.id);
-    let checkIns = [];
-    if (scheduleIds.length > 0) {
-      const { data: ci } = await supabase.from('vol_check_ins').select('*').in('schedule_id', scheduleIds);
-      checkIns = ci || [];
-    }
-    const result = data.map(s => ({ ...s, check_in: checkIns.find(c => c.schedule_id === s.id) || null }));
-    res.json(result);
-  } catch (e) { res.status(500).json({ error: 'Erro ao listar escalas' }); }
-});
+router.get('/schedules', contextoLeituraVoluntariado, criarLeituraVoluntariado({ supabase, tipo: 'schedules' }));
 
 // ══════════════════════════════════════════════════════════════
 // CHECK-INS
 // ══════════════════════════════════════════════════════════════
-router.get('/check-ins', async (req, res) => {
-  try {
-    const { service_id, volunteer_id, is_unscheduled } = req.query;
-    let q = supabase.from('vol_check_ins').select('*, volunteer:vol_profiles(id, full_name, planning_center_id), schedule:vol_schedules(id, volunteer_name, volunteer_id, team_name, position_name), service:vol_services(id, name, scheduled_at)')
-      .order('checked_in_at', { ascending: false });
-    if (service_id) q = q.eq('service_id', service_id);
-    if (volunteer_id) q = q.eq('volunteer_id', volunteer_id);
-    if (is_unscheduled === 'true') q = q.eq('is_unscheduled', true);
-    const { data, error } = await q;
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: 'Erro ao listar check-ins' }); }
-});
+router.get('/check-ins', contextoLeituraVoluntariado, criarLeituraVoluntariado({ supabase, tipo: 'checkins' }));
 
 router.post('/check-ins', async (req, res) => {
   try {
@@ -3262,25 +3015,7 @@ router.put('/profiles/:id/contact', async (req, res) => {
 });
 
 // Histórico de check-ins do voluntário logado (self-service)
-router.get('/my-check-ins', async (req, res) => {
-  try {
-    const userId = req.user.userId;
-    const { data: profile } = await supabase.from('vol_profiles')
-      .select('id').eq('auth_user_id', userId).maybeSingle();
-    if (!profile) return res.json([]);
-
-    const { data, error } = await supabase.from('vol_check_ins')
-      .select('id, checked_in_at, method, is_unscheduled, schedule_id, service:vol_services(id, name, scheduled_at)')
-      .eq('volunteer_id', profile.id)
-      .order('checked_in_at', { ascending: false })
-      .limit(100);
-    if (error) return res.status(400).json({ error: error.message });
-    res.json(data || []);
-  } catch (e) {
-    console.error('[Vol] my-check-ins error:', e.message);
-    res.status(500).json({ error: 'Erro ao listar meus check-ins' });
-  }
-});
+router.get('/my-check-ins', contextoLeituraVoluntariado, criarLeituraVoluntariado({ supabase, tipo: 'my-checkins' }));
 
 // ══════════════════════════════════════════════════════════════
 // QR CODE LOOKUP (scan)

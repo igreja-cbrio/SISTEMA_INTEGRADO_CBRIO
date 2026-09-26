@@ -4,6 +4,7 @@ const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const { isoWeekRange } = require('../utils/isoWeek');
 const { isAuthorizedCron } = require('../utils/cronAuth');
+const { gerarAgendaDosCampi } = require('../services/campusAgenda');
 
 // Cron (ANTES do authenticate · CRON_SECRET): mantém os cultos recorrentes
 // gerados ~3 meses à frente. Sem isso, os cultos acabam no fim do ano (a
@@ -11,21 +12,14 @@ const { isAuthorizedCron } = require('../utils/cronAuth');
 // gerar_cultos_recorrentes é idempotente (pula os que já existem) e cria TODOS
 // os service_types ativos (Domingo/Quarta/AMI/Bridge).
 router.get('/cron/gerar-cultos-recorrentes', async (req, res) => {
-  if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'Unauthorized' });
+  if (!isAuthorizedCron(req)) return res.status(401).json({ error: 'Não autorizado.' });
   try {
-    const hoje = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Sao_Paulo' });
-    const fimDt = new Date(); fimDt.setMonth(fimDt.getMonth() + 3);
-    const fim = fimDt.toISOString().slice(0, 10);
-    const { data, error } = await supabase.rpc('gerar_cultos_recorrentes', {
-      p_data_inicio: hoje, p_data_fim: fim,
-    });
-    if (error) throw error;
-    const criados = (data || []).filter((r) => r.out_status === 'criado').length;
-    console.log(`[integracao/cron/gerar-cultos] ${hoje}→${fim} · ${criados} criados de ${(data || []).length}`);
-    res.json({ ok: true, ate: fim, total: (data || []).length, criados });
+    const resultado = await gerarAgendaDosCampi({ supabase });
+    console.log(`[integracao/cron/gerar-cultos] ${resultado.inicio}→${resultado.ate} · ${resultado.criados} criados · ${resultado.campi.length} campi`);
+    return res.status(resultado.ok ? 200 : 503).json(resultado);
   } catch (e) {
     console.error('[integracao/cron/gerar-cultos]', e.message);
-    res.status(500).json({ error: 'Erro ao gerar cultos recorrentes' });
+    return res.status(503).json({ error: 'Não foi possível gerar os cultos recorrentes.' });
   }
 });
 
