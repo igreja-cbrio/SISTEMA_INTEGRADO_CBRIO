@@ -1,7 +1,5 @@
-// ============================================================================
-// utils/jornadaTempo · "quanto tempo o novo convertido levou até cada marco?"
-// ============================================================================
-// Régua PURA (sem banco, sem rede, sem relógio implícito — o "hoje" é sempre
+// =====================================================================// utils/jornadaTempo · "quanto tempo o novo convertido levou até cada marco?"
+// =====================================================================// Régua PURA (sem banco, sem rede, sem relógio implícito — o "hoje" é sempre
 // INJETADO). Mora em `utils/` pra entrar no gate de deploy.
 // Quem lê o banco é o handler `GET /cuidados/jornada-convertidos`.
 //
@@ -26,21 +24,62 @@
 // Ver a migration 20260619140000_nsm_sinais_engajamento_v3.sql, que registra o
 // mesmo fato e é a razão de nenhuma régua do sistema aplicar janela de tempo
 // em grupo até hoje.
-// ============================================================================
-
+// =====================================================================
 /**
  * Catálogo dos marcos, NA ORDEM DA JORNADA. `meta_dias` é o prazo interno
  * acordado (null = não há prazo — pertencer não tem prazo).
  * `sensivel` espelha utils/jornadaMarcadores: generosidade é dado financeiro.
+ *
+ * `descricao` e `fonte` vão pra TELA (pedido do Matheus em 14/08: "preciso
+ * saber o que significam esses marcos"). Ficam aqui, junto da régua, e não num
+ * texto no componente: rótulo de métrica sem a régua ao lado é o que faz duas
+ * telas discordarem e ninguém saber qual está certa — foi assim que "fez o
+ * Next" virou discussão entre esta tela e o /painel.
+ *
+ * `engajamento: false` no 1º contato é DECISÃO, não detalhe — ver a lei do
+ * engajamento logo abaixo.
  */
 const MARCOS_TEMPO = [
-  { chave: 'contato',      label: '1º contato',   curto: 'CONT',    meta_dias: 3,   sensivel: false },
-  { chave: 'next',         label: 'Next',         curto: 'NEXT',    meta_dias: 90,  sensivel: false },
-  { chave: 'batismo',      label: 'Batismo',      curto: 'BAT',     meta_dias: 90,  sensivel: false },
-  { chave: 'grupo',        label: 'Grupo',        curto: 'GRUPO',   meta_dias: null, sensivel: false },
-  { chave: 'servir',       label: 'Voluntariado', curto: 'SERVE',   meta_dias: null, sensivel: false },
-  { chave: 'generosidade', label: 'Generosidade', curto: 'CONTRIB', meta_dias: null, sensivel: true },
+  {
+    chave: 'contato', label: '1º contato', curto: 'CONT', meta_dias: 3, sensivel: false,
+    engajamento: false,
+    descricao: 'A equipe pastoral conseguiu falar com a pessoa depois da decisão. É ação NOSSA, não engajamento dela — por isso não entra na conta de "engajaram".',
+    fonte: 'Marcado no módulo Cuidados (prazo interno: 3 dias).',
+  },
+  {
+    chave: 'next', label: 'Next', curto: 'NEXT', meta_dias: 90, sensivel: false,
+    engajamento: true,
+    descricao: 'Esteve presente em ao menos UM encontro do Next.',
+    fonte: 'Presença registrada no encontro. Esta visão considera a primeira presença; a conclusão do Next segue a régua própria do programa.',
+  },
+  {
+    chave: 'batismo', label: 'Batismo', curto: 'BAT', meta_dias: 90, sensivel: false,
+    engajamento: true,
+    descricao: 'Batismo realizado (não apenas inscrito).',
+    fonte: 'Data do batismo no módulo Integração.',
+  },
+  {
+    chave: 'grupo', label: 'Grupo', curto: 'GRUPO', meta_dias: null, sensivel: false,
+    engajamento: true,
+    descricao: 'Entrou em um grupo de conexão e o vínculo segue aberto.',
+    fonte: 'Data de entrada no grupo. Vínculos importados ou anteriores à decisão aparecem como alcançados, mas não comprovam engajamento após a decisão nem entram na mediana.',
+  },
+  {
+    chave: 'servir', label: 'Voluntariado', curto: 'SERVE', meta_dias: null, sensivel: false,
+    engajamento: true,
+    descricao: 'Começou a servir como voluntário.',
+    fonte: 'Início do vínculo de voluntariado.',
+  },
+  {
+    chave: 'generosidade', label: 'Generosidade', curto: 'CONTRIB', meta_dias: null, sensivel: true,
+    engajamento: true,
+    descricao: 'Registrou a primeira contribuição (dízimo ou oferta).',
+    fonte: 'Lançamento financeiro. Só aparece para quem já pode ver contribuição da pessoa.',
+  },
 ];
+
+/** Contato mede o alcance da equipe; os demais marcos medem engajamento. */
+const CHAVES_ENGAJAMENTO = MARCOS_TEMPO.filter((m) => m.engajamento).map((m) => m.chave);
 
 const CHAVES_TEMPO = MARCOS_TEMPO.map((m) => m.chave);
 const CHAVES_SENSIVEIS_TEMPO = MARCOS_TEMPO.filter((m) => m.sensivel).map((m) => m.chave);
@@ -206,7 +245,7 @@ function diasParado(pessoa, hoje) {
   return Math.max(0, desdeDecisao - ultimoDia);
 }
 
-/** Quantos marcos (além da decisão) a pessoa alcançou. */
+/** Quantos marcos (além da decisão) a pessoa alcançou — inclusive o contato. */
 function totalMarcos(pessoa) {
   return Object.values(pessoa?.marcos || {}).filter((m) => m && m.alcancado).length;
 }
@@ -218,7 +257,7 @@ function totalMarcos(pessoa) {
  * própria no gráfico do /cuidados. Contá-lo faria as duas linhas quase
  * coincidirem e o gráfico deixaria de responder o que promete.
  */
-const CHAVES_OUTRO_VALOR = CHAVES_TEMPO.filter((c) => c !== 'contato');
+const CHAVES_OUTRO_VALOR = CHAVES_ENGAJAMENTO;
 
 /**
  * Este marco prova que a pessoa se moveu DEPOIS de decidir?
@@ -250,10 +289,27 @@ function engajouEmOutroValor(pessoa) {
   return valoresEngajados(pessoa).length > 0;
 }
 
+
+/** Quantos marcos comprovam engajamento pela mesma régua do funil. */
+function totalEngajamento(pessoa) {
+  return valoresEngajados(pessoa).length;
+}
+
+/** Primeiro engajamento com data confiável; falta de data nunca vira zero. */
+function diasAteEngajar(pessoa) {
+  const marcos = pessoa?.marcos || {};
+  const dias = valoresEngajados(pessoa)
+    .map((c) => marcos[c])
+    .filter((m) => !m.aproximada && Number.isFinite(m.dias) && m.dias >= 0)
+    .map((m) => m.dias);
+  return dias.length ? Math.min(...dias) : null;
+}
+
 module.exports = {
   MARCOS_TEMPO,
   CHAVES_TEMPO,
   CHAVES_SENSIVEIS_TEMPO,
+  CHAVES_ENGAJAMENTO,
   diaBRT,
   diasEntre,
   datasDeImport,
@@ -267,4 +323,6 @@ module.exports = {
   marcoContaComoEngajamento,
   valoresEngajados,
   engajouEmOutroValor,
+  totalEngajamento,
+  diasAteEngajar,
 };

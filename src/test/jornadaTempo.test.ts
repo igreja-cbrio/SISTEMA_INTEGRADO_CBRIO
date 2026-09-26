@@ -17,7 +17,8 @@ import { describe, it, expect } from 'vitest';
 import {
   diaBRT, diasEntre, datasDeImport, montarMarco,
   mediana, quantil, estatisticaMarco, diasParado, totalMarcos,
-  MARCOS_TEMPO, CHAVES_SENSIVEIS_TEMPO,
+  totalEngajamento, diasAteEngajar,
+  MARCOS_TEMPO, CHAVES_SENSIVEIS_TEMPO, CHAVES_ENGAJAMENTO,
 } from '../../backend/utils/jornadaTempo.js';
 
 describe('diaBRT · o dia é o da igreja, não o do UTC', () => {
@@ -229,5 +230,84 @@ describe('catálogo', () => {
   it('totalMarcos conta só os alcançados', () => {
     expect(totalMarcos({ marcos: { contato: { alcancado: true }, next: { alcancado: true } } } as any)).toBe(2);
     expect(totalMarcos({ marcos: {} } as any)).toBe(0);
+  });
+
+  it('todo marco declara o que significa (é o que a tela exibe)', () => {
+    for (const m of MARCOS_TEMPO) {
+      expect(typeof m.descricao, `${m.chave} sem descricao`).toBe('string');
+      expect(m.descricao.length, `${m.chave} com descricao vazia`).toBeGreaterThan(20);
+      expect(typeof m.fonte, `${m.chave} sem fonte`).toBe('string');
+      expect(typeof m.engajamento, `${m.chave} sem flag de engajamento`).toBe('boolean');
+    }
+  });
+});
+
+// A LEI DO ENGAJAMENTO. Mutante que este bloco existe pra matar: incluir
+// 'contato' em CHAVES_ENGAJAMENTO (ou usar totalMarcos onde vai totalEngajamento).
+// Foi assim que a tela disse "97% engajaram" numa coorte de 12% — contato é a
+// igreja ligando pra pessoa, não a resposta dela.
+describe('engajamento · o 1º contato NÃO conta', () => {
+  it('contato está FORA das chaves de engajamento', () => {
+    expect(CHAVES_ENGAJAMENTO).not.toContain('contato');
+    expect(CHAVES_ENGAJAMENTO).toEqual(['next', 'batismo', 'grupo', 'servir', 'generosidade']);
+  });
+
+  it('quem só tem contato NÃO engajou', () => {
+    const p = { marcos: { contato: { alcancado: true, dias: 0, aproximada: false } } };
+    expect(totalMarcos(p as any)).toBe(1);      // tem 1 marco
+    expect(totalEngajamento(p as any)).toBe(0); // e zero engajamento
+    expect(diasAteEngajar(p as any)).toBeNull();
+  });
+
+  it('contato + grupo = 1 engajamento, e o tempo é o do GRUPO', () => {
+    const p = {
+      marcos: {
+        contato: { alcancado: true, dias: 0, aproximada: false },
+        grupo: { alcancado: true, dias: 41, aproximada: false },
+      },
+    };
+    expect(totalEngajamento(p as any)).toBe(1);
+    expect(diasAteEngajar(p as any)).toBe(41);
+  });
+
+  it('pega o PRIMEIRO marco de engajamento, não o primeiro marco', () => {
+    const p = {
+      marcos: {
+        contato: { alcancado: true, dias: 2, aproximada: false },
+        batismo: { alcancado: true, dias: 56, aproximada: false },
+        next: { alcancado: true, dias: 7, aproximada: false },
+      },
+    };
+    expect(diasAteEngajar(p as any)).toBe(7);
+  });
+
+  it('data de importação não comprova engajamento após a decisão', () => {
+    const p = {
+      marcos: {
+        grupo: { alcancado: true, dias: 41, aproximada: true, motivo: 'data_de_importacao' },
+      },
+    };
+    expect(totalEngajamento(p as any)).toBe(0);
+    expect(diasAteEngajar(p as any)).toBeNull(); // mas não dá pra medir
+  });
+
+  it('marco antes da decisão não conta como engajamento nem tempo', () => {
+    const p = { marcos: { grupo: { alcancado: true, dias: -30, aproximada: true, motivo: 'antes_da_decisao' } } };
+    expect(totalEngajamento(p as any)).toBe(0);
+    expect(diasAteEngajar(p as any)).toBeNull();
+  });
+
+  it('pessoa sem marco nenhum', () => {
+    expect(totalEngajamento({ marcos: {} } as any)).toBe(0);
+    expect(totalEngajamento({} as any)).toBe(0);
+    expect(diasAteEngajar({} as any)).toBeNull();
+  });
+});
+
+describe('engajamento · fato registrado sem data', () => {
+  it('Next realizado sem data conta, mas não inventa dias até engajar', () => {
+    const pessoa = { marcos: { next: montarMarco(null, '2026-01-10', { alcancado: true }) } };
+    expect(totalEngajamento(pessoa)).toBe(1);
+    expect(diasAteEngajar(pessoa)).toBeNull();
   });
 });
