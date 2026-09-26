@@ -649,7 +649,7 @@ export default function EventoExterno() {
                   background: 'rgba(37,211,102,0.10)', border: '1px solid rgba(37,211,102,0.35)',
                   color: '#1da851', fontSize: 12.5, fontWeight: 700, textDecoration: 'none',
                 }}>
-                  Dúvidas? Entre no grupo do WhatsApp
+                  {evento?.igreja_parceira ? 'Entre no grupo do WhatsApp' : 'Dúvidas? Entre no grupo do WhatsApp'}
                 </a>
               )}
             </>
@@ -696,6 +696,22 @@ export default function EventoExterno() {
                 <p style={{ fontSize: 12, color: C.text3, marginTop: 10 }}>
                   Seu número da sorte já foi gerado na sua primeira inscrição — se não anotou, procure a equipe no dia do evento.
                 </p>
+              )}
+              {/* Pedido pra ENTRAR no grupo ao concluir (Genesis · 26/09, igual
+                  ao retiro): o link do cabeçalho existe, mas no fim da
+                  inscrição vira chamada de destaque. */}
+              {evento.whatsapp_duvidas && (
+                <div style={{ marginTop: 18 }}>
+                  <p style={{ fontSize: 13, color: C.text, fontWeight: 600, margin: '0 0 10px' }}>
+                    Último passo: entre no grupo do WhatsApp para receber os avisos.
+                  </p>
+                  <a href={safeHref(evento.whatsapp_duvidas)} target="_blank" rel="noopener noreferrer" style={{
+                    display: 'inline-block', padding: '12px 22px', borderRadius: 12,
+                    background: '#25D366', color: '#fff', fontSize: 14.5, fontWeight: 800, textDecoration: 'none',
+                  }}>
+                    Entrar no grupo do WhatsApp
+                  </a>
+                </div>
               )}
               {resultado.comprovanteToken && <ComprovanteQr token={resultado.comprovanteToken} />}
               {/* Instruções gerais do evento — a inscrição CONCLUIU (este bloco
