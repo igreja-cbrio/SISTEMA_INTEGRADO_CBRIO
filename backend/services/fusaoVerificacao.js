@@ -53,7 +53,7 @@ const TABELAS_COM_MEMBRO = Object.freeze([
   'next_inscricoes', 'next_matriculas', 'next_pessoa_aula_manual', 'nsm_eventos',
   'pag_cobrancas', 'profiles', 'vis_visitas', 'vol_area_supervisores',
   'vol_background_checks', 'vol_inscricoes', 'vol_inscritos', 'vol_servicos_historico',
-  'wa_conversas', 'wifi_visitantes',
+  'wa_conversas', 'wa_grupo_link_pedidos', 'wifi_visitantes',
 ]);
 
 /**
