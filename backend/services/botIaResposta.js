@@ -24,9 +24,48 @@ const waInbox = require('./waInbox');
 const { ehSoAgradecimento } = require('../utils/agradecimento');
 const { diaBrt } = require('../utils/whatsappModulo');
 const R = require('../utils/botIaRegras');
+const PICOTADA = require('../utils/mensagemPicotada');
 
 const MODEL = process.env.WHATSAPP_BOT_IA_MODEL || 'claude-haiku-4-5-20251001';
 const MAX_TOKENS = 600;
+
+// ⚠️⚠️ DEBOUNCE de mensagens picotadas (26/09/2026 · pedido do Matheus após
+// vídeo do Salu Barbato). A pessoa manda "boa tarde" + "você atende" + "quanto
+// custa" em 3 mensagens seguidas em 5s; sem debounce o bot responde as 3
+// atropeladas. Espera N ms depois de receber e checa "sou eu o último inbound
+// desta conversa?" — se sim, agrupa e responde uma vez; se não, aborta em
+// silêncio (a última que chegou vai fazer o trabalho).
+//
+// Env: WHATSAPP_DEBOUNCE_MS (default 5000). Zero DESLIGA o debounce.
+// A janela de agrupamento (quanto tempo pra trás olhamos ao concatenar) é o
+// dobro do debounce, com piso — cobre a rajada mesmo se ela começou antes.
+const DEBOUNCE_MS = PICOTADA.janelaValida(
+  process.env.WHATSAPP_DEBOUNCE_MS,
+  PICOTADA.JANELA_DEBOUNCE_MS_PADRAO
+);
+const AGRUPAR_MS = Math.max(DEBOUNCE_MS * 3, PICOTADA.JANELA_AGRUPAR_MS_PADRAO);
+
+function sleep(ms) { return new Promise(r => setTimeout(r, Math.max(0, Number(ms) || 0))); }
+
+/**
+ * Últimas mensagens INBOUND desta conversa dentro da janela de agrupamento.
+ * ⚠️ FALHA-ABERTA: se a consulta falhar, devolve `null` e o caller ignora o
+ * debounce (responde como hoje). Bloquear resposta por instabilidade de banco
+ * é pior que responder atropelado.
+ */
+async function inboundRecentes(conversaId, janelaMs, agora = new Date()) {
+  if (!conversaId) return null;
+  const desde = new Date(agora.getTime() - janelaMs).toISOString();
+  const { data, error } = await supabase.from('wa_mensagens')
+    .select('id, whatsapp_message_id:wa_message_id, criado_em, texto')
+    .eq('conversa_id', conversaId).eq('direcao', 'in').gte('criado_em', desde)
+    .order('criado_em', { ascending: true }).limit(30);
+  if (error) {
+    console.warn('[botIa] inbound recentes:', error.message);
+    return null;
+  }
+  return data || [];
+}
 
 // ── leituras ────────────────────────────────────────────────────────────────
 
@@ -275,7 +314,45 @@ async function tratar({ telefone, texto, messageId, phoneNumberId = null, cfg = 
     }
 
     const conv = await conversaPorTelefone(telefone);
-    const d = await decidir({ conv, texto, cfgInstitucional: c.institucional || cfg?.institucional || null, botIa: c.botIa, areas: a.areas });
+
+    // ⚠️⚠️ DEBOUNCE DA RAJADA (26/09). Se o debounce está ligado E temos uma
+    // conversa registrada (sem conversa não há como comparar mensagens), espera
+    // N ms e checa se sou eu ainda a última mensagem inbound. Se OUTRA chegou
+    // depois, aborto — ela dispara uma nova execução deste mesmo `tratar` e vai
+    // ver TODAS as mensagens juntas (inclusive esta).
+    // ⚠️ Falha ao ler o histórico ⇒ segue como HOJE (responde só o `texto`
+    // recebido). Bloquear por erro de banco esconderia respostas.
+    let textoFinal = texto;
+    let coalescingUsado = { debouncou: false, agrupou: 1 };
+    if (DEBOUNCE_MS > 0 && conv?.id) {
+      await sleep(DEBOUNCE_MS);
+      const inbound = await inboundRecentes(conv.id, AGRUPAR_MS);
+      if (Array.isArray(inbound) && inbound.length) {
+        const decisao = PICOTADA.decidirDebounce({
+          minhaId: null,
+          minhaWamid: messageId,
+          minhaCriadoEm: inbound.find(m => m.whatsapp_message_id === messageId)?.criado_em
+            || new Date().toISOString(),
+          textoAtual: texto,
+          todasInbound: inbound,
+          agora: new Date().toISOString(),
+        });
+        if (decisao.acao === 'coalesced') {
+          if (coletaId) {
+            await supabase.from('whatsapp_coletas').update({
+              erro: 'bot_ia:coalesced',
+              parsed: { bot_ia: { acao: 'coalesced', motivo: decisao.motivo, janela_ms: DEBOUNCE_MS } },
+            }).eq('id', coletaId).then(() => {}, () => {});
+          }
+          return { ...resultado, acao: 'coalesced', motivo: decisao.motivo };
+        }
+        textoFinal = decisao.texto || texto;
+        coalescingUsado = { debouncou: true, agrupou: decisao.contagem || 1 };
+      }
+    }
+
+    const d = await decidir({ conv, texto: textoFinal, cfgInstitucional: c.institucional || cfg?.institucional || null, botIa: c.botIa, areas: a.areas });
+    d.coalescing = coalescingUsado;
 
     // Triagem de carona: a área que o modelo reconheceu vira a etiqueta da
     // conversa — só onde está VAZIA (decisão humana manda), inclusive quando o
@@ -302,7 +379,7 @@ async function tratar({ telefone, texto, messageId, phoneNumberId = null, cfg = 
     if (coletaId) {
       await supabase.from('whatsapp_coletas').update({
         erro: `bot_ia:${d.acao}`,
-        parsed: { bot_ia: { acao: d.acao, area: d.area, motivo: d.motivo, enviado: !!d.enviado, uso: d.uso || null, modelo: d.modelo_chamado ? MODEL : null, removidos: d.removidos || null } },
+        parsed: { bot_ia: { acao: d.acao, area: d.area, motivo: d.motivo, enviado: !!d.enviado, uso: d.uso || null, modelo: d.modelo_chamado ? MODEL : null, removidos: d.removidos || null, coalescing: coalescingUsado } },
       }).eq('id', coletaId).then(({ error }) => { if (error) console.warn('[botIa] coleta update:', error.message); });
     }
     return d;
