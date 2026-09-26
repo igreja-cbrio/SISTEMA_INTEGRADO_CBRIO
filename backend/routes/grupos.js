@@ -4214,7 +4214,7 @@ router.get('/:id', authorizeModule('grupos', 1), async (req, res) => {
         ? supabase.from('mem_membros').select('id, nome, foto_url').eq('id', grupo.supervisor_id).single()
         : Promise.resolve({ data: null }),
       supabase.from('mem_grupo_link').select('link, plataforma').eq('grupo_id', id).maybeSingle()
-        .then(r => r, () => ({ data: null })),
+        .then(r => r, error => ({ data: null, error })),
     ]);
     // ⚠️ `link_online: null` significa "não cadastrado"; a tela distingue isso de
     // "não deu pra ler" pelo `link_indisponivel`.

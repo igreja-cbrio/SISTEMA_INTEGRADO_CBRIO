@@ -82,7 +82,7 @@ function diaDaSemana(n) {
  * @param {string|null} p.proximaISO  data da próxima ocorrência (de `proximoEncontro`)
  * @param {boolean} p.estimada        a data é cálculo, não fato observado
  */
-function quandoComData({ diaSemana, horario, recorrencia = 'semanal', proximaISO = null, estimada = false }) {
+function quandoComData({ diaSemana, horario, recorrencia = 'semanal', proximaISO = null, proximoHorario = null, estimada = false }) {
   const rec = String(recorrencia || 'semanal').toLowerCase().trim();
   const hh = String(horario || '').slice(0, 5);
 
@@ -101,12 +101,15 @@ function quandoComData({ diaSemana, horario, recorrencia = 'semanal', proximaISO
   const curta = dataCurta(proximaISO);
   if (!curta) return paramSeguro(comCadencia);
 
+  const horaProxima = String(proximoHorario || '').slice(0, 5);
+  const quandoProximo = horaProxima && horaProxima !== hh ? `${curta} às ${horaProxima}` : curta;
+
   return paramSeguro(estimada
     // ⚠️ "deve ser" e "confirme", nunca "é": a âncora foi derivada do início da
     // temporada porque o grupo nunca registrou encontro. Afirmar aqui é mandar
     // gente para a terça errada — e num aviso de boas-vindas.
-    ? `${comCadencia} · o próximo deve ser dia ${curta}, confirme com o líder`
-    : `${comCadencia} · o próximo é dia ${curta}`);
+    ? `${comCadencia} · o próximo deve ser dia ${quandoProximo}, confirme com o líder`
+    : `${comCadencia} · o próximo é dia ${quandoProximo}`);
 }
 
 /**
@@ -125,7 +128,9 @@ function ondeComLink({ partes = [], online = false, linkOnline = null }) {
 
   if (online) {
     const link = String(linkOnline || '').trim();
-    if (link) return paramSeguro(`Online · ${link}`, 300);
+    // URLs não podem ser cortadas: um endereço parcial impediria a entrada.
+    if (link && `Online · ${link}`.length <= 300) return paramSeguro(`Online · ${link}`, 300);
+    if (link) return 'Online · o líder envia o link';
     // ⚠️ Sem link cadastrado, DIZ que o líder envia — "Online" sozinho é
     // exatamente o que faz a pessoa perguntar "e o link?". Medido: 36 grupos
     // online ativos e nenhuma coluna de link no cadastro até 25/09.

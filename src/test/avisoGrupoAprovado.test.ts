@@ -119,3 +119,18 @@ describe('paramSeguro · o que a Meta recusa', () => {
     expect(t).not.toMatch(/ {2,}/);
   });
 });
+
+
+describe('aviso de aprovação · exceções da agenda e limite do link', () => {
+  it('informa o horário alterado do próximo encontro', () => {
+    const aviso = quandoComData({ diaSemana: 2, horario: '20:00', proximaISO: '2026-09-30', proximoHorario: '19:00' });
+    expect(aviso).toContain('Terça às 20:00');
+    expect(aviso).toContain('o próximo é dia 30/09 às 19:00');
+  });
+  it('não envia um link cortado quando a URL supera o limite do parâmetro', () => {
+    const link = 'https://example.com/reuniao?token=' + 'a'.repeat(300);
+    const aviso = ondeComLink({ online: true, linkOnline: link });
+    expect(aviso).toBe('Online · o líder envia o link');
+    expect(aviso).not.toContain('https://');
+  });
+});

@@ -462,10 +462,12 @@ export default function Grupos() {
     setSaving(true);
     try {
       if (form.id) {
-        await api.update(form.id, form);
-        toast.success('Grupo atualizado');
+        const atualizado = await api.update(form.id, form);
+        if (atualizado?.aviso_link) toast.warning(atualizado.aviso_link);
+        else toast.success('Grupo atualizado');
       } else {
         const novo = await api.create(form);
+        if (novo?.aviso_link) toast.warning(novo.aviso_link);
         // Grupo criado a partir de uma candidatura de líder (caixa de
         // entrada): fecha o ciclo marcando a inscrição como vinculada.
         if (liderVinculoPendente && novo?.id) {
@@ -2670,6 +2672,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
             <Label>Link da sala (grupo online)</Label>
             <Input
               value={form.link_online || ''}
+              disabled={form.link_indisponivel}
               onChange={e => set('link_online', e.target.value)}
               placeholder="https://meet.google.com/..."
             />
@@ -2684,7 +2687,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
             )}
             {form.link_indisponivel && (
               <p style={{ fontSize: 11, color: '#b45309', marginTop: 4, lineHeight: 1.45 }}>
-                Não foi possível ler o link deste grupo agora. Salvar sem preencher não apaga o que já estava lá.
+                Não foi possível ler o link deste grupo agora. Ele será preservado ao salvar. Reabra a ficha antes de alterar o link.
               </p>
             )}
           </div>

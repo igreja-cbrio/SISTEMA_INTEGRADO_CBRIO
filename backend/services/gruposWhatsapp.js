@@ -233,6 +233,7 @@ async function agendaEDoGrupo(grupo) {
       recorrencia: grupo.recorrencia, ancoraISO, excecoes: exc || [],
     });
     out.proximaISO = prox?.data || null;
+    out.proximoHorario = prox?.horario || null;
     // `ancora_incerta` é o sinal do futuro; `estimada` é o da âncora derivada.
     out.estimada = Boolean(estimada || prox?.ancora_incerta);
   } catch (e) {
@@ -266,7 +267,7 @@ async function notificarPessoaAprovada({ telefone, grupo, liderNome, liderTelefo
         quandoComData({
           diaSemana: grupo?.dia_semana, horario: grupo?.horario,
           recorrencia: grupo?.recorrencia,
-          proximaISO: extra.proximaISO, estimada: extra.estimada,
+          proximaISO: extra.proximaISO, proximoHorario: extra.proximoHorario, estimada: extra.estimada,
         }),
         ondeComLink({
           partes: [grupo?.local, grupo?.endereco, grupo?.complemento, grupo?.bairro],
