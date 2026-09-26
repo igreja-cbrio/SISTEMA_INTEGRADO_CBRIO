@@ -18,7 +18,7 @@ const { normalizarEscolha } = require('../utils/elegibilidadeVol');
 const { ehDiaDoCulto } = require('../utils/janelaCulto');
 const { classificarCulto } = require('../utils/rodizioCulto');
 const { proximasOcorrencias, proximoEncontro, ocorrenciaAnterior, ocorrenciasPassadas, janelaCorrecaoPassada } = require('../utils/agendaGrupo');
-const { notificar, resolverDestinatarios } = require('../services/notificar');
+const { notificar } = require('../services/notificar');
 const { responderEscala, STATUS_VALIDOS: STATUS_ESCALA } = require('../services/escalaResposta');
 const { acoesDaNotificacao, acaoPermitida, statusDaAcao } = require('../utils/acaoNotificacao');
 const { validarMensagem: validarMensagemSuporte, montarParams: montarParamsSuporte, digitos: digitosSuporte } = require('../utils/suporteApp');
@@ -76,6 +76,8 @@ const { aprovarPedidoCore } = require('./grupos');
 const { cadastrarPessoaNoGrupo } = require('../services/grupoPessoaDireta');
 const { ancorasDeGrupos, iniciosDeGrupos } = require('../services/grupoAncora');
 const { aplicarExcecaoAgenda } = require('../services/grupoAgendaExcecao');
+// Pedido de transferência de grupo: caminho ÚNICO (app + WhatsApp · 26/09/2026).
+const { solicitarTransferencia } = require('../services/grupoTransferencia');
 const { registrarEventoPedido } = require('../services/grupoPedidoEventos');
 const appIdentidade = require('../services/appIdentidade');
 const { acharRespostaDaPessoa } = require('../services/censoJaRespondeu');
@@ -6447,63 +6449,30 @@ router.post('/grupos/:grupoId/membros/:rowId/transferir', authApp, limiterNormal
       .select('nome').eq('id', linha.membro_id).is('deleted_at', null).maybeSingle();
     const motivo = String(req.body?.motivo || '').trim().slice(0, 500) || null;
 
-    // ⚠️ Já existe pedido pendente desta pessoa neste grupo? Devolve o MESMO,
-    // sem criar outro. O índice `uniq_grupo_transf_pendente` garante isso no
-    // banco; conferir antes é o que transforma o 23505 numa resposta amigável
-    // em vez de um 500 ("o líder tocou duas vezes" é o caso normal).
-    const { data: jaPediu } = await supabase.from('mem_grupo_transferencias')
-      .select('id, created_at').eq('membro_id', linha.membro_id)
-      .eq('grupo_origem_id', gid).eq('status', 'pendente').limit(1).maybeSingle();
-    if (jaPediu) {
-      return res.json({ ok: true, ja_pedido: true, transferencia_id: jaPediu.id });
-    }
-
-    const { data: novo, error } = await supabase.from('mem_grupo_transferencias').insert({
-      membro_id: linha.membro_id,
-      grupo_origem_id: gid,
-      vinculo_id: linha.id,
+    // ⚠️ O INSERT + o aviso à coordenação moram em `services/grupoTransferencia`
+    // desde 26/09/2026 — o WhatsApp virou a 2ª porta que cria este pedido, e
+    // duas cópias divergiriam. As RESPOSTAS abaixo são as de sempre, byte a
+    // byte (a tela do app lê `ja_pedido` e `transferencia_id`).
+    // ⚠️ Já existe pedido pendente desta pessoa neste grupo? O serviço devolve
+    // o MESMO, sem criar outro (o índice `uniq_grupo_transf_pendente` garante).
+    const r = await solicitarTransferencia({
+      membroId: linha.membro_id,
+      grupoOrigemId: gid,
+      grupoOrigemNome: g.grupo.nome,
+      vinculoId: linha.id,
       motivo,
-      status: 'pendente',
-      pedido_por: req.user?.id || null,
-      // Snapshot de nome: em 86 dos 102 grupos ativos o líder não tem conta no
-      // ERP, então resolver o nome depois pelo `pedido_por` não funcionaria.
-      pedido_por_nome: g.membro?.nome || req.user?.email || 'Líder (app)',
+      pedidoPor: req.user?.id || null,
+      pedidoPorNome: g.membro?.nome || req.user?.email || 'Líder (app)',
       origem: 'app',
-    }).select('id').single();
-    if (error) {
-      // Corrida com outra aba/toque: o índice parcial pegou. Não é erro pro
-      // líder — o pedido dele está registrado.
-      if (error.code === '23505') return res.json({ ok: true, ja_pedido: true });
-      throw error;
+      pessoaNome: pessoa?.nome || null,
+    });
+    if (r.ja_pedido) {
+      return res.json(r.transferencia_id
+        ? { ok: true, ja_pedido: true, transferencia_id: r.transferencia_id }
+        : { ok: true, ja_pedido: true });
     }
 
-    // ⚠️⚠️ Quem precisa saber é a COORDENAÇÃO, e não o dono de nenhum grupo: é
-    // ela que vai ESCOLHER o destino, e destino é justamente o que este pedido
-    // não tem. Por isso aqui o `targetIds` não sai de `donosDoGrupo` (como em
-    // todo outro aviso de grupo) e sim de `resolverDestinatarios('grupos')` — as
-    // regras do módulo em `notificacao_regras`, nunca uma lista de nomes no
-    // código (a lei do projeto: o dono do fluxo muda sem PR).
-    //
-    // ⚠️ Lista VAZIA (nenhuma regra configurada) omite `targetIds` de propósito,
-    // pra cair no fallback de admin/diretor: transferência é rara e o custo de
-    // avisar gente demais é bem menor que o de um pedido de líder ficar parado
-    // sem ninguém saber que existe. Mandar `targetIds: []` seria SILÊNCIO.
-    (async () => {
-      const coordenacao = await resolverDestinatarios('grupos').catch(() => []);
-      await notificar({
-        modulo: 'grupos',
-        tipo: 'grupo_transferencia_pedida',
-        titulo: 'Transferência pedida por um líder',
-        mensagem: `${pessoa?.nome || 'Alguém'} do grupo "${g.grupo.nome}" precisa ser transferida. `
-          + `${motivo ? `Motivo: ${motivo}. ` : ''}O pedido está na Caixa de entrada, aguardando a coordenação escolher o grupo.`,
-        link: '/grupos?tab=entrada',
-        severidade: 'aviso',
-        chaveDedup: `grupo_transf_${novo?.id}`,
-        ...(coordenacao.length ? { targetIds: coordenacao } : {}),
-      });
-    })().catch(e => console.warn('[APP] transferir · notificar:', e.message));
-
-    res.status(201).json({ ok: true, transferencia_id: novo?.id || null });
+    res.status(201).json({ ok: true, transferencia_id: r.transferencia_id || null });
   } catch (e) {
     console.error('[APP] grupos/transferir:', e.message);
     res.status(500).json({ error: 'Erro ao pedir a transferência' });

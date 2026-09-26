@@ -55,6 +55,12 @@ describe('pedido de grupo · avisa o dono do grupo, nunca o público do módulo'
 describe('transferência de participante · o líder SOLICITA, a coordenação decide', () => {
   const APP = lerBackend('backend/routes/app.js');
   const ROTA = corpoDaRota(APP, '/grupos/:grupoId/membros/:rowId/transferir');
+  // ⚠️ 26/09/2026: o INSERT + o aviso saíram da rota para o serviço ÚNICO
+  // `services/grupoTransferencia.js` (o WhatsApp virou a 2ª porta que pede
+  // transferência). As regras abaixo passam a valer para os DOIS lados — a rota
+  // e o serviço —, senão bastaria o desenho antigo voltar pelo serviço.
+  const SERVICO = lerBackend('backend/services/grupoTransferencia.js');
+  const AMBOS = `${ROTA}\n${SERVICO}`;
 
   // ⚠️⚠️ ESTE BLOCO FOI REESCRITO EM 25/08/2026, e o motivo importa mais que os
   // asserts. Ele guardava o desenho de 10/08: o líder escolhia o grupo de
@@ -71,14 +77,15 @@ describe('transferência de participante · o líder SOLICITA, a coordenação d
   // O que este bloco protege AGORA é o inverso: que o destino NÃO volte a ser
   // escolhido pelo líder, e que o aviso chegue a quem decide.
 
-  it('a rota existe e foi encontrada pelo extrator', () => {
-    expect(ROTA).toContain('mem_grupo_transferencias');
+  it('a rota existe, foi encontrada pelo extrator e delega ao serviço único', () => {
+    expect(ROTA).toContain('solicitarTransferencia(');
+    expect(SERVICO).toContain("from('mem_grupo_transferencias')");
   });
 
   it('⚠️⚠️ o líder NÃO escolhe o destino — nada de destino_grupo_id no corpo', () => {
     // É o ponto todo da mudança. Reintroduzir isso devolve ao líder uma escolha
     // que ele não tem informação pra fazer (ele só via os grupos dele).
-    expect(ROTA).not.toMatch(/destino_grupo_id/);
+    expect(AMBOS).not.toMatch(/destino_grupo_id/);
     expect(ROTA).not.toMatch(/req\.body\?\.destino/);
   });
 
@@ -86,14 +93,14 @@ describe('transferência de participante · o líder SOLICITA, a coordenação d
     // `mem_grupo_pedidos` é "quero entrar NESTE grupo" e exige grupo_id — a
     // transferência nasce sem destino. O único toque naquela tabela aqui seria
     // sinal de que o desenho antigo voltou.
-    expect(ROTA).not.toMatch(/from\('mem_grupo_pedidos'\)\.insert/);
+    expect(AMBOS).not.toMatch(/from\('mem_grupo_pedidos'\)\.insert/);
   });
 
   it('avisa a COORDENAÇÃO pelas regras do módulo, não uma lista no código', () => {
     // Não há dono de grupo a mirar (o destino não existe ainda), então o
     // destinatário sai de `notificacao_regras` via resolverDestinatarios.
-    expect(ROTA).toMatch(/resolverDestinatarios\('grupos'\)/);
-    const aviso = chamadasNotificar(ROTA)
+    expect(SERVICO).toMatch(/resolverDestinatarios\('grupos'\)/);
+    const aviso = chamadasNotificar(SERVICO)
       .filter(b => b.includes("tipo: 'grupo_transferencia_pedida'"));
     expect(aviso.length).toBeGreaterThan(0);
     for (const bloco of aviso) {
@@ -111,14 +118,14 @@ describe('transferência de participante · o líder SOLICITA, a coordenação d
     // O desenho antigo mandava o link de aprovação pro líder do destino. Sem
     // destino, não há a quem mandar — e disparar pra coordenação seria mensagem
     // paga sobre uma decisão que ela toma no sistema, onde já vê a fila.
-    expect(ROTA).not.toMatch(/notificarLiderNovoPedido\(/);
-    expect(ROTA).not.toMatch(/gruposWpp\./);
+    expect(AMBOS).not.toMatch(/notificarLiderNovoPedido\(/);
+    expect(AMBOS).not.toMatch(/gruposWpp\./);
   });
 
   it('⚠️ a pessoa NÃO é tirada do grupo pelo pedido', () => {
     // Ela continua onde está até a coordenação resolver. Encerrar o vínculo aqui
     // a deixaria sem grupo nenhum no meio do caminho.
-    expect(ROTA).not.toMatch(/saiu_em:/);
+    expect(AMBOS).not.toMatch(/saiu_em:/);
   });
 
   it('⚠️ a líder PRINCIPAL não é transferida pelo app', () => {
