@@ -16,7 +16,7 @@
 ## Backend
 - `backend/routes/comunicacao.js`
 Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
-<details><summary>Endpoints (39)</summary>
+<details><summary>Endpoints (42)</summary>
 - `DELETE /api/comunicacao/agendamentos/:id`
 - `GET /api/comunicacao/agendamentos`
 - `GET /api/comunicacao/atendentes`
@@ -24,6 +24,8 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `GET /api/comunicacao/bot-ia/areas`
 - `GET /api/comunicacao/bot-ia/config`
 - `GET /api/comunicacao/bot-ia/resumo`
+- `GET /api/comunicacao/bot-ia/varreduras`
+- `GET /api/comunicacao/bot-ia/varreduras/:periodo/exemplos`
 - `GET /api/comunicacao/conexao`
 - `GET /api/comunicacao/contatos`
 - `GET /api/comunicacao/conversas/:id/sugestao-grupo`
@@ -41,6 +43,7 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 - `POST /api/comunicacao/agendamentos`
 - `POST /api/comunicacao/atendentes`
 - `POST /api/comunicacao/bot-ia/simular`
+- `POST /api/comunicacao/bot-ia/varreduras/rodar`
 - `POST /api/comunicacao/envios/agora`
 - `POST /api/comunicacao/envios/previa`
 - `POST /api/comunicacao/erros/:id/reenviar`
@@ -62,6 +65,7 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 
 - `backend/utils/appError.js`
 - `backend/utils/botIaRegras.js`
+- `backend/utils/botIaVarredura.js`
 - `backend/utils/comunicacaoDashboard.js`
 - `backend/utils/conexaoWhatsapp.js`
 - `backend/utils/cronAuth.js`
@@ -75,6 +79,7 @@ Guard: `authorizeModule('comunicacao', 1 | 3 | 4 | 5)`
 **Serviços**
 
 - `backend/services/botIaResposta.js`
+- `backend/services/botIaVarredura.js`
 - `backend/services/busca.js`
 - `backend/services/comunicacaoAutomaticas.js`
 - `backend/services/comunicacaoDisparosOff.js`
