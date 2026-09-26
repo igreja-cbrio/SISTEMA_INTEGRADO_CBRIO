@@ -176,12 +176,29 @@ router.get('/cron/agendamentos', requireCron, async (req, res, next) => {
       campanha_disparos = { erro: e.message };
     }
 
+    // ── VARREDURA MENSAL do WhatsApp · de carona neste cron HORÁRIO (26/09) ──
+    //
+    // Dia 1 de cada mês, a partir das 6h BRT, lê o que o WhatsApp recebeu no mês
+    // anterior, agrupa por tema com IA e manda o e-mail-resumo. A pergunta "é
+    // hora?" é barata (1 SELECT); a idempotência é o UNIQUE(periodo) da tabela.
+    // ⚠️ Sem slot novo no `vercel.json` (está no teto). ⚠️⚠️ BLOCO PROTEGIDO:
+    // falhar aqui (sem crédito na Anthropic, migration ausente…) não pode
+    // derrubar os agendamentos, o sync de templates nem as campanhas.
+    let bot_varredura = null;
+    try {
+      bot_varredura = await require('../services/botIaVarredura').rodarSeDevido({ agoraMs: Date.now() });
+    } catch (e) {
+      console.error('[comunicacao] varredura mensal do bot (carona no cron):', e.message);
+      bot_varredura = { erro: e.message };
+    }
+
     res.json({
       ok: true, disparados, resultados, orfaos_reconciliados,
       ...(faxina_midia ? { faxina_midia } : {}),
       ...(campanha_semanal ? { campanha_semanal } : {}),
       ...(campanha_disparos ? { campanha_disparos } : {}),
       ...(campanha_agradecimentos ? { campanha_agradecimentos } : {}),
+      bot_varredura,
     });
   } catch (e) {
     console.error('[comunicacao] cron agendamentos:', e.message);
@@ -1216,6 +1233,9 @@ router.put('/bot-ia/config', authorizeModule('comunicacao', 3), async (req, res,
     const R = require('../utils/botIaRegras');
     const atual = await botIa.lerConfig();
     if (atual.migracaoAusente) return res.status(409).json({ error: MIGRATION_BOT_IA });
+    // ⚠️ Sem ler o jsonb atual não há como preservar as chaves que esta tela
+    // não conhece — gravar assim apagaria, por exemplo, os e-mails da varredura.
+    if (atual.erro) return res.status(503).json({ error: 'Não foi possível ler a configuração atual do bot — tente de novo.' });
     const patch = { updated_at: new Date().toISOString() };
     const novo = { ...atual.botIa };
     if ('modo' in b) {
@@ -1229,16 +1249,29 @@ router.put('/bot-ia/config', authorizeModule('comunicacao', 3), async (req, res,
     if ('contato_humano' in b) novo.contato_humano = String(b.contato_humano || '').trim().slice(0, 60);
     for (const k of ['limite_dia', 'limite_conversa_dia', 'horas_silencio_apos_humano']) if (k in b) novo[k] = Number(b[k]);
     if ('instrucoes' in b) novo.instrucoes = String(b.instrucoes || '').slice(0, 2000);
+    // Destinos do e-mail da varredura mensal (26/09): lista validada, teto 5.
+    // O que não é e-mail é DECLARADO na resposta, não descartado em silêncio.
+    let emailsDescartados = 0;
+    if ('varredura_emails' in b) {
+      const brutos = Array.isArray(b.varredura_emails)
+        ? b.varredura_emails
+        : String(b.varredura_emails || '').split(/[,;\s]+/);
+      const informados = brutos.filter((x) => typeof x === 'string' && x.trim()).length;
+      novo.varredura_emails = R.listaEmails(brutos);
+      emailsDescartados = Math.max(0, informados - novo.varredura_emails.length);
+    }
     const n = R.lerConfigBotIa(novo);
-    patch.bot_ia = {
-      ativo: n.ativo, contato_humano: n.contato_humano, limite_dia: n.limite_dia,
-      limite_conversa_dia: n.limite_conversa_dia, horas_silencio_apos_humano: n.horas_silencio_apos_humano,
-      instrucoes: n.instrucoes,
-    };
+    // ⚠️⚠️ PRESERVA as chaves que esta tela não conhece (`atual.bruto` é o jsonb
+    // do banco). O PUT antigo reescrevia `bot_ia` com 6 chaves fixas e apagaria
+    // `varredura_emails` na primeira gravação do contato humano.
+    patch.bot_ia = R.mesclarConfigBotIa(atual.bruto, n);
     const { error } = await supabase.from('whatsapp_config').update(patch).eq('id', 1);
     if (error) throw error;
     const { data: cfg } = await supabase.from('whatsapp_config').select('ia_ativa, respostas_automaticas').eq('id', 1).maybeSingle();
-    res.json({ ok: true, bot_ia: n, modo: R.modoResposta({ cfg, erroCfg: null, botIa: n }) });
+    res.json({
+      ok: true, bot_ia: n, modo: R.modoResposta({ cfg, erroCfg: null, botIa: n }),
+      varredura_emails_descartados: emailsDescartados,
+    });
   } catch (e) {
     console.error('[comunicacao] bot-ia config put:', e.message);
     next(communicationError(e, 'Erro ao salvar a configuração do bot.'));
@@ -1320,9 +1353,20 @@ router.get('/bot-ia/resumo', async (req, res, next) => {
       if (!data || data.length < 1000) break;
     }
     const porAcao = {}; const porArea = {}; const porMotivo = {}; let tokens = 0;
+    // Última falha do MODELO na janela (26/09): é o que deixa a tela dizer "a IA
+    // está sem crédito" em vez de só "erro". Uma chamada bem-sucedida DEPOIS dela
+    // zera o aviso — o problema já passou.
+    let ultimoErroModelo = null; let ultimoErroEm = null;
+    const { sanitizarErro } = require('../utils/botIaVarredura');
     for (const r of rows) {
       const b = r.parsed?.bot_ia || {};
       const acao = b.acao || String(r.erro || '').replace(/^bot_ia:/, '') || 'desconhecido';
+      if (acao === 'erro' || r.erro === 'bot_ia:erro') {
+        ultimoErroModelo = sanitizarErro(b.motivo || r.erro || '');
+        ultimoErroEm = r.created_at;
+      } else if (acao === 'responder' || acao === 'encaminhar' || b.modelo) {
+        ultimoErroModelo = null; ultimoErroEm = null;
+      }
       porAcao[acao] = (porAcao[acao] || 0) + 1;
       const area = b.area || '(sem área)';
       porArea[area] = porArea[area] || { total: 0, responder: 0, encaminhar: 0, silencio: 0 };
@@ -1336,10 +1380,67 @@ router.get('/bot-ia/resumo', async (req, res, next) => {
       por_area: Object.entries(porArea).map(([area, v]) => ({ area, ...v })).sort((a, b) => b.total - a.total),
       por_motivo: Object.entries(porMotivo).map(([motivo, n]) => ({ motivo, n })).sort((a, b) => b.n - a.n).slice(0, 12),
       tokens, truncado: rows.length >= 5000,
+      ultimo_erro_modelo: ultimoErroModelo, ultimo_erro_em: ultimoErroEm,
     });
   } catch (e) {
     console.error('[comunicacao] bot-ia resumo:', e.message);
     next(communicationError(e, 'Erro ao resumir o bot.'));
+  }
+});
+
+// ── VARREDURA MENSAL do WhatsApp (26/09/2026) ────────────────────────────
+// Leitura (nível 1, pelo router): o histórico das varreduras — temas,
+// contagens, lacunas, se o e-mail saiu. ⚠️ Nenhum texto de mensagem sai por
+// aqui: os exemplos são outra rota, nível 3, e mascarados.
+const RE_PERIODO_ROTA = /^\d{4}-(0[1-9]|1[0-2])$/;
+
+router.get('/bot-ia/varreduras', async (req, res, next) => {
+  try {
+    const r = await require('../services/botIaVarredura').listar({ limite: req.query.limite });
+    res.json({ varreduras: r.varreduras, migration_ok: !r.migracaoAusente });
+  } catch (e) {
+    console.error('[comunicacao] bot-ia varreduras:', e.message);
+    next(communicationError(e, 'Erro ao listar as varreduras.'));
+  }
+});
+
+// Exemplos de cada tema: é DADO DE CONVERSA de membro, por isso nível 3 e
+// sempre mascarado (telefone, CPF, e-mail, link).
+router.get('/bot-ia/varreduras/:periodo/exemplos', authorizeModule('comunicacao', 3), async (req, res, next) => {
+  try {
+    const periodo = String(req.params.periodo || '');
+    if (!RE_PERIODO_ROTA.test(periodo)) return res.status(400).json({ error: 'Período inválido (use AAAA-MM).' });
+    const r = await require('../services/botIaVarredura').exemplos(periodo);
+    if (r.migracaoAusente) return res.status(409).json({ error: 'A migration 20260926130000 ainda não foi aplicada.' });
+    if (r.naoEncontrada) return res.status(404).json({ error: 'Não há varredura deste mês.' });
+    res.json(r);
+  } catch (e) {
+    console.error('[comunicacao] bot-ia varredura exemplos:', e.message);
+    next(communicationError(e, 'Erro ao buscar os exemplos.'));
+  }
+});
+
+// "Rodar agora" (nível 3): ignora o interruptor dos disparos automáticos DE
+// PROPÓSITO (quem clicou decidiu) e fica registrado como `forcado`.
+// ⚠️ Síncrono: a chamada ao modelo leva dezenas de segundos (teto de 90 s no
+// cliente da Anthropic e max_tokens limitado). Se estourar, a linha fica `erro`
+// com o motivo — nunca "rodando" pra sempre (em 30 min ela pode ser retomada).
+router.post('/bot-ia/varreduras/rodar', authorizeModule('comunicacao', 3), async (req, res, next) => {
+  try {
+    const V = require('../utils/botIaVarredura');
+    const bruto = req.body?.periodo;
+    if (bruto != null && bruto !== '' && !RE_PERIODO_ROTA.test(String(bruto))) {
+      return res.status(400).json({ error: 'Período inválido (use AAAA-MM).' });
+    }
+    const periodo = bruto ? String(bruto) : V.periodoAnterior(Date.now());
+    const r = await require('../services/botIaVarredura').rodar({
+      periodo, forcado: true, criadoPor: req.user?.userId || req.user?.id || null,
+    });
+    if (r.pulou === 'migration_ausente') return res.status(409).json({ error: 'A migration 20260926130000 ainda não foi aplicada.', ...r });
+    res.json({ periodo, ...r });
+  } catch (e) {
+    console.error('[comunicacao] bot-ia varredura rodar:', e.message);
+    next(communicationError(e, 'Erro ao rodar a varredura.'));
   }
 });
 

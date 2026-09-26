@@ -81,7 +81,9 @@ async function lerConfig() {
     if (error.code === '42703' || /bot_ia/.test(error.message || '')) return { botIa: R.lerConfigBotIa(null), institucional: null, migracaoAusente: true };
     return { botIa: R.lerConfigBotIa(null), institucional: null, erro: error.message };
   }
-  return { botIa: R.lerConfigBotIa(data?.bot_ia), institucional: data?.institucional || null };
+  // `bruto` = o jsonb como está no banco: o PUT da tela precisa dele pra
+  // PRESERVAR as chaves que ela não conhece (ex.: varredura_emails · 26/09).
+  return { botIa: R.lerConfigBotIa(data?.bot_ia), institucional: data?.institucional || null, bruto: data?.bot_ia ?? null };
 }
 
 /** Linhas de `wa_bot_areas`. Tabela ausente ⇒ []. */
