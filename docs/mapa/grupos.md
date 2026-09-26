@@ -178,6 +178,7 @@ Guard: `authorizeModule('grupos', 1 | 2 | 3 | 4 | 5)`
 - `mem_grupo_documentos`
 - `mem_grupo_encontro_presencas`
 - `mem_grupo_encontros`
+- `mem_grupo_link`
 - `mem_grupo_membros`
 - `mem_grupo_pedido_eventos`
 - `mem_grupo_pedidos`
