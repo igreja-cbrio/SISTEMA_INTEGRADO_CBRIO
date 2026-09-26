@@ -486,11 +486,12 @@ router.post('/inscricoes/:id/indicacoes', async (req, res) => {
 //   devocional         → só registra a escolha (flag · estatística). 1º acesso/leitura = Fase 2.
 // NÃO marca engajamento (NSM conta o sinal real). Dedup por matrícula × destino.
 // ----------------------------------------------------------------------------
-router.post('/matriculas/:id/direcionar', async (req, res) => {
+router.post('/matriculas/:id/direcionar', contextoEscritaNext, async (req, res) => {
   try {
     const b = req.body || {};
     const r = await direcionarMatricula({
       matriculaId: req.params.id,
+      campus: req.campus,
       destinos: b.destinos || [],
       areas: b.areas || [], // "Servir" abre a escolha de áreas (Totem / self-service)
       // "Batismo" abre a escolha do HORÁRIO (obrigatório · 13/08) — mesma
@@ -498,7 +499,7 @@ router.post('/matriculas/:id/direcionar', async (req, res) => {
       horarioBatismo: b.horario_batismo || null,
       userId: req.user?.id || null,
     });
-    recalcularKpisNext();
+    recalcularKpisNext(req.campus);
     res.json(r);
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message, codigo: e.codigo, campo: e.campo });
@@ -510,17 +511,17 @@ router.post('/matriculas/:id/direcionar', async (req, res) => {
 // (aba Pessoas e Totem do Next). ⚠️ Lê o MESMO catálogo que a Integração
 // gerencia (`batismo_horarios`) pela MESMA régua do formulário público — uma 2ª
 // lista aqui ofereceria horário que o servidor recusa no envio.
-router.get('/batismo-horarios', async (_req, res) => {
+router.get('/batismo-horarios', contextoLeituraNext, async (req, res) => {
   try {
-    const dataBatismo = await dataProximoBatismo();
-    const configurados = await batismoHorariosConfigurados();
+    const dataBatismo = await dataProximoBatismo({ campusId: req.campus.campus_id });
+    const configurados = await batismoHorariosConfigurados({ campusId: req.campus.campus_id });
     // ⚠️ Falha FECHADA e DECLARADA: sem catálogo/data devolve lista vazia com
     // `indisponivel`, nunca "não há horário" — a tela precisa distinguir "a
     // equipe fechou tudo" de "não conseguimos ler agora".
     if (!dataBatismo || configurados === null) {
       return res.json({ data_batismo: dataBatismo || null, horarios: [], indisponivel: true });
     }
-    const ocup = await batismoOcupacaoPorHorario(dataBatismo);
+    const ocup = await batismoOcupacaoPorHorario(dataBatismo, { campusId: req.campus.campus_id });
     res.json({ data_batismo: dataBatismo, horarios: horariosDisponiveis(configurados, ocup) });
   } catch (e) {
     console.error('[next] batismo-horarios:', e.message);
@@ -529,9 +530,9 @@ router.get('/batismo-horarios', async (_req, res) => {
 });
 
 // GET /direcionar-qr — token FIXO pro QR de direcionamento (resolve a turma aberta · Fase 2a)
-router.get('/direcionar-qr', async (_req, res) => {
+router.get('/direcionar-qr', contextoLeituraNext, async (req, res) => {
   try {
-    const token = signDirecionarToken();
+    const token = signDirecionarToken(req.campus);
     if (!token) return res.status(503).json({ error: 'QR indisponível (CRON_SECRET ausente no servidor)' });
     res.json({ token });
   } catch (e) { res.status(500).json({ error: e.message }); }

@@ -94,9 +94,9 @@ Campus 2, aplicar migrations em produção ou mergear esta PR durante o trabalho
   da reserva inclui `p_inscrito_por` opcional, preenchido pelo servidor no admin.
   `backend/scripts/multicampus/cutover-batismo.sql` fica FORA da sequência de
   migrations: trocar PK antiga por data só após todos os consumidores adaptados.
-- Integração SQL ampliada: 22 migrations em sequência até `180000`, com
+- Integração SQL ampliada: 23 migrations em sequência até `180000`, mais `210000`, com
   fixtures estruturais vivas de Cultos/Pessoas/Cuidados/Grupos/Next/Batismo,
-  Kids e Voluntariado; 12 cenários passaram. Inclui check-in/checkout e
+  Kids e Voluntariado; 13 cenários passaram. Inclui check-in/checkout e
   consolidação Kids, ponte Servir local, notificações e bloqueio do Storage.
   O Storage usa adaptador mínimo; biometria, triggers laterais de auditoria,
   recálculo KPI e concorrência entre conexões permanecem fora do PGlite.
@@ -136,6 +136,20 @@ Kids — checkpoint SQL de 27/09/2026:
   revisar consumidores legados. Configurações singleton deixam de ser legíveis
   diretamente por autenticados fora da preparação. Nenhuma cobertura completa
   ou ativação decorre destes testes.
+
+### Next · direcionamento atômico (27/09/2026)
+
+`20260927210000` adiciona origem local e RLS restritiva a
+`jornada_encaminhamentos`, FKs compostas para suas origens e dedup por matrícula,
+destino e campus. `fn_campus_next_direcionar` aceita somente matrícula local
+com identidade canônica previamente resolvida; Batismo usa a reserva oficial,
+Grupos/Voluntariado preservam destinos anteriores e Devocional registra somente
+intenção. Flags e destinos são uma única transação. A resposta contém somente
+IDs e indicadores, sem contatos, CPF ou códigos. Dez testes PostgreSQL cobrem
+rollback inclusive após a reserva de vaga, dedup, campus, preservação de
+inscrição anterior e ausência de PII. Consumidores JS e tokens públicos são
+tratados pelo bloco principal. Conciliação de identidade anterior divergente
+continua humana; nenhuma transação faz fusão automática.
 
 ### Voluntariado · checkpoint SQL de 27/09/2026
 
@@ -688,3 +702,23 @@ decisões contábeis/segurança devem ser validadas pela gestão.
   bloqueados no modo isolado até revisão. Nenhum envio real ou migration aplicada.
 - PRs de continuidade: ERP #3067; Membros #178 (11b216e, 465 testes e exports
   Android/iOS); Staff #24. Permanecem em draft, sem merge/OTA.
+
+### Next · porta pública e direcionamento atômico
+
+- `20260927210000_multicampus_next_direcionamento.sql` confirma destinos e flags
+  numa única transação. Reutiliza pessoa canônica e reserva de Batismo; um erro
+  posterior desfaz também a vaga. Encaminhamentos ganham origem herdada, FKs,
+  RLS e dedup por matrícula/destino/campus. Não retorna inscrição com PII.
+- QR v2 assinado contém o campus. QR legado só resolve Sede na preparação;
+  validação usa comparação constante e rejeita componentes extras. Inscrição,
+  turmas, lista de presença e walk-in públicos filtram o campus explicitamente.
+- Formulário público exige escolha de campus e descarta catálogo de seleção
+  anterior. Turma inválida não cai silenciosamente em outra unidade ou lista.
+  Falha do matcher não cria matrícula órfã. Histórico pessoal pré-Next usa
+  membro confirmado, sem inferir vínculo por CPF isolado.
+- Testes: 131 na rodada Next/API/superfície, 10 SQL fanout e 13 integração com
+  23 migrations sequenciais. TypeScript real passou. Certificações HTTP exatas
+  são salvas junto ao checkpoint compartilhado de server; não há prefixo liberado.
+- Pendente imediato: endpoints autenticados `/app/next/*`, geofence por campus,
+  inscrições/presença próprias e gestão no App. Root assumiu esse ramo; Kids,
+  Voluntariado e respectivas migrations seguintes permanecem em andamento.

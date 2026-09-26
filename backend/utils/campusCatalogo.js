@@ -9,7 +9,7 @@ adicionar('campus', 'compartilhado', 'igrejas modulos cargos areas');
 adicionar('campus', 'local', 'usuario_igrejas', 'igreja_id');
 adicionar('integracao', 'local', 'cultos batismo_eventos batismo_inscricoes int_visitantes', 'igreja_id');
 adicionar('integracao', 'local', 'cultos_decisoes_pessoas cultos_dados_submissoes', 'igreja_id', { tabela: 'cultos', chave: 'culto_id' });
-adicionar('cuidados', 'local', 'cui_convertidos cui_acompanhamentos cui_jornada180 cui_jornada', 'igreja_id');
+adicionar('cuidados', 'local', 'cui_convertidos cui_acompanhamentos cui_jornada180 cui_jornada jornada_encaminhamentos', 'igreja_id');
 adicionar('cuidados', 'local', 'cui_atendimentos', null, { tabela: 'cui_acompanhamentos', chave: 'acompanhamento_id' });
 adicionar('grupos', 'local', 'mem_grupos', 'igreja_id');
 adicionar('grupos', 'local', 'mem_grupo_membros mem_grupo_encontros grupo_supervisao_visitas grupo_pedidos mem_grupo_link', 'igreja_id', { tabela: 'mem_grupos', chave: 'grupo_id' });

@@ -20,4 +20,7 @@ GRANT SELECT,INSERT,UPDATE,DELETE ON storage.objects TO authenticated,service_ro
 GRANT SELECT,INSERT,UPDATE ON storage.buckets TO service_role;
 CREATE TABLE next_pessoa_aula_manual("membro_id" uuid NOT NULL,"fez_aula1" boolean DEFAULT false NOT NULL,"fez_aula2" boolean DEFAULT false NOT NULL,"observacao" text,"marcado_por" uuid,"updated_at" timestamp with time zone DEFAULT now() NOT NULL);
 ALTER TABLE next_pessoa_aula_manual ADD CONSTRAINT next_pessoa_aula_manual_membro_id_fkey FOREIGN KEY (membro_id) REFERENCES mem_membros(id) ON DELETE CASCADE;
-ALTER TABLE next_pessoa_aula_manual ADD CONSTRAINT next_pessoa_aula_manual_pkey PRIMARY KEY (membro_id);
+ALTER TABLE next_pessoa_aula_manual ADD CONSTRAINT next_pessoa_aula_manual_pkey PRIMARY KEY (membro_id);-- Permissão anterior propositalmente ampla apenas na fixture: testa o limite restritivo.
+ALTER TABLE whatsapp_envios ENABLE ROW LEVEL SECURITY;
+CREATE POLICY fixture_old_whatsapp ON whatsapp_envios FOR ALL TO authenticated USING(true) WITH CHECK(true);
+GRANT SELECT,INSERT,UPDATE ON whatsapp_envios TO authenticated,service_role;

@@ -33,9 +33,10 @@ function criarCampusSuperficie({ supabase, cobertura = [] } = {}) {
       throw new Error('Cobertura de campus inválida: informe método e caminho exatos.');
     }
     const partes = rota.caminho.split('/');
-    if (partes.some(p => p.includes(':') && ![':id', ':temporada', ':data', ':arquivo'].includes(p))) throw new Error('Parâmetro de cobertura inválido.');
+    if (partes.some(p => p.includes(':') && ![':id', ':temporada', ':data', ':arquivo', ':token'].includes(p))) throw new Error('Parâmetro de cobertura inválido.');
     const pattern = partes.map(p => p === ':id'
       ? '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+      : p === ':token' ? '[A-Za-z0-9_-]{1,256}'
       : p === ':temporada' ? '[A-Za-z0-9_-]{1,64}'
         : p === ':data' ? '[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])'
           : p === ':arquivo' ? '[A-Za-z0-9_-]{1,160}\\.(?:jpg|jpeg|png|webp)' : p).join('/');

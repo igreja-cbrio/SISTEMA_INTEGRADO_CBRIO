@@ -11,14 +11,14 @@ const TYPE='20000000-0000-0000-0000-000000000001';
 let db:PGlite;
 // Checkpoint deliberado: migrations posteriores em desenvolvimento não entram
 // silenciosamente sem ampliar a fixture estrutural e os cenários correspondentes.
-const migrations=readdirSync('supabase/migrations').filter(f=>/^2026092.*multicampus.*\.sql$/.test(f)&&f.slice(0,14)<='20260927180000').sort();
+const migrations=readdirSync('supabase/migrations').filter(f=>/^2026092.*multicampus.*\.sql$/.test(f)&&(f.slice(0,14)<='20260927180000'||f.slice(0,14)==='20260927210000')).sort();
 async function reject(sql:string,pattern:RegExp){await db.exec('SAVEPOINT failure');await expect(db.exec(sql)).rejects.toThrow(pattern);await db.exec('ROLLBACK TO SAVEPOINT failure');}
 async function activate(){await db.exec("UPDATE app_campus_cobertura SET api_validada=true,rls_validada=true,produtores_validados=true,regressao_validada=true,evidencia='Fixture sintética: evidência exclusiva do teste'; UPDATE app_campus_config SET estado='ensaio'");}
 async function user(id=U){await db.exec(`SET LOCAL ROLE authenticated;SET LOCAL "test.user"='${id}';SET LOCAL "test.level"='5';`);}
 describe('integração: migrations multicampus reais em sequência',()=>{
  beforeAll(async()=>{
   db=new PGlite({extensions:{unaccent,pg_trgm,pgcrypto}});
-  const fixture=['campusIntegracaoBase.sql','campusKidsBase.sql','campusVoluntariadoBase.sql','campusIntegracaoComplemento.sql'].map(f=>readFileSync('src/test/fixtures/'+f,'utf8')).join('\n');
+  const fixture=['campusIntegracaoBase.sql','campusKidsBase.sql','campusVoluntariadoBase.sql','campusIntegracaoComplemento.sql','campusNextDirecionamentoBase.sql'].map(f=>readFileSync('src/test/fixtures/'+f,'utf8')).join('\n');
   try{await db.exec(fixture);}catch(error){const e=error as Error & {position?:string};throw new Error(e.message+' near '+fixture.slice(Number(e.position)-150,Number(e.position)+150));}
   await db.exec(`INSERT INTO igrejas(id,nome,slug,tipo) VALUES('${A}','Sede sintética','cbrio-sede','sede');
     INSERT INTO profiles(id,name,email) VALUES('${U}','Usuário A','a@example.invalid'),('${V}','Usuário B','b@example.invalid');
@@ -30,7 +30,7 @@ describe('integração: migrations multicampus reais em sequência',()=>{
  },30000);
  beforeEach(async()=>{await db.exec('BEGIN');});afterEach(async()=>{await db.exec('ROLLBACK; RESET ROLE');});afterAll(async()=>{await db.close();});
  it('aplica toda a sequência e preserva a barreira de ativação',async()=>{
-  expect(migrations).toHaveLength(22);
+  expect(migrations).toHaveLength(23);
   await reject("UPDATE app_campus_config SET estado='ensaio'",/validação|evidência/);
   await activate();await reject("UPDATE app_campus_config SET estado='preparacao'",/legado/);
  });
@@ -184,5 +184,13 @@ describe('integração: migrations multicampus reais em sequência',()=>{
   await db.exec("INSERT INTO storage.objects(bucket_id,name) VALUES('batismos-campi','campus-b/foto-sintetica.jpg')");
   await activate();await user();expect((await db.query('SELECT name FROM storage.objects')).rows).toEqual([]);
   await reject("INSERT INTO storage.objects(bucket_id,name) VALUES('batismos-campi','invasao.jpg')",/row-level security/);
+ });
+ it('fila WhatsApp mantém dedup local, origem imutável e RLS após todas as migrations',async()=>{
+  await activate();
+  for(const campus of [A,B])await db.query("INSERT INTO whatsapp_envios(telefone,tipo,texto,chave_dedup,igreja_id) VALUES('00000000000','texto','Mensagem sintética','mesma-chave',$1)",[campus]);
+  await reject(`INSERT INTO whatsapp_envios(telefone,tipo,texto,chave_dedup,igreja_id) VALUES('00000000000','texto','Duplicada','mesma-chave','${A}')`,/unique constraint/);
+  await reject(`UPDATE whatsapp_envios SET igreja_id='${B}' WHERE igreja_id='${A}'`,/origem/);
+  await user();expect((await db.query('SELECT igreja_id FROM whatsapp_envios')).rows).toEqual([{igreja_id:A}]);
+  await reject(`INSERT INTO whatsapp_envios(telefone,tipo,texto,igreja_id) VALUES('00000000000','texto','Remota','${B}')`,/row-level security/);
  });
 });
