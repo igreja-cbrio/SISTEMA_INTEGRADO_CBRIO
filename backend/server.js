@@ -153,6 +153,10 @@ app.use('/api/meetings', require('./routes/meetings'));
 app.use('/api/agents', require('./routes/agents'));
 app.use('/api/agent-tasks', require('./routes/agentTasks')); // Time de agentes · super-admin
 app.use('/api/rh', require('./routes/rh'));
+// ⚠️ Avaliação 360 é montada FORA de /api/rh de propósito: aquele router faz
+// `authorizeModule('rh')` (nível 2) e só 3 cargos alcançam — numa 360 todo
+// funcionário responde. Ver o cabeçalho de routes/avaliacao360.js.
+app.use('/api/avaliacao360', require('./routes/avaliacao360'));
 app.use('/api/painel-rh', require('./routes/painelRh'));
 app.use('/api/coberturas', require('./routes/coberturas'));
 app.use('/api/pcs', require('./routes/pcs'));
