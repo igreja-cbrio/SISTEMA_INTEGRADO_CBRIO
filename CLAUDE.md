@@ -21,6 +21,59 @@ decisões/time-lapse do sistema). Regras de manutenção:
   vivo (lição `cui_atendimentos`: achado de auditoria baseado em arquivo de
   migration que nunca foi aplicado em prod).
 
+## ⚠️⚠️ BATISMO · a DATA virou CADASTRO e a pessoa escolhe o MÊS (2026-09-25 · migrations `20260925120000` + `20260925121000` · PR #3063)
+
+Pedido do Matheus: *"preciso que na inscrição de batismo tenha como escolher o
+mês... isso deve refletir tanto no formulário público quanto no app dos
+membros."* Registro escrito em 26/09, depois de conferir o estado VIVO.
+
+- **`batismo_eventos`** (`data` PK · `aberto` · `observacao`): a data deixou
+  de ser CONTA (`proximoQuartoDomingoISO()`) e virou DADO. Medido nas **32
+  cerimônias desde fev/2024**: a fórmula do 4º domingo acerta 31 — a que falhou
+  foi **dez/2024, antecipado para 15/12** (3º domingo). Com 3 meses abertos,
+  alguém reservaria em setembro uma data que a igreja ainda pode mover.
+  ⚠️ A fórmula NÃO morreu: é o SEMEADOR (12 meses à frente, `ON CONFLICT DO
+  NOTHING` — rodar de novo não reabre data que o gestor fechou) e a rede de
+  `fn_batismo_proxima_data()`. RLS ligada **sem policy**: só o backend
+  (service_role) lê e escreve.
+- **`fn_batismo_datas_abertas(n)`** é o que o formulário e o app consomem.
+  `GET /api/public/batismo/horarios` **ganhou** `datas: [{data_batismo,
+  horarios}]` (`DATAS_ABERTAS_PADRAO`) e **manteve** `data_batismo`/`horarios`
+  no topo apontando para a primeira — cliente antigo ignora o campo novo.
+  Conferido em produção em 26/09: 27/09 · 25/10 · 22/11, com vagas por data.
+- **`POST /api/public/batismo` aceita `data_batismo`**; régua PURA em
+  `backend/utils/batismoData.js` (`resolverDataBatismo`): **sem data → primeira
+  aberta**, de propósito (exigir trancaria o app em campo e o formulário em
+  cache — o portão que travou a frota em 06/08); fora da janela ou lixo →
+  **400** no endpoint (503 só sem nenhuma data aberta).
+- ⚠️⚠️ **O fan-out do APP descartava a data em SILÊNCIO.** A inscrição pelo app
+  grava em `app_inscricoes` e `fn_app_inscricoes_fanout` fazia
+  `v_data_batismo := fn_proximo_quarto_domingo()` FIXO — a tela diria novembro,
+  o banco gravaria setembro, sem erro. A `20260925121000` é **patch DINÂMICO**
+  sobre a definição viva (âncora exatamente 1 vez, senão ABORTA — a função já
+  foi reescrita em prod mais de uma vez; `CREATE OR REPLACE` do arquivo
+  reverteria isso calado): agora `COALESCE(data do payload se estiver aberta,
+  primeira aberta)`. Provado com 4 inserções reais pelo caminho do app (22/11 →
+  22/11 · ausente → 27/09 · fora → 27/09 · `2026-02-31` → 27/09 sem derrubar o
+  fan-out).
+- ⚠️ **A ocupação é POR DATA** (`ocupacaoPorHorario(data)`): em 26/09 setembro
+  tinha 6 vagas somadas e novembro 22. Reaproveitar a contagem da 1ª data
+  mostraria vaga que não existe. O catálogo de HORÁRIOS segue **único**, não
+  por data (decisão · `batismo_horarios` não tem data).
+- ⚠️ **27/12/2026 ficou ABERTO** — é a data mais arriscada da janela (em 2024
+  foi movida). Fechar é `UPDATE batismo_eventos SET aberto=false` pelo gestor,
+  não código.
+- ⚠️ **`schema_migrations`**: a `20260925120000` está registrada como
+  `20260925233932` (o MCP carimba a hora da aplicação) e a `20260925121000`
+  **não está registrada** — o efeito está vivo (conferido em 26/09: a função lê
+  `dados->>'data_batismo'`), mas quem auditar pela tabela não a encontra.
+- **App de membros**: #177 (escolha da data, reaplicado sobre a main atual) e
+  #179 (guarda de que a data viaja no payload + banner "Geralmente no 4º
+  domingo"). ⚠️ O 1º OTA da feature saiu de um checkout numa branch antiga e a
+  frota perdeu 18 PRs (#160–#177, tudo desde 21/09) por alguns minutos; o
+  corretivo saiu em seguida. A régua
+  ("OTA só de worktree limpa em `origin/main`") está no CLAUDE.md do app.
+
 ## ⚠️ DEVOCIONAL · vídeo do YOUTUBE toca DENTRO do app (2026-09-25 · migration `20260925150000`)
 
 Pedido do Marcos: *"a pessoa clica para ver mas não sai do app, nós apenas
