@@ -17,6 +17,11 @@ const { criarMiddlewareCampus } = require('../middleware/campus');
 const { filtrarCampus } = require('../utils/campusQuery');
 const { lerTodasPaginas } = require('../utils/campusPaginacao');
 const contextoLeituraCuidados = criarMiddlewareCampus({ modulo: 'cuidados', cobertura: { leitura: true, escrita: false } });
+const { criarGuardasRegistro } = require('../services/campusRegistro');
+const guardasVisitas = criarGuardasRegistro({ modulo: 'cuidados', tabela: 'cui_visitas' });
+const guardasPedidos = criarGuardasRegistro({ modulo: 'cuidados', tabela: 'cui_pedidos' });
+const { resolverPessoaRegistro } = require('../services/campusPessoaRegistro');
+const { responderErroCampus, ErroCampus } = require('../services/campusContexto');
 
 // Contato FEITO = o contato foi realizado, independente da resposta da pessoa
 // (regra do Marcos · 2026-06-17). Vale pelo status do dropdown OU pelo
@@ -1642,14 +1647,15 @@ router.get('/visitas', authorizeModule('cuidados', 1), contextoLeituraCuidados, 
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.post('/visitas', authorizeModule('cuidados', 3), async (req, res) => {
+router.post('/visitas', authorizeModule('cuidados', 3), guardasVisitas.contexto, guardasVisitas.payload, guardasVisitas.membro, async (req, res) => {
   try {
     const b = req.body || {};
     if (!b.nome) return res.status(400).json({ error: 'Nome obrigatório' });
     const payload = {
+      igreja_id: req.campus.campus_id,
       nome: b.nome,
       membro_id: b.membro_id || null,
-      telefone: b.telefone || null,
+      telefone: String(b.telefone || '').replace(/\D/g, '') || null,
       data_visita: b.data_visita || new Date().toISOString().slice(0, 10),
       tipo: VISITA_TIPOS.includes(b.tipo) ? b.tipo : 'visita_domiciliar',
       tipo_outro: b.tipo === 'outro' ? (b.tipo_outro || null) : null,
@@ -1658,17 +1664,15 @@ router.post('/visitas', authorizeModule('cuidados', 3), async (req, res) => {
       observacao: b.observacao || null,
       created_by: req.user.userId || req.user.id || null,
     };
-    if (!payload.membro_id && b.cpf) {
-      const m = await findMembroByCpf(b.cpf);
-      if (m) payload.membro_id = m.id;
-    }
+    payload.membro_id = await resolverPessoaRegistro(b, req.campus, 'cuidados_visita');
+
     const { data, error } = await supabase.from('cui_visitas').insert(payload).select().single();
     if (error) throw error;
     res.status(201).json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (e instanceof ErroCampus) return responderErroCampus(res, e); res.status(500).json({ error: e.message }); }
 });
 
-router.patch('/visitas/:id', authorizeModule('cuidados', 3), async (req, res) => {
+router.patch('/visitas/:id', authorizeModule('cuidados', 3), guardasVisitas.contexto, guardasVisitas.payload, guardasVisitas.registro, guardasVisitas.membro, async (req, res) => {
   try {
     const b = req.body || {};
     const patch = {};
@@ -1678,20 +1682,32 @@ router.patch('/visitas/:id', authorizeModule('cuidados', 3), async (req, res) =>
     if (patch.tipo && !VISITA_TIPOS.includes(patch.tipo)) delete patch.tipo;
     if (patch.status && !VISITA_STATUS.includes(patch.status)) delete patch.status;
     if (patch.tipo && patch.tipo !== 'outro') patch.tipo_outro = null; // limpa descrição livre se não for "Outro"
+    if ('telefone' in patch) patch.telefone = String(patch.telefone || '').replace(/\D/g, '') || null;
+    if (['nome','telefone','membro_id','cpf','email','data_nascimento'].some(k => k in b)) {
+      patch.membro_id = await resolverPessoaRegistro({ ...req.registroCampus, ...patch, cpf: b.cpf, email: b.email, data_nascimento: b.data_nascimento }, req.campus, 'cuidados_visita_edicao', {
+        membroVinculado: req.registroCampus.membro_id,
+      });
+    }
     patch.updated_at = new Date().toISOString();
-    const { data, error } = await supabase.from('cui_visitas')
-      .update(patch).eq('id', req.params.id).is('deleted_at', null).select().single();
+    let consulta = supabase.from('cui_visitas')
+      .update(patch).eq('igreja_id', req.campus.campus_id).eq('id', req.params.id).is('deleted_at', null);
+    if ('membro_id' in patch) consulta = req.registroCampus.membro_id
+      ? consulta.eq('membro_id', req.registroCampus.membro_id) : consulta.is('membro_id', null);
+    const { data, error } = await consulta.select().maybeSingle();
     if (error) throw error;
+    if (!data) return res.status(409).json({ error: 'Visita alterada; atualize os dados e tente novamente.' });
     res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (e instanceof ErroCampus) return responderErroCampus(res, e); res.status(500).json({ error: e.message }); }
 });
 
-router.delete('/visitas/:id', authorizeModule('cuidados', 3), async (req, res) => {
+router.delete('/visitas/:id', authorizeModule('cuidados', 3), guardasVisitas.contexto, guardasVisitas.registro, async (req, res) => {
   try {
-    const { error } = await supabase.from('cui_visitas')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', req.params.id).is('deleted_at', null);
+    const { data, error } = await supabase.rpc('fn_campus_soft_delete_cuidados', {
+      p_tabela: 'cui_visitas', p_id: req.params.id, p_igreja_id: req.campus.campus_id,
+      p_usuario_id: req.user?.id || req.user?.userId || null,
+    });
     if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Registro não encontrado.' });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1862,18 +1878,17 @@ router.get('/pedidos', authorizeModule('cuidados', 1), contextoLeituraCuidados, 
   }
 });
 
-router.post('/pedidos', authorizeModule('cuidados', 2), async (req, res) => {
+router.post('/pedidos', authorizeModule('cuidados', 2), guardasPedidos.contexto, guardasPedidos.payload, guardasPedidos.membro, async (req, res) => {
   try {
     const d = req.body || {};
     if (!d.nome && !d.telefone && !d.membro_id) return res.status(400).json({ error: 'Informe ao menos nome ou telefone.' });
-    let membro_id = d.membro_id || null;
-    if (!membro_id && d.cpf) { const m = await findMembroByCpf(d.cpf); if (m) membro_id = m.id; }
+    const membro_id = await resolverPessoaRegistro(d, req.campus, 'cuidados_pedido');
     const pedido = await registrarPedidoCuidado({
-      canal: 'manual', tipo: d.tipo, membro_id, nome: d.nome, telefone: d.telefone,
+      campus: req.campus, canal: 'manual', tipo: d.tipo, membro_id, nome: d.nome, telefone: d.telefone,
       email: d.email, mensagem: d.mensagem, criado_por: req.user?.id || req.user?.userId || null,
     });
     res.status(201).json(pedido);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { if (e instanceof ErroCampus) return responderErroCampus(res, e); res.status(500).json({ error: e.message }); }
 });
 
 router.patch('/pedidos/:id', authorizeModule('cuidados', 3), async (req, res) => {
@@ -1894,12 +1909,14 @@ router.patch('/pedidos/:id', authorizeModule('cuidados', 3), async (req, res) =>
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.delete('/pedidos/:id', authorizeModule('cuidados', 3), async (req, res) => {
+router.delete('/pedidos/:id', authorizeModule('cuidados', 3), guardasPedidos.contexto, guardasPedidos.registro, async (req, res) => {
   try {
-    const { error } = await supabase.from('cui_pedidos')
-      .update({ deleted_at: new Date().toISOString() })
-      .eq('id', req.params.id).is('deleted_at', null);
+    const { data, error } = await supabase.rpc('fn_campus_soft_delete_cuidados', {
+      p_tabela: 'cui_pedidos', p_id: req.params.id, p_igreja_id: req.campus.campus_id,
+      p_usuario_id: req.user?.id || req.user?.userId || null,
+    });
     if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Registro não encontrado.' });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

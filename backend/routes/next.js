@@ -43,7 +43,9 @@ const {
 
 // Re-calcula KPIs do NEXT em background (não bloqueia a resposta).
 // Chamado após qualquer mudança em inscrições ou indicacoes.
-function recalcularKpisNext() {
+function recalcularKpisNext(contexto) {
+  // O coletor legado ainda agrega a rede inteira. Não recalcular como se fosse local.
+  if (contexto && contexto.estado !== 'preparacao') return;
   setImmediate(async () => {
     try {
       await coletarTodos({ fontes: ['next.'] });
@@ -54,6 +56,43 @@ function recalcularKpisNext() {
 }
 
 router.use(authenticate);
+
+const { criarMiddlewareCampus } = require('../middleware/campus');
+const { filtrarCampus, carimbarCampus } = require('../utils/campusQuery');
+const { ErroCampus, responderErroCampus } = require('../services/campusContexto');
+const { lerTodasPaginas } = require('../utils/campusPaginacao');
+const contextoLeituraNext = criarMiddlewareCampus({ modulo: 'next', cobertura: { leitura: true, escrita: false } });
+
+const contextoEscritaNext = criarMiddlewareCampus({ modulo: 'next', cobertura: { leitura: false, escrita: true } });
+const UUID_CAMPUS_NEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const NEXT_SOFT_DELETE = new Set(['next_turmas', 'next_matriculas', 'mem_membros']);
+function validarEscritaNext({ tabela, pai, campoPai, membro = false } = {}) {
+  return async (req, res, next) => {
+    try {
+      carimbarCampus(req.body || {}, req.campus); // recusa tentar mover o ato por payload
+      const buscar = async (nome, id) => {
+        if (!UUID_CAMPUS_NEXT.test(id || '')) throw new ErroCampus(404, 'next_registro_ausente', 'Registro não encontrado neste campus.');
+        let q = filtrarCampus(supabase.from(nome).select('*'), req.campus).eq('id', id);
+        if (NEXT_SOFT_DELETE.has(nome)) q = q.is('deleted_at', null);
+        const { data, error } = await q.maybeSingle();
+        if (error) throw error;
+        if (!data) throw new ErroCampus(404, 'next_registro_ausente', 'Registro não encontrado neste campus.');
+        return data;
+      };
+      if (tabela) req.nextAtual = await buscar(tabela, req.params.id);
+      if (pai && req.body?.[campoPai]) await buscar(pai, req.body[campoPai]);
+      if (membro && req.body?.membro_id && req.body.membro_id !== req.nextAtual?.membro_id) {
+        await buscar('mem_membros', req.body.membro_id);
+      }
+      return next();
+    } catch (erro) { return responderErroCampus(res, erro); }
+  };
+}
+
+function erroRpcNext(res, error) {
+  const status = { P0400: 400, P0403: 403, P0404: 404, '23514': 409, '23505': 409, '22P02': 400 }[error.code] || 503;
+  return res.status(status).json({ error: status === 503 ? 'Não foi possível concluir a operação do Next.' : error.message });
+}
 
 // ⚠️⚠️ Guard de MÓDULO (03/09/2026) — este arquivo rodou até hoje só com
 // `authenticate`: qualquer autenticado do ERP escrevia no Next. Aplicado no
@@ -72,9 +111,12 @@ router.use((req, res, next) => (
 // ----------------------------------------------------------------------------
 // Eventos
 // ----------------------------------------------------------------------------
-router.get('/eventos', async (req, res) => {
+router.get('/eventos', contextoLeituraNext, async (req, res) => {
   const { ano, mes, status } = req.query;
-  let q = supabase.from('next_eventos').select('*').order('data', { ascending: false });
+  if ((ano && (!Number.isInteger(Number(ano)) || Number(ano) < 2000 || Number(ano) > 2200)) || (mes && (!ano || !Number.isInteger(Number(mes)) || Number(mes) < 1 || Number(mes) > 12))) {
+    return res.status(400).json({ error: 'Ano ou mês inválido.' });
+  }
+  let q = filtrarCampus(supabase.from('next_eventos').select('*'), req.campus).order('data', { ascending: false });
   if (status) q = q.eq('status', status);
   if (ano) {
     const start = `${ano}-01-01`;
@@ -90,19 +132,18 @@ router.get('/eventos', async (req, res) => {
   const { data, error } = await q.limit(500);
   if (error) return res.status(500).json({ error: error.message });
 
-  // Contagem agregada via view (1 row por evento) — evita o limite default
-  // de 1000 rows do supabase ao agregar em memória com 2.4k+ inscrições.
   const ids = (data || []).map(e => e.id);
-  let counts = {};
-  if (ids.length) {
-    const { data: rows } = await supabase
-      .from('vw_next_eventos_counts')
-      .select('evento_id, inscritos, checkins')
-      .in('evento_id', ids);
-    for (const row of (rows || [])) {
-      counts[row.evento_id] = { inscritos: Number(row.inscritos) || 0, checkins: Number(row.checkins) || 0 };
+  const counts = {};
+  try {
+    for (let inicio = 0; inicio < ids.length; inicio += 100) {
+      const rows = await lerTodasPaginas(() => filtrarCampus(supabase.from('next_inscricoes')
+        .select('id,evento_id,check_in_at'), req.campus).in('evento_id', ids.slice(inicio, inicio + 100)).order('id'));
+      for (const row of rows) {
+        const count = counts[row.evento_id] || (counts[row.evento_id] = { inscritos: 0, checkins: 0 });
+        count.inscritos += 1; if (row.check_in_at) count.checkins += 1;
+      }
     }
-  }
+  } catch { return res.status(503).json({ error: 'Não foi possível contar as inscrições do campus.' }); }
   res.json((data || []).map(e => ({
     ...e,
     inscritos: counts[e.id]?.inscritos || 0,
@@ -110,12 +151,13 @@ router.get('/eventos', async (req, res) => {
   })));
 });
 
-router.post('/eventos', async (req, res) => {
+router.post('/eventos', contextoEscritaNext, validarEscritaNext(), async (req, res) => {
   const { data, titulo, observacoes, total_lista, presentes_impressa, presentes_manuscritos, arquivo_origem } = req.body || {};
-  if (!data) return res.status(400).json({ error: 'data obrigatoria' });
+  if (!data) return res.status(400).json({ error: 'Data obrigatória.' });
   const { data: row, error } = await supabase
     .from('next_eventos')
     .insert({
+      igreja_id: req.campus.campus_id,
       data, titulo: titulo || null, observacoes: observacoes || null,
       total_lista: total_lista ?? null,
       presentes_impressa: presentes_impressa ?? null,
@@ -128,7 +170,7 @@ router.post('/eventos', async (req, res) => {
   res.json(row);
 });
 
-router.put('/eventos/:id', async (req, res) => {
+router.put('/eventos/:id', contextoEscritaNext, validarEscritaNext({ tabela: 'next_eventos' }), async (req, res) => {
   const allowed = [
     'data', 'titulo', 'observacoes', 'status',
     'total_lista', 'presentes_impressa', 'presentes_manuscritos', 'arquivo_origem',
@@ -138,15 +180,19 @@ router.put('/eventos/:id', async (req, res) => {
     if (allowed.includes(k)) update[k] = v;
   }
   const { data, error } = await supabase
-    .from('next_eventos').update(update).eq('id', req.params.id).select().single();
+    .from('next_eventos').update(update).eq('id', req.params.id).eq('igreja_id', req.campus.campus_id).select().maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Evento não encontrado.' });
   res.json(data);
 });
 
 // Cria os 3 primeiros domingos do mês informado (idempotente)
-router.post('/eventos/auto-create-mes', async (req, res) => {
-  const ano = Number(req.body?.ano) || new Date().getFullYear();
-  const mes = Number(req.body?.mes) || (new Date().getMonth() + 1);
+router.post('/eventos/auto-create-mes', contextoEscritaNext, validarEscritaNext(), async (req, res) => {
+  const ano = req.body?.ano == null ? new Date().getFullYear() : Number(req.body.ano);
+  const mes = req.body?.mes == null ? new Date().getMonth() + 1 : Number(req.body.mes);
+  if (!Number.isInteger(ano) || ano < 2000 || ano > 2200 || !Number.isInteger(mes) || mes < 1 || mes > 12) {
+    return res.status(400).json({ error: 'Ano ou mês inválido.' });
+  }
 
   const datas = [];
   let cursor = new Date(Date.UTC(ano, mes - 1, 1));
@@ -161,9 +207,10 @@ router.post('/eventos/auto-create-mes', async (req, res) => {
   for (const d of datas) {
     const { data: row, error } = await supabase
       .from('next_eventos')
-      .upsert({ data: d, titulo: `NEXT ${d}` }, { onConflict: 'data', ignoreDuplicates: true })
+      .upsert({ igreja_id: req.campus.campus_id, data: d, titulo: `NEXT ${d}` }, { onConflict: 'igreja_id,data', ignoreDuplicates: true })
       .select();
-    if (!error && row && row[0]) created.push(row[0]);
+    if (error) return res.status(503).json({ error: 'Não foi possível completar a criação dos eventos. Tente novamente.', created: created.length });
+    if (row && row[0]) created.push(row[0]);
   }
   res.json({ ano, mes, datas, created: created.length });
 });
@@ -171,11 +218,12 @@ router.post('/eventos/auto-create-mes', async (req, res) => {
 // ----------------------------------------------------------------------------
 // Inscrições
 // ----------------------------------------------------------------------------
-router.get('/inscricoes', async (req, res) => {
+router.get('/inscricoes', contextoLeituraNext, async (req, res) => {
   const { evento_id, search, com_checkin, com_indicacao, origem_lista, limit } = req.query;
-  const maxLimit = Math.min(Number(limit) || 500, 5000);
-  let q = supabase.from('next_inscricoes').select('*, evento:next_eventos(id, data, titulo)')
-    .order('created_at', { ascending: false }).limit(maxLimit);
+  const maxLimit = Math.max(1, Math.min(Math.floor(Number(limit) || 500), 5000));
+  const consultar = () => {
+  let q = filtrarCampus(supabase.from('next_inscricoes').select('*, evento:next_eventos(id, data, titulo)'), req.campus)
+    .order('created_at', { ascending: false }).order('id');
   if (evento_id) q = q.eq('evento_id', evento_id);
   if (com_checkin === 'true') q = q.not('check_in_at', 'is', null);
   if (com_checkin === 'false') q = q.is('check_in_at', null);
@@ -187,16 +235,26 @@ router.get('/inscricoes', async (req, res) => {
     const s = `%${escapePostgrestValue(search)}%`;
     q = q.or(`nome.ilike.${s},sobrenome.ilike.${s},email.ilike.${s},cpf.ilike.${s}`);
   }
-  const { data, error } = await q;
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data || []);
+  return q;
+  };
+  try {
+    const resultado = [];
+    for (let inicio = 0; inicio < maxLimit; inicio += 1000) {
+      const fim = Math.min(inicio + 999, maxLimit - 1);
+      const { data, error } = await consultar().range(inicio, fim);
+      if (error || !Array.isArray(data)) throw error || new Error('Resposta inválida.');
+      resultado.push(...data);
+      if (data.length < fim - inicio + 1) break;
+    }
+    res.json(resultado);
+  } catch { res.status(503).json({ error: 'Não foi possível carregar as inscrições do campus.' }); }
 });
 
-router.get('/inscricoes/:id', async (req, res) => {
+router.get('/inscricoes/:id', contextoLeituraNext, async (req, res) => {
   const { data, error } = await supabase
     .from('next_inscricoes')
     .select('*, evento:next_eventos(*), indicacoes:next_indicacoes(*)')
-    .eq('id', req.params.id)
+    .eq('igreja_id', req.campus.campus_id).eq('id', req.params.id)
     .maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: 'Inscrição não encontrada' });
@@ -206,11 +264,13 @@ router.get('/inscricoes/:id', async (req, res) => {
 const { acharOuCriarGuardado } = require('../services/membroMatch');
 const { reconciliarCpfTardio } = require('../services/cpfReconciliar');
 const { normalizarCpf, cpfValido } = require('../utils/cpf');
+const { resolverPessoaRegistro } = require('../services/campusPessoaRegistro');
 
-router.post('/inscricoes', async (req, res) => {
+router.post('/inscricoes', contextoEscritaNext, validarEscritaNext({ pai: 'next_eventos', campoPai: 'evento_id' }), async (req, res) => {
   const { evento_id, nome, sobrenome, cpf, telefone, email, data_nascimento, observacoes, origem_lista } = req.body || {};
   if (!nome || !evento_id) return res.status(400).json({ error: 'nome e evento_id obrigatórios' });
   const cleanCpf = cpf ? String(cpf).replace(/\D/g, '') : null;
+  if (String(cpf || '').trim() && (!cleanCpf || !cpfValido(cleanCpf))) return res.status(400).json({ error: 'CPF inválido — confira os dígitos.' });
   const validOrigemLista = ['impressa', 'manuscrito'].includes(origem_lista) ? origem_lista : null;
 
   // ANTES de criar a inscrição: garantir que existe mem_membros (cria se necessário).
@@ -223,19 +283,20 @@ router.post('/inscricoes', async (req, res) => {
       nome: [nome, sobrenome].filter(Boolean).join(' '),
       dataNascimento: data_nascimento || null,
       status: 'visitante',
-      origem: 'next_inscricao_interna',
+      origem: 'next_inscricao_interna', extra: { igreja_id: req.campus.campus_id },
     });
+    if (!r?.membro_id) throw new Error('Identidade indisponível.');
     membro_id = r.membro_id;
   } catch (e) {
     console.error('next/inscricoes acharOuCriarGuardado failed:', e.message);
-    // segue sem membro_id - inscrição ainda e criada pra não perder dado
+    return res.status(503).json({ error: 'Não foi possível vincular a identidade. Tente novamente.' });
   }
 
   const { data, error } = await supabase
     .from('next_inscricoes')
     .insert({
-      evento_id, nome, sobrenome: sobrenome || null, cpf: cleanCpf,
-      telefone: telefone || null, email: email ? String(email).toLowerCase() : null,
+      igreja_id: req.campus.campus_id, evento_id, nome, sobrenome: sobrenome || null, cpf: cleanCpf,
+      telefone: telefone ? String(telefone).replace(/\D/g, '') : null, email: email ? String(email).trim().toLowerCase() : null,
       data_nascimento: data_nascimento || null, observacoes: observacoes || null,
       origem: 'manual', origem_lista: validOrigemLista,
       registered_by: req.user?.id || null,
@@ -265,7 +326,7 @@ router.put('/inscricoes/:id', async (req, res) => {
 // ----------------------------------------------------------------------------
 // Check-in
 // ----------------------------------------------------------------------------
-router.post('/inscricoes/:id/checkin', async (req, res) => {
+router.post('/inscricoes/:id/checkin', contextoEscritaNext, validarEscritaNext({ tabela: 'next_inscricoes' }), async (req, res) => {
   const { data, error } = await supabase
     .from('next_inscricoes')
     .update({
@@ -273,18 +334,18 @@ router.post('/inscricoes/:id/checkin', async (req, res) => {
       check_in_by: req.user?.id || null,
       updated_at: new Date().toISOString(),
     })
-    .eq('id', req.params.id)
+    .eq('id', req.params.id).eq('igreja_id', req.campus.campus_id)
     .select()
     .single();
   if (error) return res.status(500).json({ error: error.message });
   res.json(data);
 });
 
-router.delete('/inscricoes/:id/checkin', async (req, res) => {
+router.delete('/inscricoes/:id/checkin', contextoEscritaNext, validarEscritaNext({ tabela: 'next_inscricoes' }), async (req, res) => {
   const { error } = await supabase
     .from('next_inscricoes')
     .update({ check_in_at: null, check_in_by: null, updated_at: new Date().toISOString() })
-    .eq('id', req.params.id);
+    .eq('id', req.params.id).eq('igreja_id', req.campus.campus_id);
   if (error) return res.status(500).json({ error: error.message });
   res.json({ ok: true });
 });
@@ -458,11 +519,12 @@ router.get('/direcionar-qr', async (_req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.get('/indicacoes', async (req, res) => {
+router.get('/indicacoes', contextoLeituraNext, async (req, res) => {
   const { tipo, status, area } = req.query;
   let q = supabase
     .from('next_indicacoes')
-    .select('*, inscricao:next_inscricoes(id, nome, sobrenome, email, telefone, evento_id, evento:next_eventos(data))')
+    .select('*, inscricao:next_inscricoes!inner(id, nome, sobrenome, email, telefone, evento_id, evento:next_eventos(data))')
+    .eq('inscricao.igreja_id', req.campus.campus_id)
     .order('created_at', { ascending: false })
     .limit(500);
   if (tipo) q = q.eq('tipo', tipo);
@@ -492,27 +554,24 @@ router.put('/indicacoes/:id', async (req, res) => {
 // ----------------------------------------------------------------------------
 // Dashboard
 // ----------------------------------------------------------------------------
-router.get('/dashboard', async (_req, res) => {
-  const hoje = new Date();
-  const inicioMes = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth(), 1)).toISOString().slice(0, 10);
-  const inicioProxMes = new Date(Date.UTC(hoje.getFullYear(), hoje.getMonth() + 1, 1)).toISOString().slice(0, 10);
-
-  const [eventos, inscricoesMes, checkinsMes, indicPendentes] = await Promise.all([
-    supabase.from('next_eventos').select('id, data, status').gte('data', inicioMes).lt('data', inicioProxMes),
-    supabase.from('next_inscricoes').select('id', { count: 'exact', head: true })
-      .gte('created_at', inicioMes).lt('created_at', inicioProxMes),
-    supabase.from('next_inscricoes').select('id', { count: 'exact', head: true })
-      .not('check_in_at', 'is', null)
-      .gte('check_in_at', inicioMes).lt('check_in_at', inicioProxMes),
-    supabase.from('next_indicacoes').select('id', { count: 'exact', head: true }).eq('status', 'pendente'),
-  ]);
-
-  res.json({
-    eventos_mes: eventos.data || [],
-    inscricoes_mes: inscricoesMes.count || 0,
-    checkins_mes: checkinsMes.count || 0,
-    indicacoes_pendentes: indicPendentes.count || 0,
-  });
+router.get('/dashboard', contextoLeituraNext, async (req, res) => {
+  const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Sao_Paulo', year: 'numeric', month: '2-digit' }).format(new Date());
+  const [ano, mes] = hoje.split('-').map(Number);
+  const inicioMes = `${hoje}-01`;
+  const inicioProxMes = new Date(Date.UTC(ano, mes, 1)).toISOString().slice(0, 10);
+  try {
+    const [eventos, inscricoesMes, checkinsMes, indicPendentes] = await Promise.all([
+      lerTodasPaginas(() => filtrarCampus(supabase.from('next_eventos').select('id,data,status'), req.campus).gte('data', inicioMes).lt('data', inicioProxMes).order('id')),
+      filtrarCampus(supabase.from('next_inscricoes').select('id', { count: 'exact', head: true }), req.campus)
+        .gte('created_at', `${inicioMes}T00:00:00-03:00`).lt('created_at', `${inicioProxMes}T00:00:00-03:00`),
+      filtrarCampus(supabase.from('next_inscricoes').select('id', { count: 'exact', head: true }), req.campus)
+        .gte('check_in_at', `${inicioMes}T00:00:00-03:00`).lt('check_in_at', `${inicioProxMes}T00:00:00-03:00`),
+      supabase.from('next_indicacoes').select('id,inscricao:next_inscricoes!inner(igreja_id)', { count: 'exact', head: true })
+        .eq('inscricao.igreja_id', req.campus.campus_id).eq('status', 'pendente'),
+    ]);
+    if ([inscricoesMes, checkinsMes, indicPendentes].some(r => r.error || !Number.isInteger(r.count))) throw new Error('Contagem indisponível.');
+    res.json({ eventos_mes: eventos, inscricoes_mes: inscricoesMes.count, checkins_mes: checkinsMes.count, indicacoes_pendentes: indicPendentes.count });
+  } catch { res.status(503).json({ error: 'Não foi possível carregar o resumo do campus.' }); }
 });
 
 // ----------------------------------------------------------------------------
@@ -560,9 +619,9 @@ async function recomputarStatusTurma(turmaId) {
 }
 
 // GET /turmas — lista turmas ativas + contagens (matriculados/formados/encontros)
-router.get('/turmas', async (req, res) => {
+router.get('/turmas', contextoLeituraNext, async (req, res) => {
   const { status } = req.query;
-  let q = supabase.from('next_turmas').select('*').is('deleted_at', null).order('created_at', { ascending: false });
+  let q = filtrarCampus(supabase.from('next_turmas').select('*'), req.campus).is('deleted_at', null).order('created_at', { ascending: false });
   if (status) q = q.eq('status', status);
   const { data: turmas, error } = await q.limit(500);
   if (error) return res.status(500).json({ error: error.message });
@@ -572,10 +631,10 @@ router.get('/turmas', async (req, res) => {
     // pagina (evita o cap de 1000 do PostgREST quando há muito histórico)
     const mats = [];
     for (let from = 0; ; from += 1000) {
-      const { data: chunk, error: e2 } = await supabase
-        .from('next_matriculas').select('turma_id, status').is('deleted_at', null)
+      const { data: chunk, error: e2 } = await filtrarCampus(supabase.from('next_matriculas').select('turma_id, status'), req.campus).is('deleted_at', null)
         .in('turma_id', ids).order('id').range(from, from + 999);
-      if (e2 || !chunk || !chunk.length) break;
+      if (e2) return res.status(503).json({ error: 'Não foi possível carregar as matrículas do campus.' });
+      if (!chunk || !chunk.length) break;
       mats.push(...chunk);
       if (chunk.length < 1000) break;
     }
@@ -583,7 +642,9 @@ router.get('/turmas', async (req, res) => {
       const c = cont[m.turma_id] || (cont[m.turma_id] = { total: 0, formado: 0, matriculado: 0, incompleto: 0, desistiu: 0, encontros: 0 });
       c.total += 1; if (c[m.status] !== undefined) c[m.status] += 1;
     });
-    const { data: encs } = await supabase.from('next_encontros').select('turma_id, data').in('turma_id', ids);
+    let encs;
+    try { encs = await lerTodasPaginas(() => filtrarCampus(supabase.from('next_encontros').select('turma_id, data'), req.campus).in('turma_id', ids).order('id')); }
+    catch { return res.status(503).json({ error: 'Não foi possível carregar os encontros do campus.' }); }
     (encs || []).forEach(e => {
       const c = cont[e.turma_id] || (cont[e.turma_id] = { total: 0, encontros: 0 });
       c.encontros = (c.encontros || 0) + 1;
@@ -687,11 +748,11 @@ router.get('/satisfacao', async (req, res) => {
 
 // GET /lista-espera — contagem de inscritos SEM turma (aguardando a próxima
 // turma abrir). São puxados automaticamente quando uma turma nova é aberta.
-router.get('/lista-espera', async (req, res) => {
+router.get('/lista-espera', contextoLeituraNext, async (req, res) => {
   // Fila de espera = matrículas sem turma (turma_id NULL). Retorna a LISTA de
   // pessoas (pros responsáveis alocarem numa turma) + a contagem.
-  const { data, error } = await supabase.from('next_matriculas')
-    .select('id, nome, sobrenome, telefone, email, cpf, membro_id, observacoes, created_at')
+  const { data, error } = await filtrarCampus(supabase.from('next_matriculas')
+    .select('id, nome, sobrenome, telefone, email, cpf, membro_id, observacoes, created_at'), req.campus)
     .is('turma_id', null).is('deleted_at', null)
     .order('created_at', { ascending: true })
     .limit(1000);
@@ -700,157 +761,98 @@ router.get('/lista-espera', async (req, res) => {
 });
 
 // POST /turmas — cria turma (+ o encontro · default 1 desde 26/08/2026)
-router.post('/turmas', async (req, res) => {
-  const { nome, responsavel_id, observacoes, encontros } = req.body || {};
-  if (!nome || !String(nome).trim()) return res.status(400).json({ error: 'nome obrigatório' });
-
-  // Múltiplas turmas abertas são permitidas — ex.: 2 por mês (1º/2º domingo e
-  // 3º/4º domingo · pedido do Matheus 2026-06-30). Antes só permitia 1 aberta.
-
-  const { data: turma, error } = await supabase
-    .from('next_turmas')
-    .insert({ nome: String(nome).trim(), responsavel_id: responsavel_id || null, observacoes: observacoes || null })
-    .select().single();
-  if (error) return res.status(500).json({ error: error.message });
-  // ⚠️ UM encontro por turma desde 26/08/2026 (era 2 — aula 1 + aula 2). A turma
-  // agora é o domingo: 1 encontro, culto de 09:30, uma turma por domingo do mês.
-  // Régua e horário em backend/utils/nextTurmas.js.
-  const base = Array.isArray(encontros) && encontros.length ? encontros : [{ numero: 1 }];
-  const rows = base.map((e, i) => ({ turma_id: turma.id, numero: e.numero || (i + 1), data: e.data || null, tema: e.tema || null }));
-  const { error: encErr } = await supabase.from('next_encontros').insert(rows);
-  if (encErr) return res.status(500).json({ error: encErr.message });
-
-  // Puxa a LISTA DE ESPERA (matrículas sem turma) pra esta turma nova — SÓ quando
-  // não há OUTRA turma aberta. Com mais de uma turma aberta ao mesmo tempo (ex.: 2
-  // por mês), o operador decide quem vai em cada uma, então não vacuamos a fila pra
-  // a turma recém-criada. Defensivo: 1 a 1, pulando conflito de UNIQUE.
-  let puxados = 0;
-  const { count: outrasAbertas } = await supabase.from('next_turmas')
-    .select('id', { count: 'exact', head: true })
-    .eq('status', 'aberta').is('deleted_at', null).neq('id', turma.id);
-  if (!outrasAbertas) try {
-    const { data: espera } = await supabase.from('next_matriculas')
-      .select('id').is('turma_id', null).is('deleted_at', null);
-    for (const m of (espera || [])) {
-      const { error: upErr } = await supabase.from('next_matriculas')
-        .update({ turma_id: turma.id, status: 'matriculado', updated_at: new Date().toISOString() })
-        .eq('id', m.id).is('turma_id', null);
-      if (!upErr) puxados += 1;
-      else if (upErr.code !== '23505') console.error('[next] puxar espera:', upErr.message);
-    }
-  } catch (e) { console.error('[next] puxar lista de espera:', e.message); }
-
-  res.status(201).json({ ...turma, puxados_da_espera: puxados });
+router.post('/turmas', contextoEscritaNext, validarEscritaNext(), async (req, res) => {
+  const b = req.body || {};
+  const { data, error } = await supabase.rpc('fn_campus_next_criar_turma', {
+    p_igreja_id: req.campus.campus_id, p_nome: b.nome || null,
+    p_responsavel_id: b.responsavel_id || null, p_observacoes: b.observacoes || null,
+    p_encontros: Array.isArray(b.encontros) && b.encontros.length ? b.encontros : [{ numero: 1 }],
+    p_auto_domingo: null, p_puxar_fila: true,
+  });
+  if (error) return erroRpcNext(res, error);
+  res.status(201).json(data);
 });
 
 // GET /turmas/:id — detalhe (encontros + matrículas + presenças)
-router.get('/turmas/:id', async (req, res) => {
+router.get('/turmas/:id', contextoLeituraNext, async (req, res) => {
   const { id } = req.params;
-  const { data: turma, error } = await supabase.from('next_turmas').select('*').eq('id', id).is('deleted_at', null).maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
-  if (!turma) return res.status(404).json({ error: 'Turma não encontrada' });
-  const { data: encontros } = await supabase.from('next_encontros').select('*').eq('turma_id', id).order('numero');
-  const { data: matriculas } = await supabase.from('next_matriculas').select('*').eq('turma_id', id).is('deleted_at', null).order('nome');
-  const encIds = (encontros || []).map(e => e.id);
-  let presencas = [];
-  if (encIds.length) {
-    const { data: pres } = await supabase.from('next_presencas').select('*').in('encontro_id', encIds);
-    presencas = pres || [];
-  }
-  res.json({ ...turma, encontros: encontros || [], matriculas: matriculas || [], presencas });
+  try {
+    const { data: turma, error } = await filtrarCampus(supabase.from('next_turmas').select('*'), req.campus).eq('id', id).is('deleted_at', null).maybeSingle();
+    if (error) throw error;
+    if (!turma) return res.status(404).json({ error: 'Turma não encontrada' });
+    const encontros = await lerTodasPaginas(() => filtrarCampus(supabase.from('next_encontros').select('*'), req.campus).eq('turma_id', id).order('numero').order('id'));
+    const matriculas = await lerTodasPaginas(() => filtrarCampus(supabase.from('next_matriculas').select('*'), req.campus).eq('turma_id', id).is('deleted_at', null).order('nome').order('id'));
+    const presencas = [];
+    // Lotes limitam o tamanho da URL PostgREST, além da paginação das presenças.
+    for (let inicio = 0; inicio < encontros.length; inicio += 100) {
+      const ids = encontros.slice(inicio, inicio + 100).map(e => e.id);
+      presencas.push(...await lerTodasPaginas(() => filtrarCampus(supabase.from('next_presencas').select('*'), req.campus).in('encontro_id', ids).order('id')));
+    }
+    res.json({ ...turma, encontros, matriculas, presencas });
+  } catch { res.status(503).json({ error: 'Não foi possível carregar os dados da turma.' }); }
 });
 
 // PATCH /turmas/:id — atualizar. Ao encerrar, não-formados viram 'incompleto'.
-router.patch('/turmas/:id', async (req, res) => {
-  const b = req.body || {};
-  // Reabrir é livre — múltiplas turmas abertas são permitidas (2 por mês · 2026-06-30).
-  const patch = {};
-  ['nome', 'status', 'responsavel_id', 'observacoes'].forEach(k => { if (k in b) patch[k] = b[k]; });
-  patch.updated_at = new Date().toISOString();
-  const { data, error } = await supabase.from('next_turmas').update(patch).eq('id', req.params.id).is('deleted_at', null).select().maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
-  if (b.status === 'encerrada') {
-    await recomputarStatusTurma(req.params.id);
-    await supabase.from('next_matriculas')
-      .update({ status: 'incompleto', updated_at: new Date().toISOString() })
-      .eq('turma_id', req.params.id).is('deleted_at', null)
-      .not('status', 'in', '("formado","desistiu")');
-  } else if (b.status === 'aberta') {
-    // Reabrir: 'incompleto' volta a 'matriculado' pra poder re-qualificar
-    // (recomputarStatusTurma pula 'incompleto'), e recalcula pela presença atual.
-    await supabase.from('next_matriculas')
-      .update({ status: 'matriculado', updated_at: new Date().toISOString() })
-      .eq('turma_id', req.params.id).is('deleted_at', null)
-      .eq('status', 'incompleto');
-    await recomputarStatusTurma(req.params.id);
-  }
+router.patch('/turmas/:id', contextoEscritaNext, validarEscritaNext({ tabela: 'next_turmas' }), async (req, res) => {
+  const { data, error } = await supabase.rpc('fn_campus_next_atualizar_turma', {
+    p_id: req.params.id, p_igreja_id: req.campus.campus_id, p_patch: req.body || {},
+  });
+  if (error) return erroRpcNext(res, error);
   res.json(data);
 });
 
 // DELETE /turmas/:id — soft delete
-router.delete('/turmas/:id', async (req, res) => {
-  const { error } = await supabase.rpc('app_soft_delete', { p_table_name: 'next_turmas', p_row_id: req.params.id, p_deleted_by: req.user?.id ?? null });
-  if (error) return res.status(500).json({ error: error.message });
+router.delete('/turmas/:id', contextoEscritaNext, validarEscritaNext({ tabela: 'next_turmas' }), async (req, res) => {
+  const { data, error } = await supabase.rpc('fn_campus_soft_delete_next', {
+    p_tabela: 'next_turmas', p_id: req.params.id, p_igreja_id: req.campus.campus_id, p_usuario_id: req.user.id,
+  });
+  if (error) return erroRpcNext(res, error);
+  if (!data) return res.status(404).json({ error: 'Registro não encontrado neste campus.' });
   res.json({ ok: true });
 });
 
 // PATCH /encontros/:id — editar data/tema do encontro
-router.patch('/encontros/:id', async (req, res) => {
+router.patch('/encontros/:id', contextoEscritaNext, validarEscritaNext({ tabela: 'next_encontros' }), async (req, res) => {
   const b = req.body || {};
   const patch = {};
   ['numero', 'data', 'tema', 'observacoes'].forEach(k => { if (k in b) patch[k] = b[k]; });
-  const { data, error } = await supabase.from('next_encontros').update(patch).eq('id', req.params.id).select().maybeSingle();
+  const { data, error } = await supabase.from('next_encontros').update(patch).eq('id', req.params.id).eq('igreja_id', req.campus.campus_id).select().maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Encontro não encontrado.' });
   res.json(data);
 });
 
 // PUT /encontros/:id/presencas — define os presentes { matricula_ids: [] } e
 // recalcula o status das matrículas da turma. Idempotente (regrava o conjunto).
-router.put('/encontros/:id/presencas', async (req, res) => {
-  const encontroId = req.params.id;
-  const presentes = Array.isArray(req.body?.matricula_ids) ? req.body.matricula_ids : [];
-  const { data: enc } = await supabase.from('next_encontros').select('id, turma_id').eq('id', encontroId).maybeSingle();
-  if (!enc) return res.status(404).json({ error: 'Encontro não encontrado' });
-  await supabase.from('next_presencas').delete().eq('encontro_id', encontroId);
-  if (presentes.length) {
-    const rows = presentes.map(mid => ({ encontro_id: encontroId, matricula_id: mid, presente: true }));
-    const { error: insErr } = await supabase.from('next_presencas').insert(rows);
-    if (insErr) return res.status(500).json({ error: insErr.message });
+router.put('/encontros/:id/presencas', contextoEscritaNext, validarEscritaNext({ tabela: 'next_encontros' }), async (req, res) => {
+  const ids = req.body?.matricula_ids;
+  if (!Array.isArray(ids) || ids.length > 5000 || ids.some(id => !UUID_CAMPUS_NEXT.test(id))) {
+    return res.status(400).json({ error: 'Lista de matrículas inválida.' });
   }
-  await recomputarStatusTurma(enc.turma_id);
-  recalcularKpisNext();
-  res.json({ ok: true });
+  const { data, error } = await supabase.rpc('fn_campus_next_presencas', {
+    p_encontro_id: req.params.id, p_igreja_id: req.campus.campus_id,
+    p_matricula_ids: ids, p_modo: 'substituir',
+  });
+  if (error) return erroRpcNext(res, error);
+  recalcularKpisNext(req.campus);
+  res.json(data);
 });
 
-// POST /encontros/:id/presenca — marca/desmarca UMA pessoa { matricula_id, presente }
-// sem apagar o resto do conjunto (usado pelo Totem, onde cada um toca 1 por vez).
-// Também carimba next_matriculas.check_in_at (compatível com o self-service público).
-router.post('/encontros/:id/presenca', async (req, res) => {
-  const encontroId = req.params.id;
-  const matriculaId = req.body?.matricula_id;
-  const presente = req.body?.presente !== false; // default true
-  if (!matriculaId) return res.status(400).json({ error: 'matricula_id obrigatório' });
-  const { data: enc } = await supabase.from('next_encontros').select('id, turma_id').eq('id', encontroId).maybeSingle();
-  if (!enc) return res.status(404).json({ error: 'Encontro não encontrado' });
-  // idempotente: remove o par e reinsere só quando presente (evita depender de UNIQUE)
-  await supabase.from('next_presencas').delete().eq('encontro_id', encontroId).eq('matricula_id', matriculaId);
-  if (presente) {
-    const { error: insErr } = await supabase.from('next_presencas')
-      .insert({ encontro_id: encontroId, matricula_id: matriculaId, presente: true });
-    if (insErr) return res.status(500).json({ error: insErr.message });
-  }
-  await supabase.from('next_matriculas')
-    .update({ check_in_at: presente ? new Date().toISOString() : null, updated_at: new Date().toISOString() })
-    .eq('id', matriculaId);
-  await recomputarStatusTurma(enc.turma_id);
-  recalcularKpisNext();
-  res.json({ ok: true, presente });
+router.post('/encontros/:id/presenca', contextoEscritaNext, validarEscritaNext({ tabela: 'next_encontros' }), async (req, res) => {
+  if (!UUID_CAMPUS_NEXT.test(req.body?.matricula_id || '')) return res.status(400).json({ error: 'Matrícula inválida.' });
+  const { data, error } = await supabase.rpc('fn_campus_next_presencas', {
+    p_encontro_id: req.params.id, p_igreja_id: req.campus.campus_id,
+    p_matricula_ids: [req.body.matricula_id], p_modo: req.body.presente === false ? 'desmarcar' : 'marcar',
+  });
+  if (error) return erroRpcNext(res, error);
+  recalcularKpisNext(req.campus);
+  res.json(data);
 });
 
 // GET /matriculas?turma_id=&fila=true&search= — lista
-router.get('/matriculas', async (req, res) => {
+router.get('/matriculas', contextoLeituraNext, async (req, res) => {
   const { turma_id, fila, search } = req.query;
-  let q = supabase.from('next_matriculas').select('*').is('deleted_at', null);
+  let q = filtrarCampus(supabase.from('next_matriculas').select('*'), req.campus).is('deleted_at', null);
   if (fila === 'true') q = q.is('turma_id', null);
   else if (turma_id) q = q.eq('turma_id', turma_id);
   if (search) {
@@ -863,32 +865,38 @@ router.get('/matriculas', async (req, res) => {
 });
 
 // POST /matriculas — matricular (turma_id opcional = fila)
-router.post('/matriculas', async (req, res) => {
+router.post('/matriculas', contextoEscritaNext, validarEscritaNext({ pai: 'next_turmas', campoPai: 'turma_id', membro: true }), async (req, res) => {
   const b = req.body || {};
   if (!b.nome || !String(b.nome).trim()) return res.status(400).json({ error: 'nome obrigatório' });
-  if (b.cpf && String(b.cpf).replace(/\D/g, '') && !cpfValido(b.cpf)) {
+  if (!b.membro_id && String(b.cpf || '').trim() && !cpfValido(b.cpf)) {
     return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
   }
   // Porta guardada: sem membro_id explícito, resolve/cria via matcher forte
   // (cpf>email>tel+nome>nome+nasc · cria stub se não achar). Não deixa órfão —
   // toda matrícula fica ligada a um mem_membros e acessível em /membresia.
   let membro_id = b.membro_id || null;
-  if (!membro_id) {
+  if (membro_id) {
+    try {
+      membro_id = await resolverPessoaRegistro({ ...b, nome: [b.nome, b.sobrenome].filter(Boolean).join(' ') }, req.campus, 'next_matricula');
+    } catch (erro) { return responderErroCampus(res, erro); }
+  } else {
     try {
       const r = await acharOuCriarGuardado({
         cpf: b.cpf, email: b.email, telefone: b.telefone,
         nome: [b.nome, b.sobrenome].filter(Boolean).join(' '),
         dataNascimento: b.data_nascimento || null, status: 'visitante',
-        origem: 'next_matricula', origemId: b.id,
+        origem: 'next_matricula', origemId: b.id, extra: { igreja_id: req.campus.campus_id },
       });
+      if (!r?.membro_id) throw new Error('Identidade indisponível.');
       membro_id = r.membro_id;
-    } catch (e) { console.error('[next/matriculas] matcher:', e.message); /* segue sem — não perde a matrícula */ }
+    } catch (e) { console.error('[next/matriculas] matcher:', e.message); return res.status(503).json({ error: 'Não foi possível vincular a identidade. Tente novamente.' }); }
   }
   const row = {
+    igreja_id: req.campus.campus_id,
     turma_id: b.turma_id || null,
     nome: String(b.nome).trim(), sobrenome: b.sobrenome || null,
     // digits-only: CPF com máscara fura o UNIQUE(turma_id,cpf) e todo matching
-    cpf: normalizarCpf(b.cpf), telefone: b.telefone || null, email: b.email || null,
+    cpf: normalizarCpf(b.cpf), telefone: b.telefone ? String(b.telefone).replace(/\D/g, '') : null, email: b.email ? String(b.email).trim().toLowerCase() : null,
     data_nascimento: b.data_nascimento || null, observacoes: b.observacoes || null,
     membro_id,
     ja_batizado: !!b.ja_batizado, ja_voluntario: !!b.ja_voluntario, ja_doador: !!b.ja_doador,
@@ -898,7 +906,7 @@ router.post('/matriculas', async (req, res) => {
   };
   const { data, error } = await supabase.from('next_matriculas').insert(row).select().single();
   if (error) return res.status(500).json({ error: error.message });
-  recalcularKpisNext();
+  recalcularKpisNext(req.campus);
   res.status(201).json(data);
 });
 
@@ -944,113 +952,98 @@ router.post('/matriculas/backfill-membros', async (req, res) => {
 });
 
 // PATCH /matriculas/:id — editar / mover de turma (re-encaixe) / status / indicações
-router.patch('/matriculas/:id', async (req, res) => {
-  const b = req.body || {};
+router.patch('/matriculas/:id', contextoEscritaNext, validarEscritaNext({ tabela: 'next_matriculas', pai: 'next_turmas', campoPai: 'turma_id', membro: true }), async (req, res) => {
+  const b = req.body || {}, atual = req.nextAtual;
   const patch = {};
   ['turma_id', 'nome', 'sobrenome', 'cpf', 'telefone', 'email', 'data_nascimento', 'observacoes', 'membro_id',
-    'ja_batizado', 'ja_voluntario', 'ja_doador', 'indicou_batismo', 'indicou_servir', 'indicou_grupo', 'indicou_dizimo',
-    'status'].forEach(k => { if (k in b) patch[k] = b[k]; });
+    'ja_batizado', 'ja_voluntario', 'ja_doador', 'indicou_batismo', 'indicou_servir', 'indicou_grupo', 'indicou_dizimo', 'status']
+    .forEach(k => { if (k in b) patch[k] = b[k]; });
   if ('cpf' in patch) {
-    if (patch.cpf && String(patch.cpf).replace(/\D/g, '') && !cpfValido(patch.cpf)) {
-      return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
+    const digits = String(patch.cpf || '').replace(/\D/g, '');
+    const anterior = String(atual.cpf || '').replace(/\D/g, '');
+    if (String(patch.cpf || '').trim() && (!digits || (digits !== anterior && !cpfValido(digits)))) {
+      return res.status(400).json({ error: 'CPF inválido — confira os dígitos.' });
     }
-    patch.cpf = normalizarCpf(patch.cpf); // digits-only sempre
+    patch.cpf = digits || null;
   }
-  patch.updated_at = new Date().toISOString();
-  const { data, error } = await supabase.from('next_matriculas').update(patch).eq('id', req.params.id).is('deleted_at', null).select().maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
-
-  // Reconciliação de CPF tardio (auditoria CPF 2026-07-16): editar a matrícula
-  // preenchendo o CPF não tocava o membro vinculado (podiam divergir pra
-  // sempre). Se a matrícula tem membro, consolida o CPF nele (conflito vira
-  // pendência de identidade); se não tem, resolve/cria pelo matcher canônico.
-  if (patch.cpf && data && !('membro_id' in patch)) {
-    (async () => {
-      try {
-        if (data.membro_id) {
-          await reconciliarCpfTardio({
-            membroId: data.membro_id, cpf: patch.cpf,
-            origem: 'next_matricula_edicao', origemId: data.id,
-            dataNascimento: data.data_nascimento || null,
+  if ('telefone' in patch) patch.telefone = String(patch.telefone || '').replace(/\D/g, '') || null;
+  if ('email' in patch) patch.email = String(patch.email || '').trim().toLowerCase() || null;
+  if ('nome' in patch && !String(patch.nome || '').trim()) return res.status(400).json({ error: 'Nome obrigatório.' });
+  if ('turma_id' in patch && patch.turma_id !== atual.turma_id) {
+    // O trigger SQL bloqueia a alteração quando há qualquer presença histórica.
+    patch.status = 'matriculado'; patch.check_in_at = null;
+  }
+  try {
+    const pessoa = { ...atual, ...patch };
+    let membroId = pessoa.membro_id;
+    const alterouIdentidade = ['nome','sobrenome','cpf','telefone','email','data_nascimento','membro_id'].some(k => k in patch);
+    if (alterouIdentidade && !membroId) {
+      const r = await acharOuCriarGuardado({
+        cpf: pessoa.cpf, email: pessoa.email, telefone: pessoa.telefone,
+        nome: [pessoa.nome, pessoa.sobrenome].filter(Boolean).join(' '), dataNascimento: pessoa.data_nascimento,
+        origem: 'next_matricula_edicao', origemId: atual.id, extra: { igreja_id: req.campus.campus_id },
+      });
+      if (!r?.membro_id) throw new Error('Identidade indisponível.');
+      membroId = r.membro_id; patch.membro_id = membroId;
+    } else if (alterouIdentidade && membroId) {
+      // O vínculo histórico local autoriza este ID global; nunca hidratamos sua ficha na resposta.
+      if (patch.data_nascimento) {
+        const { data: identidade, error: identidadeError } = await supabase.from('mem_membros')
+          .select('id,data_nascimento').eq('id', membroId).is('deleted_at', null).maybeSingle();
+        if (identidadeError || !identidade) throw identidadeError || new Error('Identidade indisponível.');
+        if (identidade.data_nascimento && String(identidade.data_nascimento).slice(0, 10) !== String(patch.data_nascimento).slice(0, 10)) {
+          const { error: pendenciaError } = await supabase.from('identidade_pendencias').insert({
+            tipo: 'vinculo_divergente', membro_id: membroId, origem: 'next_matricula_edicao', origem_id: String(atual.id),
+            detalhe: 'Nascimento informado na edição do Next diverge do cadastro vinculado. Revisão humana necessária.',
           });
-        } else {
-          const r = await acharOuCriarGuardado({
-            cpf: data.cpf, email: data.email, telefone: data.telefone,
-            nome: [data.nome, data.sobrenome].filter(Boolean).join(' '),
-            dataNascimento: data.data_nascimento || null, status: 'visitante',
-            origem: 'next_matricula_edicao', origemId: data.id,
-          });
-          if (r?.membro_id) {
-            await supabase.from('next_matriculas')
-              .update({ membro_id: r.membro_id, updated_at: new Date().toISOString() })
-              .eq('id', data.id).is('membro_id', null);
-          }
+          if (pendenciaError && pendenciaError.code !== '23505') throw pendenciaError;
         }
-      } catch (e2) {
-        console.error('[next/matriculas PATCH] reconciliar cpf:', e2.message);
       }
-    })();
-  }
-  // se mudou de turma, recalcula o status na turma de destino
-  if ('turma_id' in b && b.turma_id) await recomputarStatusTurma(b.turma_id);
-  recalcularKpisNext();
-  res.json(data);
+      if (patch.cpf) await reconciliarCpfTardio({
+        membroId, cpf: patch.cpf, origem: 'next_matricula_edicao', origemId: atual.id,
+        dataNascimento: pessoa.data_nascimento || null, igrejaId: req.campus.campus_id,
+        confianca: b.membro_id ? 'forte' : 'fraca',
+      });
+      if (patch.telefone || patch.email) {
+        const { error } = await supabase.rpc('fn_registrar_contato', {
+          p_membro_id: membroId, p_telefone: patch.telefone || null, p_email: patch.email || null, p_fonte: 'next_matricula_edicao',
+        });
+        if (error) throw error;
+      }
+    }
+    patch.updated_at = new Date().toISOString();
+    let query = supabase.from('next_matriculas').update(patch).eq('id', req.params.id)
+      .eq('igreja_id', req.campus.campus_id).is('deleted_at', null);
+    query = atual.membro_id ? query.eq('membro_id', atual.membro_id) : query.is('membro_id', null);
+    query = atual.turma_id ? query.eq('turma_id', atual.turma_id) : query.is('turma_id', null);
+    const { data, error } = await query.select().maybeSingle();
+    if (error) return erroRpcNext(res, error);
+    if (!data) return res.status(409).json({ error: 'Matrícula alterada; atualize os dados e tente novamente.' });
+    recalcularKpisNext(req.campus);
+    res.json(data);
+  } catch (erro) { return responderErroCampus(res, erro); }
 });
 
-// POST /matriculas/:id/transferir — move a pessoa pra OUTRA turma. body { turma_id }.
-// Diferente do PATCH turma_id cru: LIMPA as presenças da turma antiga (elas eram dos
-// encontros de lá · não seguem a pessoa), zera check-in e status (recomeça na turma
-// destino) e RECALCULA as DUAS turmas. Caso de uso: inscreveu na turma errada (ex.:
-// não tinha turma de agosto → entrou na 2ª de julho) e precisa ir pra turma certa.
-router.post('/matriculas/:id/transferir', async (req, res) => {
-  const destinoId = req.body?.turma_id;
-  if (!destinoId) return res.status(400).json({ error: 'turma_id de destino obrigatório' });
-
-  // Matrícula + turma de origem
-  const { data: mat } = await supabase.from('next_matriculas')
-    .select('id, turma_id, nome').eq('id', req.params.id).is('deleted_at', null).maybeSingle();
-  if (!mat) return res.status(404).json({ error: 'Matrícula não encontrada' });
-  if (mat.turma_id === destinoId) return res.status(400).json({ error: 'A pessoa já está nessa turma' });
-
-  // Turma destino existe e não está apagada
-  const { data: destino } = await supabase.from('next_turmas')
-    .select('id, nome, status').eq('id', destinoId).is('deleted_at', null).maybeSingle();
-  if (!destino) return res.status(404).json({ error: 'Turma de destino não encontrada' });
-
-  const origemId = mat.turma_id;
-
-  // Limpa as presenças da pessoa nos encontros da turma ANTIGA (presença é por encontro,
-  // e encontro pertence à turma · sem isso ficam penduradas / contam na turma errada).
-  if (origemId) {
-    const { data: encsOrigem } = await supabase.from('next_encontros').select('id').eq('turma_id', origemId);
-    const encIds = (encsOrigem || []).map(e => e.id);
-    if (encIds.length) {
-      await supabase.from('next_presencas').delete().eq('matricula_id', mat.id).in('encontro_id', encIds);
-    }
-  }
-
-  // Move + recomeça na turma destino (check-in e status zerados)
-  const { data: atualizada, error } = await supabase.from('next_matriculas')
-    .update({ turma_id: destinoId, status: 'matriculado', check_in_at: null, updated_at: new Date().toISOString() })
-    .eq('id', mat.id).is('deleted_at', null).select().maybeSingle();
-  if (error) return res.status(500).json({ error: error.message });
-
-  // Recalcula o status das DUAS turmas (origem perdeu alguém, destino ganhou)
-  if (origemId) await recomputarStatusTurma(origemId);
-  await recomputarStatusTurma(destinoId);
-  recalcularKpisNext();
-  res.json({ ...atualizada, turma_destino_nome: destino.nome });
+// A transferência só corrige matrícula sem presença. História exige nova matrícula.
+router.post('/matriculas/:id/transferir', contextoEscritaNext, validarEscritaNext({ tabela: 'next_matriculas', pai: 'next_turmas', campoPai: 'turma_id' }), async (req, res) => {
+  if (!UUID_CAMPUS_NEXT.test(req.body?.turma_id || '')) return res.status(400).json({ error: 'Turma de destino obrigatória.' });
+  const { data, error } = await supabase.rpc('fn_campus_next_transferir', {
+    p_id: req.params.id, p_igreja_id: req.campus.campus_id, p_destino_id: req.body.turma_id,
+  });
+  if (error) return erroRpcNext(res, error);
+  recalcularKpisNext(req.campus);
+  res.json(data);
 });
 
 // PATCH /matriculas/:id/contato — marca/desmarca "contato feito" com a pessoa.
 // body { feito: boolean } (default true). Carimba quem/quando pra ficar rastreável.
-router.patch('/matriculas/:id/contato', async (req, res) => {
+router.patch('/matriculas/:id/contato', contextoEscritaNext, validarEscritaNext({ tabela: 'next_matriculas' }), async (req, res) => {
   const feito = req.body?.feito !== false;
   const patch = feito
     ? { contato_em: new Date().toISOString(), contato_por: req.user?.id ?? null }
     : { contato_em: null, contato_por: null };
   const { data, error } = await supabase.from('next_matriculas')
-    .update(patch).eq('id', req.params.id).is('deleted_at', null)
+    .update(patch).eq('id', req.params.id).eq('igreja_id', req.campus.campus_id).is('deleted_at', null)
     .select('id, contato_em, contato_por').maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
   if (!data) return res.status(404).json({ error: 'Matrícula não encontrada' });
@@ -1058,10 +1051,12 @@ router.patch('/matriculas/:id/contato', async (req, res) => {
 });
 
 // DELETE /matriculas/:id — soft delete
-router.delete('/matriculas/:id', async (req, res) => {
-  const { error } = await supabase.rpc('app_soft_delete', { p_table_name: 'next_matriculas', p_row_id: req.params.id, p_deleted_by: req.user?.id ?? null });
-  if (error) return res.status(500).json({ error: error.message });
-  recalcularKpisNext();
+router.delete('/matriculas/:id', contextoEscritaNext, validarEscritaNext({ tabela: 'next_matriculas' }), async (req, res) => {
+  const { data, error } = await supabase.rpc('fn_campus_soft_delete_next', {
+    p_tabela: 'next_matriculas', p_id: req.params.id, p_igreja_id: req.campus.campus_id, p_usuario_id: req.user.id,
+  });
+  if (error) return erroRpcNext(res, error);
+  if (!data) return res.status(404).json({ error: 'Registro não encontrado neste campus.' });
   res.json({ ok: true });
 });
 

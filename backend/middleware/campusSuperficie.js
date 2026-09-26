@@ -19,7 +19,7 @@ const CENTRAIS = Object.freeze(['/api/rh', '/api/financeiro', '/api/financeiro-v
 
 function caminhoDaRequisicao(req) {
   // originalUrl conserva /api quando o middleware é montado em app.use('/api').
-  return String(req.originalUrl || `${req.baseUrl || ''}${req.path || ''}`).split('?')[0];
+  return String(req.originalUrl || `${req.baseUrl || ''}${req.path || ''}`).split('?')[0].replace(/\/$/, '');
 }
 
 function criarCampusSuperficie({ supabase, cobertura = [] } = {}) {
@@ -33,9 +33,10 @@ function criarCampusSuperficie({ supabase, cobertura = [] } = {}) {
       throw new Error('Cobertura de campus inválida: informe método e caminho exatos.');
     }
     const partes = rota.caminho.split('/');
-    if (partes.some(p => p.includes(':') && p !== ':id')) throw new Error('Parâmetro de cobertura inválido.');
+    if (partes.some(p => p.includes(':') && ![':id', ':temporada'].includes(p))) throw new Error('Parâmetro de cobertura inválido.');
     const pattern = partes.map(p => p === ':id'
-      ? '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}' : p).join('/');
+      ? '[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}'
+      : p === ':temporada' ? '[A-Za-z0-9_-]{1,64}' : p).join('/');
     return { metodo: rota.metodo, regex: new RegExp(`^${pattern}$`) };
   });
   return async function protegerSuperficieCampus(req, res, next) {

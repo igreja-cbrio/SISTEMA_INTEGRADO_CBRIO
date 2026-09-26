@@ -59,6 +59,14 @@ Campus 2, aplicar migrations em produção ou mergear esta PR durante o trabalho
   pública; resolução de membro confirmada sem fallback por contato.
 - [x] Filhos nominais de Cuidados e contatos protegidos por RLS do pai; oito
   leituras de Cuidados revisadas. Escritas e painéis ainda não certificados.
+- [x] Next: quatro leituras e 17 escritas com campus; criação/presença/exclusão
+  atômicas, transferência preserva histórico e cron exige unidade explícita.
+  Painéis, direcionamentos e outros endpoints continuam pendentes.
+- [x] Grupos: dimensão/RLS e funções de relatório por campus preparadas e testadas;
+  integração das rotas ainda em andamento. NPS sem origem não vira dado local.
+- [x] Notificações aceitam contexto explícito e intersectam destinos; dados
+  sensíveis não vão para destinatário de outro campus. Migração dos demais
+  produtores e armazenamento de notificações ainda pendente.
 - [ ] Demais destinos (`cui_*`, `nsm_*`, membros), views/RPCs e acessos
   diretos precisam do isolamento completo. Piloto NÃO significa Cultos aprovado
   para dados reais do Campus 2 enquanto estes consumidores não estiverem seguros.
@@ -81,15 +89,28 @@ Migrations preparadas, **não aplicadas**:
 4. `20260926230000_multicampus_cuidados_filhos.sql`: filhos nominais, J180,
    comentários e contatos; não certifica agregados/RPCs.
 
+5. `20260927000000_multicampus_next.sql`: dimensão e integridade Next.
+6. `20260927010000_multicampus_grupos.sql`: dimensão/RLS Grupos e matcher SQL
+   com campus explícito; assinatura legada preservada somente em preparação.
+7. `20260927020000_multicampus_next_operacoes.sql`: operações Next atômicas.
+8. `20260927030000_multicampus_cuidados_operacoes.sql`: exclusão lógica com
+   campus e ampliação aditiva da whitelist instalada.
+9. `20260927040000_multicampus_grupos_relatorios.sql`: RPCs Grupos por campus,
+   views invoker, dimensão nos consolidados e origem dos dados brutos de NPS.
+
 App: PR rascunho https://github.com/igreja-cbrio/Aplicativo-CBRio/pull/178,
 branch `codex/multicampus-app`, worktree `../wt-app-multicampus`. Depende deste
 backend; não publicar OTA antes das migrations e endpoints correspondentes.
+Staff: PR https://github.com/igreja-cbrio/CBRio-Staff/pull/24, worktree
+`../wt-staff-multicampus`, branch `codex/multicampus-staff`. Transporte/contexto
+e caches em execução, sem OTA. Endpoints próprios de RH permanecem centrais.
 
-Validação do segundo checkpoint: 174 testes específicos em 18 arquivos passaram,
-mais nove testes novos das leituras de Cuidados. CI/preview do commit 9cdbfa29 verdes. TypeScript, lint de hooks e build passaram. A primeira suíte completa
-teve 5.101 testes aprovados e seis fixtures desatualizadas pela nova trava de
-ensaio; as seis foram corrigidas e passaram na rodada específica. Repetir suíte
-completa após os próximos blocos, sem confundir testes com liberação de produção.
+Validação do terceiro checkpoint em preparação: 278 testes multicampus em
+27 arquivos passaram; Next chegou a 136 testes específicos e de regressão
+aprovados depois da transferência segura. App #178: 450 testes, TypeScript,
+i18n, 110/110 mutantes e export Android/iOS passaram. CI/preview do ERP inicial
+verdes. Suíte completa do estado ampliado em execução; registrar o resultado
+antes de fechar o próximo checkpoint. Nenhuma validação libera produção.
 
 Próxima ação ao retomar: conferir diff/CI desta branch e começar pelos destinos
 RLS/RPC do piloto; o guard global bloqueia superfícies ainda não certificadas em

@@ -20,46 +20,30 @@ const { turmasPlanejadas, mesesAGarantir } = require('../utils/nextTurmas');
  * turmas para o mesmo domingo. É a lei de 04/08 — a guarda tem de ser a mesma
  * chave do índice.
  */
-async function garantirTurmasDoMes(mes, agora = new Date()) {
-  const plano = turmasPlanejadas(mes, agora); // domingo vencido não entra
-  const criadas = [];
-  const jaExistiam = [];
-  const erros = [];
+async function campusDaRotina(cliente, campusId) {
+  const { data, error } = await cliente.from('app_campus_config').select('estado,campus_legado_id,ja_ativado').eq('id', true).maybeSingle();
+  if (error || !data || typeof data.ja_ativado !== 'boolean' || !['preparacao', 'ensaio', 'ativo'].includes(data.estado)
+    || (data.ja_ativado && data.estado === 'preparacao')) throw new Error('Configuração de campus indisponível.');
+  const id = campusId || (data.estado === 'preparacao' ? data.campus_legado_id : null);
+  if (!/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id || '')
+    || (data.estado === 'preparacao' && id !== data.campus_legado_id)) throw new Error('Campus explícito obrigatório para a rotina Next.');
+  return id;
+}
 
-  for (const t of plano) {
-    // 1. a turma. Conflito de auto_domingo = já existe (ou já existiu e foi
-    //    apagada) → pula sem tratar como erro.
-    const { data: turma, error } = await supabase
-      .from('next_turmas')
-      .insert({ nome: t.nome, status: 'aberta', auto_domingo: t.data })
-      .select('id, nome, auto_domingo')
-      .single();
-
-    if (error) {
-      if (error.code === '23505') { jaExistiam.push(t.data); continue; }
-      erros.push({ domingo: t.data, etapa: 'turma', motivo: error.message });
-      continue;
-    }
-
-    // 2. o encontro único.
-    //
-    // ⚠️ Se o encontro falhar, a turma fica SEM data e aparece no formulário sem
-    // domingo nenhum — pior que não existir. Desfaz a turma (hard delete: ela
-    // acabou de nascer, não tem matrícula nem presença) e reporta, para a
-    // próxima rodada tentar de novo.
-    const { error: encErr } = await supabase
-      .from('next_encontros')
-      .insert({ turma_id: turma.id, numero: t.encontros[0].numero, data: t.encontros[0].data });
-
-    if (encErr) {
-      await supabase.from('next_turmas').delete().eq('id', turma.id);
-      erros.push({ domingo: t.data, etapa: 'encontro', motivo: encErr.message });
-      continue;
-    }
-
-    criadas.push({ id: turma.id, nome: turma.nome, data: t.data });
+async function garantirTurmasDoMes(mes, agora = new Date(), opcoes = {}) {
+  const cliente = opcoes.supabase || supabase;
+  const campusId = await campusDaRotina(cliente, opcoes.campusId);
+  const criadas = [], jaExistiam = [], erros = [];
+  for (const t of turmasPlanejadas(mes, agora)) {
+    const { data: turma, error } = await cliente.rpc('fn_campus_next_criar_turma', {
+      p_igreja_id: campusId, p_nome: t.nome, p_responsavel_id: null, p_observacoes: null,
+      p_encontros: t.encontros, p_auto_domingo: t.data, p_puxar_fila: false,
+    });
+    if (error || !turma) {
+      erros.push({ domingo: t.data, etapa: 'transacao', motivo: error?.message || 'Resposta inválida da criação de turma.' });
+    } else if (turma.ja_existia) jaExistiam.push(t.data);
+    else criadas.push({ id: turma.id, nome: turma.nome, data: t.data });
   }
-
   return { mes, criadas, ja_existiam: jaExistiam, erros };
 }
 
@@ -71,10 +55,10 @@ async function garantirTurmasDoMes(mes, agora = new Date()) {
  * condição nunca é verdadeira, então a fila continuaria parada. Aqui a pessoa
  * escolhe o domingo no próprio formulário, que é o que substitui a fila.
  */
-async function garantirTurmasAutomaticas(agora = new Date()) {
+async function garantirTurmasAutomaticas(agora = new Date(), opcoes = {}) {
   const out = { meses: [], criadas: 0, ja_existiam: 0, erros: [] };
   for (const mes of mesesAGarantir(agora)) {
-    const r = await garantirTurmasDoMes(mes, agora);
+    const r = await garantirTurmasDoMes(mes, agora, opcoes);
     out.meses.push({ mes, criadas: r.criadas.length, ja_existiam: r.ja_existiam.length });
     out.criadas += r.criadas.length;
     out.ja_existiam += r.ja_existiam.length;

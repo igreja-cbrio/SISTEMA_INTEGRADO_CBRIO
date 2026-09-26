@@ -66,6 +66,16 @@ describe('Campus · superfície global', () => {
       expect((await chamar(guard,path,'PUT')).next).not.toHaveBeenCalled();
     expect((await chamar(guard,`/api/kpis/cultos/${A}`,'GET')).next).not.toHaveBeenCalled();
   });
+  it('temporada textual tem contrato próprio sem alargar UUID ou rota filha', async () => {
+    const guard = criarCampusSuperficie({ supabase: banco(), cobertura: [
+      { metodo: 'POST', caminho: '/api/grupos/temporadas/:temporada/consolidar' },
+      { metodo: 'GET', caminho: '/api/grupos' },
+    ] });
+    expect((await chamar(guard, '/api/grupos/temporadas/T1-2026/consolidar', 'POST')).next).toHaveBeenCalledOnce();
+    expect((await chamar(guard, '/api/grupos/')).next).toHaveBeenCalledOnce();
+    for (const path of ['/api/grupos/temporadas/T1-2026/consolidar/extra','/api/grupos/temporadas/T1-2026/editar','/api/grupos/temporadas/a.b/consolidar'])
+      expect((await chamar(guard,path,'POST')).next).not.toHaveBeenCalled();
+  });
   it('reconsulta o estado e não reutiliza preparação após ativação', async () => {
     const db = banco('preparacao');
     const guard = criarCampusSuperficie({ supabase: db });
