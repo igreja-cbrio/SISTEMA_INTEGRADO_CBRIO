@@ -6,6 +6,14 @@ const { authenticate, authorize, authorizeModule, getEffectiveLevel } = require(
 const { supabase } = require('../utils/supabase');
 const { criarGuardasCultos, campusLocal, destinatariosDecisaoCampus } = require('../services/campusCultos');
 const campusCultos = criarGuardasCultos();
+const { criarGuardasRegistro } = require('../services/campusRegistro');
+const campusBatismos = criarGuardasRegistro({ modulo: 'batismo', tabela: 'batismo_inscricoes' });
+const campusBatismoHorarios = criarGuardasRegistro({ modulo: 'batismo', tabela: 'batismo_horarios' });
+const { filtrarCampus, carimbarCampus } = require('../utils/campusQuery');
+const { lerTodasPaginas } = require('../utils/campusPaginacao');
+const { listarBatismos, listarHorarios, validarHorario } = require('../services/campusBatismoAdmin');
+const { salvar: salvarInscricaoBatismo, registrarCheckin: registrarCheckinBatismo } = require('../services/campusBatismoInscricao');
+const { responderErroCampus } = require('../services/campusContexto');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
 const { tipoVigenteEm } = require('../utils/lentesDomingo');
@@ -928,58 +936,9 @@ router.post('/cultos/auto-create', cultosAutoCreate);
 
 // ── Batismos ──────────────────────────────────────────────────────────────────
 // varredura 2026-09: era só `authenticate` e devolve as 634 inscrições com CPF, nascimento e `possui_deficiencia` (inclusive de criança) — agora exige Batismo ou Integração.
-router.get('/batismos', authorizeBatismoLeitura, async (req, res) => {
-  const { status } = req.query;
-  let query = supabase
-    .from('batismo_inscricoes')
-    .select('*, membro:membro_id(id, nome, foto_url, cpf)')
-    .order('created_at', { ascending: false });
-  if (status) query = query.eq('status', status);
-  const { data, error } = await query;
-  if (error) return res.status(500).json({ error: error.message });
-
-  const inscricoes = data || [];
-
-  // Enriquece com a data de conversão (etapa 'conversao' da jornada do membro,
-  // em mem_trilha_valores.data_conclusao — mesma fonte do "Seguir a Jesus") e o
-  // tempo em dias até o batismo. Busca em lote pelos membros vinculados.
-  const membroIds = [...new Set(inscricoes.map(b => b.membro_id).filter(Boolean))];
-  const conversaoPorMembro = {};
-  if (membroIds.length) {
-    const { data: trilhas } = await supabase
-      .from('mem_trilha_valores')
-      .select('membro_id, data_conclusao')
-      .eq('etapa', 'conversao')
-      .eq('concluida', true)
-      .in('membro_id', membroIds);
-    (trilhas || []).forEach(t => {
-      if (!t.data_conclusao) return;
-      // Conserva a conversão mais antiga por membro (defensivo contra duplicatas)
-      const atual = conversaoPorMembro[t.membro_id];
-      if (!atual || t.data_conclusao < atual) conversaoPorMembro[t.membro_id] = t.data_conclusao;
-    });
-  }
-
-  const DIA_MS = 86400000;
-  const enriched = inscricoes.map(b => {
-    // NÃO vaza o token de acesso (codigo_acesso) nem o código de conferência:
-    // varredura 2026-09: a rota deixou de ser só `authenticate` (agora Batismo ou
-    // Integração), mas o token continua FORA do payload — o codigo_acesso é
-    // credencial das fotos. Quem precisa vê via fluxos gated (check-in / recuperação).
-    const { codigo_acesso, codigo_conferencia, ...b2 } = b;
-    b = b2;
-    const data_conversao = b.membro_id ? (conversaoPorMembro[b.membro_id] || null) : null;
-    let dias_conversao_batismo = null;
-    if (data_conversao && b.data_batismo) {
-      dias_conversao_batismo = Math.round(
-        (new Date(`${b.data_batismo}T12:00:00`).getTime()
-          - new Date(`${data_conversao}T12:00:00`).getTime()) / DIA_MS,
-      );
-    }
-    return { ...b, data_conversao, dias_conversao_batismo };
-  });
-
-  res.json(enriched);
+router.get('/batismos', authorizeBatismoLeitura, campusBatismos.contexto, async (req, res) => {
+  try { res.json(await listarBatismos(supabase, req.campus, req.query.status)); }
+  catch (e) { responderErroCampus(res, e); }
 });
 
 // ── Cobertura de batismo dos convertidos ────────────────────────────────────
@@ -1059,79 +1018,43 @@ router.get('/batismos/cobertura-convertidos', authorizeBatismoLeitura, async (re
 });
 
 // ── Horários de batismo (abrir/fechar + limite) ──────────────────────────────
-// Próximo 4º domingo (mesma lógica de publicBatismo) · base da contagem de vagas.
-function _proximo4Domingo() {
-  const q = (y, m) => { const p = new Date(y, m, 1); const off = (7 - p.getDay()) % 7; return new Date(y, m, 1 + off + 21); };
-  const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
-  let y = hoje.getFullYear(), m = hoje.getMonth();
-  let d = q(y, m);
-  if (d < hoje) { m += 1; if (m > 11) { y += 1; m = 0; } d = q(y, m); }
-  return d.toISOString().slice(0, 10);
-}
-
 // GET /api/kpis/batismos/horarios — todos os horários (incl. fechados) + ocupação
-router.get('/batismos/horarios', authorizeBatismo, async (_req, res) => {
-  try {
-    const dataBatismo = _proximo4Domingo();
-    const { data: horarios, error } = await supabase
-      .from('batismo_horarios').select('*').is('deleted_at', null).order('ordem');
-    if (error) throw error;
-    const { data: insc } = await supabase
-      .from('batismo_inscricoes').select('horario_culto')
-      .eq('data_batismo', dataBatismo).is('deleted_at', null)
-      .not('status', 'in', '(cancelado,rejeitado)');
-    const ocup = {};
-    (insc || []).forEach(i => { if (i.horario_culto) ocup[i.horario_culto] = (ocup[i.horario_culto] || 0) + 1; });
-    res.json({
-      data_batismo: dataBatismo,
-      horarios: (horarios || []).map(h => ({ ...h, inscritos: ocup[h.horario] || 0 })),
-    });
-  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao listar horários' }); }
+router.get('/batismos/horarios', authorizeBatismo, campusBatismoHorarios.contexto, async (req, res) => {
+  try { res.json(await listarHorarios(supabase, req.campus, req.query.data)); }
+  catch (e) { responderErroCampus(res, e); }
 });
 
-// POST /api/kpis/batismos/horarios — adiciona um horário
-router.post('/batismos/horarios', authorizeBatismo, async (req, res) => {
+router.post('/batismos/horarios', authorizeBatismo, campusBatismoHorarios.contexto, campusBatismoHorarios.payload, async (req, res) => {
   try {
-    const horario = String(req.body?.horario || '').trim().slice(0, 40);
-    if (!horario) return res.status(400).json({ error: 'horário é obrigatório' });
-    const label = String(req.body?.label || horario).trim().slice(0, 120);
-    const limite = req.body?.limite != null && req.body.limite !== '' ? parseInt(req.body.limite, 10) : null;
-    const aberto = req.body?.aberto !== false;
-    const ordem = Number.isFinite(+req.body?.ordem) ? +req.body.ordem : 99;
+    const payload = validarHorario(req.body, true);
     const { data, error } = await supabase.from('batismo_horarios')
-      .insert({ horario, label, limite: Number.isFinite(limite) ? limite : null, aberto, ordem })
-      .select().single();
+      .insert(carimbarCampus(payload, req.campus)).select().single();
     if (error) throw error;
     res.status(201).json(data);
-  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao criar horário' }); }
+  } catch (e) { responderErroCampus(res, e); }
 });
 
-// PATCH /api/kpis/batismos/horarios/:id — abrir/fechar, limite, label
-router.patch('/batismos/horarios/:id', authorizeBatismo, async (req, res) => {
+router.patch('/batismos/horarios/:id', authorizeBatismo, campusBatismoHorarios.contexto, campusBatismoHorarios.payload, campusBatismoHorarios.registro, async (req, res) => {
   try {
-    const upd = { updated_at: new Date().toISOString() };
-    if (typeof req.body?.aberto === 'boolean') upd.aberto = req.body.aberto;
-    if (req.body?.label != null) upd.label = String(req.body.label).trim().slice(0, 120);
-    if ('limite' in (req.body || {})) {
-      const l = req.body.limite;
-      upd.limite = (l === null || l === '' ) ? null : (Number.isFinite(+l) ? Math.max(0, parseInt(l, 10)) : null);
-    }
-    if (Number.isFinite(+req.body?.ordem)) upd.ordem = +req.body.ordem;
-    const { data, error } = await supabase.from('batismo_horarios')
-      .update(upd).eq('id', req.params.id).is('deleted_at', null).select().single();
+    const payload = validarHorario(req.body, false);
+    const { data, error } = await filtrarCampus(supabase.from('batismo_horarios')
+      .update({ ...payload, updated_at: new Date().toISOString() }), req.campus)
+      .eq('id', req.params.id).is('deleted_at', null).select().maybeSingle();
     if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Horário não encontrado.' });
     res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao atualizar horário' }); }
+  } catch (e) { responderErroCampus(res, e); }
 });
 
 // DELETE /api/kpis/batismos/horarios/:id — remove (soft)
-router.delete('/batismos/horarios/:id', authorizeBatismo, async (req, res) => {
+router.delete('/batismos/horarios/:id', authorizeBatismo, campusBatismoHorarios.contexto, campusBatismoHorarios.registro, async (req, res) => {
   try {
-    const { error } = await supabase.from('batismo_horarios')
-      .update({ deleted_at: new Date().toISOString() }).eq('id', req.params.id);
-    if (error) throw error;
+    const { error } = await supabase.rpc('fn_campus_batismo_excluir_horario', {
+      p_igreja_id: req.campus.campus_id, p_id: req.params.id, p_ator: req.user.id,
+    });
+    if (error) return res.status(error.code === '23514' ? 409 : 503).json({ error: error.code === '23514' ? error.message : 'Não foi possível excluir o horário.' });
     res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao remover horário' }); }
+  } catch (e) { responderErroCampus(res, e); }
 });
 
 // Config do batismo · link do grupo de WhatsApp (Lorena atualiza a cada mês)
@@ -1156,216 +1079,48 @@ router.patch('/batismos/config', authorizeBatismo, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message || 'Erro ao salvar o link do grupo' }); }
 });
 
-router.post('/batismos', authorizeBatismo, async (req, res) => {
-  const {
-    cpf, nome, sobrenome, data_nascimento, telefone, email,
-    origem = 'manual', observacoes, area_kpi,
-    tamanho_camisa, eh_crianca, possui_deficiencia, deficiencia_descricao, endereco,
-    horario_culto, sexo,
-  } = req.body;
-  if (!nome || !sobrenome) return res.status(400).json({ error: 'nome e sobrenome são obrigatórios' });
-  const AREAS_OK = ['kids', 'sede', 'bridge', 'ami', 'online'];
-  const areaKpiValida = AREAS_OK.includes(area_kpi) ? area_kpi : 'sede';
-
-  const cpfClean = cpf ? cpf.replace(/\D/g, '') : null;
-  if (cpfClean && (cpfClean.length !== 11 || !cpfValido(cpfClean))) {
-    return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
-  }
-  // Totem é porta pública self-service: segue a mesma lei do formulário público
-  // de batismo (CPF com DV obrigatório). O cadastro interno da equipe continua
-  // sendo a exceção operacional (origem manual).
-  if (origem === 'totem' && !cpfClean) {
-    return res.status(400).json({ error: 'CPF é obrigatório para se inscrever pelo totem' });
-  }
-
-  // Data/horário escolhidos no totem: a data é SEMPRE a do próximo batismo
-  // (server-side — não confia na data do cliente) e o horário precisa estar
-  // aberto e com vaga no momento do insert.
-  let dataBatismo = null;
-  let horarioCulto = null;
-  let horarioLabel = null;
-  if (horario_culto) {
-    const { data: h } = await supabase
-      .from('batismo_horarios')
-      .select('horario, label, limite')
-      .eq('horario', String(horario_culto))
-      .eq('aberto', true)
-      .is('deleted_at', null)
-      .maybeSingle();
-    if (!h) return res.status(400).json({ error: 'Horário indisponível — escolha outro' });
-    horarioLabel = h.label || h.horario;
-    dataBatismo = _proximo4Domingo();
-    if (h.limite != null) {
-      const { count } = await supabase
-        .from('batismo_inscricoes')
-        .select('id', { count: 'exact', head: true })
-        .eq('data_batismo', dataBatismo)
-        .eq('horario_culto', h.horario)
-        .is('deleted_at', null)
-        .not('status', 'in', '(cancelado,rejeitado)');
-      if ((count || 0) >= h.limite) {
-        return res.status(409).json({ error: 'Esse horário acabou de lotar — escolha outro' });
-      }
-    }
-    horarioCulto = h.horario;
-  }
-
-  // Guarda na origem (membroMatch · 2026-06-19): resolve-ou-cria UM membro
-  // deduplicado em vez do match-só-por-CPF (que deixava órfão quem inscrevia sem
-  // CPF e não pegava match por e-mail/telefone+nome). Consistente com a intake
-  // pública e com Next/grupos/Kids. NUNCA liga por telefone/e-mail sozinho.
-  let membro_id = null;
+router.post('/batismos', authorizeBatismo, campusBatismos.contexto, campusBatismos.payload, campusBatismos.membro, async (req, res) => {
   try {
-    const r = await acharOuCriarGuardado({
-      cpf: cpfClean, email: email || null, telefone: telefone || null,
-      nome: `${nome} ${sobrenome}`.trim(),
-      dataNascimento: data_nascimento || null,
-      status: 'visitante',
-      origem: 'batismo_cadastro_interno',
-    });
-    membro_id = r.membro_id;
-  } catch (e) {
-    console.error('[kpis/batismos] acharOuCriarGuardado:', e.message);
-    // fail-open: segue sem vínculo (Entradas liga depois)
-  }
-
-  // Dedup de INSCRIÇÃO no totem (self-service · mesma regra da porta pública):
-  // a mesma pessoa não abre 2 inscrições em aberto. Por membro OU CPF. O cadastro
-  // interno da equipe (origem 'manual') mantém liberdade de reinscrever.
-  if (origem === 'totem') {
-    const ors = [];
-    if (membro_id) ors.push(`membro_id.eq.${membro_id}`);
-    if (cpfClean) ors.push(`cpf.eq.${cpfClean}`);
-    if (ors.length) {
-      const { data: dups } = await supabase
-        .from('batismo_inscricoes')
-        .select('id, status')
-        .or(ors.join(','))
-        .in('status', ['pendente', 'confirmado'])
-        .is('deleted_at', null)
-        .limit(1);
-      if (dups && dups[0]) {
-        return res.json({ ok: true, duplicado: true, mensagem: `Você já tem uma inscrição de batismo em andamento (${dups[0].status}).` });
-      }
-    }
-  }
-
-  const { data: inscricao, error } = await supabase
-    .from('batismo_inscricoes')
-    .insert({
-      membro_id, nome, sobrenome,
-      data_nascimento: data_nascimento || null,
-      cpf: cpfClean,
-      telefone: telefone || null,
-      email: email || null,
-      origem,
-      area_kpi: areaKpiValida,
-      observacoes: observacoes || null,
-      inscrito_por: req.user?.id || null,
-      tamanho_camisa: tamanho_camisa ? String(tamanho_camisa).trim().toUpperCase() : null,
-      eh_crianca: !!eh_crianca,
-      possui_deficiencia: !!possui_deficiencia,
-      deficiencia_descricao: possui_deficiencia && deficiencia_descricao
-        ? String(deficiencia_descricao).trim() : null,
-      endereco: endereco ? String(endereco).trim() : null,
-      ...(sexo ? { sexo: String(sexo).trim().slice(0, 20) } : {}),
-      ...(dataBatismo ? { data_batismo: dataBatismo, horario_culto: horarioCulto } : {}),
-    })
-    .select('*, membro:membro_id(id, nome, foto_url)')
-    .single();
-  if (error) return res.status(500).json({ error: error.message });
-
-  notificar({
-    modulo: 'membresia',
-    tipo: 'novo_batismo',
-    titulo: `Nova inscrição de batismo`,
-    mensagem: `${nome} ${sobrenome} se inscreveu para batismo${origem === 'totem' ? ' pelo totem' : ''}.`,
-    link: '/kpis',
-    severidade: 'info',
-    chaveDedup: `batismo_${inscricao.id}`,
-  }).catch(() => {});
-
-  // Confirmação por WhatsApp (via FILA · caminho feliz em tempo real, reenvio
-  // com backoff se o TIER_250 estourar). No-op gracioso até o template
-  // `WHATSAPP_TEMPLATE_BATISMO_CONF` existir/ser aprovado na Meta. Só no totem.
-  const telConf = telefone || inscricao.telefone;
-  if (origem === 'totem' && telConf) {
-    try {
+    const inscricao = await salvarInscricaoBatismo(supabase, req.campus, req.body || {}, { usuarioId: req.user?.id });
+    notificar({ modulo: 'membresia', tipo: 'novo_batismo', titulo: 'Nova inscrição de batismo',
+      mensagem: `${inscricao.nome} ${inscricao.sobrenome} se inscreveu para batismo.`,
+      link: '/kpis', severidade: 'info', chaveDedup: `batismo_${inscricao.id}`, campus: req.campus,
+    }).catch(() => {});
+    if (inscricao.origem === 'totem' && inscricao.telefone) {
       const { enfileirar } = require('../services/whatsappFila');
-      enfileirar({
-        telefone: telConf,
-        // Nome do template FIXO (padrão de grupos · gruposWhatsapp.js) · env só
-        // override. A equipe cria o template na Meta com este nome e NÃO precisa
-        // mexer no Vercel. Se ainda não existir na Meta, a fila registra o erro.
+      enfileirar({ telefone: inscricao.telefone,
         template: process.env.WHATSAPP_TEMPLATE_BATISMO_CONF || 'batismo_confirmacao',
-        params: [
-          String(nome).split(' ')[0] || 'Olá',
-          dataBatismo ? dataBatismo.split('-').reverse().join('/') : 'a confirmar',
-          horarioLabel || 'a confirmar',
-        ],
-        contexto: 'batismo_totem',
-        refId: inscricao.id,
+        params: [String(inscricao.nome).split(' ')[0], inscricao.data_batismo ? inscricao.data_batismo.split('-').reverse().join('/') : 'a confirmar', inscricao.horario_culto || 'a confirmar'],
+        contexto: 'batismo_totem', refId: inscricao.id,
       }).catch(() => {});
-    } catch { /* fila indisponível · não bloqueia a inscrição */ }
-  }
-
-  // Exposição mínima: o token de acesso só sai pelo fluxo de check-in (impressão).
-  const { codigo_acesso: _ca, codigo_conferencia: _cc, ...inscricaoPub } = inscricao;
-  res.json(inscricaoPub);
+    }
+    res.json(inscricao);
+  } catch (e) { responderErroCampus(res, e); }
 });
 
 // PUT /batismos/em-massa — muda o status de VÁRIAS inscrições de uma vez (ex.:
 // marcar os presentes como 'realizado'). body { ids: [...], status }. Precisa vir
 // ANTES de '/batismos/:id' (senão o :id captura "em-massa").
-router.put('/batismos/em-massa', authorizeBatismo, async (req, res) => {
-  const { ids, status } = req.body || {};
-  const STATUS_VALIDOS = ['pendente', 'confirmado', 'realizado', 'cancelado'];
-  const lista = Array.isArray(ids) ? [...new Set(ids.filter(Boolean).map(String))] : [];
-  if (!lista.length) return res.status(400).json({ error: 'Selecione ao menos uma pessoa.' });
-  if (!STATUS_VALIDOS.includes(status)) return res.status(400).json({ error: 'Status inválido.' });
-  if (lista.length > 500) return res.status(400).json({ error: 'Máximo de 500 por vez.' });
-  const { data, error } = await supabase
-    .from('batismo_inscricoes')
-    .update({ status, updated_at: new Date().toISOString() })
-    .in('id', lista)
-    .is('deleted_at', null)
-    .select('id');
-  if (error) return res.status(500).json({ error: error.message });
-  res.json({ ok: true, atualizados: (data || []).length });
+router.put('/batismos/em-massa', authorizeBatismo, campusBatismos.contexto, campusBatismos.payload, async (req, res) => {
+  try {
+    const { ids, status } = req.body || {};
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!Array.isArray(ids) || !ids.length || ids.length > 500 || ids.some(id => typeof id !== 'string' || !uuid.test(id))) {
+      return res.status(400).json({ error: 'Selecione de 1 a 500 inscrições válidas.' });
+    }
+    if (!['pendente','confirmado','realizado','cancelado'].includes(status)) return res.status(400).json({ error: 'Status inválido.' });
+    const { data, error } = await supabase.rpc('fn_campus_batismo_status_lote', {
+      p_igreja_id: req.campus.campus_id, p_ids: [...new Set(ids)], p_status: status,
+    });
+    if (error) return res.status(['23514','23505'].includes(error.code) ? 409 : 503).json({ error: ['23514','23505'].includes(error.code) ? error.message : 'Não foi possível atualizar as inscrições.' });
+    res.json({ ok: true, atualizados: data });
+  } catch (e) { responderErroCampus(res, e); }
 });
 
-router.put('/batismos/:id', authorizeBatismo, async (req, res) => {
-  const {
-    status, data_batismo, observacoes, area_kpi,
-    tamanho_camisa, eh_crianca, possui_deficiencia, deficiencia_descricao, endereco,
-  } = req.body;
-  const update = { updated_at: new Date().toISOString() };
-  if (status)       update.status = status;
-  if (data_batismo) update.data_batismo = data_batismo;
-  if (observacoes !== undefined) update.observacoes = observacoes;
-  if (area_kpi && ['kids', 'sede', 'bridge', 'ami', 'online'].includes(area_kpi)) {
-    update.area_kpi = area_kpi;
-  }
-  if (tamanho_camisa !== undefined) {
-    update.tamanho_camisa = tamanho_camisa ? String(tamanho_camisa).trim().toUpperCase() : null;
-  }
-  if (eh_crianca !== undefined) update.eh_crianca = !!eh_crianca;
-  if (possui_deficiencia !== undefined) update.possui_deficiencia = !!possui_deficiencia;
-  if (deficiencia_descricao !== undefined) {
-    update.deficiencia_descricao = deficiencia_descricao ? String(deficiencia_descricao).trim() : null;
-  }
-  if (endereco !== undefined) update.endereco = endereco ? String(endereco).trim() : null;
-
-  const { data, error } = await supabase
-    .from('batismo_inscricoes')
-    .update(update)
-    .eq('id', req.params.id)
-    .select()
-    .single();
-  if (error) return res.status(500).json({ error: error.message });
-  // Exposição mínima: não devolve o token de acesso na edição da inscrição.
-  const { codigo_acesso: _ca, codigo_conferencia: _cc, ...dataPub } = data || {};
-  res.json(dataPub);
+router.put('/batismos/:id', authorizeBatismo, campusBatismos.contexto, campusBatismos.payload, campusBatismos.registro, async (req, res) => {
+  try {
+    res.json(await salvarInscricaoBatismo(supabase, req.campus, req.body || {}, { atual: req.registroCampus, usuarioId: req.user?.id }));
+  } catch (e) { responderErroCampus(res, e); }
 });
 
 // ── Check-in de batismo · Quiosque (Fase 1) ──────────────────────────────────
@@ -1375,16 +1130,16 @@ router.put('/batismos/:id', authorizeBatismo, async (req, res) => {
 
 // Lista os batizandos de uma data (default = hoje, São Paulo) para o check-in.
 // Não expõe CPF cru — só nome + flags.
-router.get('/batismos/checkin/do-dia', authorizeBatismo, async (req, res) => {
+router.get('/batismos/checkin/do-dia', authorizeBatismo, campusBatismos.contexto, async (req, res) => {
+  try {
   const data = req.query.data || hojeSP();
-  const { data: rows, error } = await supabase
+  const rows = await lerTodasPaginas(() => filtrarCampus(supabase
     .from('batismo_inscricoes')
-    .select('id, nome, sobrenome, checkin_em, foto_referencia_url')
+    .select('id, nome, sobrenome, checkin_em, foto_referencia_url'), req.campus)
     .eq('data_batismo', data)
     .in('status', ['pendente', 'confirmado'])
     .is('deleted_at', null)
-    .order('nome', { ascending: true });
-  if (error) return res.status(500).json({ error: error.message });
+    .order('nome', { ascending: true }).order('id'));
   res.json({
     data,
     batizandos: (rows || []).map(r => ({
@@ -1395,88 +1150,16 @@ router.get('/batismos/checkin/do-dia', authorizeBatismo, async (req, res) => {
       tem_foto: !!r.foto_referencia_url,
     })),
   });
+  } catch (e) { responderErroCampus(res, e); }
 });
 
 // Registra o check-in: dedup por CPF (acharOuCriarGuardado · opcional), grava
 // presença + consentimento, devolve os códigos para imprimir a etiqueta.
 // Idempotente: pode ser rodado de novo (reimpressão) — o token não muda.
-router.post('/batismos/:id/checkin', authorizeBatismo, async (req, res) => {
-  const { cpf, consentiu } = req.body || {};
-  const cpfClean = cpf ? String(cpf).replace(/\D/g, '') : null;
-  if (cpfClean && (cpfClean.length !== 11 || !cpfValido(cpfClean))) {
-    return res.status(400).json({ error: 'CPF inválido — confira os dígitos' });
-  }
-
-  const { data: insc, error: e0 } = await supabase
-    .from('batismo_inscricoes')
-    .select('id, nome, sobrenome, telefone, email, data_nascimento, cpf, membro_id, codigo_acesso, codigo_conferencia, consentimento_em, deleted_at')
-    .eq('id', req.params.id)
-    .single();
-  if (e0 || !insc || insc.deleted_at) return res.status(404).json({ error: 'Inscrição não encontrada' });
-
-  // Guarda na origem: liga/cria membro deduplicado a partir do CPF (opcional ·
-  // "preço da foto"). Mesmo padrão de POST /batismos e da intake pública. Só
-  // quando a inscrição ainda NÃO tem vínculo — não sobrescreve link existente
-  // (evita relink por erro de digitação) nem cria stub órfão pra quem já é membro.
-  let membro_id = insc.membro_id;
-  if (cpfClean && cpfClean.length === 11 && !insc.membro_id) {
-    try {
-      const r = await acharOuCriarGuardado({
-        cpf: cpfClean,
-        email: insc.email || null,
-        telefone: insc.telefone || null,
-        nome: `${insc.nome} ${insc.sobrenome || ''}`.trim(),
-        dataNascimento: insc.data_nascimento || null,
-        status: 'visitante',
-        origem: 'batismo_checkin', origemId: insc.id,
-      });
-      membro_id = r.membro_id || membro_id;
-    } catch (e) {
-      console.error('[kpis/batismos/checkin] acharOuCriarGuardado:', e.message);
-      // fail-open: segue sem vínculo (Entradas liga depois)
-    }
-  } else if (cpfClean && cpfClean.length === 11 && insc.membro_id) {
-    // Reconciliação de CPF tardio: a inscrição JÁ estava ligada a um membro
-    // (tipicamente um stub criado sem CPF na conversão) e o CPF chegou agora,
-    // na presença física. Antes o CPF ficava só na inscrição — o membro seguia
-    // sem CPF e a identidade global nunca consolidava. Conflito não sobrescreve
-    // nada: vira pendência de identidade (fila humana).
-    try {
-      await reconciliarCpfTardio({
-        membroId: insc.membro_id, cpf: cpfClean,
-        origem: 'batismo_checkin', origemId: insc.id,
-        dataNascimento: insc.data_nascimento || null,
-      });
-      await propagarCpfConvertido({ membroId: insc.membro_id });
-    } catch (e) {
-      console.error('[kpis/batismos/checkin] reconciliar cpf:', e.message);
-    }
-  }
-
-  const nowIso = new Date().toISOString();
-  const update = {
-    checkin_em: nowIso,
-    checkin_por: req.user?.id || null,
-    updated_at: nowIso,
-  };
-  if (membro_id && membro_id !== insc.membro_id) update.membro_id = membro_id;
-  if (cpfClean && cpfClean.length === 11 && !insc.cpf) update.cpf = cpfClean;
-  if (consentiu && !insc.consentimento_em) update.consentimento_em = nowIso;
-
-  const { data: row, error } = await supabase
-    .from('batismo_inscricoes')
-    .update(update)
-    .eq('id', req.params.id)
-    .select('id, nome, sobrenome, codigo_acesso, codigo_conferencia')
-    .single();
-  if (error) return res.status(500).json({ error: error.message });
-
-  res.json({
-    id: row.id,
-    nome: `${row.nome} ${row.sobrenome || ''}`.trim(),
-    codigo_acesso: row.codigo_acesso,
-    codigo_conferencia: row.codigo_conferencia,
-  });
+router.post('/batismos/:id/checkin', authorizeBatismo, campusBatismos.contexto, campusBatismos.payload, campusBatismos.registro, async (req, res) => {
+  try {
+    res.json(await registrarCheckinBatismo(supabase, req.campus, req.registroCampus, req.body || {}, req.user?.id));
+  } catch (e) { responderErroCampus(res, e); }
 });
 
 // Upload da selfie de referência (opcional · consentida) → bucket privado.

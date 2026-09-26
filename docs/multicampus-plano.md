@@ -75,6 +75,36 @@ Campus 2, aplicar migrations em produção ou mergear esta PR durante o trabalho
 - [ ] Agregados/KPIs/NSM/consolidados e operação administrativa central.
 - [ ] Testes de integração completos, reconciliação histórica e ensaio de ativação.
 
+### Checkpoint adicional · Next e Batismo (27/09/2026)
+
+- Next agora tem 11 leituras e 21 escritas certificadas no catálogo do servidor.
+  Conclusão pessoal pode ser global, mas a RPC só recebe IDs de atos locais e
+  devolve booleanos; observações de aulas manuais permanecem por campus.
+  Migration `20260927080000_multicampus_next_sinais.sql` exige tabela manual vazia
+  (confirmada por consulta somente de leitura). Se houver novo histórico, aborta
+  exigindo mapa explícito; não executar ignorando essa pré-condição.
+- Batismo: catálogo/ocupação paginados por campus e reserva transacional
+  `fn_campus_batismo_reservar`; erro de página não vira vaga disponível.
+  Admin: listagem, horários (listar/criar/editar), listagem do check-in diário,
+  criação e edição de inscrições já usam contexto e consultas locais.
+  Inscrição sem evento/horário permanece sem reserva; atribuição posterior usa
+  a RPC atômica. Identidade passa pelo matcher global, sem falha silenciosa.
+- SQL Batismo: `20260927050000_multicampus_batismo.sql` aditiva e
+  `20260927070000_multicampus_batismo_reserva.sql` service-only. A assinatura
+  da reserva inclui `p_inscrito_por` opcional, preenchido pelo servidor no admin.
+  `backend/scripts/multicampus/cutover-batismo.sql` fica FORA da sequência de
+  migrations: trocar PK antiga por data só após todos os consumidores adaptados.
+- Integração SQL: fixture derivada de 60 tabelas do schema vivo executa 11
+  migrations em sequência; 8 cenários passaram. Teste real PostgreSQL 17 com
+  duas conexões confirmou a disputa pela última vaga. Limitações do ensaio
+  estão nos testes (biometria/storage, triggers laterais e agregados não cobertos).
+- Ainda pendentes no Batismo: cobertura de convertidos, config por campus,
+  armazenamento/fotos e cutover. Status em massa e exclusão de horários agora
+  usam RPCs atômicas (`20260927110000_multicampus_batismo_admin.sql`);
+  check-in valida identidade do ato local e detecta edição concorrente. Não liberar a frente toda por essas rotas.
+- Kids está em implementação nos mesmos arquivos/branch. Não considerar
+  arquivos não commitados como certificados até a validação e checkpoint.
+
 Migrations preparadas, **não aplicadas**:
 1. `20260926200000_multicampus_contexto_e_ativacao.sql`: configuração, gate de
    ativação, helper e administração de vínculos. Deve preceder qualquer deploy
@@ -98,12 +128,52 @@ Migrations preparadas, **não aplicadas**:
 9. `20260927040000_multicampus_grupos_relatorios.sql`: RPCs Grupos por campus,
    views invoker, dimensão nos consolidados e origem dos dados brutos de NPS.
 
+
+10. `20260927050000_multicampus_batismo.sql`: preparação aditiva do batismo.
+    UUID canônico de evento, campus, vínculos de inscrição por evento/horário,
+    RPCs locais e RLS restritiva. **Preserva PK(data) e índice global de horário.**
+11. `20260927070000_multicampus_batismo_reserva.sql`: reserva tipada atômica,
+    idempotência por UUID, edição sem contar a própria vaga e bloqueio por
+    evento/horário. Matcher canônico e autorização da porta continuam no backend.
+
+Batismo — decisão de transição (27/09/2026): inspeção somente leitura do banco
+confirmou PK `data`, nenhuma FK externa/view dependente, RPC de datas global e
+índice de horário global. Histórico tinha zero inscrições fora da Sede, zero
+datas sem evento e zero horários sem catálogo. A fase aditiva não permite ainda
+mesma data em dois campi. `backend/scripts/multicampus/cutover-batismo.sql` fica
+FORA das migrations automáticas: exige preparação, cobertura completa e marcador
+`batismo-cutover-revisado`. Só promover após adaptar consumidores, rever FKs e
+obter aprovação para trocar a PK. IDs são canônicos; campos legados permanecem
+sincronizados e nenhum cadastro de pessoa é duplicado por campus.
+
+Validação do batismo: 10 testes PostgreSQL/PGlite passaram (incluem o cutover
+isolado), e teste local PostgreSQL 17 com duas conexões reais confirmou a última
+vaga serializada: primeira reserva confirma, segunda aguarda e falha por falta
+de vaga. Nenhuma migration foi aplicada em produção. RPC de edição recebe o
+registro completo validado, não um patch parcial: backend deve compor valores
+atuais antes da chamada para não limpar campos opcionais. Consentimento,
+check-in e auditoria não são editáveis pelo payload da reserva.
+
+Portas de batismo (checkpoint 27/09): público oferece catálogo de sedes ativas
+em `/public/batismo/campi`; campus explícito por slug/UUID em horários e envio,
+com ausência permitida só na preparação. Catálogo entrega IDs de evento/horário;
+handler compartilhado usa reserva transacional e matcher global no público.
+App usa somente `/app/campus/batismo/horarios` e
+`/app/campus/batismo/inscricoes`, com vínculo confirmado `profiles.membro_id`,
+sem resolver por e-mail, metadados ou ID enviado pelo cliente. Consentimento
+canônico obrigatório; sem fallback da data calculada e sem grupo WhatsApp global
+fora de preparação. Não certificar `/app/inscricoes` inteiro nem os endpoints de
+fotos/acesso públicos, que permanecem pendentes. Validação: 70 testes de serviço,
+handler, UI e regressão passaram, além dos testes SQL. Nenhum efeito em produção.
+
 App: PR rascunho https://github.com/igreja-cbrio/Aplicativo-CBRio/pull/178,
 branch `codex/multicampus-app`, worktree `../wt-app-multicampus`. Depende deste
 backend; não publicar OTA antes das migrations e endpoints correspondentes.
 Staff: PR https://github.com/igreja-cbrio/CBRio-Staff/pull/24, worktree
 `../wt-staff-multicampus`, branch `codex/multicampus-staff`. Transporte/contexto
-e caches em execução, sem OTA. Endpoints próprios de RH permanecem centrais.
+e caches implementados (commit `5f2133f`), sem OTA: TypeScript, 97 testes e
+export Android/iOS passaram. Falta validação visual com backend de ensaio.
+Endpoints próprios de RH permanecem centrais.
 
 Validação do terceiro checkpoint em preparação: 278 testes multicampus em
 27 arquivos passaram; Next chegou a 136 testes específicos e de regressão

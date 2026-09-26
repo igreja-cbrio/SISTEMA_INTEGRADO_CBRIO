@@ -44,6 +44,7 @@ function ambiente({ cultoCampus = A, membroCampus = A, erroTabela = '', rpcResul
     if (nome === '../utils/supabase') return { supabase: db };
     if (nome === '../middleware/auth') return { authenticate: noop, authorize: () => noop, authorizeModule: () => noop, getEffectiveLevel: () => 5 };
     if (nome === '../services/campusCultos') return { ...helpers, criarGuardasCultos: () => helpers.criarGuardasCultos({ supabase: db, resolver: async (req: any) => req.campus }) };
+    if (nome === '../services/campusRegistro') return { criarGuardasRegistro: () => ({ contexto: noop, payload: noop, registro: noop, membro: noop }) };
     if (nome === '../utils/cpf') return { cpfValido: () => true };
     if (nome === '../services/painelCache') return { bust: vi.fn() };
     return new Proxy({}, { get: () => () => undefined });

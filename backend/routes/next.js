@@ -65,7 +65,7 @@ const contextoLeituraNext = criarMiddlewareCampus({ modulo: 'next', cobertura: {
 
 const contextoEscritaNext = criarMiddlewareCampus({ modulo: 'next', cobertura: { leitura: false, escrita: true } });
 const UUID_CAMPUS_NEXT = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const NEXT_SOFT_DELETE = new Set(['next_turmas', 'next_matriculas', 'mem_membros']);
+const NEXT_SOFT_DELETE = new Set(['next_turmas', 'next_matriculas', 'mem_membros', 'cui_convertidos']);
 function validarEscritaNext({ tabela, pai, campoPai, membro = false } = {}) {
   return async (req, res, next) => {
     try {
@@ -307,20 +307,38 @@ router.post('/inscricoes', contextoEscritaNext, validarEscritaNext({ pai: 'next_
   res.json(data);
 });
 
-router.put('/inscricoes/:id', async (req, res) => {
-  const allowed = [
-    'nome', 'sobrenome', 'cpf', 'telefone', 'email', 'data_nascimento',
-    'observacoes', 'evento_id', 'ja_batizado', 'ja_voluntario', 'ja_doador',
-    'origem_lista',
-  ];
-  const update = { updated_at: new Date().toISOString() };
-  for (const [k, v] of Object.entries(req.body || {})) {
-    if (allowed.includes(k)) update[k] = v;
+router.put('/inscricoes/:id', contextoEscritaNext, validarEscritaNext({ tabela: 'next_inscricoes', pai: 'next_eventos', campoPai: 'evento_id' }), async (req, res) => {
+  const b = req.body || {}, atual = req.nextAtual, update = { updated_at: new Date().toISOString() };
+  const allowed = ['nome', 'sobrenome', 'cpf', 'telefone', 'email', 'data_nascimento', 'observacoes', 'evento_id',
+    'ja_batizado', 'ja_voluntario', 'ja_doador', 'origem_lista'];
+  for (const [k, v] of Object.entries(b)) if (allowed.includes(k)) update[k] = v;
+  if ('cpf' in b) {
+    const digits = String(b.cpf || '').replace(/\D/g, '');
+    if (String(b.cpf || '').trim() && (!digits || (digits !== String(atual.cpf || '').replace(/\D/g, '') && !cpfValido(digits)))) return res.status(400).json({ error: 'CPF inválido.' });
+    update.cpf = digits || null;
   }
-  const { data, error } = await supabase
-    .from('next_inscricoes').update(update).eq('id', req.params.id).select().single();
-  if (error) return res.status(500).json({ error: error.message });
-  res.json(data);
+  if ('telefone' in b) update.telefone = String(b.telefone || '').replace(/\D/g, '') || null;
+  if ('email' in b) update.email = String(b.email || '').trim().toLowerCase() || null;
+  try {
+    if (['nome','sobrenome','cpf','telefone','email','data_nascimento'].some(k => k in b)) {
+      const pessoa = { ...atual, ...update };
+      pessoa.nome = [pessoa.nome, pessoa.sobrenome].filter(Boolean).join(' ');
+      if (atual.membro_id) {
+        // Contato/nascimento novo só entra quando informado nesta edição.
+        pessoa.telefone = update.telefone; pessoa.email = update.email; pessoa.data_nascimento = update.data_nascimento;
+        pessoa.cpf = update.cpf !== String(atual.cpf || '').replace(/\D/g, '') ? update.cpf : undefined;
+      }
+      update.membro_id = await resolverPessoaRegistro(pessoa, req.campus, 'next_inscricao_edicao', {
+        supabase, membroVinculado: atual.membro_id, matcher: acharOuCriarGuardado, reconciliar: reconciliarCpfTardio,
+      });
+    }
+    let query = supabase.from('next_inscricoes').update(update).eq('id', req.params.id).eq('igreja_id', req.campus.campus_id);
+    query = atual.membro_id ? query.eq('membro_id', atual.membro_id) : query.is('membro_id', null);
+    const { data, error } = await query.select().maybeSingle();
+    if (error) return erroRpcNext(res, error);
+    if (!data) return res.status(409).json({ error: 'Inscrição alterada; atualize os dados e tente novamente.' });
+    res.json(data);
+  } catch (erro) { return responderErroCampus(res, erro); }
 });
 
 // ----------------------------------------------------------------------------
@@ -877,7 +895,7 @@ router.post('/matriculas', contextoEscritaNext, validarEscritaNext({ pai: 'next_
   let membro_id = b.membro_id || null;
   if (membro_id) {
     try {
-      membro_id = await resolverPessoaRegistro({ ...b, nome: [b.nome, b.sobrenome].filter(Boolean).join(' ') }, req.campus, 'next_matricula');
+      membro_id = await resolverPessoaRegistro({ ...b, nome: [b.nome, b.sobrenome].filter(Boolean).join(' ') }, req.campus, 'next_matricula', { supabase, matcher: acharOuCriarGuardado, reconciliar: reconciliarCpfTardio });
     } catch (erro) { return responderErroCampus(res, erro); }
   } else {
     try {
@@ -1070,21 +1088,22 @@ router.delete('/matriculas/:id', contextoEscritaNext, validarEscritaNext({ tabel
 const MESES_PT = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
 function nomeMesAtual() { const d = new Date(); return `${MESES_PT[d.getMonth()]} ${d.getFullYear()}`; }
 
-async function fetchAllNext(table, columns, applyFilter) {
+async function fetchAllNext(table, columns, applyFilter, contexto, ordem = 'id') {
   const out = []; let from = 0; const page = 1000;
   while (true) {
     let q = supabase.from(table).select(columns).range(from, from + page - 1);
+    if (contexto) q = filtrarCampus(q, contexto).order(ordem);
     if (applyFilter) q = applyFilter(q);
     const { data, error } = await q;
-    if (error) throw error;
-    out.push(...(data || []));
+    if (error || !Array.isArray(data)) throw error || new Error('Resposta de paginação inválida.');
+    out.push(...data);
     if (!data || data.length < page) break;
     from += page;
   }
   return out;
 }
 
-router.get('/pessoas', async (req, res) => {
+router.get('/pessoas', contextoLeituraNext, async (req, res) => {
   try {
     const { area } = req.query;
     const DIA = 86400000; const agora = Date.now();
@@ -1093,27 +1112,14 @@ router.get('/pessoas', async (req, res) => {
 
     const convertidos = await fetchAllNext('cui_convertidos',
       'id, nome, telefone, cpf, membro_id, data_culto, area, next_resolucao, next_resolucao_em',
-      (q) => { q = q.is('deleted_at', null); return area ? q.eq('area', area) : q; });
+      (q) => { q = q.is('deleted_at', null); return area ? q.eq('area', area) : q; }, req.campus);
     const matriculas = await fetchAllNext('next_matriculas',
       'id, turma_id, nome, sobrenome, cpf, telefone, email, membro_id, status, indicou_grupo, indicou_servir, indicou_batismo, indicou_devocional',
-      (q) => q.is('deleted_at', null));
-    const turmas = await fetchAllNext('next_turmas', 'id, nome', (q) => q.is('deleted_at', null));
+      (q) => q.is('deleted_at', null), req.campus);
+    const turmas = await fetchAllNext('next_turmas', 'id, nome', (q) => q.is('deleted_at', null), req.campus);
     const turmaNome = new Map(turmas.map(t => [t.id, t.nome]));
-    // ⚠️ "Fez o Next" vem da FONTE ÚNICA `vw_next_formado_pessoa` (régua de
-    // 14/08/2026: UM encontro basta), não de `next_matriculas.status`. O status
-    // é POR TURMA e diz "não formou" para quem esteve num encontro de outra
-    // turma — era isso que fazia a tela discordar da NSM, do /painel e dos KPIs,
-    // que já leem a view.
-    const formadosPessoa = await fetchAllNext('vw_next_formado_pessoa', 'membro_id, cpf');
-    const fMembro = new Set(), fCpf = new Set();
-    for (const f of formadosPessoa) {
-      if (f.membro_id) fMembro.add(f.membro_id);
-      const c = digits(f.cpf); if (c.length === 11) fCpf.add(c);
-    }
-    const fezNext = (p) => {
-      if (p && p.membro_id && fMembro.has(p.membro_id)) return true;
-      const c = digits(p && p.cpf); return c.length === 11 && fCpf.has(c);
-    };
+    const { sinaisNextDosAtos } = require('../services/campusNextSinais');
+    const fezNext = await sinaisNextDosAtos(supabase, req.campus, convertidos, matriculas);
     // Direcionamento (pra onde a pessoa vai ao fim do Next) · vem da matrícula
     const dirFlags = (mm) => ({
       indicou_grupo: !!(mm && mm.indicou_grupo), indicou_servir: !!(mm && mm.indicou_servir),
@@ -1164,7 +1170,7 @@ router.get('/pessoas', async (req, res) => {
       const dias = cv.data_culto ? Math.floor((agora - new Date(cv.data_culto + 'T12:00:00').getTime()) / DIA) : null;
       let next_status; let bucket = null;
       if (cv.next_resolucao) next_status = 'resolvido';
-      else if (fezNext(cv) || fezNext(m) || (m && m.status === 'formado')) next_status = 'formado';
+      else if (fezNext(cv, 'convertido') || fezNext(m, 'matricula') || (m && m.status === 'formado')) next_status = 'formado';
       else if (m) next_status = 'matriculado';
       else { next_status = 'nao_inscrito'; bucket = dias == null ? 'no_prazo' : dias > 90 ? 'fora_prazo' : dias > 75 ? 'vencendo' : 'no_prazo'; }
       itens.push({
@@ -1184,7 +1190,7 @@ router.get('/pessoas', async (req, res) => {
         nome: `${m.nome || ''}${m.sobrenome ? ' ' + m.sobrenome : ''}`.trim(), telefone: m.telefone, email: m.email, membro_id: m.membro_id,
         area: null, data_nsm: null, dias_desde_conversao: null,
         turma_id: m.turma_id, turma_nome: m.turma_id ? (turmaNome.get(m.turma_id) || null) : null,
-        next_status: (fezNext(m) || m.status === 'formado') ? 'formado' : 'matriculado', bucket: null, next_resolucao: null, next_resolucao_em: null,
+        next_status: (fezNext(m, 'matricula') || m.status === 'formado') ? 'formado' : 'matriculado', bucket: null, next_resolucao: null, next_resolucao_em: null,
         ...dirFlags(m),
       });
     }
@@ -1209,30 +1215,31 @@ router.get('/pessoas', async (req, res) => {
     res.json({ itens, resumo });
   } catch (e) {
     console.error('[next/pessoas]', e.message);
-    res.status(500).json({ error: e.message });
+    res.status(503).json({ error: 'Não foi possível carregar a jornada Next do campus.' });
   }
 });
 
 // POST /convertidos/:id/resolver — fecha o pendente de Next do convertido
 // (acaba o "vermelho pra sempre"). Body: { resolucao }.
-router.post('/convertidos/:id/resolver', async (req, res) => {
+router.post('/convertidos/:id/resolver', contextoEscritaNext, validarEscritaNext({ tabela: 'cui_convertidos' }), async (req, res) => {
   const { resolucao } = req.body || {};
   const VALID = ['contatado', 'sem_interesse', 'encerrado'];
   if (!VALID.includes(resolucao)) return res.status(400).json({ error: 'resolucao inválida' });
   const { data, error } = await supabase.from('cui_convertidos')
     .update({ next_resolucao: resolucao, next_resolucao_em: new Date().toISOString(), next_resolucao_por: req.user?.id ?? null })
-    .eq('id', req.params.id).is('deleted_at', null).select('id').maybeSingle();
+    .eq('id', req.params.id).eq('igreja_id', req.campus.campus_id).is('deleted_at', null).select('id').maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
-  if (!data) return res.status(404).json({ error: 'Convertido não encontrado' });
+  if (!data) return res.status(404).json({ error: 'Convertido não encontrado.' });
   res.json({ ok: true });
 });
 
 // DELETE /convertidos/:id/resolver — desfaz a resolução (volta ao funil)
-router.delete('/convertidos/:id/resolver', async (req, res) => {
-  const { error } = await supabase.from('cui_convertidos')
+router.delete('/convertidos/:id/resolver', contextoEscritaNext, validarEscritaNext({ tabela: 'cui_convertidos' }), async (req, res) => {
+  const { data, error } = await supabase.from('cui_convertidos')
     .update({ next_resolucao: null, next_resolucao_em: null, next_resolucao_por: null })
-    .eq('id', req.params.id);
+    .eq('id', req.params.id).eq('igreja_id', req.campus.campus_id).is('deleted_at', null).select('id').maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Convertido não encontrado.' });
   res.json({ ok: true });
 });
 
@@ -1243,7 +1250,7 @@ router.delete('/convertidos/:id/resolver', async (req, res) => {
 //   status=formado legado), "não concluiu" (>90d sem as 2) e flag sem-CPF.
 //   Espelha a definição de vw_next_formado_pessoa pra bater com a NSM.
 // ----------------------------------------------------------------------------
-router.get('/curso', async (_req, res) => {
+router.get('/curso', contextoLeituraNext, async (req, res) => {
   try {
     const DIA = 86400000, agora = Date.now();
     const digits = (v) => String(v || '').replace(/\D/g, '');
@@ -1251,10 +1258,10 @@ router.get('/curso', async (_req, res) => {
 
     const matriculas = await fetchAllNext('next_matriculas',
       'id, membro_id, cpf, nome, sobrenome, telefone, status, created_at',
-      (q) => q.is('deleted_at', null));
-    const encontros = await fetchAllNext('next_encontros', 'id, numero', null);
+      (q) => q.is('deleted_at', null), req.campus);
+    const encontros = await fetchAllNext('next_encontros', 'id, numero', null, req.campus);
     const numByEnc = new Map(encontros.map(e => [e.id, e.numero]));
-    const presencas = await fetchAllNext('next_presencas', 'matricula_id, encontro_id, presente', null);
+    const presencas = await fetchAllNext('next_presencas', 'matricula_id, encontro_id, presente', null, req.campus);
     const a1ByMat = new Set(), a2ByMat = new Set();
     for (const p of presencas) {
       if (!p.presente) continue;
@@ -1262,8 +1269,10 @@ router.get('/curso', async (_req, res) => {
       if (num === 1) a1ByMat.add(p.matricula_id);
       else if (num === 2) a2ByMat.add(p.matricula_id);
     }
-    const manual = await fetchAllNext('next_pessoa_aula_manual', 'membro_id, fez_aula1, fez_aula2, observacao', null);
+    const manual = await fetchAllNext('next_pessoa_aula_manual', 'membro_id, fez_aula1, fez_aula2, observacao', null, req.campus, 'membro_id');
     const manByMembro = new Map(manual.map(m => [m.membro_id, m]));
+    const { sinaisNextDosAtos } = require('../services/campusNextSinais');
+    const fezNext = await sinaisNextDosAtos(supabase, req.campus, [], matriculas);
 
     // pré-pass: mapeia cpf/nome -> membro_id (das matrículas JÁ vinculadas), pra
     // colapsar um órfão no seu "gêmeo" vinculado (dedup robusto mesmo antes do backfill).
@@ -1284,8 +1293,9 @@ router.get('/curso', async (_req, res) => {
         || (nk && nomeToMembro.get(nk))
         || (c.length === 11 ? 'cpf:' + c : 'nome:' + (nk || m.id));
       let g = byKey.get(key);
-      if (!g) { g = { membro_id: null, cpf: null, nome: null, telefone: null, n: 0, primeira: null, a1p: false, a2p: false, formado_legacy: false }; byKey.set(key, g); }
+      if (!g) { g = { membro_id: null, cpf: null, nome: null, telefone: null, n: 0, primeira: null, a1p: false, a2p: false, formado_legacy: false, conclusao_pessoal: false }; byKey.set(key, g); }
       g.n += 1;
+      if (fezNext(m, 'matricula')) g.conclusao_pessoal = true;
       if (!g.membro_id && m.membro_id) g.membro_id = m.membro_id;
       const temCpf = c.length === 11;
       if (!g.cpf && temCpf) g.cpf = c;
@@ -1303,7 +1313,7 @@ router.get('/curso', async (_req, res) => {
       const man = g.membro_id ? manByMembro.get(g.membro_id) : null;
       const a1m = !!(man && man.fez_aula1), a2m = !!(man && man.fez_aula2);
       const fez_aula1 = g.a1p || a1m, fez_aula2 = g.a2p || a2m;
-      const concluiu = (fez_aula1 && fez_aula2) || g.formado_legacy;
+      const concluiu = g.conclusao_pessoal || g.formado_legacy;
       const dias = g.primeira ? Math.floor((agora - new Date(g.primeira + 'T12:00:00').getTime()) / DIA) : null;
       const nao_concluiu_90d = !concluiu && dias != null && dias >= 90;
       itens.push({
@@ -1327,32 +1337,19 @@ router.get('/curso', async (_req, res) => {
     res.json({ itens, resumo });
   } catch (e) {
     console.error('[next/curso]', e.message);
-    res.status(500).json({ error: e.message });
+    res.status(503).json({ error: 'Não foi possível carregar o curso Next do campus.' });
   }
 });
 
-// PUT /pessoa/:membroId/aulas — override manual de aula 1/2 (o responsável corrige
-// presença que não foi computada). Merge com o existente (não zera o outro campo).
-// Chave = membro_id (só pessoas já vinculadas · use o backfill pra vincular órfãos).
-router.put('/pessoa/:membroId/aulas', async (req, res) => {
-  const membroId = req.params.membroId;
-  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(membroId)) {
-    return res.status(400).json({ error: 'membro_id inválido' });
-  }
-  const b = req.body || {};
-  const { data: cur } = await supabase.from('next_pessoa_aula_manual').select('*').eq('membro_id', membroId).maybeSingle();
-  const row = {
-    membro_id: membroId,
-    fez_aula1: 'fez_aula1' in b ? !!b.fez_aula1 : !!(cur && cur.fez_aula1),
-    fez_aula2: 'fez_aula2' in b ? !!b.fez_aula2 : !!(cur && cur.fez_aula2),
-    observacao: 'observacao' in b ? (b.observacao || null) : (cur ? cur.observacao : null),
-    marcado_por: req.user?.id ?? null,
-    updated_at: new Date().toISOString(),
-  };
-  const { data, error } = await supabase.from('next_pessoa_aula_manual')
-    .upsert(row, { onConflict: 'membro_id' }).select().single();
-  if (error) return res.status(500).json({ error: error.message });
-  recalcularKpisNext();
+// Override local: o mesmo membro pode ter correções em campi diferentes.
+router.put('/pessoa/:membroId/aulas', contextoEscritaNext, validarEscritaNext(), async (req, res) => {
+  if (!UUID_CAMPUS_NEXT.test(req.params.membroId || '')) return res.status(400).json({ error: 'Membro inválido.' });
+  const { data, error } = await supabase.rpc('fn_campus_next_manual', {
+    p_igreja_id: req.campus.campus_id, p_membro_id: req.params.membroId,
+    p_usuario_id: req.user.id, p_patch: req.body || {},
+  });
+  if (error) return erroRpcNext(res, error);
+  recalcularKpisNext(req.campus);
   res.json(data);
 });
 

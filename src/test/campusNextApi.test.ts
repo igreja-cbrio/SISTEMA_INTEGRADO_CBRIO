@@ -10,7 +10,8 @@ const ID = '11111111-1111-1111-1111-111111111111';
 const noop = (_req: any, _res: any, next: any) => next();
 function ambiente(campus = A, fail = '', quantidade = 1) {
   const queries: any[] = [];
-  const db = { from: (table: string) => {
+  const rpcCalls: any[] = [];
+  const db = { rpc: async (fn: string, args: any) => { rpcCalls.push({ fn, args }); return { error: fail === 'rpc' ? { message: 'offline' } : null, data: [...args.p_convertido_ids.map((id: string) => ({ tipo: 'convertido', registro_id: id, fez_next: true })), ...args.p_matricula_ids.map((id: string) => ({ tipo: 'matricula', registro_id: id, fez_next: true }))] }; }, from: (table: string) => {
     const call: any = { table, filters: [] }; queries.push(call);
     const q: any = {};
     for (const method of ['select','is','in','order','limit','range','maybeSingle','gte','lt','not','or']) q[method] = (...args: any[]) => { call[method] = args; return q; };
@@ -36,7 +37,7 @@ function ambiente(campus = A, fail = '', quantidade = 1) {
     if (name === '../utils/supabase') return { supabase: db };
     if (name === '../middleware/auth') return { authenticate: noop, authorizeModule: () => noop };
     if (name === '../middleware/campus') return { criarMiddlewareCampus: () => noop };
-    if (['../utils/campusQuery','../utils/campusPaginacao','../utils/nextGuardNivel'].includes(name)) return require('../../backend/' + name.slice(3) + '.js');
+    if (['../utils/campusQuery','../utils/campusPaginacao','../utils/nextGuardNivel','../services/campusNextSinais'].includes(name)) return require('../../backend/' + name.slice(3) + '.js');
     return new Proxy({}, { get: () => () => undefined });
   };
   vm.runInNewContext(readFileSync(join(__dirname, '../../backend/routes/next.js'), 'utf8'), { require: localRequire, module: { exports: {} }, console, Date, Intl });
@@ -46,7 +47,7 @@ function ambiente(campus = A, fail = '', quantidade = 1) {
     const handlers = routes.get('get' + path)!; let i = 0;
     const next = (): any => handlers[i++]?.(req, res, next); await next(); return res;
   }
-  return { run, queries };
+  return { run, queries, rpcCalls };
 }
 describe('Next · leituras por campus', () => {
   it.each(['/turmas', '/turmas/:id', '/matriculas', '/lista-espera', '/eventos', '/inscricoes', '/inscricoes/:id'])('filtra cada consulta local em %s', async path => {
@@ -96,6 +97,26 @@ describe('Next · leituras por campus', () => {
   });
   it.each(['/eventos','/dashboard'])('erro de contagem não vira zero em %s', async path => {
     const env = ambiente(A,'next_inscricoes'); expect((await env.run(path)).status).toHaveBeenCalledWith(503);
+  });
+
+  it('pessoas preserva marco pessoal global usando apenas IDs carregados dos atos locais', async () => {
+    const env = ambiente(); const res = await env.run('/pessoas',{ membro_id: B, cpf: 'arbitrario' });
+    expect(res.status).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].itens.every((p: any) => p.next_status === 'formado')).toBe(true);
+    for (const q of env.queries) expect(q.filters).toContainEqual(['igreja_id',A]);
+    expect(env.queries.some(q => q.table === 'vw_next_formado_pessoa' || q.table === 'mem_membros')).toBe(false);
+    expect(env.rpcCalls[0]).toEqual({ fn: 'fn_campus_next_sinais', args: { p_igreja_id: A, p_convertido_ids: ['0'], p_matricula_ids: ['0'] } });
+  });
+  it('erro no marco pessoal não reclassifica pessoas como sem Next', async () => {
+    const env = ambiente(A,'rpc'); expect((await env.run('/pessoas')).status).toHaveBeenCalledWith(503);
+  });
+
+  it('curso combina apenas atos/observações locais com sinal pessoal global', async () => {
+    const env = ambiente(); const res = await env.run('/curso');
+    expect(res.status).not.toHaveBeenCalled();
+    expect(res.json.mock.calls[0][0].itens[0].concluiu).toBe(true);
+    for (const q of env.queries) expect(q.filters).toContainEqual(['igreja_id',A]);
+    expect(env.queries.find(q => q.table === 'next_pessoa_aula_manual').order).toEqual(['membro_id']);
   });
 
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
 const require = createRequire(import.meta.url);
 const { criarCampusSuperficie } = require('../../backend/middleware/campusSuperficie.js');
 const A = '00000000-0000-0000-0000-000000000001';
@@ -95,4 +96,31 @@ describe('Campus · superfície global', () => {
     db.resposta.data = null as never;
     expect((await chamar(guard)).next).not.toHaveBeenCalled();
   });
+  it('certificação Next instalada permite somente as novas rotas comprovadas', async () => {
+    const source = readFileSync('backend/server.js','utf8');
+    const cobertura = [...source.matchAll(/\{ metodo: '([^']+)', caminho: '([^']+)' \}/g)].map(m => ({ metodo: m[1], caminho: m[2] }));
+    const guard = criarCampusSuperficie({ supabase: banco(), cobertura });
+    for (const [metodo,caminho] of [
+      ['GET','/api/next/pessoas'], ['GET','/api/next/curso'], ['PUT',`/api/next/pessoa/${A}/aulas`],
+      ['PUT',`/api/next/inscricoes/${A}`], ['POST',`/api/next/convertidos/${A}/resolver`], ['DELETE',`/api/next/convertidos/${A}/resolver`],
+    ]) expect((await chamar(guard,caminho,metodo)).next).toHaveBeenCalledOnce();
+    for (const [metodo,caminho] of [
+      ['POST','/api/next/pessoas'], ['GET',`/api/next/pessoa/${A}/aulas`], ['PUT','/api/next/pessoa/qualquer/aulas'],
+      ['POST',`/api/next/inscricoes/${A}/indicacoes`], ['PUT',`/api/next/indicacoes/${A}`], ['GET','/api/next/satisfacao'],
+    ]) expect((await chamar(guard,caminho,metodo)).next).not.toHaveBeenCalled();
+  });
+
+  it('portas Batismo certificadas não liberam acesso, fotos ou inscrições genéricas do App', async () => {
+    const source = readFileSync('backend/server.js','utf8');
+    const cobertura = [...source.matchAll(/\{ metodo: '([^']+)', caminho: '([^']+)' \}/g)].map(m => ({ metodo: m[1], caminho: m[2] }));
+    const guard = criarCampusSuperficie({ supabase: banco(), cobertura });
+    for (const [method,path] of [
+      ['GET','/api/public/batismo/campi'], ['GET','/api/public/batismo/horarios'], ['GET','/api/public/batismo/proxima-data'], ['GET','/api/public/batismo/textos'],
+      ['POST','/api/public/batismo'], ['GET','/api/app/campus/batismo/horarios'], ['POST','/api/app/campus/batismo/inscricoes'],
+    ]) expect((await chamar(guard,path,method)).next).toHaveBeenCalledOnce();
+    for (const [method,path] of [
+      ['POST','/api/app/inscricoes'], ['POST','/api/public/batismo/acesso'], ['GET','/api/public/batismo/fotos'], ['POST','/api/public/batismo/campi'],
+    ]) expect((await chamar(guard,path,method)).next).not.toHaveBeenCalled();
+  });
+
 });

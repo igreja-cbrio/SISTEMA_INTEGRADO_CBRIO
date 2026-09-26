@@ -1,96 +1,61 @@
-/**
- * Leitura do catálogo de horários de batismo — a camada que fala com o banco.
- *
- * A DECISÃO ("esse horário pode receber esta pessoa?") vive em
- * `utils/batismoHorario.js`, que é pura e entra no gate de deploy. Aqui só
- * ficam as duas consultas, compartilhadas pelos DOIS clientes: o formulário
- * público (`routes/publicBatismo.js`) e o app de membros
- * (`POST /api/app/inscricoes` com `tipo:'batismo'`).
- *
- * ⚠️ Duas cópias destas consultas é exatamente como o app e o web passam a
- * discordar sobre o que está aberto — a classe de defeito catalogada na
- * varredura de 05/08 ("o app reproduz a régua do ERP em vez de consumi-la").
+/** Catálogo e ocupação de batismo. Toda leitura resolve uma unidade operacional.
+ * Opções de campus vêm da rota autorizada ou da porta pública, nunca são
+ * autorização por si. Chamadores legados só funcionam durante preparação.
  */
-
 const { supabase } = require('../utils/supabase');
-const { DATAS_ABERTAS_PADRAO } = require('../utils/batismoData');
-const { fetchAllRows } = require('../utils/pagination');
+const { DATAS_ABERTAS_PADRAO, dataIso } = require('../utils/batismoData');
+const { lerTodasPaginas } = require('../utils/campusPaginacao');
+const { resolverCampusOperacional } = require('./campusOperacional');
 
-/**
- * Catálogo VIVO de `batismo_horarios`.
- * ⚠️ Devolve `null` quando não deu pra ler — quem consome trata isso como falha
- * FECHADA (`avaliarHorarioBatismo`), nunca como "não há horário configurado".
- * Lista vazia (`[]`) é resposta legítima: significa catálogo sem linhas.
- */
-async function horariosConfigurados() {
-  const { data, error } = await supabase
-    .from('batismo_horarios')
-    .select('horario, label, aberto, limite')
-    .is('deleted_at', null)
-    .order('ordem');
-  if (error) {
+async function contexto(opcoes = {}) {
+  const db = opcoes.supabase || supabase;
+  return { db, id: await resolverCampusOperacional(db, opcoes.campusId) };
+}
+
+async function horariosConfigurados(opcoes = {}) {
+  try {
+    const { db, id } = await contexto(opcoes);
+    return await lerTodasPaginas(() => db.from('batismo_horarios')
+      .select('id, horario, label, aberto, limite').eq('igreja_id', id)
+      .is('deleted_at', null).order('ordem').order('id'));
+  } catch (error) {
     console.error('[batismoHorarios] catálogo:', error.message);
     return null;
   }
-  return data || [];
 }
 
-/**
- * Quantas inscrições ativas já ocupam cada horário na data do batismo.
- *
- * ⚠️ Paginado: o cap de 1000 do PostgREST trunca EM SILÊNCIO, e um batismo
- * grande passando disso faria o limite por horário parar de valer sem erro
- * nenhum aparecer.
- */
-async function ocupacaoPorHorario(dataBatismo) {
-  const linhas = await fetchAllRows(() => supabase
-    .from('batismo_inscricoes')
-    .select('horario_culto')
-    .eq('data_batismo', dataBatismo)
-    .is('deleted_at', null)
-    .not('status', 'in', '(cancelado,rejeitado)'));
-  const c = {};
-  linhas.forEach((i) => {
-    if (i.horario_culto) c[i.horario_culto] = (c[i.horario_culto] || 0) + 1;
-  });
-  return c;
+// Erro em qualquer página invalida a ocupação inteira. Uma contagem parcial
+// jamais pode autorizar uma inscrição acima da capacidade.
+async function ocupacaoPorHorario(dataBatismo, opcoes = {}) {
+  if (!dataIso(dataBatismo)) throw new Error('Data de batismo inválida.');
+  const { db, id } = await contexto(opcoes);
+  const linhas = await lerTodasPaginas(() => db.from('batismo_inscricoes')
+    .select('horario_culto').eq('igreja_id', id).eq('data_batismo', dataBatismo)
+    .is('deleted_at', null).not('status', 'in', '(cancelado,rejeitado)').order('id'));
+  const ocupacao = {};
+  for (const linha of linhas) if (linha.horario_culto) ocupacao[linha.horario_culto] = (ocupacao[linha.horario_culto] || 0) + 1;
+  return ocupacao;
 }
 
-/**
- * Data do próximo batismo pela MESMA função que o fan-out SQL usa
- * (`fn_proximo_quarto_domingo`). ⚠️ Reimplementar o cálculo em JS aqui faria a
- * ocupação ser contada num dia e a inscrição cair em outro.
- * Devolve `null` em falha — o chamador decide (aqui, falha fechada).
- */
-async function dataProximoBatismo() {
-  // ⚠️⚠️ Lê o CADASTRO (`fn_batismo_proxima_data`), não mais a fórmula crua.
-  // Desde 25/09/2026 as datas vivem em `batismo_eventos`: a fórmula do 4º
-  // domingo virou o semeador. Trocar AQUI conserta os 10 pontos de chamada de
-  // uma vez — se o gestor fechar uma data, todos passam a respeitar.
-  // A própria função tem a fórmula como rede, então tabela vazia não trava.
-  const { data, error } = await supabase.rpc('fn_batismo_proxima_data');
-  if (error) {
-    console.error('[batismoHorarios] fn_batismo_proxima_data:', error.message);
+async function eventosAbertos(n = DATAS_ABERTAS_PADRAO, opcoes = {}) {
+  try {
+    if (!Number.isInteger(n) || n < 1 || n > 24) throw new Error('Quantidade de datas inválida.');
+    const { db, id } = await contexto(opcoes);
+    const { data, error } = await db.rpc('fn_campus_batismo_datas_abertas', { p_igreja_id: id, p_n: n });
+    if (error || !Array.isArray(data)) throw error || new Error('Resposta inválida do catálogo de batismo.');
+    return data.map(evento => ({ id: evento.id, data: evento.data }));
+  } catch (error) {
+    console.error('[batismoHorarios] datas:', error.message);
     return null;
   }
-  return data || null;
 }
 
-/**
- * As N próximas datas ABERTAS de batismo, em ordem.
- *
- * ⚠️ Falha FECHADA (`null`, não `[]`): lista vazia é indistinguível de "não
- * consegui ler", e quem recebe `[]` mostra um formulário sem data nenhuma sem
- * saber que está mostrando um erro.
- */
-async function datasAbertas(n = DATAS_ABERTAS_PADRAO) {
-  const { data, error } = await supabase.rpc('fn_batismo_datas_abertas', { p_n: n });
-  if (error) {
-    console.error('[batismoHorarios] fn_batismo_datas_abertas:', error.message);
-    return null;
-  }
-  // A RPC devolve linhas {data: 'YYYY-MM-DD'}; normaliza para lista de texto.
-  return (data || []).map((r) => (typeof r === 'string' ? r : r?.data)).filter(Boolean);
+async function datasAbertas(n = DATAS_ABERTAS_PADRAO, opcoes = {}) {
+  const eventos = await eventosAbertos(n, opcoes);
+  return eventos === null ? null : eventos.map(evento => evento.data);
 }
-
-module.exports = { horariosConfigurados, ocupacaoPorHorario, dataProximoBatismo, datasAbertas };
+async function dataProximoBatismo(opcoes = {}) {
+  const datas = await datasAbertas(1, opcoes);
+  return datas?.[0] || null;
+}
+module.exports = { horariosConfigurados, ocupacaoPorHorario, dataProximoBatismo, datasAbertas, eventosAbertos };

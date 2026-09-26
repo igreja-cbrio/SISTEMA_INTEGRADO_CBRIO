@@ -3237,6 +3237,7 @@ export const apresentacaoCriancasPublico = {
 };
 
 export const batismoPublico = {
+  campi: () => get('/public/batismo/campi'),
   // Textos canônicos de consentimento (o snapshot gravado é sempre o do backend)
   textos: async () => {
     const res = await fetch(`${API}/public/batismo/textos`);
@@ -3247,10 +3248,10 @@ export const batismoPublico = {
     if (!res.ok) throw new Error('Erro ao buscar próxima data');
     return res.json();
   },
-  horarios: async () => {
+  horarios: async (campus) => {
     // no-store: o seletor do form sempre reflete o estado atual (aberto/fechado/
     // lotado) que a Integração acabou de mudar — sem cache do navegador.
-    const res = await fetch(`${API}/public/batismo/horarios?t=${Date.now()}`, { cache: 'no-store' });
+    const res = await fetch(`${API}/public/batismo/horarios?campus=${encodeURIComponent(campus || "")}&t=${Date.now()}`, { cache: 'no-store' });
     if (!res.ok) throw new Error('Erro ao buscar horários');
     return res.json();
   },

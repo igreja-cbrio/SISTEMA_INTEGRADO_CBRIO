@@ -234,6 +234,27 @@ const campusApp = require('../services/campusApp').criarCampusApp({ supabase });
 router.get('/campus/contexto', authApp, limiterNormal, campusApp.contexto);
 router.get('/campus/agenda', authApp, limiterNormal, campusApp.agenda);
 router.get('/campus/agenda/:id', authApp, limiterNormal, campusApp.detalhe);
+const batismoCampusPorta = require('../services/campusBatismoPorta');
+const { contextoApp: contextoCampusBatismoApp } = require('../services/campusApp');
+const { responderErroCampus: erroCampusBatismoApp, ErroCampus: ErroCampusBatismoApp } = require('../services/campusContexto');
+router.get('/campus/batismo/horarios', authApp, limiterNormal, async (req,res)=> {
+  try { res.json(await batismoCampusPorta.catalogo(supabase,await contextoCampusBatismoApp(req,supabase))); }
+  catch(e) { erroCampusBatismoApp(res,e); }
+});
+router.post('/campus/batismo/inscricoes', authApp, limiterStrict, async (req,res)=> {
+  try {
+    const campus=await contextoCampusBatismoApp(req,supabase);
+    const membro=await batismoCampusPorta.membroConfirmado(supabase,req.user.id);
+    if(!membro.cpf || !membro.genero) throw new ErroCampusBatismoApp(400,'membro_cadastro_incompleto','Complete CPF e sexo no seu perfil antes de se inscrever.');
+    // Identidade vem exclusivamente do vínculo confirmado. Nome/CPF/membro_id
+    // enviados pelo cliente não escolhem outra pessoa nem reparam o vínculo.
+    req.batismoCampus=campus; req.batismoMembroConfirmado=membro;
+    req.body={...req.body,nome_completo:membro.nome,cpf:membro.cpf,telefone:membro.telefone,email:membro.email,
+      data_nascimento:membro.data_nascimento || req.body?.data_nascimento,sexo:membro.genero};
+    return require('./publicBatismo').inscrever(req,res);
+  } catch(e) { return erroCampusBatismoApp(res,e); }
+});
+
 
 // ── Versão mínima do app (PÚBLICO) · Onda 3 (07/08/2026) ──────────────────
 //

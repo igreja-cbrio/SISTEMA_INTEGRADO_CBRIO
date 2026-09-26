@@ -182,8 +182,12 @@ function formatDataLonga(iso: string) {
 
 export default function InscricaoBatismo() {
   const { C } = usePublicTheme();
+  const [campi, setCampi] = useState<{id:string;nome:string;slug:string}[]>([]);
+  const [campus, setCampus] = useState('');
+  const [catalogoPronto, setCatalogoPronto] = useState(false);
+  const reservaId = useRef(crypto.randomUUID());
   const [proximaData, setProximaData] = useState<string>('');
-  const [horarios, setHorarios] = useState<{ horario: string; label: string; vagas_restantes: number | null }[]>([]);
+  const [horarios, setHorarios] = useState<{ horario_id: string; horario: string; label: string; vagas_restantes: number | null }[]>([]);
   const [form, setForm] = useState({
     nome_completo: '',
     cpf: '', telefone: '', email: '',
@@ -220,35 +224,34 @@ export default function InscricaoBatismo() {
   // ⚠️ As datas de batismo abertas (25/09/2026). Antes o formulário só sabia da
   // próxima; quem queria o mês seguinte não tinha como pedir e esperava a data
   // atual passar — ~3 semanas e meia por mês.
-  const [datas, setDatas] = useState<{ data_batismo: string; horarios: typeof horarios }[]>([]);
+  const [datas, setDatas] = useState<{ evento_id: string; data_batismo: string; horarios: typeof horarios }[]>([]);
 
   useEffect(() => {
-    batismoPublico.horarios()
-      .then((r: { data_batismo: string; horarios: typeof horarios; datas?: typeof datas }) => {
-        setProximaData(r.data_batismo);
-        // ⚠️ `datas` é campo NOVO. Se o servidor for antigo (ou falhar em
-        // devolvê-lo), cai na data única — a tela nunca fica sem nada.
-        const ds = Array.isArray(r.datas) && r.datas.length
-          ? r.datas
-          : [{ data_batismo: r.data_batismo, horarios: Array.isArray(r.horarios) ? r.horarios : [] }];
-        setDatas(ds);
-        const hs = ds[0].horarios || [];
-        setHorarios(hs);
-        // ⚠️ A PRIMEIRA data vem pré-marcada de propósito: "o próximo batismo é
-        // dia X" é o que a igreja comunica no púlpito e no WhatsApp. Um seletor
-        // vazio pedindo escolha dissolveria isso.
-        setForm(f => (f.data_batismo ? f : { ...f, data_batismo: ds[0].data_batismo }));
-        if (hs.length) setForm(f => (f.horario_culto ? f : { ...f, horario_culto: hs[0].horario }));
-      })
-      .catch(() => {
-        batismoPublico.proximaData()
-          .then((r: { data_batismo: string }) => setProximaData(r.data_batismo))
-          .catch(() => {});
-      });
-    batismoPublico.textos()
-      .then((t: any) => { if (t?.termos_lgpd) setTextos(t); })
-      .catch(() => { /* fallback local */ });
-  }, []);
+    let ativo=true;
+    batismoPublico.campi().then((r:any)=>{
+      if(!ativo) return; setCampi(r.campi || []);
+      const solicitado=new URLSearchParams(window.location.search).get('campus');
+      const escolhido=solicitado ? r.campi.find((c:any)=>c.id===solicitado || c.slug===solicitado) : r.estado==='preparacao' ? r.campi.find((c:any)=>c.id===r.campus_legado_id) : null;
+      if(solicitado && !escolhido) setError('Campus não encontrado. Escolha uma unidade disponível.');
+      setCampus(escolhido?.id || '');
+    }).catch(()=>{if(ativo) setError('Não foi possível carregar os campi. Recarregue a página.');});
+    batismoPublico.textos().then((t:any)=>{if(ativo && t?.termos_lgpd) setTextos(t);}).catch(()=>{});
+    return ()=>{ativo=false;};
+  },[]);
+  useEffect(()=>{
+    let ativo=true;
+    setCatalogoPronto(false); setDatas([]); setHorarios([]); setProximaData('');
+    setForm(f=>({...f,data_batismo:'',horario_culto:''})); reservaId.current=crypto.randomUUID();
+    if(!campus) return ()=>{ativo=false;};
+    batismoPublico.horarios(campus).then((r:any)=>{
+      if(!ativo) return;
+      const ds=Array.isArray(r.datas)?r.datas:[];
+      setDatas(ds); setHorarios(ds[0]?.horarios || []); setProximaData(ds[0]?.data_batismo || '');
+      setForm(f=>({...f,data_batismo:ds[0]?.data_batismo || '',horario_culto:ds[0]?.horarios?.[0]?.horario || ''}));
+      setCatalogoPronto(true); setError('');
+    }).catch(()=>{if(ativo) setError('Não foi possível carregar as datas deste campus. Recarregue a página.');});
+    return ()=>{ativo=false;};
+  },[campus]);
 
   const set = (k: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     let v = e.target.value;
@@ -262,6 +265,7 @@ export default function InscricaoBatismo() {
     e.preventDefault();
     if (submittingRef.current) return;
     setError('');
+    if (!campus || !catalogoPronto || !form.data_batismo || !form.horario_culto) return setError('Escolha o campus, a data e um horário disponível.');
     if (!nomeCompletoValido(form.nome_completo)) {
       return setError(temAbreviacaoNome(form.nome_completo)
         ? 'Escreva seu nome completo, sem abreviações.'
@@ -287,6 +291,9 @@ export default function InscricaoBatismo() {
     setLoading(true);
     try {
       const resp: any = await batismoPublico.inscrever({
+        campus, inscricao_id:reservaId.current,
+        evento_id:datas.find(d=>d.data_batismo===form.data_batismo)?.evento_id,
+        horario_id:horarios.find(h=>h.horario===form.horario_culto)?.horario_id,
         nome_completo: form.nome_completo.trim(),
         cpf: form.cpf || null,
         telefone: form.telefone,
@@ -417,6 +424,7 @@ export default function InscricaoBatismo() {
             </div>
 
             <form onSubmit={handleSubmit}>
+              <SelectField id="campus" label="Campus do batismo" value={campus} onChange={e=>{if(!submittingRef.current) setCampus(e.target.value);}} options={campi.map(c=>({value:c.id,label:c.nome}))} required />
               <SectionTitle>Dados pessoais</SectionTitle>
               <Field id="nome_completo" label="Nome completo (sem abreviar)" value={form.nome_completo} onChange={set('nome_completo')} required autoComplete="name" />
               <Field id="email" label="E-mail" type="email" value={form.email} onChange={set('email')} required autoComplete="email" inputMode="email" />

@@ -28,11 +28,11 @@ function ambiente({ ausente = false, falha = false, erroRpc = null as any, atual
     if (name === '../middleware/campus') return { criarMiddlewareCampus: () => noop };
     if (name === '../services/membroMatch') return { acharOuCriarGuardado: matcher };
     if (name === '../services/kpiAutoCollector') return { coletarTodos: coletar };
-    if (['../utils/campusQuery','../utils/campusPaginacao','../utils/nextGuardNivel','../utils/cpf','../services/campusContexto'].includes(name)) return require('../../backend/' + name.slice(3) + '.js');
+    if (['../utils/campusQuery','../utils/campusPaginacao','../utils/nextGuardNivel','../utils/cpf','../services/campusContexto','../services/campusPessoaRegistro'].includes(name)) return require('../../backend/' + name.slice(3) + '.js');
     return new Proxy({}, { get: () => () => undefined });
   }});
   async function run(method: string, path: string, body: any = {}, campus = A) {
-    const req: any = { method: method.toUpperCase(), params: { id: ID }, body, user: { id: ID }, campus: { estado: 'ensaio', campus_id: campus, campi: [{ id: campus }] } };
+    const req: any = { method: method.toUpperCase(), params: { id: ID, membroId: ID }, body, user: { id: ID }, campus: { estado: 'ensaio', campus_id: campus, campi: [{ id: campus }] } };
     const res: any = { status: vi.fn(), json: vi.fn() }; res.status.mockReturnValue(res);
     let i = 0; const handlers = routes.get(method + path)!;
     const next = (): any => handlers[i++]?.(req, res, next); await next(); return res;
@@ -41,7 +41,7 @@ function ambiente({ ausente = false, falha = false, erroRpc = null as any, atual
 }
 describe('Next · escritas locais', () => {
   it.each([
-    ['put','/eventos/:id'], ['post','/inscricoes/:id/checkin'], ['delete','/inscricoes/:id/checkin'],
+    ['put','/eventos/:id'], ['put','/inscricoes/:id'], ['post','/convertidos/:id/resolver'], ['delete','/convertidos/:id/resolver'], ['post','/inscricoes/:id/checkin'], ['delete','/inscricoes/:id/checkin'],
     ['patch','/encontros/:id'], ['patch','/turmas/:id'], ['patch','/matriculas/:id'], ['post','/matriculas/:id/transferir'], ['patch','/matriculas/:id/contato'], ['delete','/turmas/:id'], ['delete','/matriculas/:id'],
   ])('%s %s rejeita pai invisível antes da mutação', async (method, path) => {
     const env = ambiente({ ausente: true }); const res = await env.run(method, path);
@@ -119,6 +119,29 @@ describe('Next · escritas locais', () => {
     const env = ambiente(); const res = await env.run('patch','/matriculas/:id',{ cpf: '12345678900' });
     expect(res.status).toHaveBeenCalledWith(400); expect(env.matcher).not.toHaveBeenCalled();
     expect(env.queries.some(q => q.update)).toBe(false);
+  });
+
+  it('override manual usa RPC local e não reutiliza upsert global por membro', async () => {
+    const env = ambiente(); await env.run('put','/pessoa/:membroId/aulas',{ fez_aula1: true });
+    expect(env.calls[0]).toMatchObject({ fn: 'fn_campus_next_manual', args: { p_igreja_id: A, p_membro_id: ID, p_usuario_id: ID } });
+    expect(env.queries).toHaveLength(0);
+  });
+
+  it('inscrição editada acumula contato no vínculo histórico e repete campus na mutação', async () => {
+    const env = ambiente({ atual: { membro_id: ID, nome: 'Pessoa' } });
+    await env.run('put','/inscricoes/:id',{ telefone: '(21) 99999-1111', email: ' A@B.COM ' });
+    expect(env.calls[0]).toMatchObject({ fn: 'fn_registrar_contato', args: { p_membro_id: ID, p_telefone: '21999991111', p_email: 'a@b.com' } });
+    expect(env.queries.find(q => q.update).eq).toContainEqual(['igreja_id',A]);
+  });
+  it('matrícula com membro explícito também registra contato secundário', async () => {
+    const env = ambiente({ atual: { membro_id: ID } });
+    await env.run('post','/matriculas',{ membro_id: ID, nome: 'Pessoa', telefone: '(21) 99999-1111' });
+    expect(env.calls[0]).toMatchObject({ fn: 'fn_registrar_contato', args: { p_membro_id: ID, p_telefone: '21999991111' } });
+    expect(env.queries.find(q => q.insert).insert[0]).toMatchObject({ membro_id: ID, igreja_id: A });
+  });
+  it.each(['post','delete'])('resolução de convertido %s atualiza só o campus do ato', async method => {
+    const env = ambiente(); await env.run(method,'/convertidos/:id/resolver',{ resolucao: 'contatado' });
+    const update = env.queries.find(q => q.update); expect(update.eq).toContainEqual(['igreja_id',A]); expect(update.is).toEqual(['deleted_at',null]);
   });
 
 });
