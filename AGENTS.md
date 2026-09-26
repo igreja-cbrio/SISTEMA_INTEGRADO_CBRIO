@@ -2,6 +2,19 @@
 
 Guia operacional para o Codex quando trabalhar neste repositório.
 
+## Jornada · engajamento e linha do tempo (2026-09-26)
+
+- `total_engajamento` usa `valoresEngajados()` de `backend/utils/jornadaTempo.js`,
+  a mesma régua do funil: contato pastoral não conta; vínculos importados ou
+  anteriores à decisão não comprovam engajamento posterior. Fato sem data
+  continua contado, mas não entra na mediana de tempo até engajar.
+- O filtro de pessoas sem engajamento conta o prazo desde a decisão; contato
+  recente não reinicia esse prazo. Ano/mês filtram a lista; os cards declaram
+  que resumem o período carregado.
+- O card em Grupos > Relatórios respeita os módulos já aceitos pelo endpoint
+  de jornada e busca os dados somente quando aberto. Não ampliar o guard da API
+  para conceder acesso ao card.
+
 ## Como este arquivo é mantido (auditoria 2026-06-10)
 
 Este arquivo contém **leis do projeto + estado atual dos módulos + lições aprendidas**.

@@ -6971,7 +6971,7 @@ mostra a posição de cada lente e as divergências.
   oráculo. Consenso do conselho **não é evidência**; para fatos, validar contra o
   código/banco/fontes, não contra o "consenso".
 
-## ⚠️ IA fora do ar = `ANTHROPIC_API_KEY` inválida na Vercel (2026-07-22)
+## ⚠️ IA fora do ar · chave inválida (401) OU sem saldo (400) (2026-07-22 · 2026-09-24)
 
 Sintoma: telas/crons que usam IA quebram todos ao mesmo tempo com **401
 `authentication_error` "API key is invalid"** — NPS (gerar perguntas), agente
@@ -6986,6 +6986,56 @@ da Anthropic → atualizar `ANTHROPIC_API_KEY` (Production) na Vercel → **rede
 (a Vercel só aplica env nova em deployment novo; não há ignored build step, então
 qualquer commit na main serve). Diagnóstico rápido: `get_runtime_errors` da Vercel
 agrupa por `authentication_error`.
+
+### ⚠️⚠️ São DOIS erros diferentes, e o conserto de um NÃO serve para o outro (2026-09-24)
+
+O Matheus apertou "Gerar de novo" no relatório do censo e recebeu **400**. Ler
+a seção acima e sair trocando a env teria sido o conserto errado.
+
+| | 22/07 (a seção acima) | **24/09** |
+|---|---|---|
+| HTTP | **401** | **400** |
+| `type` | `authentication_error` | `invalid_request_error` |
+| mensagem | *"API key is invalid"* | *"Your credit balance is too low (...) purchase credits"* |
+| causa | chave rotacionada; o valor na Vercel ficou velho | **saldo da conta Anthropic acabou** |
+| conserto | nova key → env na Vercel → **redeploy** | **comprar crédito** em console.anthropic.com → Plans & Billing |
+| deploy? | sim, obrigatório | **não** — volta sozinho no próximo tique dos crons |
+
+⚠️⚠️ **Trocar a chave no 400 não resolve e ainda cria um problema**: a chave
+NOVA sai da MESMA organização, com o MESMO saldo zerado, e o redeploy dá a
+impressão de que "alguma coisa foi feita".
+
+⚠️ **O sintoma aparece primeiro onde alguém CLICA, não onde começa.** O relatório
+do censo foi o que ele viu, mas a medição em `agent_runs` mostrou que a parada
+era de **~36 horas** e já tinha **70 execuções falhadas**: último sucesso do
+`incident_backend_diagnostician` em **22/09 11:30**, do
+`incident_automation_diagnostician` em **23/09 11:05**, do
+`piloto_triage_watcher` em **23/09 11:31** — e nada depois disso.
+
+⇒ **`agent_runs` é o termômetro da chave**, e responde em uma consulta:
+
+```sql
+select agent_type, status, count(*), max(created_at)
+from agent_runs where created_at >= now() - interval '3 days'
+group by 1,2 order by 4 desc;
+```
+
+⚠️ **Não existe alarme para isso.** O `monitorAutomacoes` vigia pipeline de
+DADO, não a chave; e os agentes que abririam incidente são justamente os que
+não rodam sem crédito — **o vigia morre junto com o vigiado**. Foi por isso que
+36 horas passaram sem ninguém saber. Alarme de saldo teria de ser um cron
+BARATO, sem IA, olhando `agent_runs` (ou a própria API da Anthropic).
+
+⚠️ **O que fica parado é TUDO o que usa a chave** (é uma só): relatório e
+Leitura da IA do censo · NPS · agente de primeiro contato · agente
+batismo/Next · Central de Agentes · `developer_agent` (o "Resolver todos" dos
+Diagnósticos) · Cérebro · nfScanner · parser do WhatsApp · bot de IA por área ·
+agente executor financeiro e `rotina_gestor` (Railway).
+
+⚠️ **Nada se perde**: o relatório anterior continua na tela (o de 21/09, com
+1.353 respostas), e a falha é na GERAÇÃO. Mas as 70 execuções que falharam
+**não são refeitas sozinhas** — quem depende de janela (a triagem de incidente
+de 5 em 5 min) simplesmente perdeu aquelas rodadas.
 
 ## ⚠️ LEI · NUNCA nomear pessoa como dono de fluxo neste arquivo (2026-08-05)
 

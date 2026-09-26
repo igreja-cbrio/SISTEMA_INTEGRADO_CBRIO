@@ -15,9 +15,15 @@
  *     aparece VAZADO e fica fora da mediana — com a exclusão declarada.
  */
 import { useMemo, useState } from 'react';
-import { Clock, AlertTriangle, Users, TrendingUp, Info } from 'lucide-react';
+import { Clock, AlertTriangle, Users, TrendingUp, Info, HelpCircle, PhoneCall } from 'lucide-react';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../ui/tooltip';
+import Paginacao, { usePaginacaoLocal } from '../Paginacao';
+
+const MESES = [
+  'janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+  'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro',
+];
 
 const COR: Record<string, string> = {
   contato: '#3b82f6',
@@ -33,11 +39,14 @@ type Marco = { alcancado: boolean; data: string | null; dias: number | null; apr
 type Item = {
   id: string; nome: string; area?: string; data_culto: string;
   dias_desde_conversao: number; dias_parado?: number | null; total_marcos?: number;
+  total_engajamento?: number; dias_ate_engajar?: number | null;
   marcos?: Record<string, Marco>;
   registro?: { texto: string; porPessoa: boolean | null; atrasoDias: number | null } | null;
 };
 type EstatMarco = {
   chave: string; label: string; meta_dias: number | null;
+  // significado do marco · vem do catálogo do backend (fonte única da régua)
+  descricao?: string; fonte?: string; engajamento?: boolean;
   alcancaram: number; pct: number; com_data_confiavel: number; aproximados: number;
   mediana: number | null; q1: number | null; q3: number | null; min: number | null; max: number | null;
 };
@@ -72,7 +81,26 @@ function BarraTempo({ e, maxDias }: { e: EstatMarco; maxDias: number }) {
   return (
     <div className="flex items-center gap-3 py-2">
       <div className="w-28 shrink-0">
-        <p className="text-xs font-medium truncate">{e.label}</p>
+        <div className="flex items-center gap-1">
+          <p className="text-xs font-medium truncate">{e.label}</p>
+          {/* A régua fica COLADA no rótulo: é o que impede este número de
+              virar discussão contra o /painel (o caso do "fez o Next"). */}
+          {e.descricao && (
+            <TooltipProvider delayDuration={100}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button type="button" aria-label={`O que significa ${e.label}`}>
+                    <HelpCircle className="h-3 w-3 text-muted-foreground/70 shrink-0" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-[280px] text-xs space-y-1">
+                  <p>{e.descricao}</p>
+                  {e.fonte && <p className="text-muted-foreground">{e.fonte}</p>}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          )}
+        </div>
         <p className="text-[10px] text-muted-foreground tabular-nums">
           {e.alcancaram} · {e.pct}%
         </p>
@@ -115,7 +143,7 @@ function BarraTempo({ e, maxDias }: { e: EstatMarco; maxDias: number }) {
 }
 
 /** Uma pessoa = uma linha do tempo. Eixo X = dias desde a decisão DELA. */
-function LinhaPessoa({ item, escala, hoje }: { item: Item; escala: number; hoje: number }) {
+function LinhaPessoa({ item, escala }: { item: Item; escala: number }) {
   const marcos = item.marcos || {};
   const comData = Object.entries(marcos).filter(([, m]) => m?.alcancado && typeof m.dias === 'number' && m.dias >= 0);
   const semData = Object.entries(marcos).filter(([, m]) => m?.alcancado && (m.dias == null || m.dias < 0));
@@ -231,29 +259,51 @@ export default function JornadaTimeline({ data }: { data: any }) {
   const [ordem, setOrdem] = useState<'recentes' | 'parados' | 'rapidos' | 'marcos'>('recentes');
   const [limiar, setLimiar] = useState(90);
   const [soTravados, setSoTravados] = useState(false);
-  const [pagina, setPagina] = useState(1);
+  const [ano, setAno] = useState('todos');
+  const [mes, setMes] = useState('todos');
 
   const itens: Item[] = data?.itens || [];
   const tempo = data?.tempo;
   const estat: EstatMarco[] = tempo?.marcos || [];
-  const hoje = Date.now();
+
+  // Anos/meses derivados do DADO, não de um range fixo: mês sem decisão não
+  // pode aparecer no seletor como se fosse opção que resulta em lista vazia.
+  const anosDisponiveis = useMemo(() => {
+    const s = new Set<string>();
+    for (const i of itens) if (i.data_culto) s.add(i.data_culto.slice(0, 4));
+    return [...s].sort((a, b) => b.localeCompare(a));
+  }, [itens]);
+
+  const mesesDisponiveis = useMemo(() => {
+    const s = new Set<number>();
+    for (const i of itens) {
+      if (!i.data_culto) continue;
+      if (ano !== 'todos' && i.data_culto.slice(0, 4) !== ano) continue;
+      s.add(Number(i.data_culto.slice(5, 7)));
+    }
+    return [...s].sort((a, b) => a - b);
+  }, [itens, ano]);
 
   const lista = useMemo(() => {
     let arr = itens.slice();
-    if (soTravados) arr = arr.filter((i) => (i.total_marcos ?? 0) === 0 && (i.dias_parado ?? 0) > limiar);
+    // Recorte por ano/mês da DECISÃO (é a data que ancora todo o eixo de tempo).
+    if (ano !== 'todos') arr = arr.filter((i) => i.data_culto?.slice(0, 4) === ano);
+    if (mes !== 'todos') arr = arr.filter((i) => i.data_culto?.slice(5, 7) === mes);
+    // Sem engajamento: prazo contado desde a decisão. Um contato recente não reinicia esse prazo.
+    if (soTravados) arr = arr.filter((i) => (i.total_engajamento ?? 0) === 0 && i.dias_desde_conversao > limiar);
     const parado = (i: Item) => i.dias_parado ?? i.dias_desde_conversao;
-    const primeiro = (i: Item) => {
-      const ds = Object.values(i.marcos || {})
-        .filter((m) => m?.alcancado && typeof m.dias === 'number' && m.dias >= 0)
-        .map((m) => m.dias as number);
-      return ds.length ? Math.min(...ds) : Number.POSITIVE_INFINITY;
-    };
+    const primeiro = (i: Item) => i.dias_ate_engajar ?? Number.POSITIVE_INFINITY;
     if (ordem === 'parados') arr.sort((a, b) => parado(b) - parado(a));
     else if (ordem === 'rapidos') arr.sort((a, b) => primeiro(a) - primeiro(b));
     else if (ordem === 'marcos') arr.sort((a, b) => (b.total_marcos ?? 0) - (a.total_marcos ?? 0));
     else arr.sort((a, b) => (a.data_culto < b.data_culto ? 1 : -1));
     return arr;
-  }, [itens, ordem, soTravados, limiar]);
+  }, [itens, ordem, soTravados, limiar, ano, mes]);
+
+  // Paginação CLIENT-SIDE pelo componente padrão da casa — reseta pra página
+  // 1 sozinha quando o total muda (trocar ano/mês não deixa a pessoa numa
+  // página que já não existe).
+  const { pageItems: visiveis, paginacaoProps, setPageSize } = usePaginacaoLocal(lista, 25);
 
   const escala = useMemo(() => {
     const max = Math.max(30, ...lista.slice(0, 400).map((i) => i.dias_desde_conversao || 0));
@@ -265,25 +315,25 @@ export default function JornadaTimeline({ data }: { data: any }) {
     [estat],
   );
 
+  // "Travado" exige ZERO marco de ENGAJAMENTO. Com o contato contando, este
+  // número dava 0 numa coorte em que 88% nunca engajaram — porque quase todo
+  // mundo tem contato, e ele é do mesmo dia da decisão.
   const travados = useMemo(
-    () => itens.filter((i) => (i.total_marcos ?? 0) === 0 && (i.dias_parado ?? 0) > limiar).length,
+    () => itens.filter((i) => (i.total_engajamento ?? 0) === 0 && i.dias_desde_conversao > limiar).length,
     [itens, limiar],
   );
 
-  const medianaPrimeiro = useMemo(() => {
-    const ds = itens
-      .map((i) =>
-        Object.values(i.marcos || {})
-          .filter((m) => m?.alcancado && !m.aproximada && typeof m.dias === 'number' && m.dias >= 0)
-          .map((m) => m.dias as number),
-      )
-      .filter((a) => a.length)
-      .map((a) => Math.min(...a))
-      .sort((a, b) => a - b);
-    if (!ds.length) return null;
-    const meio = Math.floor(ds.length / 2);
-    return ds.length % 2 ? ds[meio] : Math.round((ds[meio - 1] + ds[meio]) / 2);
-  }, [itens]);
+  // Recorte da LISTA em português, pra ficar colado no número (rótulo de
+  // agregado sem a janela ao lado é lido errado — lição do Retrato dos Grupos).
+  const rotuloRecorte = useMemo(() => {
+    const partes: string[] = [];
+    if (mes !== 'todos') partes.push(MESES[Number(mes) - 1]);
+    if (ano !== 'todos') partes.push(ano);
+    if (!partes.length) return 'todo o período carregado';
+    return `decisões de ${partes.join(' de ')}`;
+  }, [ano, mes]);
+
+  const temFiltro = ano !== 'todos' || mes !== 'todos' || soTravados;
 
   if (!tempo) {
     return (
@@ -293,21 +343,30 @@ export default function JornadaTimeline({ data }: { data: any }) {
     );
   }
 
-  const visiveis = lista.slice(0, pagina * 40);
   const total = itens.length;
   const engajaram = tempo.engajaram ?? 0;
+  const contatoFeito = tempo.contato_feito ?? 0;
+  const medianaEngajar = tempo.mediana_ate_engajar ?? null;
+  const comDataConfiavel = tempo.engajaram_com_data_confiavel ?? 0;
 
   return (
     <div className="space-y-4">
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+      <p className="text-xs text-muted-foreground">Resumo do período carregado. Os filtros abaixo alteram apenas a lista de pessoas.</p>
+      {/* 5 tiles, e "contato" tem o SEU: com ele dentro de "engajaram" os
+          quatro números do topo respondiam à mesma pergunta (e a errada). */}
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
         <Tile icon={Users} titulo="Convertidos" valor={total.toLocaleString('pt-BR')}
-          apoio="no recorte atual" />
+          apoio="no período carregado" />
+        <Tile icon={PhoneCall} titulo="1º contato feito" valor={contatoFeito.toLocaleString('pt-BR')}
+          apoio={`${total ? Math.round((contatoFeito / total) * 100) : 0}% · alcance da equipe`} cor="#3b82f6" />
         <Tile icon={TrendingUp} titulo="Engajaram" valor={engajaram.toLocaleString('pt-BR')}
-          apoio={`${total ? Math.round((engajaram / total) * 100) : 0}% têm ao menos 1 marco`} cor="#10b981" />
-        <Tile icon={AlertTriangle} titulo={`Sem marco há +${limiar}d`} valor={travados.toLocaleString('pt-BR')}
-          apoio="nenhum registro além da decisão" alerta={travados > 0} />
-        <Tile icon={Clock} titulo="Até o 1º marco" valor={fmtDias(medianaPrimeiro)}
-          apoio="mediana · só datas confiáveis" />
+          apoio={`${total ? Math.round((engajaram / total) * 100) : 0}% · engajamento após a decisão`} cor="#10b981" />
+        <Tile icon={AlertTriangle} titulo={`Sem registro há +${limiar}d`} valor={travados.toLocaleString('pt-BR')}
+          apoio="sem engajamento após a decisão" alerta={travados > 0} />
+        <Tile icon={Clock} titulo="Até engajar" valor={fmtDias(medianaEngajar)}
+          apoio={medianaEngajar == null
+            ? 'ninguém com data confiável'
+            : `mediana sobre ${comDataConfiavel} pessoa${comDataConfiavel === 1 ? '' : 's'}`} />
       </div>
 
       <div className="rounded-[16px] border border-border bg-card p-4">
@@ -339,9 +398,63 @@ export default function JornadaTimeline({ data }: { data: any }) {
           <p className="text-[11px] text-amber-600 dark:text-amber-500 mt-2">
             {tempo.datas_de_importacao.length} data(s) de importação em massa detectada(s)
             ({tempo.datas_de_importacao.map((d: string) => fmtDia(d)).join(' · ')}) — vínculos de grupo
-            nesses dias entram como data aproximada e ficam fora da mediana.
+            nesses dias aparecem como alcançados, mas não comprovam engajamento após a decisão nem entram na mediana.
           </p>
         )}
+
+        {/* O SIGNIFICADO DE CADA MARCO, à vista (pedido do Matheus · 14/08).
+            Recolhido por padrão: quem já sabe não precisa rolar por cima dele,
+            e quem não sabe encontra sem sair da tela nem perguntar. */}
+        <details className="mt-3 border-t border-border pt-2 group">
+          <summary className="cursor-pointer text-[11px] font-medium text-muted-foreground hover:text-foreground list-none flex items-center gap-1">
+            <HelpCircle className="h-3.5 w-3.5" />
+            O que significa cada marco
+            <span className="text-muted-foreground/60 group-open:hidden">— abrir</span>
+          </summary>
+          <dl className="mt-2 space-y-2">
+            <div className="flex gap-2">
+              <span className="h-2.5 w-2.5 rounded-full shrink-0 mt-1" style={{ background: COR_DECISAO }} />
+              <div>
+                <dt className="text-xs font-medium">Decisão <span className="font-normal text-muted-foreground">(dia 0)</span></dt>
+                <dd className="text-[11px] text-muted-foreground">
+                  A decisão de fé registrada num culto. É a data de onde todo o tempo é contado.
+                </dd>
+              </div>
+            </div>
+            {estat.map((e) => (
+              <div key={e.chave} className="flex gap-2">
+                <span className="h-2.5 w-2.5 rounded-full shrink-0 mt-1" style={{ background: COR[e.chave] }} />
+                <div>
+                  <dt className="text-xs font-medium">
+                    {e.label}
+                    {e.meta_dias != null && (
+                      <span className="font-normal text-muted-foreground"> · prazo interno {e.meta_dias} dias</span>
+                    )}
+                    {e.engajamento === false && (
+                      <span className="font-normal text-muted-foreground"> · não conta como engajamento</span>
+                    )}
+                  </dt>
+                  <dd className="text-[11px] text-muted-foreground">
+                    {e.descricao || '—'}
+                    {e.fonte && <span className="block text-muted-foreground/80">{e.fonte}</span>}
+                  </dd>
+                </div>
+              </div>
+            ))}
+            <div className="flex gap-2">
+              <span className="h-2.5 w-2.5 rounded-full border-2 shrink-0 mt-1" style={{ borderColor: '#94a3b8' }} />
+              <div>
+                <dt className="text-xs font-medium">Marcador vazado = data aproximada</dt>
+                <dd className="text-[11px] text-muted-foreground">
+                  A pessoa alcançou o marco, mas a data guardada não é a do evento (veio de
+                  importação ou o encontro não teve data registrada). Conta como alcançado e fica
+                  fora da mediana. Vínculos importados ou anteriores à decisão também ficam fora da conta de engajamento. <strong>Marco ausente nunca significa "não fez"</strong> — significa
+                  que o sistema não tem registro.
+                </dd>
+              </div>
+            </div>
+          </dl>
+        </details>
       </div>
 
       <div className="rounded-[16px] border border-border bg-card">
@@ -349,17 +462,43 @@ export default function JornadaTimeline({ data }: { data: any }) {
           <div>
             <h4 className="text-sm font-semibold">Linha do tempo por pessoa</h4>
             <p className="text-[11px] text-muted-foreground">
-              {lista.length.toLocaleString('pt-BR')} de {total.toLocaleString('pt-BR')} · eixo em dias desde a decisão
+              {lista.length.toLocaleString('pt-BR')} de {total.toLocaleString('pt-BR')} · {rotuloRecorte}
+              {' · '}eixo em dias desde a decisão
               {escala > 90 && ' · linha tracejada = 90 dias'}
             </p>
           </div>
           <div className="flex items-center gap-2 flex-wrap">
+            {/* Ano/mês da DECISÃO · opções derivadas do dado carregado */}
+            <Select
+              value={ano}
+              onValueChange={(v) => {
+                setAno(v);
+                // Trocar o ano ZERA o mês: "março" do ano novo pode não ter
+                // decisão nenhuma, e a lista ficaria vazia sem motivo visível.
+                setMes('todos');
+              }}
+            >
+              <SelectTrigger className="w-[104px] h-8 text-xs"><SelectValue placeholder="Ano" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os anos</SelectItem>
+                {anosDisponiveis.map((a) => <SelectItem key={a} value={a}>{a}</SelectItem>)}
+              </SelectContent>
+            </Select>
+            <Select value={mes} onValueChange={setMes}>
+              <SelectTrigger className="w-[124px] h-8 text-xs"><SelectValue placeholder="Mês" /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="todos">Todos os meses</SelectItem>
+                {mesesDisponiveis.map((m) => (
+                  <SelectItem key={m} value={String(m).padStart(2, '0')}>{MESES[m - 1]}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
               <input type="checkbox" className="accent-primary" checked={soTravados}
-                onChange={(e) => { setSoTravados(e.target.checked); setPagina(1); }} />
-              só quem está parado há mais de
+                onChange={(e) => setSoTravados(e.target.checked)} />
+              sem engajamento registrado há mais de
             </label>
-            <Select value={String(limiar)} onValueChange={(v) => { setLimiar(Number(v)); setPagina(1); }}>
+            <Select value={String(limiar)} onValueChange={(v) => setLimiar(Number(v))}>
               <SelectTrigger className="w-[92px] h-8 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
                 {[30, 60, 90, 180, 365].map((d) => (
@@ -367,7 +506,7 @@ export default function JornadaTimeline({ data }: { data: any }) {
                 ))}
               </SelectContent>
             </Select>
-            <Select value={ordem} onValueChange={(v: any) => { setOrdem(v); setPagina(1); }}>
+            <Select value={ordem} onValueChange={(v: any) => setOrdem(v)}>
               <SelectTrigger className="w-[176px] h-8 text-xs"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="recentes">Decisão mais recente</SelectItem>
@@ -376,32 +515,50 @@ export default function JornadaTimeline({ data }: { data: any }) {
                 <SelectItem value="marcos">Mais marcos alcançados</SelectItem>
               </SelectContent>
             </Select>
+            {temFiltro && (
+              <button
+                type="button"
+                onClick={() => { setAno('todos'); setMes('todos'); setSoTravados(false); }}
+                className="text-xs text-primary hover:underline"
+              >
+                Limpar filtros
+              </button>
+            )}
           </div>
         </div>
 
         <div className="px-4 pb-4 overflow-x-auto">
           <div className="min-w-[640px]">
             {visiveis.length === 0 ? (
-              <p className="text-sm text-muted-foreground text-center py-8">
-                {soTravados
-                  ? `Ninguém está sem nenhum marco há mais de ${limiar} dias neste recorte.`
-                  : 'Nenhum convertido no acompanhamento.'}
-              </p>
+              /* Vazio DIZ qual filtro provavelmente zerou — vazio mudo faz a
+                 pessoa concluir que não há ninguém. */
+              <div className="text-center py-8 space-y-2">
+                <p className="text-sm text-muted-foreground">
+                  {soTravados
+                    ? `Ninguém está sem engajamento registrado há mais de ${limiar} dias em ${rotuloRecorte}.`
+                    : temFiltro
+                      ? `Nenhuma decisão em ${rotuloRecorte}.`
+                      : 'Nenhum convertido no acompanhamento.'}
+                </p>
+                {temFiltro && (
+                  <button
+                    type="button"
+                    onClick={() => { setAno('todos'); setMes('todos'); setSoTravados(false); }}
+                    className="text-xs text-primary hover:underline"
+                  >
+                    Limpar filtros
+                  </button>
+                )}
+              </div>
             ) : (
-              visiveis.map((i) => <LinhaPessoa key={i.id} item={i} escala={escala} hoje={hoje} />)
+              visiveis.map((i) => <LinhaPessoa key={i.id} item={i} escala={escala} />)
             )}
           </div>
         </div>
 
-        {visiveis.length < lista.length && (
+        {lista.length > 0 && (
           <div className="px-4 pb-4">
-            <button
-              type="button"
-              onClick={() => setPagina((p) => p + 1)}
-              className="w-full text-xs text-primary hover:underline py-2"
-            >
-              Carregar mais ({lista.length - visiveis.length} restantes)
-            </button>
+            <Paginacao {...paginacaoProps} itemLabel="pessoas" onPageSizeChange={setPageSize} />
           </div>
         )}
       </div>
