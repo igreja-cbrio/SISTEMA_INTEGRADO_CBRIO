@@ -23,8 +23,8 @@ import QrScanner from '@/pages/ministerial/voluntariado/components/checkin/QrSca
 import { calcIdadeMeses, formatIdade, formatIdadeShort } from './lib/idade';
 import { imprimirEtiquetas, imprimirEtiquetasLote, reimprimirEtiqueta, reimprimirEtiquetasCompletas } from './lib/imprimir';
 import * as off from './lib/offlineKids';
+import { createCampusRequest } from '@/lib/campusSession';
 import { motivoFalhaBloco } from './lib/motivoBloco';
-import { ehFalhaDeRedeOuServidor } from '@/lib/falhaDeRede';
 import DataNascimentoPicker from './DataNascimentoPicker';
 import useConfirmarSaida from '@/hooks/useConfirmarSaida';
 import confetti from 'canvas-confetti';
@@ -401,6 +401,7 @@ export default function TotemKidsCheckin() {
   // garante a unicidade do código de retirada é o SERVIDOR; o totem só
   // consome. Pedir isto offline não funciona, e não deve funcionar.
   const recarregarBloco = useCallback(async (sessaoId?: string | null) => {
+    const scope = createCampusRequest();
     try {
       // ⚠️⚠️ `checkin.` NÃO é enfeite: a função mora em `totemKids.checkin`
       // (`src/api.js`). Chamada em `totemKids.reservarCodigos` — como ficou de
@@ -416,6 +417,7 @@ export default function TotemKidsCheckin() {
         sessao_id: sessaoId || null,
         quantidade: 60,   // domingo tem pico de 125 simultâneos entre TODAS as estações
       });
+      scope.assertCurrent();
       off.guardarCodigos(r?.codigos || []);
       setCodigosOffline(off.codigosDisponiveis().length);
       // ⚠️ Servidor respondeu OK e mandou lista VAZIA é outro estado: não é
@@ -429,7 +431,7 @@ export default function TotemKidsCheckin() {
       // ⚠️ Vai pro console (e daí pra telemetria): o motivo do 503 vive no log
       // da função, e sem esta linha ninguém liga uma coisa à outra.
       console.error('[totem-kids] não deu pra reservar o bloco offline:', e);
-    }
+    } finally { scope.release(); }
   }, []);
 
   // ⚠️ Sincroniza quando a rede volta. `navigator.onLine` NÃO basta (ele só vê
@@ -455,6 +457,8 @@ export default function TotemKidsCheckin() {
       if (!silencioso && !r.enviados && !r.duplicados && r.pendentes) {
         toast.warning(`Ainda sem sistema — ${r.pendentes} na fila.`);
       }
+    } catch (e) {
+      if ((e as { code?: string })?.code !== 'CAMPUS_CONTEXT_CHANGED') toast.error((e as Error)?.message || 'Não foi possível sincronizar a fila offline.');
     } finally { setSincronizando(false); }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sincronizando]);
@@ -462,6 +466,8 @@ export default function TotemKidsCheckin() {
   useEffect(() => {
     setFilaOffline(off.filaCount());
     setCodigosOffline(off.codigosDisponiveis().length);
+    if (off.excecoes().length) toast.error('Há etiquetas offline com código recusado neste campus. Procure a coordenação antes da retirada das crianças.', { duration: 60000 });
+    if (off.possuiFilaLegada()) toast.error('Há uma fila offline anterior à separação de campus neste aparelho. Não a reenvie automaticamente; peça à coordenação que confira as etiquetas.', { duration: 60000 });
   }, []);
 
   useEffect(() => {
@@ -1359,6 +1365,8 @@ export default function TotemKidsCheckin() {
   }
 
   async function confirmarCheckin() {
+    const scope=createCampusRequest();
+    try {
     if (!sessao || !crianca || !salaSelecionada) {
       toast.error('Falta selecionar sala');
       return;
@@ -1378,6 +1386,7 @@ export default function TotemKidsCheckin() {
       usarRespManual ? null : (respSelInd?.membro?.cpf || null),
       usarRespManual ? (respManualNome.trim() || 'o responsável') : (respSelInd?.membro?.nome || 'o responsável'),
     );
+    scope.assertCurrent();
     if (cpfRes === null) return; // operador cancelou
 
     setImprimindo(true);
@@ -1421,9 +1430,13 @@ export default function TotemKidsCheckin() {
       let r: any;
       let modoOffline = false;
       try {
+        scope.assertCurrent();
         r = await totemKids.checkin.criar(payload);
+        scope.assertCurrent();
       } catch (e) {
-        if (!ehFalhaDeRedeOuServidor(e)) throw e;
+        scope.assertCurrent();
+        if (!off.falhaCompativelOffline(e)) throw e;
+        if (usarRespManual || cpfRes.dispensado || !respSelInd?.membro?.cpf) throw new Error('Este atendimento precisa de conferência online do responsável. Use a ficha de papel e avise a coordenação.');
 
         const codigo = off.sacarCodigo();
         // ⚠️⚠️ SEM BLOCO NÃO HÁ CHECK-IN OFFLINE, e isso é um NÃO honesto.
@@ -1442,6 +1455,8 @@ export default function TotemKidsCheckin() {
           crianca_nome: crianca.nome,
           sala_id: salaSelecionada,
           sessao_id: String(sessao_id),
+          responsavel_id: responsavelSelecionado,
+          cultos_extras: (cultos_extras || []) as string[],
           responsavel_nome: usarRespManual
             ? respManualNome.trim()
             : (crianca.responsaveis.find(x => x.membro_id === responsavelSelecionado)?.membro?.nome || 'Responsável'),
@@ -1549,6 +1564,7 @@ export default function TotemKidsCheckin() {
     } finally {
       setImprimindo(false);
     }
+    } finally { scope.release(); }
   }
 
   if (carregando) {

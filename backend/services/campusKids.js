@@ -52,10 +52,11 @@ function criarCheckoutKids({ supabase }) {
 }
 function criarCheckinKids({ supabase, reconciliarCpf }) {
   return async (req, res, next) => {
-    if (req.campus.estado === 'preparacao') return next();
+    if (req.campus.estado === 'preparacao' && !req.body?.codigo_reservado && req.body?.origem!=='offline') return next();
     try {
       validarContexto(req.campus, true);
       const b = req.body || {};
+      if(b.origem==='offline' && !b.codigo_reservado) throw new ErroCampus(400,'kids_offline_invalido','Informe o código reservado da etiqueta offline.');
       if (b.igreja_id !== undefined && b.igreja_id !== req.campus.campus_id) throw new ErroCampus(403, 'campus_payload_divergente', 'Campus divergente.');
       if (b.permitir_sem_cpf || !b.responsavel_id || b.enviar_wpp) {
         throw new ErroCampus(503, 'kids_fluxo_pendente', 'Este fluxo de check-in ainda não está habilitado para múltiplos campi.');
@@ -101,10 +102,18 @@ function criarCheckinKids({ supabase, reconciliarCpf }) {
       };
       let resposta;
       for (let tentativa = 0; tentativa < (parametros.p_codigo_reservado ? 1 : 5); tentativa += 1) {
-        resposta = await supabase.rpc('fn_campus_kids_checkin', parametros);
+        if(parametros.p_codigo_reservado) {
+          if(typeof b.estacao_ref!=='string' || !b.checkin_at || !Number.isFinite(Date.parse(b.checkin_at))) throw new ErroCampus(400,'kids_offline_invalido','Atendimento offline exige estação e horário válidos.');
+          resposta=await supabase.rpc('fn_campus_kids_checkin_offline',{
+            p_igreja_id:req.campus.campus_id,p_usuario_id:req.user.id || req.user.userId,p_estacao_ref:b.estacao_ref,
+            p_sessao_id:b.sessao_id,p_crianca_id:b.crianca_id,p_sala_id:b.sala_id,p_responsavel_id:membro.id,
+            p_codigo:parametros.p_codigo_reservado,p_checkin_at:b.checkin_at,p_estacao_id:b.estacao_id || null,p_cultos_extras:extras,
+          });
+        } else resposta = await supabase.rpc('fn_campus_kids_checkin', parametros);
         if (resposta.error?.code !== '23505' || !/colis[aã]o.*c[oó]digo/i.test(resposta.error.message || '')) break;
       }
       const { data, error } = resposta;
+      if(error && parametros.p_codigo_reservado && ['P0403','P0409'].includes(error.code)) return res.status(409).json({error:error.message,codigo_conflito:true,code:'kids_codigo_conflito'});
       if (error) throw new ErroCampus(({ '23514': 409, '23505': 409, P0400: 400, P0403: 403, P0404: 404 })[error.code] || 503,'kids_checkin_recusado',error.message);
       if (!data?.checkin) throw new Error('Check-in sem resultado.');
       res.status(201).json({ checkin: data.checkin, crianca, sala, sessao: { id: sessao.id, culto: sessao.culto },

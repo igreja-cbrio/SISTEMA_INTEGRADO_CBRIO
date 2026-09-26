@@ -50,8 +50,8 @@ describe('Kids · check-in com responsável canônico e ato local', () => {
     const e = env({ falha: 'kids_salas' }); expect((await e.run()).status).toHaveBeenCalledWith(503); expect(e.rpc).not.toHaveBeenCalled();
   });
   it('código reservado impresso nunca é trocado ou tentado novamente', async () => {
-    const e = env({ colisao: true }); expect((await e.run({ codigo_reservado: 'abcd' })).status).toHaveBeenCalledWith(409);
-    expect(e.rpc).toHaveBeenCalledTimes(1); expect(e.rpc).toHaveBeenCalledWith('fn_campus_kids_checkin', expect.objectContaining({ p_codigo_reservado: 'ABCD' }));
+    const e = env({ colisao: true }); expect((await e.run({ codigo_reservado: 'abcd', estacao_ref:'totem-00000000-0000-0000-0000-000000000001', checkin_at:'2026-09-27T12:00:00Z' })).status).toHaveBeenCalledWith(409);
+    expect(e.rpc).toHaveBeenCalledTimes(1); expect(e.rpc).toHaveBeenCalledWith('fn_campus_kids_checkin_offline', expect.objectContaining({ p_codigo: 'ABCD', p_usuario_id:RESP, p_igreja_id:A }));
   });
   it('colisão online sem etiqueta impressa permite nova tentativa atômica', async () => {
     const e = env({ colisao: true }); await e.run(); expect(e.rpc).toHaveBeenCalledTimes(5);

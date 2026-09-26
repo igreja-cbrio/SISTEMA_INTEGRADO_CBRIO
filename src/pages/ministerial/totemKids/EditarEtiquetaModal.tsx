@@ -16,6 +16,7 @@ import { Baby, Loader2, Upload, Trash2, Printer, RotateCcw, Image as ImageIcon }
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { toast } from 'sonner';
+import { createCampusRequest } from '@/lib/campusSession';
 import { totemKids } from '@/api';
 import { imprimirEtiquetas, gerarHtmlPreviewCrianca, gerarHtmlPreviewAniversario } from './lib/imprimir';
 import { arquivoParaDataUrl } from '@/lib/imagemParaEnvio';
@@ -102,14 +103,16 @@ export default function EditarEtiquetaModal({ open, onClose }: { open: boolean; 
     if (!file) return;
     if (!/^image\/(png|jpe?g|webp)$/.test(file.type)) return toast.error('Use PNG, JPG ou WEBP');
     if (file.size > 3 * 1024 * 1024) return toast.error('Imagem muito grande (máx 3MB)');
+    const scope=createCampusRequest();
     setEnviandoLogo(true);
     try {
       const dataUrl = await lerArquivoComoDataUrl(file);
+      scope.assertCurrent();
       const { logo_aniversario_url } = await totemKids.etiquetaConfig.uploadLogoAniversario(dataUrl);
       setCfg(c => ({ ...c, logo_aniversario_url }));
       toast.success('Logo salva');
     } catch (e) { toast.error((e as { message?: string })?.message || 'Erro ao salvar a logo'); }
-    finally { setEnviandoLogo(false); }
+    finally { scope.release(); setEnviandoLogo(false); }
   }
 
   async function removerLogo() {

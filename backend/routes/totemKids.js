@@ -29,6 +29,8 @@ const { filtrarCampus } = require('../utils/campusQuery');
 const { lerTodasPaginas } = require('../utils/campusPaginacao');
 const { responderErroCampus } = require('../services/campusContexto');
 const { exigirCriancaCampus, exigirSessaoCampus, criarCheckoutKids, criarCheckinKids } = require('../services/campusKids');
+const kidsConfigCampus = require('../services/campusKidsConfig');
+const { responderErroCampus: erroConfigKids } = require('../services/campusContexto');
 const contextoLeituraKids = criarMiddlewareCampus({ modulo: 'kids', cobertura: { leitura: true, escrita: false } });
 const contextoEscritaKids = criarMiddlewareCampus({ modulo: 'kids', cobertura: { leitura: false, escrita: true } });
 const checkoutCampusKids = criarCheckoutKids({ supabase });
@@ -1328,35 +1330,15 @@ router.patch('/membro/:id', authorizeModule('kids', 3), async (req, res) => {
 // ── Senha de edição da ficha da criança (totem) ──────────────────────────────
 // Criada por líder do Kids (Mari/Milena · kids>=4). Editar a ficha no totem exige
 // verificar essa senha (qualquer operador kids>=1).
-router.get('/edit-senha/status', authorizeModule('kids', 1), async (_req, res) => {
-  try {
-    const { data } = await supabase.from('kids_totem_config').select('edit_senha_hash').eq('id', true).maybeSingle();
-    res.json({ definida: !!data?.edit_senha_hash });
-  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+router.get('/edit-senha/status', authorizeModule('kids', 1), contextoLeituraKids, async (req,res)=>{
+ try {res.json(await kidsConfigCampus.statusSenha(supabase,req.campus));}catch(e){erroConfigKids(res,e);}
 });
-
-router.post('/edit-senha', authorizeModule('kids', 4), async (req, res) => {
-  try {
-    const bcrypt = require('bcryptjs');
-    const senha = String(req.body?.senha || '');
-    if (senha.length < 4) return res.status(400).json({ error: 'A senha precisa ter ao menos 4 caracteres' });
-    const hash = bcrypt.hashSync(senha, 10);
-    const { error } = await supabase.from('kids_totem_config')
-      .update({ edit_senha_hash: hash, edit_senha_por: req.user?.userId || null, edit_senha_em: new Date().toISOString(), updated_at: new Date().toISOString() })
-      .eq('id', true);
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (e) { res.status(500).json({ error: 'Erro ao salvar a senha' }); }
+router.post('/edit-senha', authorizeModule('kids', 4), contextoEscritaKids, async(req,res)=>{
+ try {res.json(await kidsConfigCampus.salvarSenha(supabase,req.campus,req.body?.senha,req.user.id || req.user.userId));}catch(e){erroConfigKids(res,e);}
 });
-
-router.post('/edit-senha/verificar', authorizeModule('kids', 1), async (req, res) => {
-  try {
-    const bcrypt = require('bcryptjs');
-    const senha = String(req.body?.senha || '');
-    const { data } = await supabase.from('kids_totem_config').select('edit_senha_hash').eq('id', true).maybeSingle();
-    if (!data?.edit_senha_hash) return res.json({ ok: false, naoDefinida: true });
-    res.json({ ok: bcrypt.compareSync(senha, data.edit_senha_hash) });
-  } catch (e) { res.status(500).json({ error: 'Erro' }); }
+const limitarSenhaKids = require('express-rate-limit')({windowMs:15*60*1000,max:20,standardHeaders:true,legacyHeaders:false,keyGenerator:req=>`${req.user.id || req.user.userId}:${req.campus.campus_id}`,message:{error:'Muitas tentativas. Aguarde antes de verificar a senha novamente.'}});
+router.post('/edit-senha/verificar', authorizeModule('kids', 1), contextoEscritaKids, limitarSenhaKids, async(req,res)=>{
+ try {res.json(await kidsConfigCampus.verificarSenha(supabase,req.campus,req.body?.senha));}catch(e){erroConfigKids(res,e);}
 });
 
 // GET /api/totem-kids/criancas/:id/aniversario-impressoes · limite de 2 etiquetas
@@ -4031,31 +4013,8 @@ router.get('/checkins-abertos/buscar', authorizeModule('kids', 2), async (req, r
 // sendo o SERVIDOR; o totem só consome o que já foi reservado.
 // ⚠️ Chamado enquanto HÁ REDE (na abertura da sessão e periodicamente). Pedir
 // isto offline não faz sentido e não funciona — é esse o ponto.
-router.post('/codigos-reservados', authorizeModule('kids', 2), async (req, res) => {
-  try {
-    const estacaoRef = String(req.body?.estacao_ref || '').trim();
-    if (!estacaoRef) return res.status(400).json({ error: 'estacao_ref obrigatório' });
-    const sessaoId = req.body?.sessao_id || null;
-    // ⚠️ Teto de 200 espelha o da função SQL: bloco gigante esgota o espaço de
-    // 1 M de códigos e faz o gerador online começar a falhar por exaustão.
-    const qtd = Math.min(Math.max(parseInt(req.body?.quantidade, 10) || 60, 1), 200);
-
-    const { data, error } = await supabase.rpc('fn_kids_reservar_codigos', {
-      p_estacao_ref: estacaoRef,
-      p_sessao_id: sessaoId,
-      p_quantidade: qtd,
-      p_estacao_id: req.body?.estacao_id || null,
-    });
-    if (error) throw error;
-
-    const codigos = (data || []).map((r) => (typeof r === 'string' ? r : r.codigo)).filter(Boolean);
-    return res.json({ codigos, total: codigos.length, estacao_ref: estacaoRef });
-  } catch (e) {
-    console.error('[totemKids/codigos-reservados]', e?.message);
-    // ⚠️ Falhar aqui NÃO pode travar o totem: sem bloco ele segue online
-    // normalmente, e é só a rede de segurança do offline que não existe.
-    return res.status(503).json({ error: 'Não foi possível reservar códigos agora.', detalhe: e?.message });
-  }
+router.post('/codigos-reservados', authorizeModule('kids', 2), contextoEscritaKids, async(req,res)=>{
+ try {res.json(await kidsConfigCampus.reservarCodigos(supabase,req.campus,req.body || {},req.user.id || req.user.userId));}catch(e){erroConfigKids(res,e);}
 });
 
 router.post('/checkin', authorizeModule('kids', 2), contextoEscritaKids, checkinCampusKids, async (req, res) => {
@@ -5614,83 +5573,19 @@ router.post('/salas/:id/logo/remover', authorizeModule('kids', 3), async (req, r
 });
 
 // ─── Config de layout da etiqueta (singleton) ───────────────────────────────
-router.get('/etiqueta-config', authorizeModule('kids', 1), async (req, res) => {
-  try {
-    const { data } = await supabase.from('kids_etiqueta_config').select('*').eq('id', 1).maybeSingle();
-    res.json(data || { logo_tamanho: 'M', logo_posicao: 'esquerda', nome_tamanho: 'auto', fonte: 'sans', escala_fonte: 'M' });
-  } catch (e) {
-    res.status(500).json({ error: 'Erro ao carregar layout' });
-  }
+router.get('/etiqueta-config', authorizeModule('kids', 1), contextoLeituraKids, async(req,res)=>{
+ try {res.json(await kidsConfigCampus.etiqueta(supabase,req.campus));}catch(e){erroConfigKids(res,e);}
 });
-
-router.put('/etiqueta-config', authorizeModule('kids', 3), async (req, res) => {
-  try {
-    const tamOk = ['P', 'M', 'G'];
-    const posOk = ['esquerda', 'direita', 'acima'];
-    const nomeOk = ['auto', 'P', 'M', 'G'];
-    const fonteOk = ['sans', 'condensada', 'arredondada', 'serif', 'mono'];
-    const escalaOk = ['P', 'M', 'G', 'GG'];
-    const patch = { id: 1, updated_at: new Date().toISOString() };
-    if (tamOk.includes(req.body?.logo_tamanho)) patch.logo_tamanho = req.body.logo_tamanho;
-    if (posOk.includes(req.body?.logo_posicao)) patch.logo_posicao = req.body.logo_posicao;
-    if (nomeOk.includes(req.body?.nome_tamanho)) patch.nome_tamanho = req.body.nome_tamanho;
-    if (fonteOk.includes(req.body?.fonte)) patch.fonte = req.body.fonte;
-    if (escalaOk.includes(req.body?.escala_fonte)) patch.escala_fonte = req.body.escala_fonte;
-    const { data, error } = await supabase.from('kids_etiqueta_config')
-      .upsert(patch, { onConflict: 'id' }).select().single();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) {
-    console.error('[totemKids] etiqueta-config:', e.message);
-    res.status(500).json({ error: 'Erro ao salvar layout' });
-  }
+router.put('/etiqueta-config', authorizeModule('kids', 3), contextoEscritaKids, async(req,res)=>{
+ try {res.json(await kidsConfigCampus.salvarEtiqueta(supabase,req.campus,req.body || {}));}catch(e){erroConfigKids(res,e);}
 });
-
-// POST /etiqueta-config/logo · logo do Kids da etiqueta de ANIVERSÁRIO (global).
-// Bucket público fotos-membros (kids-logos/_aniversario) pra o iframe imprimir.
-router.post('/etiqueta-config/logo', authorizeModule('kids', 3), async (req, res) => {
-  try {
-    const { dataUrl } = req.body || {};
-    const m = String(dataUrl || '').match(/^data:(image\/(png|jpe?g|webp));base64,(.+)$/);
-    if (!m) return res.status(400).json({ error: 'Imagem inválida' });
-    const mime = m[1];
-    const ext = mime.includes('png') ? 'png' : mime.includes('webp') ? 'webp' : 'jpg';
-    const buffer = Buffer.from(m[3], 'base64');
-    if (buffer.length > 3 * 1024 * 1024) return res.status(413).json({ error: 'Imagem muito grande (máx 3MB)' });
-    const path = `kids-logos/_aniversario.${ext}`;
-    const { error: upErr } = await supabase.storage.from('fotos-membros').upload(path, buffer, { contentType: mime, upsert: true });
-    if (upErr) throw upErr;
-    const { data: urlData } = supabase.storage.from('fotos-membros').getPublicUrl(path);
-    const logo_aniversario_url = `${urlData.publicUrl}?t=${Date.now()}`;
-    const { error: dbErr } = await supabase.from('kids_etiqueta_config')
-      .upsert({ id: 1, logo_aniversario_url, updated_at: new Date().toISOString() }, { onConflict: 'id' });
-    if (dbErr) throw dbErr;
-    res.json({ logo_aniversario_url });
-  } catch (e) {
-    console.error('[totemKids] etiqueta-config logo:', e.message);
-    res.status(500).json({ error: 'Erro ao salvar a logo' });
-  }
+// Logos são identidade visual pública, nunca fotografia infantil.
+router.post('/etiqueta-config/logo', authorizeModule('kids', 3), contextoEscritaKids, async(req,res)=>{
+ try {res.json(await kidsConfigCampus.logo(supabase,req.campus,req.body?.dataUrl));}catch(e){erroConfigKids(res,e);}
 });
-
-// POST /etiqueta-config/logo/remover · tira a logo de aniversário
-router.post('/etiqueta-config/logo/remover', authorizeModule('kids', 3), async (req, res) => {
-  try {
-    for (const ext of ['png', 'jpg', 'webp']) {
-      await supabase.storage.from('fotos-membros').remove([`kids-logos/_aniversario.${ext}`]).catch(() => {});
-    }
-    const { error } = await supabase.from('kids_etiqueta_config')
-      .upsert({ id: 1, logo_aniversario_url: null, updated_at: new Date().toISOString() }, { onConflict: 'id' });
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('[totemKids] etiqueta-config logo remover:', e.message);
-    res.status(500).json({ error: 'Erro ao remover a logo' });
-  }
+router.post('/etiqueta-config/logo/remover', authorizeModule('kids', 3), contextoEscritaKids, async(req,res)=>{
+ try {res.json(await kidsConfigCampus.removerLogo(supabase,req.campus));}catch(e){erroConfigKids(res,e);}
 });
-
-// ═══════════════════════════════════════════════════════════════════════════
-// ETIQUETAS · LOG (auditoria de impressão)
-// ═══════════════════════════════════════════════════════════════════════════
 
 router.post('/etiquetas-log', authorizeModule('kids', 2), async (req, res) => {
   try {
