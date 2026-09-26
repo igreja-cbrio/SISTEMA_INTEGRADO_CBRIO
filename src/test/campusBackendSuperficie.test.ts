@@ -140,3 +140,14 @@ it('fotos certificam data e arquivo limitado sem admitir traversal ou formatos a
  expect((await chamar(guard,'/api/batismo-fotos/2026-09-27/fotos/foto_01.jpg','DELETE')).next).toHaveBeenCalledOnce();
  for(const path of ['2026-99-27/fotos/foto.jpg','2026-09-27/fotos/../foto.jpg','2026-09-27/fotos/%2e%2e%2ffoto.jpg','2026-09-27/fotos/a..jpg','2026-09-27/fotos/a.svg','2026-09-27/fotos/'+ 'a'.repeat(161)+'.jpg','2026-09-27/fotos/a.jpg/extra']) expect((await chamar(guard,'/api/batismo-fotos/'+path,'DELETE')).next).not.toHaveBeenCalled();
 });
+
+it('Voluntariado mantém escrita administrativa e cron fechados após certificar leituras próprias',async()=>{
+ const source=readFileSync('backend/server.js','utf8');
+ const cobertura=[...source.matchAll(/\{ metodo: '([^']+)', caminho: '([^']+)' \}/g)].map(m=>({metodo:m[1],caminho:m[2]}));
+ const guard=criarCampusSuperficie({supabase:banco(),cobertura});
+ for(const path of ['services','services/upcoming','services/today','services/checkin-window','schedules','check-ins','relatorio-dados','my-schedules','my-services','my-availability','my-check-ins']) expect((await chamar(guard,`/api/voluntariado/${path}`)).next).toHaveBeenCalledOnce();
+ for(const path of ['my-availability','frequencia/sync-pco']) expect((await chamar(guard,`/api/voluntariado/${path}`,'POST')).next).toHaveBeenCalledOnce();
+ expect((await chamar(guard,`/api/voluntariado/my-availability/${A}`,'DELETE')).next).toHaveBeenCalledOnce();
+ for(const path of ['sync','sync-historical','sync-auto','check-ins','schedules','schedules/auto-fill']) expect((await chamar(guard,`/api/voluntariado/${path}`,'POST')).next).not.toHaveBeenCalled();
+ for(const path of ['profiles','volunteers-pool','cron/sync','cron/emails','cron/antecedentes']) expect((await chamar(guard,`/api/voluntariado/${path}`)).next).not.toHaveBeenCalled();
+});

@@ -7,18 +7,21 @@
 // (data BRT <= hoje · escala futura não "serviu" ainda); dedupe por
 // pessoa+data+culto. Vincula ao perfil pelo planning_center_id. Idempotente.
 const { supabase } = require('../utils/supabase');
+const { filtrarCampus } = require('../utils/campusQuery');
+const { resolverOrigemVoluntariado } = require('./campusVoluntariadoOrigem');
 
 const normNome = (s) => (s || '').toString().normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
 const CULTO = { 0: 'Domingo', 3: 'Quarta', 6: 'Sábado' };
 const MESES = ['Janeiro', 'Fevereiro', 'Março', 'Abril', 'Maio', 'Junho', 'Julho', 'Agosto', 'Setembro', 'Outubro', 'Novembro', 'Dezembro'];
 
-async function bridgeFrequenciaPCO(desdeISO) {
+async function bridgeFrequenciaPCO(desdeISO, contexto, db = supabase) {
+  contexto = await resolverOrigemVoluntariado(db, contexto);
   const hojeBRT = new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10);
 
   // services no range (paginado)
   let services = []; let off = 0;
   while (true) {
-    const { data, error } = await supabase.from('vol_services').select('id, scheduled_at').gte('scheduled_at', desdeISO).range(off, off + 999);
+    const { data, error } = await filtrarCampus(db.from('vol_services').select('id, scheduled_at'),contexto).gte('scheduled_at', desdeISO).order('id').range(off, off + 999);
     if (error) throw error;
     if (!data || !data.length) break;
     services = services.concat(data);
@@ -41,8 +44,8 @@ async function bridgeFrequenciaPCO(desdeISO) {
     const chunk = svcIds.slice(i, i + 100);
     let o = 0;
     while (true) {
-      const { data, error } = await supabase.from('vol_schedules')
-        .select('service_id, volunteer_name, planning_center_person_id, confirmation_status').in('service_id', chunk).range(o, o + 999);
+      const { data, error } = await filtrarCampus(db.from('vol_schedules')
+        .select('id, service_id, volunteer_name, planning_center_person_id, confirmation_status'),contexto).in('service_id', chunk).order('id').range(o, o + 999);
       if (error) throw error;
       if (!data || !data.length) break;
       schedules = schedules.concat(data);
@@ -55,7 +58,8 @@ async function bridgeFrequenciaPCO(desdeISO) {
   const pids = [...new Set(schedules.map((s) => s.planning_center_person_id).filter(Boolean))];
   const profMap = new Map();
   for (let i = 0; i < pids.length; i += 200) {
-    const { data } = await supabase.from('vol_profiles').select('planning_center_id, id').in('planning_center_id', pids.slice(i, i + 200));
+    const { data, error } = await db.from('vol_profiles').select('planning_center_id, id').in('planning_center_id', pids.slice(i, i + 200));
+    if (error) throw error;
     (data || []).forEach((p) => p.planning_center_id && profMap.set(p.planning_center_id, p.id));
   }
 
@@ -70,15 +74,15 @@ async function bridgeFrequenciaPCO(desdeISO) {
     const k = `${nn}|${meta.data}|${meta.culto}`;
     if (vistos.has(k)) continue;
     vistos.add(k);
-    linhas.push({ nome_planilha: s.volunteer_name, nome_norm: nn, data: meta.data, culto_label: meta.culto, mes: meta.mes, origem: 'planning_center', vol_profile_id: profMap.get(s.planning_center_person_id) || null });
+    linhas.push({ igreja_id: contexto.campus_id, nome_planilha: s.volunteer_name, nome_norm: nn, data: meta.data, culto_label: meta.culto, mes: meta.mes, origem: 'planning_center', vol_profile_id: profMap.get(s.planning_center_person_id) || null });
   }
 
   let inseridos = 0;
   for (let i = 0; i < linhas.length; i += 400) {
     const lote = linhas.slice(i, i + 400);
-    const { error } = await supabase.from('vol_servicos_historico').upsert(lote, { onConflict: 'nome_norm,data,culto_label,origem', ignoreDuplicates: true });
+    const { error } = await db.from('vol_servicos_historico').upsert(lote, { onConflict: 'igreja_id,nome_norm,data,culto_label,origem', ignoreDuplicates: true });
     if (!error) inseridos += lote.length;
-    else console.error('[freqPCO] upsert:', error.message);
+    else throw error;
   }
   return { inseridos, servicos: svcIds.length, escalas: schedules.length };
 }

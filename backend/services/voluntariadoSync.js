@@ -1,3 +1,4 @@
+const { carregarOrigensPco } = require('./campusPco');
 // Sync completo do Planning Center pro voluntariado · compartilhado entre o
 // botão manual (POST /voluntariado/sync), o /sync-auto e o cron diário
 // (GET /voluntariado/cron/sync). Estratégia dupla por tipo de serviço:
@@ -11,7 +12,14 @@ const {
 } = require('./planningCenter');
 const { decidirReconciliacao } = require('../utils/volSyncIntegrity');
 
-async function executarSyncCompleto() {
+async function executarSyncCompleto({contexto} = {}) {
+  const origens = await carregarOrigensPco(supabase);
+  const isolado = origens.estado !== 'preparacao';
+  if (contexto) {
+    require('../utils/campusQuery').validarContexto(contexto,true);
+    origens.mapa = new Map([...origens.mapa].filter(([,o]) => o.igreja_id === contexto.campus_id));
+    if (isolado && !origens.mapa.size) throw new Error('Cadastre a origem do Planning Center para este campus.');
+  }
   const { basic: credentials } = getPCCredentials();
 
   const serviceTypes = await fetchAllServiceTypes(credentials, { requireComplete: true });
@@ -46,7 +54,9 @@ async function executarSyncCompleto() {
   // o qual a reconciliação decide quem sumiu. Ele fica em try/catch PRÓPRIO:
   // se falhar, marca o tipo como incompleto (bloqueando o arquivamento) mas
   // NÃO impede os planos daquele mesmo tipo de entrar.
-  const settled = await Promise.allSettled(serviceTypes.map(async (st) => {
+  const tiposSemOrigem = isolado && !contexto ? serviceTypes.filter(st => !origens.mapa.has(String(st.id))).map(st => String(st.id)) : [];
+  const tiposPermitidos = isolado ? serviceTypes.filter(st => origens.mapa.has(String(st.id))) : serviceTypes;
+  const settled = await Promise.allSettled(tiposPermitidos.map(async (st) => {
     const plans = await fetchAllPlans(PC_SERVICES_BASE, st.id, credentials);
     let teamPersons = new Map();
     let rosterCompleto = true;
@@ -56,11 +66,13 @@ async function executarSyncCompleto() {
       rosterCompleto = false;
       console.error(`[VOL SYNC] roster incompleto no tipo ${st.id}:`, e.message);
     }
-    const result = await processServiceType(supabase, st, plans, credentials);
-    return { result, teamPersons, rosterCompleto };
+    const result = await processServiceType(supabase, st, plans, credentials, origens.mapa.get(String(st.id)));
+    return { result, teamPersons, rosterCompleto, igreja_id:origens.mapa.get(String(st.id))?.igreja_id || null };
   }));
 
-  let tiposComFalha = 0;
+  let tiposComFalha = tiposSemOrigem.length;
+  let pendenciasEquipe = 0;
+  const resultadosCampus = new Map([...origens.mapa.values()].map(o => [o.igreja_id,{igreja_id:o.igreja_id,services:0,schedules:0,pendencias:0}]));
   for (const item of settled) {
     if (item.status === 'rejected') {
       tiposComFalha += 1;
@@ -68,6 +80,9 @@ async function executarSyncCompleto() {
       continue;
     }
     const { result, teamPersons, rosterCompleto } = item.value;
+    pendenciasEquipe += result.pendenciasEquipe || 0;
+    const resumo = resultadosCampus.get(item.value.igreja_id);
+    if (resumo) { resumo.services += result.services; resumo.schedules += result.schedules; resumo.pendencias += (result.pendenciasEquipe || 0) + (rosterCompleto ? 0 : 1); }
     // Roster incompleto conta como falha PARA A RECONCILIAÇÃO, mesmo com os
     // planos tendo entrado normalmente.
     if (!rosterCompleto) tiposComFalha += 1;
@@ -87,16 +102,17 @@ async function executarSyncCompleto() {
   let servicesPeople = 0;
   let pessoasCompletas = false;
   try {
-    const allPeople = await fetchAllServicesPeople(credentials, { requireComplete: true });
+    const allPeople = isolado ? new Map() : await fetchAllServicesPeople(credentials, { requireComplete: true });
     servicesPeople = allPeople.size;
-    pessoasCompletas = true;
+    pessoasCompletas = !isolado;
     for (const [k, v] of allPeople) if (!allVolunteers.has(k)) allVolunteers.set(k, v);
   } catch (e) {
     console.error('[VOL SYNC] fetchAllServicesPeople:', e.message);
   }
 
   const qrCount = await upsertVolunteerQrCodes(supabase, allVolunteers);
-  const { count: profilesCount, dbError } = await upsertVolunteerProfiles(supabase, allVolunteers);
+  const { count: profilesCount, dbError } = await upsertVolunteerProfiles(supabase, allVolunteers, {preservarStatus:isolado,estrito:isolado});
+  if (isolado && dbError) throw new Error(dbError);
   const avatarsImported = Array.from(allVolunteers.values()).filter(v => v.avatar_url).length;
 
   // Reconciliacao: arquiva quem saiu do PCO (allVolunteers = roster COMPLETO do
@@ -122,7 +138,7 @@ async function executarSyncCompleto() {
     pcoAtivo,
   });
   let reconciliacao = { arquivados: 0, desarquivados: 0, skipped: true, motivo: decisaoReconciliacao.motivo };
-  if (decisaoReconciliacao.podeReconciliar) {
+  if (!isolado && decisaoReconciliacao.podeReconciliar) {
     try {
       reconciliacao = await reconcilePlanningCenterProfiles(supabase, allVolunteers);
     } catch (e) {
@@ -138,10 +154,11 @@ async function executarSyncCompleto() {
   try {
     const { bridgeFrequenciaPCO } = require('./voluntariadoFreqPCO');
     const desde = new Date(Date.now() - 100 * 864e5).toISOString();
-    const r = await bridgeFrequenciaPCO(desde);
-    freqPco = r.inseridos;
+    const campi = isolado ? [...new Map([...origens.mapa.values()].map(o => [o.igreja_id,o])).values()] : [undefined];
+    for (const contexto of campi) { const r = await bridgeFrequenciaPCO(desde,contexto); freqPco += r.inseridos; }
   } catch (e) {
     console.error('[VOL SYNC] bridgeFrequenciaPCO:', e.message);
+    tiposComFalha += 1;
   }
 
   return {
@@ -150,6 +167,10 @@ async function executarSyncCompleto() {
     // interno, e o log dizia 'success' com 0 cultos. Três dias assim sem
     // ninguém notar.
     tiposComFalha,
+    tiposSemOrigem,
+    estadoCampus:origens.estado,
+    resultadosCampus:[...resultadosCampus.values()],
+    pendenciasEquipe,
     tiposTotal: serviceTypes.length,
     services: totalServices,
     schedules: totalSchedules,

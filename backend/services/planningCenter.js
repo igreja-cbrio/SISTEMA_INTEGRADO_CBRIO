@@ -1,3 +1,4 @@
+const { resolverServicoPco, sincronizarEquipesPco } = require('./campusPco');
 /**
  * Planning Center API helper — shared logic for voluntariado sync operations.
  *
@@ -344,12 +345,14 @@ async function fetchAllServicesPeople(credentials, { requireComplete = false } =
 }
 
 
-async function processServiceType(supabase, serviceType, plans, credentials) {
+async function processServiceType(supabase, serviceType, plans, credentials, origemCampus) {
+  if (!origemCampus) await require('./campusVoluntariadoOrigem').resolverOrigemVoluntariado(supabase);
   const baseUrl = PC_SERVICES_BASE;
   let typeServices = 0;
   let typeSchedules = 0;
   let typeMembersFound = 0;
   let typeMembersProcessed = 0;
+  let pendenciasEquipe = 0;
   const volunteers = new Map();
   const memberTeamMap = new Map(); // personId -> Set<teamName> — acumulado em todos os planos
 
@@ -359,6 +362,10 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
     const serviceTypeName = serviceType.attributes.name;
     const dateOnly = serviceDate.slice(0, 10); // 'yyyy-MM-dd'
 
+    let service;
+    if (origemCampus) {
+      service = await resolverServicoPco(supabase,origemCampus,serviceType,plan,serviceDate);
+    } else {
     // Busca serviço gerado internamente com mesmo tipo e data
     const { data: internalService } = await supabase
       .from('vol_services')
@@ -369,7 +376,7 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
       .lte('scheduled_at', `${dateOnly}T23:59:59-03:00`)
       .maybeSingle();
 
-    let service;
+
     if (internalService) {
       // Remove o serviço PCO-only com esse plan.id, se existir (evita conflito de unique)
       await supabase.from('vol_services')
@@ -397,6 +404,8 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
         .single();
       if (serviceError) { console.error('[PC] upsert service error:', serviceError.message); continue; }
       service = svc;
+    }
+
     }
 
     typeServices++;
@@ -435,6 +444,7 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
 
       if (!scheduleMap.has(key)) {
         scheduleMap.set(key, {
+          ...(origemCampus ? {igreja_id:origemCampus.igreja_id} : {}),
           service_id: service.id,
           planning_center_person_id: personId,
           volunteer_name: volunteerName,
@@ -467,7 +477,10 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
     let okCount = 0;
     let failCount = 0;
     for (const schedule of schedulesToUpsert) {
-      const { error } = await upsertScheduleResilient(supabase, schedule);
+      const { error } = origemCampus
+        ? await supabase.from('vol_schedules').upsert({slot_seq:0,...schedule},{onConflict:'service_id,planning_center_person_id,team_name,position_name,slot_seq'})
+        : await upsertScheduleResilient(supabase, schedule);
+      if (origemCampus && error) throw error;
       if (!error) { typeSchedules++; okCount++; }
       else { failCount++; console.error('[PC] upsert schedule error:', error.message); }
 
@@ -483,6 +496,12 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
 
   console.log(`[PC] ► ${serviceType.attributes.name}: plans=${plans.length} services=${typeServices} schedules=${typeSchedules} membersFound=${typeMembersFound} membersProcessed=${typeMembersProcessed}`);
 
+  if (origemCampus) {
+    const perfis = await upsertVolunteerProfiles(supabase,volunteers,{preservarStatus:true,estrito:true});
+    if (perfis.dbError) throw new Error(perfis.dbError);
+    const equipes = await sincronizarEquipesPco(supabase,origemCampus,[...memberTeamMap.keys()]);
+    pendenciasEquipe = equipes.pendentes;
+  } else {
   // Opção A: atribui voluntários às equipes com base nas escalas sincronizadas
   await assignVolunteersToTeams(supabase, memberTeamMap);
 
@@ -493,7 +512,9 @@ async function processServiceType(supabase, serviceType, plans, credentials) {
   // tinha na mão, e todas caírem juntas em "Sem área".
   await resolverTeamIdDasEscalas(supabase);
 
-  return { services: typeServices, schedules: typeSchedules, membersFound: typeMembersFound, membersProcessed: typeMembersProcessed, volunteers };
+  }
+
+  return { services: typeServices, schedules: typeSchedules, membersFound: typeMembersFound, membersProcessed: typeMembersProcessed, volunteers, pendenciasEquipe };
 }
 
 // ── Resolve `vol_schedules.team_id` a partir do `team_name` ────────────────
@@ -607,7 +628,7 @@ async function upsertVolunteerQrCodes(supabase, volunteersMap) {
 
 // ── Batch upsert vol_profiles (the volunteer pool) ──────────────────────────
 // Returns { count, dbError } so callers can surface DB errors to the user.
-async function upsertVolunteerProfiles(supabase, volunteersMap) {
+async function upsertVolunteerProfiles(supabase, volunteersMap, { preservarStatus = false, estrito = false } = {}) {
   let entries = Array.from(volunteersMap.values());
   if (entries.length === 0) return { count: 0, dbError: null };
 
@@ -631,6 +652,7 @@ async function upsertVolunteerProfiles(supabase, volunteersMap) {
       entries = entries.filter((v) => !protegidos.has(String(v.planning_center_person_id)));
     }
   } catch (e) {
+    if (estrito) throw e;
     console.warn('[PC] protegido_sync check:', e.message); // sem coluna → sem proteção
   }
   if (entries.length === 0) return { count: 0, dbError: null };
@@ -645,7 +667,7 @@ async function upsertVolunteerProfiles(supabase, volunteersMap) {
     full_name: v.volunteer_name,
     avatar_url: v.avatar_url || null,
     origem: 'planning_center',
-    allocation_status: 'active',
+    ...(preservarStatus ? {} : { allocation_status: 'active' }),
   });
   const comEmail = entries.filter(v => v.email).map(v => ({ ...base(v), email: v.email }));
   const semEmail = entries.filter(v => !v.email).map(base);
