@@ -6,6 +6,7 @@ import { safeHref } from '../../lib/safeHref';
 import { supabase } from '../../supabaseClient';
 import { resolveApiBaseUrl } from '../../lib/api-base';
 import CycleView from './components/CycleView';
+import { MatrizMarketingFase, useMatrizMarketing } from './components/MatrizMarketing';
 
 const API = resolveApiBaseUrl(import.meta.env.VITE_API_URL);
 import BudgetPanel from './components/BudgetPanel';
@@ -338,6 +339,8 @@ export default function Eventos() {
   const [newSubName, setNewSubName] = useState('');
   const [expandedTpl, setExpandedTpl] = useState(null);
   const [templateSubTab, setTemplateSubTab] = useState('ciclo');
+  // Só busca a matriz do Marketing quando a aba de templates do ciclo está aberta
+  const matrizMkt = useMatrizMarketing(tab === 6 && templateSubTab === 'ciclo');
   const [kpiWeights, setKpiWeights] = useState([]);
   const [eventList, setEventList] = useState([]);
   const [categories, setCategories] = useState([]);
@@ -1074,7 +1077,8 @@ export default function Eventos() {
       'Debriefing': { start: 1, end: 7 },
     };
 
-    const tpls = Array.isArray(admTemplates) ? admTemplates : [];
+    // Marketing saiu de adm_task_templates: vem da matriz por culto (MatrizMarketing · 2026-09-26)
+    const tpls = (Array.isArray(admTemplates) ? admTemplates : []).filter(t => (t.area || '').toLowerCase() !== 'marketing');
     const reloadTemplates = async () => { const d = await cyclesApi.admTemplates(); setAdmTemplates(d || []); };
 
     return (
@@ -1109,7 +1113,7 @@ export default function Eventos() {
               <div style={{ fontSize: 10, color: C.t3, marginBottom: 2 }}>Área</div>
               <select value={newTplForm.area} onChange={e => setNewTplForm(f => ({ ...f, area: e.target.value }))} style={{ padding: 6, borderRadius: 6, border: `1px solid ${C.border}`, background: C.card, color: C.text, fontSize: 12, minWidth: 130 }}>
                 <option value="">Selecione</option>
-                {AREAS.map(a => <option key={a} value={a}>{CAT_LABELS[a]}</option>)}
+                {AREAS.filter(a => a !== 'marketing').map(a => <option key={a} value={a}>{CAT_LABELS[a]}</option>)}
               </select>
             </div>
             <div style={{ flex: 1, minWidth: 200 }}>
@@ -1134,6 +1138,8 @@ export default function Eventos() {
                 <span style={{ fontSize: 10, padding: '3px 10px', borderRadius: 99, background: C.bg, color: C.t3, border: `1px solid ${C.border}` }}>{fase.offset}</span>
                 <span style={{ fontSize: 11, color: C.t2, fontWeight: 600 }}>{ativos}/{faseTpls.length}</span>
               </div>
+              {/* Marketing · matriz por culto */}
+              <MatrizMarketingFase fase={fase} matriz={matrizMkt} />
               {/* Tarefas */}
               {faseTpls.length === 0 ? (
                 <div style={{ padding: 16, textAlign: 'center', color: C.t3, fontSize: 12 }}>Nenhuma tarefa nesta fase</div>

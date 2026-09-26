@@ -2322,6 +2322,10 @@ router.delete('/checklist/:itemId', authorizeModule('marketing', 3), async (req,
 // (categoria do evento × nome da fase) -> etiqueta + dono automáticos no
 // nascimento do card de evento. CRUD + catalogos + backfill manual.
 
+// category_id 'global' (ou vazio) = o padrão do Marketing para todo evento com ciclo
+// (2026-09-26 · a matriz por culto deixou de ser só da Série).
+const categoriaDoPadrao = (v) => (v && v !== 'global' ? v : null);
+
 router.get('/admin/ciclo-padroes', authorizeModule('marketing', 5), async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -2351,15 +2355,17 @@ router.get('/admin/ciclo-padroes/categorias', authorizeModule('marketing', 5), a
 // que casam com event_cycle_phases.nome_fase). Distinct por nome.
 router.get('/admin/ciclo-padroes/fases', authorizeModule('marketing', 5), async (req, res) => {
   try {
-    const { category_id } = req.query;
-    if (!category_id) return res.status(400).json({ error: 'category_id obrigatorio' });
-    const { data: proprias, error } = await supabase
-      .from('cycle_phase_templates')
-      .select('numero, nome, area')
-      .eq('category_id', category_id)
-      .order('numero', { ascending: true });
-    if (error) throw error;
-    let data = proprias || [];
+    const category_id = categoriaDoPadrao(req.query.category_id);
+    let data = [];
+    if (category_id) {
+      const { data: proprias, error } = await supabase
+        .from('cycle_phase_templates')
+        .select('numero, nome, area')
+        .eq('category_id', category_id)
+        .order('numero', { ascending: true });
+      if (error) throw error;
+      data = proprias || [];
+    }
     // a Série não tem etapas próprias: usa o criativo padrão, como a ativação do ciclo
     if (!data.length) {
       const { data: padrao, error: e2 } = await supabase
@@ -2391,8 +2397,9 @@ router.post('/admin/ciclo-padroes/aplicar', authorizeModule('marketing', 5), asy
 
 router.post('/admin/ciclo-padroes', authorizeModule('marketing', 5), async (req, res) => {
   try {
-    const { category_id, nome_fase, etiqueta_tipo_id, atribuido_a } = req.body || {};
-    if (!category_id || !nome_fase) return res.status(400).json({ error: 'category_id e nome_fase obrigatórios' });
+    const { nome_fase, etiqueta_tipo_id, atribuido_a } = req.body || {};
+    const category_id = categoriaDoPadrao(req.body?.category_id);
+    if (!nome_fase) return res.status(400).json({ error: 'nome_fase obrigatório' });
     if (!etiqueta_tipo_id && !atribuido_a) return res.status(400).json({ error: 'informe ao menos etiqueta ou dono' });
     const { campos: extra, erro } = regraSubtarefa.camposCardLider({
       culto: req.body?.culto === '' ? null : req.body?.culto,
@@ -2464,7 +2471,8 @@ router.get('/admin/ciclo-itens', authorizeModule('marketing', 5), async (req, re
   try {
     let q = supabase.from('marketing_ciclo_itens_padrao').select('*')
       .order('nome_fase').order('ordem').order('created_at');
-    if (req.query.category_id) q = q.eq('category_id', req.query.category_id);
+    if (req.query.category_id === 'global') q = q.is('category_id', null);
+    else if (req.query.category_id) q = q.eq('category_id', req.query.category_id);
     const { data, error } = await q;
     if (error) {
       if (error.code === '42P01') return res.json([]);
@@ -2497,8 +2505,9 @@ function camposItemPadrao(body = {}) {
 
 router.post('/admin/ciclo-itens', authorizeModule('marketing', 5), async (req, res) => {
   try {
-    const { category_id, nome_fase } = req.body || {};
-    if (!category_id || !nome_fase) return res.status(400).json({ error: 'category_id e nome_fase obrigatórios' });
+    const { nome_fase } = req.body || {};
+    const category_id = categoriaDoPadrao(req.body?.category_id);
+    if (!nome_fase) return res.status(400).json({ error: 'nome_fase obrigatório' });
     const { campos, erro } = camposItemPadrao(req.body);
     if (erro) return res.status(400).json({ error: erro });
     if (!campos.texto) return res.status(400).json({ error: 'texto obrigatório' });

@@ -12,13 +12,19 @@ export function subTarefa(t) {
     const n = (t.itens || []).length;
     return `${n} ${n === 1 ? 'compromisso' : 'compromissos'} na semana`;
   }
-  if (t.frente === 'pen') return t.solicitante ? `Pedido de ${t.solicitante}` : 'Pedido do formulário';
+  if (t.tipo === 'pedido') return t.solicitante ? `Pedido de ${t.solicitante}` : 'Pedido do formulário';
   if (t.frente === 'sis') return t.pedido?.titulo || 'Solicitação';
   return t.culto ? rotuloCulto(t.culto) : (t.descricao || 'Demanda interna');
 }
 
+const STATUS_PEDIDO = {
+  aguardando_aprovacao: 'aguardando o diretor aprovar',
+  aguardando_alocacao: 'aguardando alocação',
+  sem_tarefa: 'campanha sem tarefa',
+};
+
 export function contagemItens(t, fut) {
-  if (t.frente === 'pen') return t.atrasada ? 'data pedida já passou' : 'aguardando alocação';
+  if (t.tipo === 'pedido') return STATUS_PEDIDO[t.pedido_status] || 'sem tarefa';
   const itens = t.itens || [];
   if (!itens.length) return 'Sem subtarefas';
   const abertos = itens.filter(i => !i.feito).length;
@@ -32,13 +38,14 @@ export default function CartaoTarefa({ no, membros, onAbrir }) {
   const itens = t.itens || [];
   const feitos = itens.filter(i => i.feito).length;
   const pct = itens.length ? Math.round((feitos / itens.length) * 100) : 0;
-  const donoId = t.frente === 'rot' ? t.membro_id : t.frente === 'pen' ? t.sugerido_membro_id : t.atribuido_a;
+  const ehPedido = t.tipo === 'pedido';
+  const donoId = t.frente === 'rot' ? t.membro_id : ehPedido ? t.sugerido_membro_id : t.atribuido_a;
   const dono = nomeMembro(membros, donoId);
-  const semDono = t.frente === 'pen' ? 'Sem sugestão' : 'Sem responsável';
+  const semDono = ehPedido ? 'Sem sugestão' : 'Sem responsável';
   return (
     <button
       type="button"
-      className={`ml-abs ml-node l-${t.frente} ${no.fut ? 'fut' : ''}`}
+      className={`ml-abs ml-node l-${ehPedido ? 'pen' : t.frente} ${no.fut ? 'fut' : ''}`}
       style={{ left: no.x, top: no.y, width: G.NW, height: no.h }}
       onClick={() => onAbrir(t)}
       title={tituloTarefa(t, membros)}
@@ -56,7 +63,7 @@ export default function CartaoTarefa({ no, membros, onAbrir }) {
         <div className="foot">
           {PAPEL[t.papel]
             ? <span className="own">{PAPEL[t.papel]}</span>
-            : <span className="who">{dono ? (t.frente === 'pen' ? `Sugestão: ${dono}` : dono) : semDono}</span>}
+            : <span className="who">{dono ? (ehPedido ? `Sugestão: ${dono}` : dono) : semDono}</span>}
           <span>{t.semana === 0 ? 'de antes' : t.prazo ? `prazo ${ddmm(t.prazo)}` : ''}</span>
         </div>
       </div>

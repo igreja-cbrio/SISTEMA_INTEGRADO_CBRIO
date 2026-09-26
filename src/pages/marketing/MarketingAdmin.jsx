@@ -401,7 +401,8 @@ function DestinoRow({ d, onSave }) {
 // ═══════════════════════════════════════════════════════════════════════
 // Recorrentes
 // ═══════════════════════════════════════════════════════════════════════
-function AbaRecorrentes() {
+// Exportada: o Planner monta a mesma tela para adicionar a rotina da equipe (2026-09-26).
+export function AbaRecorrentes() {
   const [lista, setLista] = useState([]);
   const [membros, setMembros] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -722,7 +723,8 @@ function AbaPadroes() {
         api.admin.cicloItens.list(),
       ]);
       setLista(p);
-      setCategorias(c);
+      // 'global' = padrão de todo evento com ciclo (2026-09-26); categoria é exceção
+      setCategorias([{ id: 'global', name: 'Padrão · todo evento com ciclo' }, ...(c || [])]);
       setTipos((t || []).filter(x => x.ativo));
       setMembros(m);
       setItens(i || []);
@@ -754,9 +756,10 @@ function AbaPadroes() {
   const catMap = Object.fromEntries(categorias.map(c => [c.id, c.name]));
   const grupos = {};
   const bucket = (catId, fase) => {
-    const cat = catMap[catId] || '(categoria)';
+    const chave = catId || 'global';
+    const cat = catMap[chave] || '(categoria)';
     grupos[cat] = grupos[cat] || {};
-    grupos[cat][fase] = grupos[cat][fase] || { catId, padroes: [], itens: [] };
+    grupos[cat][fase] = grupos[cat][fase] || { catId: chave, padroes: [], itens: [] };
     return grupos[cat][fase];
   };
   for (const p of lista) bucket(p.category_id, p.nome_fase).padroes.push(p);
