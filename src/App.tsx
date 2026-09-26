@@ -7,6 +7,8 @@ import { lazy, Suspense, Component, useEffect, useRef, useState } from 'react';
 import type { ReactNode, ComponentType, ErrorInfo } from 'react';
 import { Toaster } from 'sonner';
 import AppShell from './components/layout/AppShell';
+import CampusWorkspace from './components/layout/CampusWorkspace';
+import { CampusProvider } from './contexts/CampusContext';
 import Login from './pages/Login';
 import DemoAutoLogin from './pages/DemoAutoLogin';
 import { DEMO_MODE } from './lib/demo';
@@ -275,6 +277,7 @@ const NotificacaoRegras = lazyWithRetry(() => import('./pages/admin/NotificacaoR
 const CruzamentosPessoas = lazyWithRetry(() => import('./pages/admin/CruzamentosPessoas'));
 const SolicitacoesResponsaveis = lazyWithRetry(() => import('./pages/admin/SolicitacoesResponsaveis'));
 const SolicitacoesFluxo = lazyWithRetry(() => import('./pages/admin/SolicitacoesFluxo'));
+const CampiAdmin = lazyWithRetry(() => import('./pages/admin/Campi'));
 const PermissoesAdmin = lazyWithRetry(() => import('./pages/admin/Permissoes'));
 const FeedbackAdmin = lazyWithRetry(() => import('./pages/admin/Feedback'));
 const AppAnalytics = lazyWithRetry(() => import('./pages/admin/AppAnalytics'));
@@ -779,7 +782,7 @@ function AppRoutes() {
       <Route path="/voluntariado/self-checkin" element={<Suspense fallback={<Loading />}><VolSelfCheckin /></Suspense>} />
 
       {/* ═══ Rotas do VOLUNTÁRIO — shell minimalista ═══ */}
-      <Route element={<ProtectedRoute><VolunteerShell /></ProtectedRoute>}>
+      <Route element={<ProtectedRoute><CampusWorkspace><VolunteerShell /></CampusWorkspace></ProtectedRoute>}>
         <Route path="/voluntariado/checkin/*" element={<Suspense fallback={<Loading />}><Voluntariado /></Suspense>} />
         <Route path="/voluntariado/*" element={<Navigate to="/voluntariado/checkin" replace />} />
       </Route>
@@ -789,7 +792,7 @@ function AppRoutes() {
         element={
           <ProtectedRoute>
             <MemberOnlyRedirect>
-              <AppShell />
+              <CampusWorkspace><AppShell /></CampusWorkspace>
             </MemberOnlyRedirect>
           </ProtectedRoute>
         }
@@ -941,6 +944,7 @@ function AppRoutes() {
         <Route path="/admin/cruzamentos" element={<Suspense fallback={<Loading />}><CruzamentosPessoas /></Suspense>} />
         <Route path="/admin/solicitacoes-responsaveis" element={<Suspense fallback={<Loading />}><SolicitacoesResponsaveis /></Suspense>} />
         <Route path="/admin/solicitacoes-fluxo" element={<Suspense fallback={<Loading />}><SolicitacoesFluxo /></Suspense>} />
+        <Route path="/admin/campi" element={<SuperAdminGuard><Suspense fallback={<Loading />}><CampiAdmin /></Suspense></SuperAdminGuard>} />
         <Route path="/admin/permissoes" element={<Suspense fallback={<Loading />}><PermissoesAdmin /></Suspense>} />
         <Route path="/admin/feedback" element={<SuperAdminGuard><Suspense fallback={<Loading />}><FeedbackAdmin /></Suspense></SuperAdminGuard>} />
         <Route path="/admin/app-analytics" element={<SuperAdminGuard><Suspense fallback={<Loading />}><AppAnalytics /></Suspense></SuperAdminGuard>} />
@@ -1148,6 +1152,7 @@ export default function App() {
       <QueryClientProvider client={queryClient}>
         <ThemeProvider>
           <AuthProvider>
+            <CampusProvider>
             <BrowserRouter>
               <TutorialProvider>
                 <AppRoutes />
@@ -1155,6 +1160,7 @@ export default function App() {
                 <Toaster position="top-right" richColors />
               </TutorialProvider>
             </BrowserRouter>
+            </CampusProvider>
           </AuthProvider>
         </ThemeProvider>
       </QueryClientProvider>

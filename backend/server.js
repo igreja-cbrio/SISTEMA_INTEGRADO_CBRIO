@@ -135,6 +135,25 @@ app.use(systemJobTracking);
 // cabeçalho de lá (caminho 3: dar motivo real ao agente de incidente).
 app.use(criarTelemetria500());
 
+// Superfícies ainda não validadas falham fechadas quando o isolamento é exigido.
+app.use('/api', require('./middleware/campusSuperficie').criarCampusSuperficie({ cobertura: [
+  { metodo: 'GET', caminho: '/api/kpis/cultos' },
+  { metodo: 'POST', caminho: '/api/kpis/cultos' },
+  { metodo: 'PUT', caminho: '/api/kpis/cultos/:id' },
+  { metodo: 'DELETE', caminho: '/api/kpis/cultos/:id' },
+  { metodo: 'GET', caminho: '/api/kpis/cultos/:id/decisoes-pessoas' },
+  { metodo: 'POST', caminho: '/api/kpis/cultos/:id/decisoes-pessoas' },
+  { metodo: 'GET', caminho: '/api/app/campus/contexto' },
+  { metodo: 'GET', caminho: '/api/app/campus/agenda' },
+  { metodo: 'GET', caminho: '/api/app/campus/agenda/:id' },
+  { metodo: 'GET', caminho: '/api/integracao/cron/gerar-cultos-recorrentes' },
+  { metodo: 'GET', caminho: '/api/campus/admin/estado' },
+  { metodo: 'GET', caminho: '/api/campus/admin/usuarios' },
+  { metodo: 'GET', caminho: '/api/campus/admin/vinculos' },
+  { metodo: 'PUT', caminho: '/api/campus/admin/vinculos' },
+] }));
+app.use('/api/campus', require('./routes/campus'));
+
 // ── Routes ──
 app.use('/api/telemetry', require('./routes/systemTelemetry')); // Web Vitals anônimos, best-effort
 app.use('/api/app', require('./routes/app'));               // Mobile app (sem auth ERP)

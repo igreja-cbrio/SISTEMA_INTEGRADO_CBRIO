@@ -27,29 +27,75 @@ Campus 2, aplicar migrations em produção ou mergear esta PR durante o trabalho
   descrição da PR com evidência e pendências, sem declarar multicampus concluído
   enquanto houver módulos, canais ou migrações não cobertos.
 
-### Estado recuperável
+### Estado recuperável · checkpoint de implementação
 
-- [x] Branch isolada criada a partir da main atual.
-- [ ] Inventário executável de tabelas, rotas, RPCs, clientes diretos e jobs.
-- [ ] Contrato de contexto/autorização e estratégia de transição da Sede.
-- [ ] Contexto de campus no backend, frontend e clientes móveis.
-- [ ] Schema de atos, vínculos, agregados, unicidades e agenda por campus.
-- [ ] Isolamento API e RLS por módulo; portas públicas, arquivos e jobs.
-- [ ] Indicadores/consolidados reconciliados; módulos administrativos centrais.
-- [ ] Testes de negação, regressão, troca de campus e compatibilidade.
-- [ ] Ensaio de ativação documentado; PR revisável e aberta.
+- PR aberta: https://github.com/igreja-cbrio/SISTEMA_INTEGRADO_CBRIO/pull/3067.
+- [x] Branch isolada e inventário executável: `node backend/scripts/multicampus-inventario.cjs`.
+  `--check` deve falhar enquanto houver lacunas; isso não é um teste unitário quebrado.
+  Snapshot de metadados sem PII em `backend/scripts/multicampus/catalogo-20260926.json`:
+  546 tabelas e 1.362 policies consultadas em produção. Código tem referências extras,
+  chamadas dinâmicas e fontes históricas; os números dos dois inventários diferem.
+- [x] Contexto de campus por request, separado do objeto de autenticação cacheado.
+  Bootstrap `/api/campus/contexto`, vínculo explícito, negação sem acesso, nenhum
+  `role=admin/diretor` genérico concede todos os campi.
+- [x] Contexto frontend, seletor, nova QueryClient/árvore por usuário+campus,
+  cancelamento de requests e streams, descarte de respostas antigas. Públicos
+  `/public/*` não herdam o campus selecionado na área privada.
+- [x] Administração `/admin/campi`: busca de usuários e vínculos; gravação atômica
+  com auditoria. Sem botão para ativar isolamento nem criação de unidade.
+- [x] Estado persistido de implantação e bloqueio de regressão ao modo legado.
+  **Ensaio e ativo exigem evidência de TODAS as frentes**. Não usar ensaio em
+  produção como atalho para testar dados reais com RLS/RPCs ainda incompletas.
+- [x] Piloto Cultos: chave por campus, agenda local, herança de campus nas decisões,
+  matcher global preservado, fan-out para Cuidados/NSM carimbado, view invoker,
+  capacidade configurável e exclusão lógica atômica. Rotas certificadas no server:
+  GET/POST `/api/kpis/cultos`, PUT/DELETE `/api/kpis/cultos/:id`, GET/POST
+  `/api/kpis/cultos/:id/decisoes-pessoas`. Parâmetro `:id` só aceita UUID.
+- [x] Primeiros destinos: RLS nominal em membros, convertidos, eventos NSM e trilha;
+  leitura própria preservada, campus dos atos independente do campus-base.
+- [x] Cron de agenda paginado por campus, contagem agregada sem truncamento,
+  falhas parciais explícitas e repetição idempotente.
+- [ ] Demais destinos (`cui_*`, `nsm_*`, membros), views/RPCs e acessos
+  diretos precisam do isolamento completo. Piloto NÃO significa Cultos aprovado
+  para dados reais do Campus 2 enquanto estes consumidores não estiverem seguros.
+- [ ] Restante de Integração, Grupos, Next, Voluntariado, Kids, Batismo e portas
+  públicas; apps Membros/Staff; armazenamentos, jobs, notificações e exports.
+- [ ] Agregados/KPIs/NSM/consolidados e operação administrativa central.
+- [ ] Testes de integração completos, reconciliação histórica e ensaio de ativação.
 
-Próxima ação ao retomar: ler o diff e o checkpoint mais recente desta branch,
-validar quais testes/migrations realmente existem e continuar os itens abertos.
-Nenhuma migration desta implementação foi aplicada em produção.
+Migrations preparadas, **não aplicadas**:
+1. `20260926200000_multicampus_contexto_e_ativacao.sql`: configuração, gate de
+   ativação, helper e administração de vínculos. Deve preceder qualquer deploy
+   deste backend/frontend; configuração ausente falha fechada com 503.
+2. `20260926210000_multicampus_cultos_agenda.sql`: piloto Cultos. Replacements de
+   triggers partem das definições vivas capturadas em 26/09; não substituir por
+   versões antigas das migrations. Backfill recusa uma segunda sede ativa.
+
+3. `20260926220000_multicampus_destinos_decisao.sql`: isolamento nominal dos
+   quatro destinos iniciais e campus de origem nos marcos da trilha.
+
+App: PR rascunho https://github.com/igreja-cbrio/Aplicativo-CBRio/pull/178,
+branch `codex/multicampus-app`, worktree `../wt-app-multicampus`. Depende deste
+backend; não publicar OTA antes das migrations e endpoints correspondentes.
+
+Validação do checkpoint: 128 testes específicos em 14 arquivos `src/test/campus*`
+passaram. TypeScript, lint de hooks e build passaram. A primeira suíte completa
+teve 5.101 testes aprovados e seis fixtures desatualizadas pela nova trava de
+ensaio; as seis foram corrigidas e passaram na rodada específica. Repetir suíte
+completa após os próximos blocos, sem confundir testes com liberação de produção.
+
+Próxima ação ao retomar: conferir diff/CI desta branch e começar pelos destinos
+RLS/RPC do piloto; o guard global bloqueia superfícies ainda não certificadas em
+ensaio/ativo. **Não ampliar allowlist para fazer uma tela funcionar sem filtrar
+suas consultas, filhos, arquivos e produtores.** Preservar a PR aberta.
 
 ---
 
 ## 0. Retomada e plano de entrega (2026-09-26)
 
 **Objetivo atualizado:** preparar o sistema para um possível segundo campus
-físico em março de 2027. O pedido é planejar antes de implementar. Esta revisão
-não aplica migrations, não altera acessos e não ativa um campus novo.
+físico em março de 2027. O diagnóstico abaixo foi preparado antes da implementação. A execução atual
+está registrada no checkpoint acima; nenhuma migration foi aplicada em produção.
 
 Esta seção substitui o diagnóstico e o calendário de julho abaixo. Os registros
 anteriores são contexto de decisões, não prova do estado atual de produção.

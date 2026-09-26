@@ -4,6 +4,8 @@ const router = express.Router();
 // varredura 2026-09: `authorizeModule` entrou no import — as leituras de pessoa deste arquivo passaram a ser gateadas pela matriz cargo × módulo.
 const { authenticate, authorize, authorizeModule, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { criarGuardasCultos, campusLocal, destinatariosDecisaoCampus } = require('../services/campusCultos');
+const campusCultos = criarGuardasCultos();
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
 const { tipoVigenteEm } = require('../utils/lentesDomingo');
@@ -173,11 +175,13 @@ router.get('/service-types', async (req, res) => {
 });
 
 // ── Cultos ────────────────────────────────────────────────────────────────────
-router.get('/cultos', async (req, res) => {
+router.get('/cultos', campusCultos.contexto, async (req, res) => {
   const { limit = 100, offset = 0, service_type_id, data_inicio, data_fim } = req.query;
   let query = supabase
     .from('vw_culto_stats')
     .select('*')
+    .eq('igreja_id', campusLocal(req))
+    .is('deleted_at', null)
     .order('data', { ascending: false })
     .order('hora', { ascending: false })
     .range(Number(offset), Number(offset) + Number(limit) - 1);
@@ -189,7 +193,7 @@ router.get('/cultos', async (req, res) => {
   res.json(data);
 });
 
-router.post('/cultos', authorizeIntegracao, async (req, res) => {
+router.post('/cultos', authorizeIntegracao, campusCultos.contexto, campusCultos.payload, async (req, res) => {
   const {
     service_type_id, nome, data, hora,
     presencial_adulto, presencial_kids,
@@ -201,6 +205,7 @@ router.post('/cultos', authorizeIntegracao, async (req, res) => {
   const { data: culto, error } = await supabase
     .from('cultos')
     .insert({
+      igreja_id: campusLocal(req),
       service_type_id, nome, data, hora,
       presencial_adulto:    nonNeg(presencial_adulto),
       presencial_kids:      nonNeg(presencial_kids),
@@ -218,7 +223,7 @@ router.post('/cultos', authorizeIntegracao, async (req, res) => {
   res.json(culto);
 });
 
-router.put('/cultos/:id', authorizeIntegracao, async (req, res) => {
+router.put('/cultos/:id', authorizeIntegracao, campusCultos.contexto, campusCultos.payload, campusCultos.culto, async (req, res) => {
   const allowed = [
     'presencial_adulto', 'presencial_kids',
     'decisoes_presenciais', 'decisoes_online', 'decisoes_kids',
@@ -255,8 +260,10 @@ router.put('/cultos/:id', authorizeIntegracao, async (req, res) => {
     }
   }
   const { data, error } = await supabase
-    .from('cultos').update(update).eq('id', req.params.id).select().single();
+    .from('cultos').update(update).eq('id', req.params.id)
+    .eq('igreja_id', campusLocal(req)).is('deleted_at', null).select().maybeSingle();
   if (error) return res.status(500).json({ error: error.message });
+  if (!data) return res.status(404).json({ error: 'Culto não encontrado.' });
 
   // KPIs auto-cultos/batismos são recalculados via trigger SQL (migration
   // 20260514210000_kpis_trigger_realtime.sql · trg_kpi_recalcular_culto).
@@ -266,9 +273,13 @@ router.put('/cultos/:id', authorizeIntegracao, async (req, res) => {
   res.json(data);
 });
 
-router.delete('/cultos/:id', authorize('admin', 'diretor'), async (req, res) => {
-  const { error } = await supabase.from('cultos').delete().eq('id', req.params.id);
+router.delete('/cultos/:id', authorize('admin', 'diretor'), campusCultos.contexto, campusCultos.culto, async (req, res) => {
+  const { data, error } = await supabase.rpc('fn_campus_soft_delete_culto', {
+    p_culto_id: req.params.id, p_igreja_id: campusLocal(req), p_usuario_id: req.user.id,
+  });
   if (error) return res.status(500).json({ error: error.message });
+  if (data !== true) return res.status(404).json({ error: 'Culto não encontrado.' });
+  painelCache.bust('');
   res.json({ ok: true });
 });
 
@@ -288,11 +299,13 @@ router.get('/cultos/:id/voluntarios', async (req, res) => {
 // 1 row por pessoa que decidiu no culto · vincula opcionalmente a mem_membros.
 
 // varredura 2026-09: era só `authenticate` e devolvia nome/CPF/nascimento/responsável de quem decidiu — leitura de decisão agora exige Integração.
-router.get('/cultos/:id/decisoes-pessoas', authorizeIntegracaoLeitura, async (req, res) => {
+router.get('/cultos/:id/decisoes-pessoas', authorizeIntegracaoLeitura, campusCultos.contexto, campusCultos.culto, async (req, res) => {
   const { data, error } = await supabase
     .from('cultos_decisoes_pessoas')
     .select('id, culto_id, membro_id, nome, telefone, email, idade, data_nascimento, cpf, tipo_decisao, observacoes, status_followup, registrado_em, registrado_por, responsavel_nome, responsavel_telefone, responsavel_cpf')
     .eq('culto_id', req.params.id)
+    .eq('igreja_id', campusLocal(req))
+    .is('deleted_at', null)
     .order('registrado_em', { ascending: false });
   if (error) return res.status(500).json({ error: error.message });
   res.json(data || []);
@@ -540,7 +553,7 @@ router.get('/cultos/:id/link-decisoes', authorizeIntegracao, async (req, res) =>
   }
 });
 
-router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res) => {
+router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, campusCultos.contexto, campusCultos.payload, campusCultos.culto, campusCultos.referenciasDecisao, async (req, res) => {
   const {
     nome, telefone, email, idade, data_nascimento, cpf,
     tipo_decisao, observacoes, membro_id,
@@ -597,11 +610,15 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
   // no relatório de `/decisoes-pessoas/incompletos` (fonte passa a ser o
   // cadastro, não o navegador). Só consulta quando falta algo.
   if (membro_id && tipo !== 'kids' && (!cpfLimpo || !nascLimpo)) {
-    const { data: cad } = await supabase
+    const { data: cad, error: erroCadastro } = await supabase
       .from('mem_membros')
       .select('cpf, data_nascimento')
       .eq('id', membro_id)
+      .eq('igreja_id', campusLocal(req))
+      .is('deleted_at', null)
       .maybeSingle();
+    if (erroCadastro) return res.status(503).json({ error: 'Não foi possível verificar o cadastro. Tente novamente.' });
+    if (!cad) return res.status(404).json({ error: 'Membro não encontrado neste campus.' });
     if (cad) {
       if (!cpfLimpo && cad.cpf) cpfLimpo = String(cad.cpf).replace(/\D/g, '') || null;
       if (!nascLimpo && cad.data_nascimento) nascLimpo = cad.data_nascimento;
@@ -642,6 +659,7 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
     .from('cultos_decisoes_pessoas')
     .insert({
       culto_id: req.params.id,
+      igreja_id: campusLocal(req),
       membro_id: tipo === 'kids' ? null : (membro_id || null),
       nome: String(nome).trim(),
       telefone: telLimpo || null,
@@ -671,7 +689,7 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
       try {
         const { data: equipe } = await supabase.from('profiles')
           .select('id').in('email', ['marcelo.soares@cbrio.org', 'wesley.ramos@cbrio.org']);
-        const ids = (equipe || []).map(p => p.id).filter(Boolean);
+        const ids = await destinatariosDecisaoCampus(supabase, req.campus, (equipe || []).map(p => p.id).filter(Boolean));
         if (!ids.length) return;
         const nomePessoa = String(nome).trim();
         await notificar({
@@ -681,7 +699,7 @@ router.post('/cultos/:id/decisoes-pessoas', authorizeIntegracao, async (req, res
           mensagem: `${nomePessoa} tomou uma decisão${telLimpo ? ` · ${telLimpo}` : ''}${tipo === 'online' ? ' (online)' : ''}. Entre em contato pra acompanhar nos próximos passos.`,
           link: '/ministerial/cuidados?tab=convertidos',
           severidade: 'info',
-          chaveDedup: `nova_aceitacao_${data.id}`,
+          chaveDedup: `nova_aceitacao_${req.campus.campus_id}_${data.id}`,
           targetIds: ids,
         });
       } catch (e) {

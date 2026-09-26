@@ -1,3 +1,4 @@
+import CampusSelector from './CampusSelector';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -173,6 +174,7 @@ const NAV_ITEMS = [
         title: 'Configurações',
         items: [
           { label: 'Sistema', description: 'Centro de controle técnico, automações, integrações e releases', icon: Settings, path: '/sistema', superAdminOnly: true },
+          { label: 'Campi', description: 'Unidades, acessos e preparação multicampus', icon: Shield, path: '/admin/campi', perm: 'isSuperAdmin' },
           { label: 'Permissões', description: 'Matriz cargo × módulo + usuários (cargo, áreas, overrides)', icon: Shield, path: '/admin/permissoes', perm: 'isAdmin' },
         ],
       },
@@ -625,6 +627,7 @@ export default function AppShell() {
           )}
 
           {/* Right: Actions */}
+          <CampusSelector />
           <div className="flex items-center gap-2">
             {/* Search trigger · mobile so icon, desktop com texto + ⌘K */}
             <button
