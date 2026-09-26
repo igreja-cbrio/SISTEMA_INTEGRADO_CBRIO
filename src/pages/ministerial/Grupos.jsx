@@ -29,6 +29,7 @@ import GruposEnvios from './GruposEnvios';
 import GruposOrganograma from './GruposOrganograma';
 import GruposDuplicatas from './GruposDuplicatas';
 import KpiTaticoOficial from '../../components/kpi/KpiTaticoOficial';
+import JornadaConvertidosCard from '../../components/jornada/JornadaConvertidosCard';
 // Import ESTÁTICO de propósito (13/07): o chunk dinâmico do mapa quebrava em
 // produção e derrubava a página em loop de reload. O GrupoSelector do form
 // público já embute o GruposMapView estaticamente — o peso do maplibre já é
@@ -1827,7 +1828,13 @@ export default function Grupos() {
 
       {/* ═══ TAB RELATÓRIOS ═══ */}
       {tabAtiva === 'relatorios' && (
-        <RelatorioGrupos temporada={filterTemporada} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+          <RelatorioGrupos temporada={filterTemporada} />
+          {/* Jornada do novo convertido · o marco "Grupo" é justamente o que a
+              coordenação daqui persegue: quanto tempo a pessoa leva da decisão
+              até entrar num grupo, e quem parou antes disso. Recolhido. */}
+          {(isAdmin || (getAccessLevel?.(['cuidados', 'online', 'ami', 'bridge', 'kids']) ?? 0) >= 1) && <JornadaConvertidosCard />}
+        </div>
       )}
 
       {/* ═══ TAB GRUPOS · visualização Lista | Mapa (mesma informação, projeções diferentes) ═══ */}
