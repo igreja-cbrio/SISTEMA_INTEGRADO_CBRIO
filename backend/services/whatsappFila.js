@@ -23,6 +23,8 @@ const { supabase } = require('../utils/supabase');
 const { sendTemplate, sendText, configurado } = require('./whatsappService');
 const waSender = require('./waSender');
 const { notificar } = require('./notificar');
+const { escopoNotificacao, contextoEventoArmazenado } = require('./campusNotificacaoEscopo');
+const { moduloDoContexto: moduloDoEnvio } = require('../utils/whatsappModulo');
 
 // true = dá pra REGISTRAR (credencial existe), mesmo que o envio esteja
 // bloqueado pelo kill-switch. false = ambiente sem WhatsApp, não grava.
@@ -155,6 +157,7 @@ async function avisarFalhaTerminal(e, razao) {
       link,
       severidade: 'aviso',
       chaveDedup: `wpp_envio_falha_${e.id}`,
+      campus: await contextoEventoArmazenado(supabase,e),
     });
   } catch (err) {
     console.warn('[whatsappFila] aviso de falha terminal:', err.message);
@@ -163,15 +166,18 @@ async function avisarFalhaTerminal(e, razao) {
 
 // C2: aceita TEMPLATE (proativo) ou TEXTO (janela 24h · `texto`). Toda saída
 // fica registrada — é a fila que dá o histórico universal do módulo Comunicação.
-async function enfileirar({ telefone, template, texto, params, contexto, refId, idioma }) {
+async function enfileirar({ telefone, template, texto, params, contexto, refId, idioma, campus, chaveDedup }) {
   if (!podeRegistrar()) return { queued: false, sent: false, reason: 'disabled' };
   if (!telefone || (!template && !texto)) return { queued: false, sent: false, reason: 'dados_incompletos' };
   if (template && !texto && await templateBloqueado(template)) {
     return { queued: false, sent: false, reason: 'template_rejeitado_na_meta' };
   }
+  const escopo = await escopoNotificacao(supabase, moduloDoEnvio(contexto).modulo, campus);
   const tipo = texto && !template ? 'texto' : 'template';
 
   const { data: row, error } = await supabase.from('whatsapp_envios').insert({
+    ...escopo,
+    chave_dedup: chaveDedup || null,
     telefone,
     tipo,
     template: tipo === 'template' ? template : null,
@@ -183,6 +189,13 @@ async function enfileirar({ telefone, template, texto, params, contexto, refId, 
   }).select('id').single();
 
   if (error) {
+    if (error.code === '23505' && chaveDedup) {
+      let consulta = supabase.from('whatsapp_envios').select('id,status').eq('chave_dedup',chaveDedup);
+      consulta = escopo.igreja_id ? consulta.eq('igreja_id',escopo.igreja_id) : consulta.is('igreja_id',null).eq('escopo_campus','central');
+      const anterior = await consulta.maybeSingle();
+      if (!anterior.error && anterior.data) return {queued:true,sent:false,id:anterior.data.id,reason:'ja_registrado'};
+    }
+    if (chaveDedup || campus && campus.estado !== 'preparacao') return { queued: false, sent: false, reason: 'fila_indisponivel' };
     // Fila indisponível (ex.: migration ainda não aplicada) → degrada pro
     // envio direto, sem retry — melhor entregar do que travar o fluxo.
     console.error('[whatsappFila] insert falhou (envio direto):', error.message);
@@ -204,6 +217,8 @@ async function enfileirar({ telefone, template, texto, params, contexto, refId, 
 async function tentarEnvio(id) {
   const { data: e, error } = await supabase.from('whatsapp_envios').select('*').eq('id', id).maybeSingle();
   if (error || !e) return { sent: false, reason: 'nao_encontrado' };
+  try { await contextoEventoArmazenado(supabase,e); }
+  catch { return { sent:false, reason:'campus_indisponivel' }; }
   if (e.status !== 'pendente') return { sent: false, reason: `status_${e.status}` };
 
   // Linha antiga com template que foi REJEITADO depois de enfileirada:
@@ -217,6 +232,16 @@ async function tentarEnvio(id) {
     await avisarFalhaTerminal(e, 'template rejeitado na Meta');
     return { sent: false, reason: 'template_rejeitado_na_meta' };
   }
+
+  // Reserva temporária por CAS: cron concorrente e envio imediato não enviam
+  // a mesma linha simultaneamente. Se a function morrer, o cron retoma após 10 min.
+  const agora = new Date().toISOString();
+  const {data: tomada,error: erroTomada}=await supabase.from('whatsapp_envios')
+    .update({proxima_tentativa_em:new Date(Date.now()+10*60000).toISOString()})
+    .eq('id',id).eq('status','pendente').eq('tentativas',e.tentativas||0)
+    .eq('proxima_tentativa_em',e.proxima_tentativa_em).lte('proxima_tentativa_em',agora)
+    .select('id').maybeSingle();
+  if(erroTomada || !tomada) return {sent:false,reason:'envio_em_processamento'};
 
   const r = e.tipo === 'texto'
     ? await sendText(e.telefone, e.texto)
@@ -266,11 +291,14 @@ async function tentarEnvio(id) {
 // serverless estoura o tempo de execução conforme a base de grupos cresce.
 async function enfileirarLote(itens) {
   if (!podeRegistrar()) return { queued: 0, motivo: 'disabled' };
-  const linhas = (itens || [])
+  const linhas = await Promise.all((itens || [])
     .filter(i => i && i.telefone && (i.template || i.texto))
-    .map(i => {
+    .map(async i => {
+      const escopo = await escopoNotificacao(supabase, moduloDoEnvio(i.contexto).modulo, i.campus);
       const tipo = i.texto && !i.template ? 'texto' : 'template';
       return {
+        ...escopo,
+        chave_dedup: i.chaveDedup || null,
         telefone: i.telefone,
         tipo,
         template: tipo === 'template' ? i.template : null,
@@ -280,7 +308,7 @@ async function enfileirarLote(itens) {
         contexto: i.contexto || null,
         ref_id: i.refId || null,
       };
-    });
+    }));
   if (!linhas.length) return { queued: 0 };
   // Trava de template rejeitado (mesma régua do enfileirar) — em lote, o
   // bloqueio é DECLARADO no retorno, nunca silencioso.
@@ -312,13 +340,10 @@ async function enfileirarLote(itens) {
 async function processarFila({ limite = 200 } = {}) {
   if (!configurado()) return { processados: 0, enviados: 0, motivo: 'disabled' };
   const agora = new Date().toISOString();
-  const { data: pendentes, error } = await supabase.from('whatsapp_envios')
-    .select('id, telefone')
-    .eq('status', 'pendente')
-    .lte('proxima_tentativa_em', agora)
-    .order('criado_em', { ascending: true })
-    .limit(limite);
-  if (error) return { processados: 0, enviados: 0, erro: error.message };
+  const {listarPendentesPorCampus}=require('./campusWhatsappFila');
+  let pendentes;
+  try { pendentes=await listarPendentesPorCampus(supabase,{limite,agora}); }
+  catch(error) { return {processados:0,enviados:0,erro:error.message}; }
 
   // Suaviza a rajada por destinatário (ver MAX_POR_TELEFONE_POR_RODADA). O que
   // ficou de fora não perde a vez: segue pendente e vencido, entra na próxima

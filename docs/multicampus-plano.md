@@ -94,10 +94,14 @@ Campus 2, aplicar migrations em produção ou mergear esta PR durante o trabalho
   da reserva inclui `p_inscrito_por` opcional, preenchido pelo servidor no admin.
   `backend/scripts/multicampus/cutover-batismo.sql` fica FORA da sequência de
   migrations: trocar PK antiga por data só após todos os consumidores adaptados.
-- Integração SQL: fixture derivada de 60 tabelas do schema vivo executa 11
-  migrations em sequência; 8 cenários passaram. Teste real PostgreSQL 17 com
-  duas conexões confirmou a disputa pela última vaga. Limitações do ensaio
-  estão nos testes (biometria/storage, triggers laterais e agregados não cobertos).
+- Integração SQL ampliada: 22 migrations em sequência até `180000`, com
+  fixtures estruturais vivas de Cultos/Pessoas/Cuidados/Grupos/Next/Batismo,
+  Kids e Voluntariado; 12 cenários passaram. Inclui check-in/checkout e
+  consolidação Kids, ponte Servir local, notificações e bloqueio do Storage.
+  O Storage usa adaptador mínimo; biometria, triggers laterais de auditoria,
+  recálculo KPI e concorrência entre conexões permanecem fora do PGlite.
+  O teste separado PostgreSQL 17 confirmou disputa pela última vaga de Batismo.
+  Cutovers de Batismo e Storage continuam FORA das migrations testadas.
 - Ainda pendentes no Batismo: cobertura de convertidos, config por campus,
   armazenamento/fotos e cutover. Status em massa e exclusão de horários agora
   usam RPCs atômicas (`20260927110000_multicampus_batismo_admin.sql`);
@@ -132,6 +136,27 @@ Kids — checkpoint SQL de 27/09/2026:
   revisar consumidores legados. Configurações singleton deixam de ser legíveis
   diretamente por autenticados fora da preparação. Nenhuma cobertura completa
   ou ativação decorre destes testes.
+
+### Voluntariado · checkpoint SQL de 27/09/2026
+
+- Migrations `150000/160000`: perfil global ligado à pessoa canônica, vínculo
+  `vol_profile_campi` explícito e atos com `igreja_id`. Serviços, escalas,
+  check-ins, equipes, disponibilidade, inscrições, históricos e filhos recebem
+  herança, imutabilidade histórica e FKs compostas; policies anteriores são
+  preservadas com restrições adicionais. Vínculo revogado não reativa por ato.
+- PCO usa mapa obrigatório por ID externo em `vol_pco_service_type_campi`.
+  `fn_campus_vol_resolver_servico` serializa plano/chave local, reutiliza serviço
+  sem apagar escala e rejeita ambiguidade para reconciliação humana. Nomes são
+  exibição. Mapa de equipes e deduplicação histórica incluem campus.
+- Ponte de perfil para `mem_voluntarios` recebe campus do vínculo/ato e carimba
+  o evento Servir; nunca move campus-base da pessoa. A unicidade/coorte NSM
+  global foi preservada e permanece pendente de revisão analítica completa.
+- Dezesseis testes PGlite usam catálogo e triggers vivos para validar isolamento,
+  vínculo, origem NSM, PCO idempotente, grants e preservação da identidade.
+  Relatórios SQL legados estão guardados em preparação. Permanecem pendentes
+  consumidores dos relatórios por campus, biometria/token/totem, e-mails, antecedentes, arquivo
+  global de perfis e produtores que ainda não consomem o mapa explicitamente.
+  Não certifica ativação, rollout ou concorrência real PostgreSQL do PCO.
 
 ### Notificações · checkpoint de armazenamento e caixa própria
 
@@ -644,3 +669,22 @@ fatos do estado atual (seção 3) e as armadilhas (seção 5) foram **verificado
 contra o repo**, não apenas relatados. Os conselheiros são o mesmo modelo base —
 a convergência reduz pontos cegos de enquadramento, não é prova independente;
 decisões contábeis/segurança devem ser validadas pela gestão.
+
+### WhatsApp e ensaio integrado · checkpoint de 27/09/2026
+
+- `20260927180000_multicampus_whatsapp_envios.sql` prepara origem imutável,
+  RLS adicional e deduplicação por campus/chave. Callback da Meta e avisos de
+  falha recuperam o campus do registro, sem inferir pelo destinatário.
+- Lembrete de Batismo percorre unidades físicas ativas e todas as páginas das
+  inscrições locais de amanhã em Brasília. Dedup inclui inscrição/evento/data;
+  erro de página não dispara uma lista parcial e falha de uma unidade é declarada.
+- Reenvio distribui orçamento entre campus e central; CAS reserva cada linha
+  por dez minutos para impedir dois workers simultâneos. A integração externa
+  não oferece exatamente-uma-vez: interrupção após aceite da Meta e antes da
+  confirmação no banco ainda exige reconciliação operacional, como antes.
+- Testes WhatsApp: 44 passaram (10 novos de origem, paginação, dedup, concorrência
+  e falhas). SQL combinado passou 12 cenários executando 22 migrations até 180000.
+  Não certifica todos os produtores nem o webhook inteiro: demais ramos continuam
+  bloqueados no modo isolado até revisão. Nenhum envio real ou migration aplicada.
+- PRs de continuidade: ERP #3067; Membros #178 (11b216e, 465 testes e exports
+  Android/iOS); Staff #24. Permanecem em draft, sem merge/OTA.

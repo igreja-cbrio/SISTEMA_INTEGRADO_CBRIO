@@ -11,14 +11,14 @@ const TYPE='20000000-0000-0000-0000-000000000001';
 let db:PGlite;
 // Checkpoint deliberado: migrations posteriores em desenvolvimento não entram
 // silenciosamente sem ampliar a fixture estrutural e os cenários correspondentes.
-const migrations=readdirSync('supabase/migrations').filter(f=>/^2026092.*multicampus.*\.sql$/.test(f)&&f.slice(0,14)<='20260927070000').sort();
+const migrations=readdirSync('supabase/migrations').filter(f=>/^2026092.*multicampus.*\.sql$/.test(f)&&f.slice(0,14)<='20260927180000').sort();
 async function reject(sql:string,pattern:RegExp){await db.exec('SAVEPOINT failure');await expect(db.exec(sql)).rejects.toThrow(pattern);await db.exec('ROLLBACK TO SAVEPOINT failure');}
 async function activate(){await db.exec("UPDATE app_campus_cobertura SET api_validada=true,rls_validada=true,produtores_validados=true,regressao_validada=true,evidencia='Fixture sintética: evidência exclusiva do teste'; UPDATE app_campus_config SET estado='ensaio'");}
 async function user(id=U){await db.exec(`SET LOCAL ROLE authenticated;SET LOCAL "test.user"='${id}';SET LOCAL "test.level"='5';`);}
 describe('integração: migrations multicampus reais em sequência',()=>{
  beforeAll(async()=>{
   db=new PGlite({extensions:{unaccent,pg_trgm,pgcrypto}});
-  const fixture=readFileSync('src/test/fixtures/campusIntegracaoBase.sql','utf8');
+  const fixture=['campusIntegracaoBase.sql','campusKidsBase.sql','campusVoluntariadoBase.sql','campusIntegracaoComplemento.sql'].map(f=>readFileSync('src/test/fixtures/'+f,'utf8')).join('\n');
   try{await db.exec(fixture);}catch(error){const e=error as Error & {position?:string};throw new Error(e.message+' near '+fixture.slice(Number(e.position)-150,Number(e.position)+150));}
   await db.exec(`INSERT INTO igrejas(id,nome,slug,tipo) VALUES('${A}','Sede sintética','cbrio-sede','sede');
     INSERT INTO profiles(id,name,email) VALUES('${U}','Usuário A','a@example.invalid'),('${V}','Usuário B','b@example.invalid');
@@ -30,7 +30,7 @@ describe('integração: migrations multicampus reais em sequência',()=>{
  },30000);
  beforeEach(async()=>{await db.exec('BEGIN');});afterEach(async()=>{await db.exec('ROLLBACK; RESET ROLE');});afterAll(async()=>{await db.close();});
  it('aplica toda a sequência e preserva a barreira de ativação',async()=>{
-  expect(migrations).toHaveLength(11);
+  expect(migrations).toHaveLength(22);
   await reject("UPDATE app_campus_config SET estado='ensaio'",/validação|evidência/);
   await activate();await reject("UPDATE app_campus_config SET estado='preparacao'",/legado/);
  });
@@ -144,4 +144,45 @@ describe('integração: migrations multicampus reais em sequência',()=>{
   expect((await db.query("SELECT igreja_id FROM cultos WHERE data='2027-04-04' ORDER BY igreja_id")).rows).toEqual([{igreja_id:A},{igreja_id:B}]);
  });
 
+
+ it('Kids mantém check-in, checkout e consolidação local após todas as substituições de funções',async()=>{
+  await activate();
+  const id=async(sql:string,args:unknown[]=[])=>((await db.query<{id:string}>(sql+' RETURNING id',args)).rows[0].id);
+  const membro=await id("INSERT INTO mem_membros(nome,igreja_id) VALUES('Responsável global',$1)",[A]);
+  const child=await id("INSERT INTO kids_criancas(nome) VALUES('Criança sintética')");
+  await db.query("INSERT INTO kids_responsaveis(crianca_id,membro_id,parentesco,autorizado_buscar) VALUES($1,$2,'pai',true)",[child,membro]);
+  const results:any[]=[];
+  for(const campus of [A,B]){
+   await db.query('INSERT INTO kids_crianca_campi(crianca_id,igreja_id) VALUES($1,$2)',[child,campus]);
+   const culto=await id("INSERT INTO cultos(nome,data,hora,igreja_id) VALUES('Culto Kids',(now() AT TIME ZONE 'America/Sao_Paulo')::date,'10:00',$1)",[campus]);
+   const sessao=await id("INSERT INTO kids_sessoes(culto_id,status,abrir_em) VALUES($1,'aberta',now())",[culto]);
+   const sala=await id("INSERT INTO kids_salas(nome,igreja_id) VALUES($1,$2)",['Sala '+campus,campus]);
+   const station=await id("INSERT INTO kids_estacoes(nome,tipo,sala_id) VALUES($1,'manned',$2)",['Estação '+campus,sala]);
+   const result=(await db.query<{r:any}>('SELECT fn_campus_kids_checkin($1,$2,$3,$4,$5,$6,$7) AS r',[campus,sessao,child,sala,station,membro,U])).rows[0].r;
+   results.push(result);
+   await db.query("UPDATE kids_sessoes SET status='encerrada' WHERE id=$1",[sessao]);
+   expect((await db.query('SELECT presencial_kids FROM cultos WHERE id=$1',[culto])).rows[0]).toEqual({presencial_kids:1});
+  }
+  await reject(`SELECT fn_campus_kids_checkout('${A}','${results[1].checkin.id}','${U}','codigo_digitado','${results[1].codigo_seguranca}')`,/não encontrado/);
+  await db.query("SELECT fn_campus_kids_checkout($1,$2,$3,'codigo_digitado',$4)",[B,results[1].checkin.id,U,results[1].codigo_seguranca]);
+  expect((await db.query('SELECT igreja_id FROM kids_checkins WHERE checkout_at IS NULL')).rows).toEqual([{igreja_id:A}]);
+ });
+ it('ponte Voluntariado e caixa de notificações preservam origem local na composição',async()=>{
+  await activate();
+  const membro=(await db.query<{id:string}>("INSERT INTO mem_membros(nome,igreja_id) VALUES('Voluntário global',$1) RETURNING id",[A])).rows[0].id;
+  await db.exec("INSERT INTO mem_ministerios(nome) VALUES('Voluntariado (geral)')");
+  const perfil=(await db.query<{id:string}>("INSERT INTO vol_profiles(full_name,membresia_id) VALUES('Voluntário global',$1) RETURNING id",[membro])).rows[0].id;
+  for(const campus of [A,B]){
+   const svc=(await db.query<{id:string}>("INSERT INTO vol_services(name,scheduled_at,igreja_id) VALUES('Serviço sintético',now(),$1) RETURNING id",[campus])).rows[0].id;
+   await db.query("INSERT INTO vol_schedules(service_id,volunteer_id,volunteer_name) VALUES($1,$2,'Pessoa sintética')",[svc,perfil]);
+   await db.query("INSERT INTO notificacoes(usuario_id,titulo,mensagem,modulo,igreja_id) VALUES($1,'Escala sintética','Mensagem sintética','voluntariado',$2)",[U,campus]);
+  }
+  expect((await db.query('SELECT igreja_id FROM mem_voluntarios WHERE membro_id=$1 ORDER BY igreja_id',[membro])).rows).toEqual([{igreja_id:A},{igreja_id:B}]);
+  await user();expect((await db.query('SELECT igreja_id FROM notificacoes')).rows).toEqual([{igreja_id:A}]);
+ });
+ it('storage privado bloqueia acesso direto mesmo após policy anterior permissiva',async()=>{
+  await db.exec("INSERT INTO storage.objects(bucket_id,name) VALUES('batismos-campi','campus-b/foto-sintetica.jpg')");
+  await activate();await user();expect((await db.query('SELECT name FROM storage.objects')).rows).toEqual([]);
+  await reject("INSERT INTO storage.objects(bucket_id,name) VALUES('batismos-campi','invasao.jpg')",/row-level security/);
+ });
 });

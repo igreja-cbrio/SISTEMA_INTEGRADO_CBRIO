@@ -1014,7 +1014,7 @@ router.post('/batismos', authorizeBatismo, campusBatismos.contexto, campusBatism
       enfileirar({ telefone: inscricao.telefone,
         template: process.env.WHATSAPP_TEMPLATE_BATISMO_CONF || 'batismo_confirmacao',
         params: [String(inscricao.nome).split(' ')[0], inscricao.data_batismo ? inscricao.data_batismo.split('-').reverse().join('/') : 'a confirmar', inscricao.horario_culto || 'a confirmar'],
-        contexto: 'batismo_totem', refId: inscricao.id,
+        contexto: 'batismo_totem', refId: inscricao.id, campus: req.campus,
       }).catch(() => {});
     }
     res.json(inscricao);

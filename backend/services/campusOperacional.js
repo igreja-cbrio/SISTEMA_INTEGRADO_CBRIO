@@ -3,7 +3,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 // Para serviços/jobs que já validaram a autorização do chamador. A existência
 // de uma unidade operacional não concede acesso administrativo a ela.
-async function resolverCampusOperacional(db, solicitado) {
+async function carregarConfigOperacional(db) {
   const { data: config, error } = await db.from('app_campus_config')
     .select('estado,campus_legado_id,ja_ativado').eq('id', true).maybeSingle();
   if (error || !config || !['preparacao','ensaio','ativo'].includes(config.estado)
@@ -11,6 +11,10 @@ async function resolverCampusOperacional(db, solicitado) {
     || (config.estado === 'preparacao' ? config.ja_ativado !== false : config.ja_ativado !== true)) {
     throw new ErroCampus(503, 'campus_configuracao_pendente', 'A configuração de campus ainda não está disponível.');
   }
+  return config;
+}
+async function resolverCampusOperacional(db, solicitado) {
+  const config = await carregarConfigOperacional(db);
   const id = solicitado === undefined || solicitado === null
     ? (config.estado === 'preparacao' ? config.campus_legado_id : null) : solicitado;
   if (!UUID.test(id || '')) throw new ErroCampus(409, 'campus_selecao_necessaria', 'Informe o campus desta operação.');
@@ -23,4 +27,15 @@ async function resolverCampusOperacional(db, solicitado) {
   if (!igreja) throw new ErroCampus(404, 'campus_nao_encontrado', 'Campus não encontrado.');
   return id;
 }
-module.exports = { resolverCampusOperacional };
+async function listarContextosOperacionais(db) {
+  const config=await carregarConfigOperacional(db);
+  const {lerTodasPaginas}=require('../utils/campusPaginacao');
+  const campi=await lerTodasPaginas(()=>{
+    let query=db.from('igrejas').select('id,nome,tipo,ativa').eq('ativa',true).eq('tipo','sede').order('id');
+    if(config.estado==='preparacao') query=query.eq('id',config.campus_legado_id);
+    return query;
+  });
+  if(campi.some(c=>!UUID.test(c.id||'')||c.tipo!=='sede'||c.ativa!==true)) throw new Error('Catálogo operacional inválido.');
+  return campi.map(c=>({...config,campus_id:c.id,campi:[c],nome:c.nome}));
+}
+module.exports = { resolverCampusOperacional, listarContextosOperacionais };

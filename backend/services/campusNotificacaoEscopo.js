@@ -23,4 +23,13 @@ async function escopoNotificacao(db,modulo,campus) {
   if(c.estado!=='preparacao') throw new ErroCampus(503,'campus_notificacao_sem_origem','A notificação exige o campus do evento.');
   return {igreja_id:c.campus_legado_id,escopo_campus:'campus'};
 }
-module.exports={contextoNotificacoes,filtrarNotificacoes,escopoNotificacao};
+async function contextoEventoArmazenado(db,registro) {
+  if(registro?.escopo_campus==='central' && registro.igreja_id===null) return undefined;
+  if(registro?.escopo_campus!=='campus' || !registro.igreja_id) throw new Error('Origem do evento não registrada.');
+  const {resolverCampusOperacional}=require('./campusOperacional');
+  await resolverCampusOperacional(db,registro.igreja_id);
+  const {data:c,error}=await db.from('app_campus_config').select('estado,campus_legado_id').eq('id',true).maybeSingle();
+  if(error||!c) throw new Error('Contexto do evento indisponível.');
+  return {estado:c.estado,campus_legado_id:c.campus_legado_id,campus_id:registro.igreja_id,campi:[{id:registro.igreja_id}]};
+}
+module.exports={contextoNotificacoes,filtrarNotificacoes,escopoNotificacao,contextoEventoArmazenado};
