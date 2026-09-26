@@ -105,6 +105,34 @@ Campus 2, aplicar migrations em produção ou mergear esta PR durante o trabalho
 - Kids está em implementação nos mesmos arquivos/branch. Não considerar
   arquivos não commitados como certificados até a validação e checkpoint.
 
+Kids — checkpoint SQL de 27/09/2026:
+- `20260927090000_multicampus_kids.sql` preserva uma criança global, adiciona
+  `kids_crianca_campi` (vínculo explícito, desativação por `ativo`) e dimensão nos
+  atos/estações/filas. Backfill de vínculo usa presença/atendimento, nunca o campus
+  do responsável. Primeiro ato válido em preparação cria o vínculo atomicamente;
+  depois do ensaio exige vínculo anterior. Crianças sem atos precisam reconciliação.
+- `20260927100000_multicampus_kids_operacoes.sql` instala check-in atômico com
+  responsável canônico autorizado, pais do mesmo campus, capacidade, extras e
+  consumo de código reservado. Código continua globalmente único. Consolidação
+  e decisões respeitam o campus do culto; RPCs globais ambíguas ficam restritas à
+  preparação. Checkout está na `20260927130000_multicampus_kids_checkout.sql`.
+- `campusKidsSql.test.ts` executa schema, índices e triggers reais, junto às
+  migrations anteriores. Cobertura inclui responsável global, duas unidades,
+  RLS, rollback dos extras, código, capacidade e checkout com chamadas/pager.
+  Concorrência real de Kids ainda requer validação fora do PGlite.
+- Integração descobriu outro índice global vivo em Cultos:
+  `cultos_service_type_data_hora_uniq`. A migration 210000 também o converte para
+  campus; regressão comprova mesmo dia/horário em duas unidades, inclusive culto
+  sem tipo. Não corrigir o teste artificialmente variando horário por unidade.
+- Pendências explícitas Kids: vínculo infantil canônico com `mem_membros` (não
+  existe no schema vivo; não inventar match fraco); reconciliação de crianças sem
+  atos; PIN/configuração/etiqueta por campus; reserva offline, lotes familiares,
+  override/manual, token de estação/display, app público, sincronização PCO,
+  storage/fotos e agregados. Nomes de salas/estações mantêm unicidade global até
+  revisar consumidores legados. Configurações singleton deixam de ser legíveis
+  diretamente por autenticados fora da preparação. Nenhuma cobertura completa
+  ou ativação decorre destes testes.
+
 Migrations preparadas, **não aplicadas**:
 1. `20260926200000_multicampus_contexto_e_ativacao.sql`: configuração, gate de
    ativação, helper e administração de vínculos. Deve preceder qualquer deploy

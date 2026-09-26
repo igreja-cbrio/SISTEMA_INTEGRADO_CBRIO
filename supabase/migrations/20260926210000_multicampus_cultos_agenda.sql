@@ -35,6 +35,11 @@ ALTER TABLE public.cultos ALTER COLUMN igreja_id SET DEFAULT public.fn_campus_le
 ALTER TABLE public.cultos DROP CONSTRAINT uniq_culto_service_data;
 ALTER TABLE public.cultos ADD CONSTRAINT uniq_culto_campus_service_data UNIQUE(igreja_id,service_type_id,data);
 ALTER TABLE public.cultos ADD CONSTRAINT cultos_id_igreja_unique UNIQUE(id,igreja_id);
+-- Índice vivo adicional também cobria cultos sem service_type_id; mantê-lo
+-- global impediria duas unidades no mesmo horário apesar da constraint acima.
+DROP INDEX IF EXISTS public.cultos_service_type_data_hora_uniq;
+CREATE UNIQUE INDEX cultos_service_type_data_hora_uniq ON public.cultos
+ (igreja_id,COALESCE(service_type_id,'00000000-0000-0000-0000-000000000000'::uuid),data,hora);
 CREATE INDEX idx_cultos_campus_data ON public.cultos(igreja_id,data DESC);
 
 CREATE OR REPLACE FUNCTION public.tg_culto_preservar_campus()

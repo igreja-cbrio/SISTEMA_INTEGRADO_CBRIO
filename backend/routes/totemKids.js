@@ -24,6 +24,15 @@ const { resolverJanelaPeriodo, rotuloJanela } = require('../utils/janelaPeriodo'
 const { tokensDaBusca, montarResultado } = require('../utils/buscaCriancaDecisao');
 const { resumirCadastros, serieDiaria, limitesUtc, diaBRT, temMarcaDeImport } = require('../utils/cadastrosKids');
 const { supabase } = require('../utils/supabase');
+const { criarMiddlewareCampus } = require('../middleware/campus');
+const { filtrarCampus } = require('../utils/campusQuery');
+const { lerTodasPaginas } = require('../utils/campusPaginacao');
+const { responderErroCampus } = require('../services/campusContexto');
+const { exigirCriancaCampus, exigirSessaoCampus, criarCheckoutKids, criarCheckinKids } = require('../services/campusKids');
+const contextoLeituraKids = criarMiddlewareCampus({ modulo: 'kids', cobertura: { leitura: true, escrita: false } });
+const contextoEscritaKids = criarMiddlewareCampus({ modulo: 'kids', cobertura: { leitura: false, escrita: true } });
+const checkoutCampusKids = criarCheckoutKids({ supabase });
+const checkinCampusKids = criarCheckinKids({ supabase });
 const { safeEqual, isAuthorizedCron } = require('../utils/cronAuth');
 const { notificar } = require('../services/notificar');
 const wpp = require('../services/whatsappService');
@@ -192,9 +201,9 @@ function salaDaIdade(salas, idadeMeses) {
 }
 
 // Sala sugerida pra idade em meses
-async function sugerirSala(idadeMeses) {
+async function sugerirSala(idadeMeses, contexto) {
   if (idadeMeses == null) return null;
-  const { data } = await supabase
+  let consulta = supabase
     .from('kids_salas')
     .select('id, nome, capacidade, faixa_etaria_min_meses, faixa_etaria_max_meses, cor')
     .eq('ativo', true)
@@ -202,7 +211,10 @@ async function sugerirSala(idadeMeses) {
     .gte('faixa_etaria_max_meses', idadeMeses)
     .order('ordem')
     .limit(1)
-    .maybeSingle();
+    ;
+  if (contexto) consulta = filtrarCampus(consulta, contexto);
+  const { data, error } = await consulta.maybeSingle();
+  if (error && contexto) throw error;
   return data || null;
 }
 
@@ -605,7 +617,7 @@ router.post('/sessoes/trocar-periodo', authorizeModule('kids', 3), async (req, r
 });
 
 // GET /api/totem-kids/sessoes · lista sessões (admin)
-router.get('/sessoes', authorizeModule('kids', 1), async (req, res) => {
+router.get('/sessoes', authorizeModule('kids', 1), contextoLeituraKids, async (req, res) => {
   try {
     const status = req.query.status; // opcional · filtra por status
     const limit = Math.min(parseInt(req.query.limit) || 30, 100);
@@ -616,6 +628,7 @@ router.get('/sessoes', authorizeModule('kids', 1), async (req, res) => {
         culto:cultos(id, data, nome, presencial_kids, decisoes_kids,
                      service_type:vol_service_types(id, name, color, recurrence_time))
       `)
+      .eq('igreja_id', req.campus.campus_id).is('deleted_at', null)
       .order('abrir_em', { ascending: false })
       .limit(limit);
     if (status) q = q.eq('status', status);
@@ -624,7 +637,7 @@ router.get('/sessoes', authorizeModule('kids', 1), async (req, res) => {
     res.json(data || []);
   } catch (e) {
     console.error('[totemKids/sessoes]', e.message);
-    res.status(500).json({ error: 'Erro ao listar sessões' });
+    return responderErroCampus(res, e);
   }
 });
 
@@ -931,8 +944,9 @@ router.post('/criancas/merge', authorizeModule('kids', 3), async (req, res) => {
 });
 
 // GET /api/totem-kids/criancas/:id · detalhe completo
-router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
+router.get('/criancas/:id', authorizeModule('kids', 1), contextoLeituraKids, async (req, res) => {
   try {
+    await exigirCriancaCampus(supabase, req.campus, req.params.id);
     const { data, error } = await supabase
       .from('kids_criancas')
       .select(`
@@ -942,7 +956,7 @@ router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
           membro:mem_membros(id, nome, telefone, cpf, foto_url, email, deleted_at)
         )
       `)
-      .eq('id', req.params.id)
+      .eq('id', req.params.id).is('deleted_at', null)
       .maybeSingle();
     if (error) throw error;
     if (!data) return res.status(404).json({ error: 'Criança não encontrada' });
@@ -954,11 +968,11 @@ router.get('/criancas/:id', authorizeModule('kids', 1), async (req, res) => {
       foto_url: await fotoVisivelCrianca(data),
       idade_meses: calcIdadeMeses(data.data_nascimento),
       idade_label: formatIdade(calcIdadeMeses(data.data_nascimento)),
-      sala_sugerida: await sugerirSala(calcIdadeMeses(data.data_nascimento)),
+      sala_sugerida: await sugerirSala(calcIdadeMeses(data.data_nascimento), req.campus),
     });
   } catch (e) {
     console.error('[totemKids/criancas/:id]', e.message);
-    res.status(500).json({ error: 'Erro ao buscar criança' });
+    return responderErroCampus(res, e);
   }
 });
 
@@ -1659,17 +1673,17 @@ router.get('/criancas', authorizeModule('kids', 1), async (req, res) => {
 
 // ── Atendimentos por criança (histórico de contatos/cuidados da equipe) ──────
 // GET /criancas/:id/atendimentos
-router.get('/criancas/:id/atendimentos', authorizeModule('kids', 1), async (req, res) => {
+router.get('/criancas/:id/atendimentos', authorizeModule('kids', 1), contextoLeituraKids, async (req, res) => {
   try {
-    const { data, error } = await supabase
+    await exigirCriancaCampus(supabase, req.campus, req.params.id);
+    const data = await lerTodasPaginas(() => supabase
       .from('kids_atendimentos')
       .select('*')
-      .eq('crianca_id', req.params.id)
+      .eq('igreja_id', req.campus.campus_id).eq('crianca_id', req.params.id)
       .is('deleted_at', null)
-      .order('data', { ascending: false }).order('created_at', { ascending: false });
-    if (error) throw error;
+      .order('data', { ascending: false }).order('created_at', { ascending: false }).order('id'));
     res.json(data || []);
-  } catch (e) { res.status(500).json({ error: 'Erro ao listar atendimentos' }); }
+  } catch (e) { return responderErroCampus(res, e); }
 });
 
 // POST /criancas/:id/atendimentos  { tipo, descricao, data }
@@ -3597,7 +3611,7 @@ router.delete('/ausentes/:criancaId/contato', authorizeModule('kids', 2), async 
 
 // GET /api/totem-kids/cultos-do-dia?data=YYYY-MM-DD · cultos COM Kids do dia
 // (pro check-in multi-culto: marcar em quais a criança vai ficar).
-router.get('/cultos-do-dia', authorizeModule('kids', 2), async (req, res) => {
+router.get('/cultos-do-dia', authorizeModule('kids', 2), contextoLeituraKids, async (req, res) => {
   try {
     const data = req.query.data;
     if (!data) return res.json([]);
@@ -3605,49 +3619,54 @@ router.get('/cultos-do-dia', authorizeModule('kids', 2), async (req, res) => {
     // mexe nos 72 futuros) não pode reaparecer no seletor do totem. is_active:
     // tipo ENCERRADO (08:30/10:00 pós-corte) sai da grade — `!== false` tolera
     // NULL de tipo antigo sem a flag.
-    const { data: cultos } = await supabase.from('cultos')
-      .select('id, nome, vol_service_types(has_kids, is_active, recurrence_time)')
-      .eq('data', data)
+    const { data: cultos, error } = await supabase.from('cultos')
+      .select('id, nome, hora, vol_service_types(has_kids, is_active, recurrence_time)')
+      .eq('igreja_id', req.campus.campus_id).eq('data', data)
       .is('deleted_at', null);
+    if (error) throw error;
     const lista = (cultos || [])
       .filter(c => c.vol_service_types?.has_kids && c.vol_service_types?.is_active !== false)
-      .map(c => ({ id: c.id, nome: c.nome, hora: (c.vol_service_types?.recurrence_time || '').slice(0, 5) }))
+      .map(c => ({ id: c.id, nome: c.nome, hora: (c.hora || c.vol_service_types?.recurrence_time || '').slice(0, 5) }))
       .sort((a, b) => (a.hora || '').localeCompare(b.hora || ''));
     res.json(lista);
   } catch (e) {
     console.error('[totemKids/cultos-do-dia]', e.message);
-    res.status(500).json({ error: 'Erro ao listar cultos do dia' });
+    return responderErroCampus(res, e);
   }
 });
 
 // GET /api/totem-kids/checkin/aberto?sessao_id=&crianca_id= · check-in ABERTO da
 // criança na sessão, com sala/culto/responsável — pra REIMPRIMIR a etiqueta
 // perdida (mesmo código) sem criar outro check-in.
-router.get('/checkin/aberto', authorizeModule('kids', 1), async (req, res) => {
+router.get('/checkin/aberto', authorizeModule('kids', 1), contextoLeituraKids, async (req, res) => {
   try {
     const { sessao_id, crianca_id } = req.query;
     if (!sessao_id || !crianca_id) return res.status(400).json({ error: 'sessao_id e crianca_id obrigatórios' });
-    const { data } = await supabase
+    await exigirSessaoCampus(supabase, req.campus, sessao_id);
+    await exigirCriancaCampus(supabase, req.campus, crianca_id);
+    const { data, error } = await supabase
       .from('kids_checkins')
       .select('id, codigo_seguranca, codigo_barras, checkin_grupo_id, responsavel_checkin_nome, created_at, sala:kids_salas(id, nome, cor, logo_url), sessao:kids_sessoes(id, culto:cultos(id, nome, data))')
-      .eq('sessao_id', sessao_id)
+      .eq('igreja_id', req.campus.campus_id).is('deleted_at', null).eq('sessao_id', sessao_id)
       .eq('crianca_id', crianca_id)
       .is('checkout_at', null)
       .maybeSingle();
+    if (error) throw error;
     // Check-ins ABERTOS em OUTRAS sessões (culto anterior sem check-out) —
     // não impedem o novo check-in, mas o totem avisa e oferece regularizar.
-    const { data: anteriores } = await supabase
+    const { data: anteriores, error: erroAnteriores } = await supabase
       .from('kids_checkins')
       .select('id, codigo_seguranca, created_at, sessao:kids_sessoes(id, status, culto:cultos(id, nome, data))')
       .eq('crianca_id', crianca_id)
-      .neq('sessao_id', sessao_id)
+      .eq('igreja_id', req.campus.campus_id).is('deleted_at', null).neq('sessao_id', sessao_id)
       .is('checkout_at', null)
       .order('created_at', { ascending: false })
       .limit(5);
+    if (erroAnteriores) throw erroAnteriores;
     res.json({ checkin: data || null, abertos_anteriores: anteriores || [] });
   } catch (e) {
     console.error('[totemKids] checkin aberto:', e.message);
-    res.status(500).json({ error: 'Erro ao consultar o check-in' });
+    return responderErroCampus(res, e);
   }
 });
 
@@ -4039,7 +4058,7 @@ router.post('/codigos-reservados', authorizeModule('kids', 2), async (req, res) 
   }
 });
 
-router.post('/checkin', authorizeModule('kids', 2), async (req, res) => {
+router.post('/checkin', authorizeModule('kids', 2), contextoEscritaKids, checkinCampusKids, async (req, res) => {
   try {
     const {
       sessao_id, crianca_id, sala_id, estacao_id,
@@ -4657,7 +4676,7 @@ router.get('/checkin/codigo/:codigo', authorizeModule('kids', 2), async (req, re
 
 // POST /api/totem-kids/checkout · faz checkout
 // Body: { checkin_id, responsavel_id?, responsavel_nome?, método, override_motivo? }
-router.post('/checkout', authorizeModule('kids', 2), async (req, res) => {
+router.post('/checkout', authorizeModule('kids', 2), contextoEscritaKids, checkoutCampusKids, async (req, res) => {
   try {
     const { checkin_id, responsavel_id, responsavel_nome, metodo, override_motivo, codigo_seguranca } = req.body;
     if (!checkin_id) return res.status(400).json({ error: 'checkin_id obrigatorio' });
@@ -5480,17 +5499,17 @@ router.patch('/decisoes/fila/:id', authorizeModule('kids', 3), async (req, res) 
 // SALAS
 // ═══════════════════════════════════════════════════════════════════════════
 
-router.get('/salas', authorizeModule('kids', 1), async (req, res) => {
+router.get('/salas', authorizeModule('kids', 1), contextoLeituraKids, async (req, res) => {
   try {
-    const { data, error } = await supabase
+    const data = await lerTodasPaginas(() => supabase
       .from('kids_salas')
       .select('*')
+      .eq('igreja_id', req.campus.campus_id)
       .order('ordem')
-      .order('nome');
-    if (error) throw error;
+      .order('nome').order('id'));
     res.json(data || []);
   } catch (e) {
-    res.status(500).json({ error: 'Erro ao listar salas' });
+    return responderErroCampus(res, e);
   }
 });
 

@@ -124,3 +124,13 @@ describe('Campus · superfície global', () => {
   });
 
 });
+
+it('Kids certifica somente leituras e transações verificadas', async () => {
+  const source = readFileSync('backend/server.js','utf8');
+  const cobertura = [...source.matchAll(/\{ metodo: '([^']+)', caminho: '([^']+)' \}/g)].map(m => ({metodo:m[1],caminho:m[2]}));
+  const guard = criarCampusSuperficie({supabase:banco(),cobertura});
+  for (const path of ['salas','sessoes','cultos-do-dia','checkin/aberto',`criancas/${A}`,`criancas/${A}/atendimentos`]) expect((await chamar(guard,`/api/totem-kids/${path}`)).next).toHaveBeenCalledOnce();
+  for (const path of ['checkin','checkout']) expect((await chamar(guard,`/api/totem-kids/${path}`,'POST')).next).toHaveBeenCalledOnce();
+  for (const path of ['criancas','dashboard',`sessoes/${A}/criancas-presentes`,'display-sala','cron/encerrar-sessoes']) expect((await chamar(guard,`/api/totem-kids/${path}`)).next).not.toHaveBeenCalled();
+  expect((await chamar(guard,'/api/totem-kids/sessoes','POST')).next).not.toHaveBeenCalled();
+});

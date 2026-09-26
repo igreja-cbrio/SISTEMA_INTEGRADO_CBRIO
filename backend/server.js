@@ -137,6 +137,15 @@ app.use(criarTelemetria500());
 
 // Superfícies ainda não validadas falham fechadas quando o isolamento é exigido.
 app.use('/api', require('./middleware/campusSuperficie').criarCampusSuperficie({ cobertura: [
+  { metodo: 'GET', caminho: '/api/totem-kids/salas' },
+  { metodo: 'GET', caminho: '/api/totem-kids/sessoes' },
+  { metodo: 'GET', caminho: '/api/totem-kids/cultos-do-dia' },
+  { metodo: 'GET', caminho: '/api/totem-kids/checkin/aberto' },
+  { metodo: 'GET', caminho: '/api/totem-kids/criancas/:id' },
+  { metodo: 'GET', caminho: '/api/totem-kids/criancas/:id/atendimentos' },
+  { metodo: 'POST', caminho: '/api/totem-kids/checkin' },
+  { metodo: 'POST', caminho: '/api/totem-kids/checkout' },
+
   { metodo: 'GET', caminho: '/api/public/batismo/campi' },
   { metodo: 'GET', caminho: '/api/public/batismo/horarios' },
   { metodo: 'GET', caminho: '/api/public/batismo/proxima-data' },

@@ -138,4 +138,10 @@ describe('integração: migrations multicampus reais em sequência',()=>{
   await user(V);expect((await db.query('SELECT id FROM batismo_inscricoes')).rows).toHaveLength(1);
  });
 
+ it('índice vivo de culto sem tipo permite mesmo dia/horário em dois campi e rejeita duplicação local',async()=>{
+  await db.query("INSERT INTO cultos(nome,data,hora,igreja_id) VALUES('Manual A','2027-04-04','10:00',$1),('Manual B','2027-04-04','10:00',$2)",[A,B]);
+  await reject(`INSERT INTO cultos(nome,data,hora,igreja_id) VALUES('Duplicado','2027-04-04','10:00','${B}')`,/duplicate key/);
+  expect((await db.query("SELECT igreja_id FROM cultos WHERE data='2027-04-04' ORDER BY igreja_id")).rows).toEqual([{igreja_id:A},{igreja_id:B}]);
+ });
+
 });

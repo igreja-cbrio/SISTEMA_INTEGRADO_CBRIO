@@ -17,6 +17,13 @@ adicionar('grupos', 'local', 'mem_grupo_encontro_presencas', null, { tabela: 'me
 adicionar('next', 'local', 'next_turmas next_eventos next_inscricoes', 'igreja_id');
 adicionar('next', 'local', 'next_encontros next_matriculas', 'igreja_id', { tabela: 'next_turmas', chave: 'turma_id' });
 adicionar('next', 'local', 'next_presencas', null, { tabela: 'next_encontros', chave: 'encontro_id' });
+// Kids preserva uma criança global; participação e atos têm origem explícita.
+adicionar('kids', 'identidade', 'kids_criancas kids_responsaveis');
+adicionar('kids', 'local', 'kids_crianca_campi kids_salas kids_pagers kids_estacoes kids_sessoes kids_checkins kids_chamadas kids_etiquetas_log kids_pager_envios kids_portao_scans kids_codigos_reservados kids_pco_presencas kids_atendimentos kids_conversoes_import kids_pre_checkins kids_vinculo_solicitacoes', 'igreja_id');
+adicionar('kids', 'local', 'kids_sala_voluntarios kids_estoque', null, { tabela: 'kids_salas', chave: 'sala_id' });
+adicionar('totem', 'local', 'totem_estacoes', 'igreja_id');
+adicionar('totem', 'local', 'totem_estacao_tokens', null, { tabela: 'totem_estacoes', chave: 'estacao_id' });
+adicionar('kids', 'pendente', 'kids_totem_config kids_etiqueta_config');
 adicionar('voluntariado', 'identidade', 'vol_profiles');
 adicionar('voluntariado', 'local', 'mem_voluntarios vol_services vol_teams vol_schedules vol_escala_culto_itens', 'igreja_id');
 adicionar('voluntariado', 'local', 'vol_check_ins', null, { tabela: 'vol_schedules', chave: 'schedule_id' });
