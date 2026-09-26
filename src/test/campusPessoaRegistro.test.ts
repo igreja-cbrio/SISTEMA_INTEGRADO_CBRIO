@@ -46,7 +46,7 @@ describe('Cuidados · contrato de pessoa e campus do ato', () => {
   });
   it('encaminha nascimento ao matcher para a última chave canônica', async () => {
     const env = ambiente(); await resolverPessoaRegistro({ nome: 'Pessoa', data_nascimento: '1990-01-02' },ctx,'cuidados',env);
-    expect(env.matcher.mock.calls[0][0]).toMatchObject({ dataNascimento: '1990-01-02' });
+    expect(env.matcher).toHaveBeenCalledWith(expect.objectContaining({ dataNascimento: '1990-01-02' }));
   });
   it('nascimento divergente vira revisão mesmo se CPF coincide', async () => {
     const env = ambiente('52998224725',true,'1990-01-02');

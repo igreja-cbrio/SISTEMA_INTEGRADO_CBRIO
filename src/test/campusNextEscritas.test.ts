@@ -59,7 +59,7 @@ describe('Next · escritas locais', () => {
   });
   it('matrícula normaliza contatos e apenas pessoa nova recebe campus no matcher', async () => {
     const env = ambiente(); await env.run('post','/matriculas',{ nome: 'Pessoa', telefone: '(21) 99999-1111', email: ' A@B.COM ' });
-    expect(env.matcher.mock.calls[0][0].extra).toEqual({ igreja_id: A });
+    expect(env.matcher).toHaveBeenCalledWith(expect.objectContaining({ extra: { igreja_id: A } }));
     expect(env.queries.find(q => q.insert).insert[0]).toMatchObject({ igreja_id: A, membro_id: ID, telefone: '21999991111', email: 'a@b.com' });
     expect(env.coletar).not.toHaveBeenCalled();
   });
