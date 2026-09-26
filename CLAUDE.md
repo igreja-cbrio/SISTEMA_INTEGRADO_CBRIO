@@ -7706,6 +7706,26 @@ e as migrations F2–F5 (ainda NÃO aplicadas) vivem no PR #3050 (`docs/modulo-m
 - ⏳ Fora desta fase: campo "que formato você imagina?" no formulário (sem ele quase nenhum pedido chega
   com sugestão) · modal Responsabilidades com a matriz real · Fase 5 (planner em horas + capacidade).
 
+### O ciclo padrão do Marketing em Eventos virou a matriz por culto (2026-09-26 · migration `20260926100000`)
+
+- **A matriz é GLOBAL** (`marketing_ciclo_padroes`/`marketing_ciclo_itens_padrao` com `category_id` NULL) e vale
+  para **todo evento com ciclo** (decisão do Marcos). Linha de categoria continua possível e GANHA da global;
+  itens: se a categoria tem QUALQUER item ativo na fase, a lista dela substitui a global. Nos endpoints
+  `/marketing/admin/ciclo-*`, `category_id = 'global'` (ou vazio) = NULL.
+- **Todo evento é por culto**: `fn_marketing_cultos_do_evento` cai em **CBRio** quando nem o evento nem a
+  categoria têm cultos ⇒ o espelho antigo (`cycle_phase_tasks` → card) deixou de rodar.
+- **As 7 tarefas antigas de marketing em `adm_task_templates` ficaram inativas** (backup em
+  `backups._bk_20260926_ciclo_padrao_*`). A aba **Eventos → Templates → Ciclo criativo** mostra o Marketing
+  pela matriz (`eventos/components/MatrizMarketing.jsx`): tarefa por culto com responsável + entregas.
+  ⚠️ Marketing saiu do seletor de área de "Adicionar tarefa padrão" — entrega de marketing se cadastra na matriz.
+- ⚠️ A migration gerou tarefas só das fases que **ainda não terminaram** dos ciclos ativos (fase passada
+  criada agora nasceria atrasada).
+- **Frente Sistema = toda solicitação de marketing.** Com tarefa, aparece a tarefa; sem tarefa, aparece como
+  PEDIDO (`tipo: 'pedido'`, só para o líder): `aguardando_aprovacao` (diretor de origem) ·
+  `aguardando_alocacao` (clica e aloca) · `sem_tarefa` (campanha ativa sem card). **A frente Pendentes deixou
+  de existir** (virou isto).
+- **Planner** monta a mesma tela de rotina do Admin (`AbaRecorrentes`, exportada) — uma régua só.
+
 # ⚠️ REGRAS OBRIGATÓRIAS DE SEGURANÇA (não regredir · 2026-05-21)
 
 Esta seção é a lei do projeto após a Auditoria de Segurança 2026-05-21

@@ -189,32 +189,50 @@ router.get('/', authorizeModule('marketing', 1), async (req, res) => {
       avisos.push(`Não deu para carregar a rotina: ${e.message}`);
     }
 
-    // ── Pendentes (só líder): pedidos em triagem, com a pessoa sugerida ─────
-    let pendentes = [];
+    // ── Sistema: TODA solicitação de marketing (2026-09-26 · Pendentes entrou aqui)
+    // O que já virou tarefa aparece como tarefa (acima). O que ainda não virou
+    // aparece como PEDIDO, só para o líder: aguardando o diretor aprovar, ou
+    // aguardando ele alocar (clica e aloca, com a pessoa sugerida).
     let carga = {};
     if (ctx.lider) {
-      const camps = await lerTudo(() => supabase.from('marketing_campanhas')
-        .select('id, titulo, dor_descricao, publico_alvo, solicitacao_id, sugerido_membro_id, created_at')
-        .eq('status', 'triagem').is('deleted_at', null).order('id'));
-      const sols = await lerEmLotes('solicitacoes', 'id, titulo, descricao, data_necessaria, solicitante_id', 'id', camps.map(c => c.solicitacao_id));
-      const solDe = Object.fromEntries(sols.map(x => [x.id, x]));
-      const solicitantes = await lerEmLotes('profiles', 'id, name', 'id', sols.map(x => x.solicitante_id));
+      const [camps, sols] = await Promise.all([
+        lerTudo(() => supabase.from('marketing_campanhas')
+          .select('id, titulo, dor_descricao, publico_alvo, solicitacao_id, sugerido_membro_id, status, created_at')
+          .is('deleted_at', null).order('id')),
+        lerTudo(() => supabase.from('solicitacoes')
+          .select('id, titulo, descricao, data_necessaria, solicitante_id, status, created_at')
+          .eq('categoria', 'marketing').is('deleted_at', null).order('id')),
+      ]);
+      const campDaSol = {};
+      for (const c of camps) if (c.solicitacao_id) campDaSol[c.solicitacao_id] = c;
+      const campComCard = new Set(cards.map(c => c.campanha_id).filter(Boolean));
+      const solComCard = new Set(cards.map(c => c.solicitacao_id).filter(Boolean));
+      const FECHADA = new Set(['concluido', 'avaliado', 'cancelado', 'rejeitado']);
+      const abertas = sols.filter(x => {
+        if (FECHADA.has(x.status) || solComCard.has(x.id)) return false;
+        const c = campDaSol[x.id];
+        return !(c && campComCard.has(c.id));
+      });
+      const solicitantes = await lerEmLotes('profiles', 'id, name', 'id', abertas.map(x => x.solicitante_id));
       const nomeSolicitante = Object.fromEntries(solicitantes.map(p => [p.id, p.name]));
       const mais7 = (d) => (d ? new Date(Date.parse(d + 'T12:00:00Z') + 7 * 864e5).toISOString().slice(0, 10) : null);
-      pendentes = camps.map(c => {
-        const sol = solDe[c.solicitacao_id] || null;
-        const quando = L.dataSP(sol?.data_necessaria) || mais7(L.dataSP(c.created_at));
+      for (const sol of abertas) {
+        const c = campDaSol[sol.id] || null;
+        const pedidoStatus = sol.status === 'aguardando_aprovacao_origem' ? 'aguardando_aprovacao'
+          : c?.status === 'triagem' ? 'aguardando_alocacao' : 'sem_tarefa';
+        const quando = L.dataSP(sol.data_necessaria) || mais7(L.dataSP(sol.created_at));
         const semana = L.semanaDe(quando, semanas);
-        return {
-          id: c.id, frente: 'pen', titulo: sol?.titulo || c.titulo,
-          descricao: sol?.descricao || c.dor_descricao || null, publico_alvo: c.publico_alvo || null,
-          data_necessaria: L.dataSP(sol?.data_necessaria) || null, prazo: quando,
-          semana: semana == null ? null : Math.max(1, semana),
-          aberta: true, atrasada: semana === 0, sugerido_membro_id: c.sugerido_membro_id || null,
-          solicitante: nomeSolicitante[sol?.solicitante_id] || null, criado_em: c.created_at,
-        };
-      }).filter(p => p.semana != null)
-        .sort((a, b) => String(a.prazo).localeCompare(String(b.prazo)));
+        if (semana == null) continue; // depois do ano
+        tarefas.push({
+          id: c?.id || sol.id, frente: 'sis', tipo: 'pedido', pedido_status: pedidoStatus,
+          campanha_id: c?.id || null, solicitacao_id: sol.id,
+          titulo: sol.titulo || c?.titulo, descricao: sol.descricao || c?.dor_descricao || null,
+          publico_alvo: c?.publico_alvo || null, data_necessaria: L.dataSP(sol.data_necessaria) || null,
+          prazo: quando, semana: Math.max(1, semana), aberta: true, atrasada: semana === 0,
+          sugerido_membro_id: c?.sugerido_membro_id || null,
+          solicitante: nomeSolicitante[sol.solicitante_id] || null, itens: [],
+        });
+      }
 
       const prazoDaTarefa = Object.fromEntries(noAno.map(x => [x.card.id, x.prazo]));
       carga = A.cargaPorSemana(itens, { prazoDaTarefa, semanaDe: (d) => L.semanaDe(d, semanas) });
@@ -225,12 +243,6 @@ router.get('/', authorizeModule('marketing', 1), async (req, res) => {
       ins: { ...L.statusFrente(porFrente('ins'), semanaAtual), series: listaSeries },
       sis: { ...L.statusFrente(porFrente('sis'), semanaAtual), tarefas: porFrente('sis') },
       int: { ...L.statusFrente(porFrente('int'), semanaAtual), tarefas: porFrente('int') },
-      ...(ctx.lider ? { pen: {
-        // Pendentes é a caixa de entrada do Pedro: qualquer pedido esperando já é pendência dele.
-        ...L.statusFrente(pendentes, semanaAtual),
-        status: pendentes.length ? 'vermelho' : 'verde', pendentes: pendentes.length,
-        tarefas: pendentes,
-      } } : {}),
       rot: rotina == null
         ? { status: 'indisponivel', pendentes: null, semanas_atrasadas: [], tarefas: [], marcavel: false }
         : { ...L.statusFrente(rotina, semanaAtual), tarefas: rotina, marcavel: rotinaDisponivel },

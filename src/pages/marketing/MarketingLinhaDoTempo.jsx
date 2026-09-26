@@ -152,6 +152,18 @@ export default function MarketingLinhaDoTempo() {
     setView({ zoom, x: 16 - 20 * zoom, y: 12 });
   }, [dados, viewportRef, setView]);
 
+  // Pedido (solicitação sem tarefa): o líder aloca aqui; os outros estados só avisam.
+  const abrirTarefa = (t) => {
+    if (t.tipo !== 'pedido') { setTarefaId(t.id); return; }
+    if (t.pedido_status === 'aguardando_alocacao' && dados?.perfil?.lider) {
+      setEditor({ modo: 'alocar', pendente: { ...t, id: t.campanha_id } });
+    } else if (t.pedido_status === 'aguardando_aprovacao') {
+      toast.info('Esta solicitação ainda espera a aprovação do diretor da área de quem pediu.');
+    } else {
+      toast.info('A campanha deste pedido existe mas ainda não tem tarefa. Abra a campanha no Kanban para triar.');
+    }
+  };
+
   const irParaHoje = () => {
     if (!layout) return;
     const c = layout.colunas.find(col => col.atual) || layout.colunas[0];
@@ -270,7 +282,7 @@ export default function MarketingLinhaDoTempo() {
                 )}
                 {layout.nos.map(no => (no.tipo === 'etapa'
                   ? <CartaoEtapa key={no.key} no={no} semanaAtual={layout.semanaAtual} membros={dados.membros} onAbrir={(t) => setTarefaId(t.id)} />
-                  : <CartaoTarefa key={no.key} no={no} membros={dados.membros} onAbrir={(t) => (t.frente === 'pen' ? setEditor({ modo: 'alocar', pendente: t }) : setTarefaId(t.id))} />
+                  : <CartaoTarefa key={no.key} no={no} membros={dados.membros} onAbrir={abrirTarefa} />
                 ))}
               </div>
               <div className="pointer-events-none absolute bottom-3 left-1/2 hidden -translate-x-1/2 rounded-full border border-border bg-card/90 px-3 py-1 text-[11px] text-muted-foreground md:block">

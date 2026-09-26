@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { marketing as api } from '../../api';
 import MarketingPagina from './MarketingPagina';
+import { AbaRecorrentes } from './MarketingAdmin';
 import { Button } from '../../components/ui/button';
 import { Card } from '../../components/ui/card';
 import {
@@ -229,6 +230,21 @@ export default function MarketingPlanner() {
         <GripHorizontal className="h-3.5 w-3.5 shrink-0" />
         Arraste uma barra pra outro dia ou outra pessoa (mantém a duração em dias úteis). Dias em excesso ({'>'} slots) ficam em vermelho · 🎯 = foco (sem paralela) · barra tracejada = tarefa do ciclo criativo (período vem da fase, não se arrasta). Fim de semana não aparece.
       </p>
+
+      {/* Rotina da equipe: os compromissos fixos da semana de cada pessoa. É a mesma
+          tela do Admin (uma régua só) e alimenta a frente Rotina das Demandas. */}
+      {podeEditar && (
+        <Card className="p-4 space-y-2">
+          <div>
+            <h2 className="text-sm font-semibold">Rotina da equipe</h2>
+            <p className="text-xs text-muted-foreground">
+              O que cada pessoa faz toda semana (reunião, cobertura do culto, fechamento de redes). Aparece na frente
+              Rotina das Demandas, onde cada um marca a sua semana.
+            </p>
+          </div>
+          <AbaRecorrentes />
+        </Card>
+      )}
     </MarketingPagina>
   );
 }
