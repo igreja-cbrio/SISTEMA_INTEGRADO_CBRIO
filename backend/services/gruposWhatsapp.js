@@ -21,6 +21,12 @@ const { enfileirar } = require('./whatsappFila');
 // envio de grupos sai — nem por evento, nem manual, nem automático. Módulo leaf
 // (sem require circular). Checado no topo de cada função de envio.
 const { bloqueioTotalAtivo } = require('./gruposEnviosConfig');
+// ⚠️ A régua do que vai no aviso de aprovação vive em `utils/` (pura, no gate).
+// O carregamento da agenda reusa o que a sugestão do inbox já faz — duas contas
+// para "quando é o próximo encontro" divergiriam, e o sintoma seria o WhatsApp
+// e o inbox mandando datas diferentes para a mesma terça.
+const { quandoComData, ondeComLink } = require('../utils/avisoGrupoAprovado');
+const { ehGrupoOnline } = require('../utils/grupoOnline');
 
 // Token dos links sem login: régua ÚNICA em utils/ (testável no gate).
 const {
@@ -192,18 +198,81 @@ async function notificarLiderNovoPedido({ grupo, pedidoId, pessoa }) {
 // `optin` vem do chamador (aprovarPedidoCore lê o membro/cadastro); quando não
 // for informado, mantém o comportamento antigo pra não silenciar aviso de fluxo
 // que ainda não passa a informação.
+/**
+ * A data do PRÓXIMO encontro e o link da sala — o que o aviso de aprovação não
+ * dizia (Matheus · 25/09/2026).
+ *
+ * ⚠️⚠️ BEST-EFFORT, sempre: qualquer falha aqui devolve `{}` e o aviso sai com o
+ * texto de antes. A pessoa foi aprovada; perder a data é ruim, perder o aviso
+ * de boas-vindas é pior.
+ *
+ * ⚠️ `ancoraDoGrupo` e `proximoEncontro` são as MESMAS funções da sugestão do
+ * inbox e do app. Não reimplementar: o app, o inbox e o WhatsApp precisam
+ * concordar sobre qual terça é a próxima.
+ */
+async function agendaEDoGrupo(grupo) {
+  const out = {};
+  if (!grupo?.id) return out;
+  try {
+    const { proximoEncontro } = require('../utils/agendaGrupo');
+    const { ancoraDoGrupo } = require('./sugestaoGrupoAgenda');
+
+    const { ancoraISO, estimada } = await ancoraDoGrupo(grupo);
+
+    // ⚠️ Erro ao ler exceções NÃO vira "não há exceção": um encontro cancelado
+    // que passe batido faria o aviso mandar a pessoa numa reunião que não vai
+    // acontecer. Sem as exceções, preferimos não dar data nenhuma.
+    const { data: exc, error: eExc } = await supabase
+      .from('mem_grupo_agenda_excecoes')
+      .select('data_original, status, nova_data, novo_horario')
+      .eq('grupo_id', grupo.id);
+    if (eExc) throw eExc;
+
+    const prox = proximoEncontro({
+      diaSemana: grupo.dia_semana, horario: grupo.horario,
+      recorrencia: grupo.recorrencia, ancoraISO, excecoes: exc || [],
+    });
+    out.proximaISO = prox?.data || null;
+    out.proximoHorario = prox?.horario || null;
+    // `ancora_incerta` é o sinal do futuro; `estimada` é o da âncora derivada.
+    out.estimada = Boolean(estimada || prox?.ancora_incerta);
+  } catch (e) {
+    console.warn('[GruposWPP] agenda do grupo indisponivel:', e.message);
+  }
+
+  try {
+    const { data } = await supabase.from('mem_grupo_link')
+      .select('link').eq('grupo_id', grupo.id).maybeSingle();
+    out.link = data?.link || null;
+  } catch (e) {
+    console.warn('[GruposWPP] link da sala indisponivel:', e.message);
+  }
+  return out;
+}
+
 async function notificarPessoaAprovada({ telefone, grupo, liderNome, liderTelefone, optin, pedidoId = null }) {
   try {
     if (await bloqueioTotalAtivo()) return { sent: false, reason: 'bloqueio_total' };
     if (!telefone) return { sent: false, reason: 'pessoa_sem_telefone' };
     if (optin === false) return { sent: false, reason: 'sem_optin' };
+    // ⚠️⚠️ A data entra DENTRO do {{2}} e o link dentro do {{3}} — a Meta valida
+    // a QUANTIDADE de parâmetros, não o conteúdo. Por isso isto não depende de
+    // template novo (que custaria 48h de revisão e o risco de mudar a categoria).
+    const extra = await agendaEDoGrupo(grupo);
     const r = await enfileirar({
       telefone,
       template: TPL_PEDIDO_APROVADO,
       params: [
         (grupo?.nome || '').trim() || 'seu grupo',
-        formatarQuando(grupo),
-        formatarOnde(grupo),
+        quandoComData({
+          diaSemana: grupo?.dia_semana, horario: grupo?.horario,
+          recorrencia: grupo?.recorrencia,
+          proximaISO: extra.proximaISO, proximoHorario: extra.proximoHorario, estimada: extra.estimada,
+        }),
+        ondeComLink({
+          partes: [grupo?.local, grupo?.endereco, grupo?.complemento, grupo?.bairro],
+          online: ehGrupoOnline(grupo), linkOnline: extra.link,
+        }),
         (liderNome || '').trim() || 'o líder do grupo',
         (liderTelefone || '').trim() || 'em breve pelo WhatsApp',
       ],
