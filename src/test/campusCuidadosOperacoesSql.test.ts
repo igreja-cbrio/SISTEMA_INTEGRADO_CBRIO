@@ -2,11 +2,11 @@
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { beforeEach, afterEach, describe, expect, it } from 'vitest';
+import { beforeAll, beforeEach, afterEach, afterAll, describe, expect, it } from 'vitest';
 let db: PGlite;
 const A = '00000000-0000-0000-0000-000000000001', B = '00000000-0000-0000-0000-000000000002';
 const ID = '11111111-1111-1111-1111-111111111111';
-beforeEach(async () => {
+beforeAll(async () => {
   db = new PGlite();
   await db.exec(`CREATE ROLE anon; CREATE ROLE authenticated; CREATE ROLE service_role;
     CREATE TABLE cui_visitas(id uuid PRIMARY KEY,igreja_id uuid,deleted_at timestamptz);
@@ -20,8 +20,10 @@ beforeEach(async () => {
     GRANT SELECT,UPDATE ON cui_visitas TO service_role;
     GRANT INSERT ON audit_teste TO service_role;`);
   await db.exec(readFileSync(join(__dirname,'../../supabase/migrations/20260927030000_multicampus_cuidados_operacoes.sql'),'utf8'));
-});
-afterEach(async () => { await db.close(); });
+},30000);
+beforeEach(async () => { await db.exec('UPDATE cui_visitas SET deleted_at=NULL; DELETE FROM audit_teste;'); });
+afterEach(async () => { await db.exec('RESET ROLE'); });
+afterAll(async () => { await db.close(); });
 describe('Cuidados · exclusão lógica atômica por campus', () => {
   it('não altera registro de outro campus', async () => {
     await db.exec('SET ROLE service_role');

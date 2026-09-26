@@ -86,6 +86,12 @@ export function CampusProvider({ children }: { children: ReactNode }) {
       if (attempt !== run.current || identity.current !== owner) return;
       const currentGeneration = beginCampusSession(owner, contexto.campus_id, !!contexto.campus_id);
       remember(owner, contexto.campus_id);
+      // Um link de notificação só seleciona a unidade após autorização do servidor.
+      const url = new URL(window.location.href);
+      if (url.searchParams.has('campus_id')) {
+        url.searchParams.delete('campus_id');
+        window.history.replaceState(window.history.state, '', url.pathname + url.search + url.hash);
+      }
       setState({ owner, contexto, loading: false, error: null, generation: currentGeneration });
     } catch (error) {
       if (attempt !== run.current || identity.current !== owner) return;
@@ -98,7 +104,9 @@ export function CampusProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (authLoading) return;
-    void load(userId ? remembered(userId) : null);
+    const link = new URLSearchParams(window.location.search);
+    const solicitado = link.has('campus_id') ? (link.get('campus_id') || 'campus-invalido') : (userId ? remembered(userId) : null);
+    void load(solicitado);
     return () => { ++run.current; active.current?.abort(); beginCampusSession(null, null); };
   }, [authLoading, load, userId]);
 

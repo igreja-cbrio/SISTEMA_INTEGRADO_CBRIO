@@ -133,6 +133,22 @@ Kids — checkpoint SQL de 27/09/2026:
   diretamente por autenticados fora da preparação. Nenhuma cobertura completa
   ou ativação decorre destes testes.
 
+### Notificações · checkpoint de armazenamento e caixa própria
+
+Migration `20260927170000_multicampus_notificacoes.sql` prepara origem imutável
+na notificação. RH, Financeiro e Patrimônio conservam avisos centrais; demais
+avisos históricos pertencem à Sede. Produtor novo sem contexto explícito falha
+fora da preparação, inclusive antes de enviar push/e-mail. Regras de destinatário
+anteriores continuam sendo intersectadas com o acesso ao campus.
+
+Leituras e marcações da caixa própria filtram usuário + (campus selecionado ou
+central). Realtime descarta eventos de outra unidade. Web Push carrega campus;
+o link só troca a seleção após autorização do servidor. Testes: 22 passaram
+(incluindo 3 cenários SQL de RLS, 4 de escopo/realtime e navegação por push).
+Pendentes: demais produtores, gerador periódico, regras administrativas,
+WhatsApp/fila/webhooks e endpoints próprios dos apps. A frente inteira de jobs
+e notificações permanece não certificada.
+
 Migrations preparadas, **não aplicadas**:
 1. `20260926200000_multicampus_contexto_e_ativacao.sql`: configuração, gate de
    ativação, helper e administração de vínculos. Deve preceder qualquer deploy

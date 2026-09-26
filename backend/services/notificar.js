@@ -1,4 +1,5 @@
 const { supabase } = require('../utils/supabase');
+const { escopoNotificacao } = require('./campusNotificacaoEscopo');
 const { filtrarDestinatariosCampus } = require('./campusNotificacoes');
 const { enviarPushParaUsers } = require('./webpush');
 const { pushExpoParaUsers } = require('./appPush');
@@ -139,6 +140,7 @@ async function resolverDestinatarios(modulo, tipo = null) {
  * chaveDedup: string única que identifica o evento (ex: "ferias_vencendo_uuid123")
  */
 async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'info', chaveDedup, targetIds, extraTargetIds, email = false, emailsExtra, campus }) {
+  const escopo = await escopoNotificacao(supabase, modulo, campus);
   let destinatarios = targetIds || await resolverDestinatarios(modulo, tipo);
   if (extraTargetIds?.length) {
     destinatarios = [...new Set([...(destinatarios || []), ...extraTargetIds.filter(Boolean)])];
@@ -180,6 +182,7 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
 
     const { error } = await supabase.from('notificacoes').insert({
       usuario_id: userId,
+      ...escopo,
       titulo,
       mensagem,
       tipo: tipo || modulo,
@@ -211,6 +214,7 @@ async function notificar({ modulo, tipo, titulo, mensagem, link, severidade = 'i
       title: titulo,
       body: mensagem,
       url: link || '/',
+      ...(campus ? { campus_id: campus.campus_id } : {}),
       tag: chaveDedup || `${modulo}-${Date.now()}`,
     }).catch(e => console.warn('[notificar push]', e.message));
 

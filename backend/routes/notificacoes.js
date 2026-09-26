@@ -1,6 +1,7 @@
 const router = require('express').Router();
 const { authenticate, authorize } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { contextoNotificacoes, filtrarNotificacoes } = require('../services/campusNotificacaoEscopo');
 const { gerarTodasNotificacoes } = require('../services/notificacaoGenerator');
 
 // Endpoint de cron (sem auth, protegido por secret header)
@@ -77,16 +78,16 @@ router.post('/alerta-culto/testar', authorize('admin', 'diretor'), async (req, r
 });
 
 // GET /api/notificacoes — listar notificações do usuário logado
-router.get('/', async (req, res) => {
+router.get('/', contextoNotificacoes, async (req, res) => {
   try {
     // Não lidas SEMPRE primeiro (e com folga no limite): sem isso, uma pessoa
     // com alto volume de notificações lidas recentes empurra as não lidas pra
     // fora da lista — o badge (GET /count, sem limite) continua acusando "9+"
     // enquanto a aba "Não lidas" (filtro client-side sobre esta lista) mostra
     // vazio, porque a não lida nem chegou a ser buscada do banco.
-    let query = supabase
+    let query = filtrarNotificacoes(supabase
       .from('notificacoes')
-      .select('*')
+      .select('*'), req.campus)
       .eq('usuario_id', req.user.userId)
       .order('lida', { ascending: true })
       .order('created_at', { ascending: false })
@@ -104,11 +105,11 @@ router.get('/', async (req, res) => {
 });
 
 // GET /api/notificacoes/count — contar não lidas
-router.get('/count', async (req, res) => {
+router.get('/count', contextoNotificacoes, async (req, res) => {
   try {
-    const { count, error } = await supabase
+    const { count, error } = await filtrarNotificacoes(supabase
       .from('notificacoes')
-      .select('id', { count: 'exact', head: true })
+      .select('id', { count: 'exact', head: true }), req.campus)
       .eq('usuario_id', req.user.userId)
       .eq('lida', false);
     if (error) return res.status(400).json({ error: error.message });
@@ -153,11 +154,11 @@ router.post('/gerar', authorize('admin', 'diretor'), async (req, res) => {
 });
 
 // PATCH /api/notificacoes/:id/ler — marcar como lida
-router.patch('/:id/ler', async (req, res) => {
+router.patch('/:id/ler', contextoNotificacoes, async (req, res) => {
   try {
-    const { error } = await supabase
+    const { error } = await filtrarNotificacoes(supabase
       .from('notificacoes')
-      .update({ lida: true })
+      .update({ lida: true }), req.campus)
       .eq('id', req.params.id)
       .eq('usuario_id', req.user.userId);
     if (error) return res.status(400).json({ error: error.message });
@@ -168,11 +169,11 @@ router.patch('/:id/ler', async (req, res) => {
 });
 
 // PATCH /api/notificacoes/ler-todas
-router.patch('/ler-todas', async (req, res) => {
+router.patch('/ler-todas', contextoNotificacoes, async (req, res) => {
   try {
-    const { error } = await supabase
+    const { error } = await filtrarNotificacoes(supabase
       .from('notificacoes')
-      .update({ lida: true })
+      .update({ lida: true }), req.campus)
       .eq('usuario_id', req.user.userId)
       .eq('lida', false);
     if (error) return res.status(400).json({ error: error.message });

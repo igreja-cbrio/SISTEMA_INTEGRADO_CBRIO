@@ -17,12 +17,27 @@ function Page() {
 const Tree = () => <CampusProvider><CampusBoundary><Page /></CampusBoundary></CampusProvider>;
 beforeEach(() => {
   sessionStorage.clear();
+  window.history.replaceState({}, "", "/");
   mocks.user = { id: 'usuario-um' };
   mocks.session.mockResolvedValue({ data: { session: { access_token: 'token' } } });
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 describe('contexto e barreira de campus', () => {
+  it('link de push solicita campus ao servidor antes de montar a página', async () => {
+    window.history.replaceState({}, '', '/dashboard?campus_id=outro');
+    sessionStorage.setItem('cbrio_campus_v1:usuario-um','sede');
+    const fetcher=vi.fn().mockResolvedValue(response(config('outro')));vi.stubGlobal('fetch',fetcher);
+    render(<Tree />);await screen.findByText('Dados outro');
+    expect(fetcher).toHaveBeenCalledWith(expect.any(String),expect.objectContaining({headers:expect.objectContaining({'X-Campus-Id':'outro'})}));
+    expect(window.location.search).toBe('');
+  });
+  it('link sem acesso não reaproveita o campus lembrado', async () => {
+    window.history.replaceState({}, '', '/dashboard?campus_id=intruso');
+    sessionStorage.setItem('cbrio_campus_v1:usuario-um','sede');
+    vi.stubGlobal('fetch',vi.fn().mockResolvedValue(response({error:'Campus não autorizado.'},403)));
+    render(<Tree />);await screen.findByRole('alert');expect(screen.queryByText('Dados sede')).toBeNull();expect(getCampusHeader()).toEqual({});
+  });
   it('esconde os dados anteriores durante a troca e espera a validação do servidor', async () => {
     let resolve: (value: Response) => void;
     const fetcher = vi.fn().mockResolvedValueOnce(response(config())).mockImplementationOnce(() => new Promise<Response>(done => { resolve = done; }));

@@ -1,4 +1,6 @@
 import CampusSelector from './CampusSelector';
+import { useCampus } from '../../contexts/CampusContext';
+import { notificacaoDoCampus } from '../../lib/campusNotificacao';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { useAuth } from '../../contexts/AuthContext';
@@ -312,6 +314,8 @@ const NAV_ITEMS = [
 ];
 
 export default function AppShell() {
+  const { contexto: contextoCampus } = useCampus();
+  const campusId = contextoCampus?.campus_id || null;
   const auth = useAuth();
   const { profile, role, signOut, isAdmin, isVoluntario, rotaTravada, moduloTravado, travaPrefixos } = auth;
   const labelTravado = moduloTravado ? moduloTravado.charAt(0).toUpperCase() + moduloTravado.slice(1) : '';
@@ -442,7 +446,7 @@ export default function AppShell() {
   useEffect(() => {
     if (!supabase || !profile?.id) return;
     const channel = supabase
-      .channel(`notif:${profile.id}`)
+      .channel(`notif:${profile.id}:${campusId}`)
       .on(
         'postgres_changes',
         {
@@ -453,7 +457,7 @@ export default function AppShell() {
         },
         (payload) => {
           const nova = payload?.new;
-          if (!nova) return;
+          if (!notificacaoDoCampus(nova, campusId)) return;
           playNotificationSound();
           setNotifCount(c => {
             const next = c + 1;
@@ -476,7 +480,7 @@ export default function AppShell() {
     return () => {
       supabase.removeChannel(channel);
     };
-  }, [profile?.id]);
+  }, [profile?.id, campusId]);
 
   async function loadNotifCount() {
     try {
