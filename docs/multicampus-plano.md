@@ -55,6 +55,10 @@ Campus 2, aplicar migrations em produção ou mergear esta PR durante o trabalho
   leitura própria preservada, campus dos atos independente do campus-base.
 - [x] Cron de agenda paginado por campus, contagem agregada sem truncamento,
   falhas parciais explícitas e repetição idempotente.
+- [x] Agenda e banner do culto atual no app usam consultas por campus e projeção
+  pública; resolução de membro confirmada sem fallback por contato.
+- [x] Filhos nominais de Cuidados e contatos protegidos por RLS do pai; oito
+  leituras de Cuidados revisadas. Escritas e painéis ainda não certificados.
 - [ ] Demais destinos (`cui_*`, `nsm_*`, membros), views/RPCs e acessos
   diretos precisam do isolamento completo. Piloto NÃO significa Cultos aprovado
   para dados reais do Campus 2 enquanto estes consumidores não estiverem seguros.
@@ -74,12 +78,15 @@ Migrations preparadas, **não aplicadas**:
 3. `20260926220000_multicampus_destinos_decisao.sql`: isolamento nominal dos
    quatro destinos iniciais e campus de origem nos marcos da trilha.
 
+4. `20260926230000_multicampus_cuidados_filhos.sql`: filhos nominais, J180,
+   comentários e contatos; não certifica agregados/RPCs.
+
 App: PR rascunho https://github.com/igreja-cbrio/Aplicativo-CBRio/pull/178,
 branch `codex/multicampus-app`, worktree `../wt-app-multicampus`. Depende deste
 backend; não publicar OTA antes das migrations e endpoints correspondentes.
 
-Validação do checkpoint: 128 testes específicos em 14 arquivos `src/test/campus*`
-passaram. TypeScript, lint de hooks e build passaram. A primeira suíte completa
+Validação do segundo checkpoint: 174 testes específicos em 18 arquivos passaram,
+mais nove testes novos das leituras de Cuidados. CI/preview do commit 9cdbfa29 verdes. TypeScript, lint de hooks e build passaram. A primeira suíte completa
 teve 5.101 testes aprovados e seis fixtures desatualizadas pela nova trava de
 ensaio; as seis foram corrigidas e passaram na rodada específica. Repetir suíte
 completa após os próximos blocos, sem confundir testes com liberação de produção.

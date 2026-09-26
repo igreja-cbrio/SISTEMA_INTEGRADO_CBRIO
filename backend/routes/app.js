@@ -230,6 +230,11 @@ const limiterNormal = limiterApp({
 // emitir ETag e ninguém percebe até a tela mostrar estado velho.
 router.use(semCache);
 
+const campusApp = require('../services/campusApp').criarCampusApp({ supabase });
+router.get('/campus/contexto', authApp, limiterNormal, campusApp.contexto);
+router.get('/campus/agenda', authApp, limiterNormal, campusApp.agenda);
+router.get('/campus/agenda/:id', authApp, limiterNormal, campusApp.detalhe);
+
 // ── Versão mínima do app (PÚBLICO) · Onda 3 (07/08/2026) ──────────────────
 //
 // O achado: não existe versão mínima em lugar nenhum, e `runtimeVersion.policy
@@ -4932,32 +4937,7 @@ const { cultoDeAgora } = require('../services/cultoDeAgora');
 const { filtroSoEventosCbrio, idsEventosParceiros } = require('../services/igrejaParceira');
 
 // GET /api/app/culto/agora — Modo Culto: culto de hoje + link ao vivo + se já registrou decisão.
-router.get('/culto/agora', authApp, async (req, res) => {
-  try {
-    const channelId = process.env.YOUTUBE_CHANNEL_ID || 'UCfjMVzaYlCS_VE3JuEJj2vQ';
-    const hoje = hojeBRT();
-    const { culto, ao_vivo } = await cultoDeAgora();
-
-    let jaRegistrou = false;
-    const membro = await resolveMembroApp(req).catch(() => null);
-    if (membro?.id) {
-      const { data: pend } = await supabase
-        .from('app_decisoes').select('id')
-        .eq('membro_id', membro.id).eq('status', 'pendente').is('deleted_at', null)
-        .gte('criada_em', `${hoje}T00:00:00`).limit(1);
-      jaRegistrou = (pend || []).length > 0;
-    }
-    res.json({
-      culto: culto || null,
-      ao_vivo,
-      canal_live: `https://www.youtube.com/channel/${channelId}/live`,
-      jaRegistrou,
-    });
-  } catch (e) {
-    console.error('[APP] culto/agora:', e.message);
-    res.status(500).json({ error: 'Erro ao carregar o culto' });
-  }
-});
+router.get('/culto/agora', authApp, limiterNormal, campusApp.agora);
 
 // POST /api/app/culto/decisao — registra uma decisão de fé na FILA DE REVISÃO.
 // NÃO entra na NSM até a Integração confirmar (decisão da liderança).

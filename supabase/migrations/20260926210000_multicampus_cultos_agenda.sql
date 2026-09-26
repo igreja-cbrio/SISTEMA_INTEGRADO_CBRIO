@@ -93,8 +93,25 @@ CREATE TABLE public.vol_campus_service_types (
 COMMENT ON TABLE public.vol_campus_service_types IS
   'Agenda por campus; dia e horário nulos herdam o catálogo. Sem PII; chave composta dispensa soft-delete, desativação por is_active.';
 INSERT INTO public.vol_campus_service_types(igreja_id,service_type_id,recurrence_day,recurrence_time,is_active,capacidade_lugares)
-  SELECT public.fn_campus_legado_escrita(),id,recurrence_day,recurrence_time,is_active,1300
+  SELECT public.fn_campus_legado_escrita(),id,NULL,NULL,true,1300
   FROM public.vol_service_types;
+-- NULL herda o catálogo; só edição humana cria override local.
+-- Tipos novos continuam gerando agenda legada durante a preparação.
+CREATE OR REPLACE FUNCTION public.tg_service_type_agenda_legada()
+RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path=public AS $$
+DECLARE v_legado uuid;
+BEGIN
+  SELECT campus_legado_id INTO v_legado FROM public.app_campus_config
+    WHERE id AND estado='preparacao' AND NOT ja_ativado;
+  IF v_legado IS NOT NULL THEN
+    INSERT INTO public.vol_campus_service_types(igreja_id,service_type_id,capacidade_lugares)
+      VALUES(v_legado,NEW.id,1300) ON CONFLICT(igreja_id,service_type_id) DO NOTHING;
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER service_type_agenda_legada AFTER INSERT ON public.vol_service_types
+  FOR EACH ROW EXECUTE FUNCTION public.tg_service_type_agenda_legada();
+REVOKE ALL ON FUNCTION public.tg_service_type_agenda_legada() FROM PUBLIC,anon,authenticated;
 ALTER TABLE public.vol_campus_service_types ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.vol_campus_service_types FROM PUBLIC,anon,authenticated;
 GRANT SELECT,INSERT,UPDATE ON public.vol_campus_service_types TO service_role;

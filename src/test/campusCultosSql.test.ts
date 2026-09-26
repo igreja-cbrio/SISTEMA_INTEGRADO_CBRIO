@@ -204,6 +204,20 @@ describe('cultos multicampus: integridade e agenda no PostgreSQL', () => {
     const { rows } = await db.query<{hora: string}>('SELECT hora::text FROM cultos WHERE igreja_id=$1', [CAMPUS2]);
     expect(rows[0].hora).toBe('18:00:00');
   });
+  it('seed herda edições do catálogo sem congelar a agenda legada', async () => {
+    await db.query('UPDATE vol_service_types SET recurrence_time=$1 WHERE id=$2', ['11:00', TIPO]);
+    await gerar(SEDE);
+    expect((await db.query<{hora: string}>("SELECT hora::text FROM cultos WHERE igreja_id=$1 AND data='2027-03-07'", [SEDE])).rows[0].hora).toBe('11:00:00');
+  });
+  it('tipo novo ganha agenda legada só durante preparação', async () => {
+    const novo='10000000-0000-0000-0000-000000000002';
+    await db.query("INSERT INTO vol_service_types(id,name,recurrence_day,recurrence_time,is_active) VALUES($1,'Novo domingo',0,'18:00',true)", [novo]);
+    expect((await db.query('SELECT igreja_id,recurrence_day,recurrence_time FROM vol_campus_service_types WHERE service_type_id=$1', [novo])).rows).toEqual([{ igreja_id: SEDE, recurrence_day: null, recurrence_time: null }]);
+    expect((await gerar(SEDE)).rows).toHaveLength(2);
+    await db.exec("UPDATE app_campus_config SET estado='ensaio'");
+    await db.query("INSERT INTO vol_service_types(id,name,is_active) VALUES('10000000-0000-0000-0000-000000000003','Depois',true)");
+    expect((await db.query("SELECT * FROM vol_campus_service_types WHERE service_type_id='10000000-0000-0000-0000-000000000003'")).rows).toHaveLength(0);
+  });
   it('agenda desativada não gera culto', async () => {
     await db.query('UPDATE vol_campus_service_types SET is_active=false WHERE igreja_id=$1', [CAMPUS2]);
     expect((await gerar(CAMPUS2)).rows).toHaveLength(0);

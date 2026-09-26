@@ -15,14 +15,13 @@
 // `ao_vivo` = existe culto cuja janela [hora − 30min, hora + 3h] contém o
 // agora. Sem janela ativa devolve o PRÓXIMO de hoje (ou o último, se todos já
 // passaram) com `ao_vivo: false` — quem decide se isso serve é o chamador.
-const { supabase } = require('../utils/supabase');
 
 // Dia em BRT (offset fixo −3h · o Brasil não muda o relógio desde 2019).
-function hojeBRT() { return new Date(Date.now() - 3 * 3600 * 1000).toISOString().slice(0, 10); }
+function hojeBRT(agora = Date.now()) { return new Date(agora - 3 * 3600 * 1000).toISOString().slice(0, 10); }
 
 /** Minutos desde a meia-noite em BRT (mesma convenção do hojeBRT). */
-function agoraMinutosBRT() {
-  const d = new Date(Date.now() - 3 * 3600 * 1000);
+function agoraMinutosBRT(agora = Date.now()) {
+  const d = new Date(agora - 3 * 3600 * 1000);
   return d.getUTCHours() * 60 + d.getUTCMinutes();
 }
 function minutosDaHora(hora) {
@@ -31,17 +30,26 @@ function minutosDaHora(hora) {
   return Number.isFinite(h) ? h * 60 + (Number.isFinite(m) ? m : 0) : null;
 }
 
-async function cultoDeAgora() {
-  const hoje = hojeBRT();
-  const { data } = await supabase
-    .from('cultos')
-    .select('id, nome, data, hora')
-    .eq('data', hoje).is('deleted_at', null)
-    .order('hora', { ascending: true });
-  const lista = data || [];
+async function cultoDeAgora({ supabase: cliente, campusId = null, agora: instante = Date.now() } = {}) {
+  const supabase = cliente || require('../utils/supabase').supabase;
+  if (campusId !== null && !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(campusId)) {
+    throw new Error('Campus inválido para consultar o culto.');
+  }
+  const hoje = hojeBRT(instante);
+  const lista = [];
+  for (let inicio = 0; ; inicio += 1000) {
+    let query = supabase.from('cultos').select('id, nome, data, hora')
+      .eq('data', hoje).is('deleted_at', null)
+      .order('hora', { ascending: true }).order('id').range(inicio, inicio + 999);
+    if (campusId) query = query.eq('igreja_id', campusId);
+    const { data, error } = await query;
+    if (error || !Array.isArray(data)) throw new Error('Não foi possível carregar os cultos.');
+    lista.push(...data.map(c => ({ id: c.id, nome: c.nome, data: c.data, hora: c.hora })));
+    if (data.length < 1000) break;
+  }
   if (!lista.length) return { culto: null, ao_vivo: false };
 
-  const agora = agoraMinutosBRT();
+  const agora = agoraMinutosBRT(instante);
 
   const iniciados = lista.filter((c) => {
     const ini = minutosDaHora(c.hora);
