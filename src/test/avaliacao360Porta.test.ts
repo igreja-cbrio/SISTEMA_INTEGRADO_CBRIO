@@ -33,6 +33,7 @@ function semComentarios(src: string): string {
 const rota = semComentarios(ler('backend/routes/avaliacao360.js'));
 const servico = semComentarios(ler('backend/services/avaliacao360.js'));
 const server = semComentarios(ler('backend/server.js'));
+const sql = ler('supabase/migrations/20260926160000_avaliacao360_resposta_atomica.sql');
 
 describe('⚠️⚠️ a porta fica FORA do gate do RH', () => {
   it('o router.use NÃO tem authorizeModule', () => {
@@ -87,7 +88,8 @@ describe('⚠️⚠️ quem a pessoa é sai do LOGIN, nunca do corpo', () => {
     // Sem `.eq('avaliador_id', eu.id)`, qualquer autenticado responderia pelo
     // convite de outra pessoa sabendo o id.
     const bloco = rota.slice(rota.indexOf("router.post('/convite/:id/responder'"));
-    expect(bloco).toContain("eq('avaliador_id', eu.id)");
+    expect(bloco).toContain('p_avaliador_id: eu.id');
+    expect(sql).toContain('avaliador_id = p_avaliador_id');
   });
 
   it('⚠️ nenhuma rota do colaborador aceita funcionario_id do corpo', () => {
@@ -103,9 +105,9 @@ describe('⚠️ a identidade não vaza para a resposta', () => {
     // O coração do desenho: RLS não filtra coluna. Se a identidade morasse na
     // linha da nota, qualquer policy que liberasse a resposta entregaria junto
     // quem escreveu.
-    const i = rota.indexOf("from('rh_aval360_resposta')");
+    const i = sql.indexOf('INSERT INTO rh_aval360_resposta(');
     expect(i).toBeGreaterThan(-1);
-    const bloco = rota.slice(i, i + 600);
+    const bloco = sql.slice(i, sql.indexOf('RETURNING id', i));
     expect(bloco).toContain('convite_id');
     expect(bloco).not.toContain('avaliador_id');
   });

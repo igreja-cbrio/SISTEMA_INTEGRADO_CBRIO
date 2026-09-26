@@ -40,14 +40,18 @@ async function funcionarioDoLogin(req) {
     .select('id, nome, email, area, cargo, gestor_id, status')
     .eq('status', 'ativo')
     .is('deleted_at', null)
-    .ilike('email', email);
+    // PostgREST transforma * em %: para um * literal, buscamos um caractere
+    // e a comparação literal abaixo descarta qualquer candidato diferente.
+    .ilike('email', email.replace(/[\\%_]/g, '\\$&').replace(/\*/g, '_'));
 
   // ⚠️ Falha de consulta NUNCA vira "não é funcionário" — isso trancaria a
   // pessoa fora do próprio ciclo por instabilidade de banco.
   if (error) return { funcionario: null, erro: 'consulta_falhou' };
-  if (!data || data.length === 0) return { funcionario: null, erro: 'nao_e_funcionario' };
-  if (data.length > 1) return { funcionario: null, erro: 'email_ambiguo' };
-  return { funcionario: data[0], erro: null };
+  // A comparação final é literal: curingas de ILIKE não decidem identidade.
+  const candidatos = (data || []).filter((f) => String(f.email || '').trim().toLowerCase() === email);
+  if (candidatos.length === 0) return { funcionario: null, erro: 'nao_e_funcionario' };
+  if (candidatos.length > 1) return { funcionario: null, erro: 'email_ambiguo' };
+  return { funcionario: candidatos[0], erro: null };
 }
 
 /**
@@ -62,10 +66,10 @@ async function elegiveisPorPapel(avaliado, ativos) {
   const mesmaArea = ativos.filter(
     (f) => f.id !== avaliado.id && (f.area || null) === (avaliado.area || null),
   );
-  const liderados = ativos.filter((f) => f.gestor_id === avaliado.id);
+  const liderados = ativos.filter((f) => f.id !== avaliado.id && f.gestor_id === avaliado.id);
   return {
     auto: 1,
-    gestor: avaliado.gestor_id ? 1 : 0,
+    gestor: ativos.some((f) => f.id !== avaliado.id && f.id === avaliado.gestor_id) ? 1 : 0,
     par: mesmaArea.length,
     liderado: liderados.length,
   };
@@ -102,15 +106,16 @@ async function listarAtivos() {
 async function retratoDoCiclo(ciclo) {
   const piso = normalizarPiso(ciclo?.piso_respondentes);
   const ativos = await listarAtivos();
+  const maxPares = Math.max(1, Math.min(10, Number(ciclo?.max_pares) || 3));
   const linhas = [];
   const resumo = { avaliados: 0, convites_previstos: 0, suprimidos: {} };
 
   for (const pessoa of ativos) {
     const elegiveis = await elegiveisPorPapel(pessoa, ativos);
-    const plano = planoDeColeta({ elegiveisPorPapel: elegiveis, piso });
-
-    // par entra limitado pelo teto do ciclo; os demais entram inteiros
-    const maxPares = Math.max(1, Number(ciclo?.max_pares) || 3);
+    // O piso vale sobre quantos pares podem ser convidados, já limitado pelo teto.
+    const plano = planoDeColeta({
+      elegiveisPorPapel: { ...elegiveis, par: Math.min(elegiveis.par, maxPares) }, piso,
+    });
     const previstos = plano.coletar.reduce((acc, papel) => {
       if (papel === 'par') return acc + Math.min(elegiveis.par, maxPares);
       return acc + elegiveis[papel];
@@ -133,14 +138,14 @@ async function retratoDoCiclo(ciclo) {
     });
   }
 
-  return { piso, max_pares: Number(ciclo?.max_pares) || 3, resumo, linhas };
+  return { piso, max_pares: maxPares, resumo, linhas };
 }
 
 /**
- * Gera os convites AUTOMÁTICOS de um ciclo: autoavaliação e gestor.
+ * Gera convites automáticos: autoavaliação, gestor e liderados acima do piso.
  *
- * ⚠️⚠️ Par e liderado NÃO saem daqui. Par depende da indicação do avaliado com
- * aprovação do gestor; liderado depende do piso, e quem está abaixo dele não é
+ * Par depende da indicação do avaliado com aprovação do gestor.
+ * Liderado depende do piso, e quem está abaixo dele não é
  * convidado — a decisão é ANTES da coleta, não na hora de exibir. Coletar e
  * esconder depois é teatro: o dado fica no banco, e a própria supressão diz de
  * quem era a resposta num gestor de 1 liderado.
@@ -182,30 +187,28 @@ async function gerarConvitesAutomaticos(cicloId) {
       } else if (papel === 'gestor') {
         linhas.push({ ciclo_id: cicloId, avaliado_id: pessoa.id, avaliador_id: pessoa.gestor_id, papel: 'gestor', origem: 'automatico' });
       } else {
-        for (const l of ativos.filter((f) => f.gestor_id === pessoa.id)) {
+        for (const l of ativos.filter((f) => f.id !== pessoa.id && f.gestor_id === pessoa.id)) {
           linhas.push({ ciclo_id: cicloId, avaliado_id: pessoa.id, avaliador_id: l.id, papel: 'liderado', origem: 'automatico' });
         }
       }
     }
   }
 
-  // ⚠️ Lei do projeto: em operação longa, gravar o efeito DURANTE. Lotes de
-  // 500 com progresso — morrer no meio deixa gravado o que já saiu, e a
-  // idempotência da UNIQUE faz a retomada não duplicar.
-  let gravados = 0;
-  for (let i = 0; i < linhas.length; i += 500) {
-    const lote = linhas.slice(i, i + 500);
-    const { error } = await supabase
-      .from('rh_aval360_convite')
-      .upsert(lote, { onConflict: 'ciclo_id,avaliado_id,avaliador_id,papel', ignoreDuplicates: true });
-    if (error) throw new Error(`falha ao gravar convites (lote ${i}): ${error.message}`);
-    gravados += lote.length;
+  // Uma transação bloqueia o ciclo e compara os elegíveis com o retrato atual.
+  // Nenhum lote parcial fica persistido se o estado mudou durante a leitura.
+  const { data: resultado, error } = await supabase.rpc('fn_aval360_gerar_convites', {
+    p_ciclo_id: cicloId,
+    p_linhas: linhas,
+  });
+  if (error) throw Object.assign(new Error(`falha ao gravar convites: ${error.message}`), { code: error.code });
+  if (!resultado || !Number.isInteger(resultado.gravados) || !Number.isInteger(resultado.existentes)) {
+    throw new Error('Não foi possível confirmar a geração dos convites.');
   }
 
   // ⚠️ O que ficou de fora é DECLARADO, com nome e motivo. Papel suprimido em
   // silêncio faz o ciclo fechar com "85% de adesão" e ninguém saber que 15%
   // nunca foi convidado — e quem some é justo a equipe pequena.
-  return { ok: true, gravados, suprimidos, piso };
+  return { ok: true, gravados: resultado.gravados, existentes: resultado.existentes, suprimidos, piso };
 }
 
 module.exports = {
