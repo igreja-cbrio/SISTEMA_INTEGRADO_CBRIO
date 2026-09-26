@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { payloadLinkSala } from '@/lib/linkSalaGrupo';
 import { ModuleHeader } from '../../components/layout/ModuleHeader';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
@@ -2404,6 +2405,7 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
         modo_inscricao: 'temporada',
         foto_url: '', observacoes: '', grupo_origem_id: '', descricao: '',
         bairro: '', status_temporada: 'novo', temporada: temporadaAtiva,
+        link_online: '', link_plataforma: '',
       };
       setForm(data ? { ...defaults, ...data } : defaults);
       setLiderSearch(data?.lider?.nome || '');
@@ -2457,12 +2459,18 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
     const iMin = form.idade_min === '' || form.idade_min == null ? null : Number(form.idade_min);
     const iMax = form.idade_max === '' || form.idade_max == null ? null : Number(form.idade_max);
     if (iMin != null && iMax != null && iMin > iMax) { toast.error('Idade mínima maior que a máxima'); return; }
-    const { _geocoding, ...rest } = form;
+    const { _geocoding, link_indisponivel: _li, link_online: _lo, ...rest } = form;
+    // ⚠️⚠️ Quem decide o que o formulário diz sobre o link é `payloadLinkSala`,
+    // não este componente: não deu pra LER o link ⇒ o campo sai do corpo e o
+    // PUT não toca nele. Mandar o vazio apagaria a credencial de entrada da
+    // sala — é o bug que custou a rede de 41 grupos em setembro.
+    const patchLink = payloadLinkSala(form);
     // Diário = todos os dias → sem dia da semana fixo (a UI já bloqueia o
     // campo, mas força null aqui pra um valor antigo não escapar no salvar).
     const diaSemana = ehDiario(rest) ? null : (rest.dia_semana === '' ? null : Number(rest.dia_semana));
     onSave({
       ...rest,
+      ...patchLink,
       dia_semana: diaSemana,
       lider_id: rest.lider_id || null,
       grupo_origem_id: rest.grupo_origem_id || null,
@@ -2643,6 +2651,35 @@ function GrupoFormModal({ open, onClose, data, onSave, saving, gruposForSelect, 
           <div>
             <Label>Complemento</Label>
             <Input value={form.complemento || ''} onChange={e => set('complemento', e.target.value)} placeholder="Apto, bloco, casa, ponto de referência..." />
+          </div>
+
+          {/* ⚠️ Pedido do Matheus (25/09) depois de medir o inbox: "em que
+              plataforma é o encontro?" e "recebo o link por aqui?" estão entre as
+              perguntas mais frequentes, e até hoje o sistema não tinha ONDE
+              guardar a resposta — nenhuma coluna de link, com 36 grupos online.
+              ⚠️⚠️ O link NÃO aparece na busca pública: ele é a credencial de
+              entrada da sala. Sai só para quem tem o pedido APROVADO. */}
+          <div>
+            <Label>Link da sala (grupo online)</Label>
+            <Input
+              value={form.link_online || ''}
+              onChange={e => set('link_online', e.target.value)}
+              placeholder="https://meet.google.com/..."
+            />
+            <p style={{ fontSize: 11, color: C.t3, marginTop: 4, lineHeight: 1.45 }}>
+              Vai na mensagem de boas-vindas de quem for <strong>aprovado</strong> — nunca na
+              busca pública, porque quem tem o link entra na sala. Deixe vazio se o grupo é presencial.
+            </p>
+            {(form.link_online || '').trim() && !/^https:\/\//i.test((form.link_online || '').trim()) && (
+              <p style={{ fontSize: 11, color: '#b45309', marginTop: 4, lineHeight: 1.45 }}>
+                O link precisa começar com <code>https://</code> — assim ele não será salvo.
+              </p>
+            )}
+            {form.link_indisponivel && (
+              <p style={{ fontSize: 11, color: '#b45309', marginTop: 4, lineHeight: 1.45 }}>
+                Não foi possível ler o link deste grupo agora. Salvar sem preencher não apaga o que já estava lá.
+              </p>
+            )}
           </div>
 
           <div>
