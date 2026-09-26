@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { createCampusRequest } from '../../lib/campusSession';
 import { toast } from 'sonner';
 import { batismoFotos as api } from '../../api';
 import { Button } from '../../components/ui/button';
@@ -58,6 +59,7 @@ export default function FotosBatismo({ embutido = false, podeEditar = true }) {
     const arquivos = Array.from(e.target.files || []);
     if (!arquivos.length) return;
     setEnviando(true);
+    const scope = createCampusRequest();
     try {
       // Comprime no navegador (o Vercel rejeita corpo > 4,5 MB — foto de
       // câmera estoura) e envia em lotes pequenos pra caber no limite.
@@ -65,6 +67,7 @@ export default function FotosBatismo({ embutido = false, podeEditar = true }) {
       for (let i = 0; i < arquivos.length; i++) {
         setProgresso(`Preparando ${i + 1} de ${arquivos.length}…`);
         comprimidos.push(await comprimirImagem(arquivos[i], { maxLado: 2048 }));
+        scope.assertCurrent();
       }
       let enviadas = 0;
       const LOTE = 4;
@@ -72,7 +75,9 @@ export default function FotosBatismo({ embutido = false, podeEditar = true }) {
         setProgresso(`Enviando ${Math.min(i + LOTE, comprimidos.length)} de ${comprimidos.length}…`);
         const fd = new FormData();
         comprimidos.slice(i, i + LOTE).forEach((f) => fd.append('fotos', f));
+        scope.assertCurrent();
         const parcial = await api.upload(selecionada.data, fd);
+        scope.assertCurrent();
         enviadas += parcial.enviadas;
       }
       const r = { enviadas };
@@ -82,6 +87,7 @@ export default function FotosBatismo({ embutido = false, podeEditar = true }) {
     } catch (err) {
       toast.error(err.message);
     }
+    scope.release();
     setEnviando(false);
     setProgresso(null);
     if (fileRef.current) fileRef.current.value = '';
@@ -90,8 +96,8 @@ export default function FotosBatismo({ embutido = false, podeEditar = true }) {
   async function excluir(f) {
     if (!window.confirm('Excluir esta foto do álbum?')) return;
     try {
-      await api.remove(selecionada.data, f.nome);
-      setFotos((arr) => arr.filter((x) => x.nome !== f.nome));
+      await api.remove(selecionada.data, f.nome, f.origem);
+      setFotos((arr) => arr.filter((x) => x.nome !== f.nome || x.origem !== f.origem));
       setDatas((arr) => arr.map((d) => (d.data === selecionada.data ? { ...d, fotos: Math.max(0, d.fotos - 1) } : d)));
       toast.success('Foto excluída');
     } catch (e) {
@@ -171,7 +177,7 @@ export default function FotosBatismo({ embutido = false, podeEditar = true }) {
           ) : (
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: 12 }}>
               {fotos.map((f) => (
-                <div key={f.nome} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', border: `1px solid ${C.border}`, aspectRatio: '1' }}>
+                <div key={`${f.origem || "campus"}:${f.nome}`} style={{ position: 'relative', borderRadius: 10, overflow: 'hidden', border: `1px solid ${C.border}`, aspectRatio: '1' }}>
                   <img src={f.url} alt="" loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                   {podeEditar && (
                     <button

@@ -39,21 +39,7 @@ const acessoLimiter = rateLimit({
   message: { error: 'Muitas tentativas. Aguarde um instante e tente de novo.' },
 });
 
-// Bucket público com as fotos da cerimônia (pasta = YYYY-MM-DD). Mesmo padrão do
-// admin (batismoFotos.js): lista os arquivos da data e devolve a URL pública.
-const BUCKET_FOTOS = 'batismos';
-async function listarFotosData(data) {
-  const { data: arquivos, error } = await supabase.storage
-    .from(BUCKET_FOTOS)
-    .list(data, { limit: 200, sortBy: { column: 'name', order: 'asc' } });
-  if (error) throw error;
-  return (arquivos || [])
-    .filter((f) => f.name && !f.name.startsWith('.'))
-    .map((f) => ({
-      nome: f.name,
-      url: supabase.storage.from(BUCKET_FOTOS).getPublicUrl(`${data}/${f.name}`).data.publicUrl,
-    }));
-}
+const arquivosBatismo = require('../services/campusBatismoArquivos');
 
 function soDigitos(v) {
   return String(v || '').replace(/\D+/g, '');
@@ -383,12 +369,7 @@ async function inscrever(req, res) { // limiter geral já está no router.use (c
       }).catch(err => console.error('[publicBatismo] notificacao kids falhou:', err.message));
     }
 
-    // Link do grupo de WhatsApp do batismo (Lorena atualiza a cada mês)
-    let grupoUrl = null;
-    try {
-      const { data: cfg } = campus.estado==='preparacao' ? await supabase.from('batismo_config').select('grupo_url').eq('id', 1).maybeSingle() : {data:null};
-      grupoUrl = cfg?.grupo_url || null;
-    } catch { /* sem grupo configurado */ }
+    const {grupo_url:grupoUrl} = await arquivosBatismo.lerConfigBatismo(supabase,campus.campus_id);
 
     res.status(201).json({
       ok: true,
@@ -422,7 +403,7 @@ router.get('/acesso', acessoLimiter, async (req, res) => {
   try {
     const { data: insc, error } = await supabase
       .from('batismo_inscricoes')
-      .select('nome, sobrenome, data_batismo, status')
+      .select('nome, sobrenome, data_batismo, status, igreja_id, evento_id')
       .eq('codigo_acesso', token)
       .is('deleted_at', null)
       .maybeSingle();
@@ -433,13 +414,7 @@ router.get('/acesso', acessoLimiter, async (req, res) => {
     if (!insc || ['cancelado', 'rejeitado'].includes(insc.status)) {
       return res.status(404).json({ error: 'Link inválido ou expirado. Procure a equipe.' });
     }
-    let fotos = [];
-    try {
-      if (insc.data_batismo) fotos = await listarFotosData(insc.data_batismo);
-    } catch (e) {
-      // pasta pode ainda não existir (fotos não subiram) — não falha o acesso
-      console.error('[publicBatismo] acesso listar fotos:', e.message);
-    }
+    const fotos = insc.evento_id ? await arquivosBatismo.listarFotos(supabase,await arquivosBatismo.eventoDaInscricao(supabase,insc)) : [];
     res.json({
       nome: `${insc.nome} ${insc.sobrenome || ''}`.trim(),
       data_batismo: insc.data_batismo,

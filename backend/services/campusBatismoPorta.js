@@ -27,9 +27,7 @@ async function catalogo(db,ctx) {
   if (!eventos || !horarios) throw new ErroCampus(503,'batismo_catalogo_indisponivel','Não foi possível carregar as datas e os horários deste campus.');
   const datas=await Promise.all(eventos.map(async e=>({evento_id:e.id,data_batismo:e.data,
     horarios:horariosDisponiveis(horarios,await ocupacaoPorHorario(e.data,opcoes)).map(h=>({...h,horario_id:horarios.find(x=>x.horario===h.horario)?.id}))})));
-  // Config global de WhatsApp só pertence à preparação legada.
-  let grupo_url=null;
-  if(ctx.estado==='preparacao') { const r=await db.from('batismo_config').select('grupo_url').eq('id',1).maybeSingle(); if(!r.error) grupo_url=r.data?.grupo_url || null; }
+  const {grupo_url}=await require('./campusBatismoArquivos').lerConfigBatismo(db,ctx.campus_id);
   return {termos_lgpd:TEXTOS.termos_lgpd,campus_id:ctx.campus_id,datas,data_batismo:datas[0]?.data_batismo || null,horarios:datas[0]?.horarios || [],grupo_url};
 }
 async function reservar(db,ctx,payload,body) {

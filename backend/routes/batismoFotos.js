@@ -1,10 +1,9 @@
 const router = require('express').Router();
 const multer = require('multer');
-const crypto = require('crypto');
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 
-// Fotos do dia do batismo — bucket 'batismos', pasta YYYY-MM-DD/.
+// Fotos por campus/evento em bucket privado; histórico legado também usa URL assinada.
 // O app de membros lista essa pasta na aba Batismo: cada pessoa vê só a
 // pasta da data do PRÓPRIO batismo (lib/batismo.ts do app). Gestão
 // restrita a admin/diretor.
@@ -18,9 +17,6 @@ const uploadMw = multer({
   },
 });
 
-const BUCKET = 'batismos';
-const DATA_RE = /^\d{4}-\d{2}-\d{2}$/;
-const EXTS = { 'image/png': 'png', 'image/webp': 'webp', 'image/jpeg': 'jpg' };
 
 // ⚠️ AUTORIZAÇÃO (18/08/2026 · decisão do Marcos): *"Pedro deve poder publicar,
 // alterar fotos, alterar destaques... mexer no app por esse módulo."*
@@ -42,108 +38,44 @@ router.use(authenticate, (req, res, next) => (
   ['POST', 'PUT', 'PATCH', 'DELETE'].includes(req.method) ? podeEditar : podeVer
 )(req, res, next));
 
-function validarData(req, res, next) {
-  if (!DATA_RE.test(req.params.data)) return res.status(400).json({ error: 'Data inválida (use YYYY-MM-DD)' });
-  next();
-}
+const { criarMiddlewareCampus } = require('../middleware/campus');
+const { responderErroCampus } = require('../services/campusContexto');
+const { lerTodasPaginas } = require('../utils/campusPaginacao');
+const arquivos = require('../services/campusBatismoArquivos');
+router.use(criarMiddlewareCampus({modulo:'marketing',cobertura:{leitura:true,escrita:true}}));
 
-async function listarFotos(data) {
-  const { data: arquivos, error } = await supabase.storage
-    .from(BUCKET)
-    .list(data, { limit: 200, sortBy: { column: 'name', order: 'asc' } });
-  if (error) throw error;
-  return (arquivos || [])
-    .filter((f) => f.name && !f.name.startsWith('.'))
-    .map((f) => ({
-      nome: f.name,
-      url: supabase.storage.from(BUCKET).getPublicUrl(`${data}/${f.name}`).data.publicUrl,
-    }));
-}
-
-// GET /api/batismo-fotos — datas de batismo com nº de batizandos e de fotos
-router.get('/', async (_req, res) => {
-  try {
-    const { data: inscricoes, error } = await supabase
-      .from('batismo_inscricoes')
-      .select('data_batismo, status')
-      .not('data_batismo', 'is', null)
-      .neq('status', 'cancelado');
-    if (error) throw error;
-
-    const porData = {};
-    for (const i of inscricoes || []) {
-      porData[i.data_batismo] = (porData[i.data_batismo] || 0) + 1;
-    }
-    const datas = Object.keys(porData).sort().reverse().slice(0, 24);
-    const comFotos = await Promise.all(
-      datas.map(async (d) => {
-        let fotos = 0;
-        try { fotos = (await listarFotos(d)).length; } catch { /* pasta pode não existir */ }
-        return { data: d, batizandos: porData[d], fotos };
-      })
-    );
-    res.json(comFotos);
-  } catch (e) {
-    console.error('[BATISMO-FOTOS] datas error:', e.message);
-    res.status(500).json({ error: 'Erro ao listar batismos' });
-  }
+router.get('/', async (req,res)=>{
+ try {
+  const inscricoes=await lerTodasPaginas(()=>supabase.from('batismo_inscricoes').select('data_batismo,status')
+    .eq('igreja_id',req.campus.campus_id).is('deleted_at',null).not('data_batismo','is',null)
+    .not('status','in','(cancelado,rejeitado)').order('id'));
+  const contagem={};for(const i of inscricoes) contagem[i.data_batismo]=(contagem[i.data_batismo]||0)+1;
+  const result=await Promise.all(Object.keys(contagem).sort().reverse().slice(0,24).map(async data=>{
+   const evento=await arquivos.eventoPorData(supabase,req.campus.campus_id,data);
+   return {data,evento_id:evento.id,batizandos:contagem[data],fotos:(await arquivos.listarFotos(supabase,evento)).length};
+  }));res.json(result);
+ }catch(e){responderErroCampus(res,e);}
 });
-
-// GET /api/batismo-fotos/:data/fotos — fotos da pasta da data
-router.get('/:data/fotos', validarData, async (req, res) => {
-  try {
-    res.json(await listarFotos(req.params.data));
-  } catch (e) {
-    console.error('[BATISMO-FOTOS] list error:', e.message);
-    res.status(500).json({ error: 'Erro ao listar fotos' });
-  }
+router.get('/:data/fotos',async(req,res)=>{
+ try {const e=await arquivos.eventoPorData(supabase,req.campus.campus_id,req.params.data);res.json(await arquivos.listarFotos(supabase,e));}
+ catch(e){responderErroCampus(res,e);}
 });
-
-// POST /api/batismo-fotos/:data/fotos — upload em lote (multipart: fotos[])
-router.post('/:data/fotos', validarData, uploadMw.array('fotos', 40), async (req, res) => {
-  try {
-    if (!req.files?.length) return res.status(400).json({ error: 'Nenhuma foto enviada' });
-    const { data } = req.params;
-    const enviadas = [];
-    for (const file of req.files) {
-      const ext = EXTS[file.mimetype] || 'jpg';
-      const nome = `${Date.now()}-${crypto.randomBytes(4).toString('hex')}.${ext}`;
-      const { error } = await supabase.storage
-        .from(BUCKET)
-        .upload(`${data}/${nome}`, file.buffer, { contentType: file.mimetype, upsert: false });
-      if (error) throw error;
-      enviadas.push(nome);
-    }
-
-    // Avisa os batizados do dia que o álbum chegou (só na 1ª vez por data —
-    // a Edge Function deduplica). Em background: não bloqueia a resposta.
-    if (process.env.SUPABASE_URL) {
-      fetch(`${process.env.SUPABASE_URL}/functions/v1/notify-batismo-fotos`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ data }),
-      }).catch((e) => console.error('[BATISMO-FOTOS] notify falhou:', e.message));
-    }
-
-    res.status(201).json({ ok: true, enviadas: enviadas.length });
-  } catch (e) {
-    console.error('[BATISMO-FOTOS] upload error:', e.message);
-    res.status(500).json({ error: `Erro ao enviar fotos: ${e.message}` });
+router.post('/:data/fotos',uploadMw.array('fotos',40),async(req,res)=>{
+ try {
+  const e=await arquivos.eventoPorData(supabase,req.campus.campus_id,req.params.data);
+  const result=await arquivos.enviarFotos(supabase,e,req.files);
+  // Edge exige service role e escopo do ato. Nunca disparar fan-out só por data.
+  if(process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
+   fetch(`${process.env.SUPABASE_URL}/functions/v1/notify-batismo-fotos`,{
+    method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${process.env.SUPABASE_SERVICE_ROLE_KEY}`},
+    body:JSON.stringify({campus_id:e.igreja_id,evento_id:e.id}),signal:AbortSignal.timeout(5000),
+   }).then(r=>{if(!r.ok) console.error('[BATISMO-FOTOS] notificação recusada:',r.status);}).catch(()=>console.error('[BATISMO-FOTOS] falha ao notificar álbum.'));
   }
+  res.status(201).json(result);
+ }catch(e){responderErroCampus(res,e);}
 });
-
-// DELETE /api/batismo-fotos/:data/fotos/:nome — remove uma foto
-router.delete('/:data/fotos/:nome', validarData, async (req, res) => {
-  try {
-    const nome = req.params.nome;
-    if (nome.includes('/') || nome.includes('..')) return res.status(400).json({ error: 'Nome inválido' });
-    const { error } = await supabase.storage.from(BUCKET).remove([`${req.params.data}/${nome}`]);
-    if (error) throw error;
-    res.json({ ok: true });
-  } catch (e) {
-    console.error('[BATISMO-FOTOS] delete error:', e.message);
-    res.status(500).json({ error: 'Erro ao remover foto' });
-  }
+router.delete('/:data/fotos/:nome',async(req,res)=>{
+ try {const e=await arquivos.eventoPorData(supabase,req.campus.campus_id,req.params.data);res.json(await arquivos.removerFoto(supabase,e,req.params.nome,req.query.origem || 'campus'));}
+ catch(e){responderErroCampus(res,e);}
 });
-
-module.exports = router;
+module.exports=router;

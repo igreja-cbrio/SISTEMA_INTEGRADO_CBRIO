@@ -9,6 +9,7 @@ const matcher=require('../../backend/services/membroMatch');
 const identidade=require('../../backend/services/identidadeProgressiva');
 const contrato=require('../../backend/services/inscricaoContrato');
 const notifications=require('../../backend/services/notificar');
+vi.spyOn(require('../../backend/services/campusBatismoArquivos'),'lerConfigBatismo').mockResolvedValue({grupo_url:null});
 const horarios=require('../../backend/services/batismoHorarios');
 const ctx={estado:'ativo',campus_id:B,campus_legado_id:A};
 const contexto=vi.spyOn(porta,'contextoPublico').mockResolvedValue(ctx);

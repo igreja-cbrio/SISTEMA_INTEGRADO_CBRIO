@@ -4321,7 +4321,7 @@ export const batismoFotos = {
   datas: () => get('/batismo-fotos'),
   fotos: (data) => get(`/batismo-fotos/${data}/fotos`),
   upload: (data, formData) => requestFile(`/batismo-fotos/${data}/fotos`, formData),
-  remove: (data, nome) => del(`/batismo-fotos/${data}/fotos/${encodeURIComponent(nome)}`),
+  remove: (data, nome, origem = "campus") => del(`/batismo-fotos/${data}/fotos/${encodeURIComponent(nome)}?origem=${encodeURIComponent(origem)}`),
 };
 
 export const destaques = {

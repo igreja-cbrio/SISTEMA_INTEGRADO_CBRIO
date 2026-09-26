@@ -134,3 +134,9 @@ it('Kids certifica somente leituras e transações verificadas', async () => {
   for (const path of ['criancas','dashboard',`sessoes/${A}/criancas-presentes`,'display-sala','cron/encerrar-sessoes']) expect((await chamar(guard,`/api/totem-kids/${path}`)).next).not.toHaveBeenCalled();
   expect((await chamar(guard,'/api/totem-kids/sessoes','POST')).next).not.toHaveBeenCalled();
 });
+
+it('fotos certificam data e arquivo limitado sem admitir traversal ou formatos arbitrários', async () => {
+ const guard=criarCampusSuperficie({supabase:banco(),cobertura:[{metodo:'DELETE',caminho:'/api/batismo-fotos/:data/fotos/:arquivo'}]});
+ expect((await chamar(guard,'/api/batismo-fotos/2026-09-27/fotos/foto_01.jpg','DELETE')).next).toHaveBeenCalledOnce();
+ for(const path of ['2026-99-27/fotos/foto.jpg','2026-09-27/fotos/../foto.jpg','2026-09-27/fotos/%2e%2e%2ffoto.jpg','2026-09-27/fotos/a..jpg','2026-09-27/fotos/a.svg','2026-09-27/fotos/'+ 'a'.repeat(161)+'.jpg','2026-09-27/fotos/a.jpg/extra']) expect((await chamar(guard,'/api/batismo-fotos/'+path,'DELETE')).next).not.toHaveBeenCalled();
+});
