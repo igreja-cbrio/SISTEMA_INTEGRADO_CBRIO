@@ -21,12 +21,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { toast } from 'sonner';
 import {
   Loader2, Sparkles, Bot, Pencil, Plus, Trash2, FlaskConical, RefreshCw, AlertTriangle, Users, Save, Link2,
+  Mail, Play, Eye, CalendarSearch,
 } from 'lucide-react';
 
 type Modo = 'ninguem' | 'menu' | 'ia';
 type BotIaCfg = {
   ativo: boolean; contato_humano: string; contato_link: string | null;
   limite_dia: number; limite_conversa_dia: number; horas_silencio_apos_humano: number; instrucoes: string;
+  varredura_emails?: string[];
 };
 type Config = {
   modo: Modo; ia_ativa: boolean; menu_ligado: boolean; bot_ia: BotIaCfg;
@@ -44,6 +46,7 @@ type Resumo = {
   dias: number; total: number; por_acao: Record<string, number>;
   por_area: { area: string; total: number; responder: number; encaminhar: number; silencio: number }[];
   por_motivo: { motivo: string; n: number }[]; tokens: number; truncado: boolean;
+  ultimo_erro_modelo?: string | null; ultimo_erro_em?: string | null;
 };
 
 const MODOS: { valor: Modo; titulo: string; descricao: string }[] = [
@@ -76,7 +79,7 @@ export default function BotIaAreas({ podeEscrever }: { podeEscrever: boolean }) 
   const [catalogo, setCatalogo] = useState<string[]>([]);
   const [erro, setErro] = useState<string | null>(null);
   const [salvandoModo, setSalvandoModo] = useState(false);
-  const [form, setForm] = useState({ contato_humano: '', limite_dia: '', limite_conversa_dia: '', horas_silencio_apos_humano: '', instrucoes: '' });
+  const [form, setForm] = useState({ contato_humano: '', limite_dia: '', limite_conversa_dia: '', horas_silencio_apos_humano: '', instrucoes: '', varredura_emails: '' });
   const [salvandoCfg, setSalvandoCfg] = useState(false);
   const [editando, setEditando] = useState<Area | null>(null);
   const [novaArea, setNovaArea] = useState('');
@@ -95,6 +98,7 @@ export default function BotIaAreas({ podeEscrever }: { podeEscrever: boolean }) 
         limite_conversa_dia: String(c?.bot_ia?.limite_conversa_dia ?? ''),
         horas_silencio_apos_humano: String(c?.bot_ia?.horas_silencio_apos_humano ?? ''),
         instrucoes: c?.bot_ia?.instrucoes || '',
+        varredura_emails: (c?.bot_ia?.varredura_emails || []).join(', '),
       });
     } catch (e: unknown) {
       setErro((e as Error)?.message || 'Falha ao carregar a configuração do bot.');
@@ -125,9 +129,17 @@ export default function BotIaAreas({ podeEscrever }: { podeEscrever: boolean }) 
         contato_humano: form.contato_humano,
         limite_dia: Number(form.limite_dia), limite_conversa_dia: Number(form.limite_conversa_dia),
         horas_silencio_apos_humano: Number(form.horas_silencio_apos_humano), instrucoes: form.instrucoes,
+        varredura_emails: form.varredura_emails,
       });
       setCfg((c) => (c ? { ...c, bot_ia: r?.bot_ia || c.bot_ia } : c));
-      toast.success('Configuração salva');
+      // O servidor devolve a lista que GRAVOU — é ela que fica no campo, pra
+      // ninguém achar que um endereço inválido foi salvo.
+      if (r?.bot_ia?.varredura_emails) setForm((f) => ({ ...f, varredura_emails: r.bot_ia.varredura_emails.join(', ') }));
+      if (r?.varredura_emails_descartados > 0) {
+        toast.warning(`${r.varredura_emails_descartados} endereço(s) da varredura não parecia(m) e-mail e não foi(ram) salvo(s).`, { duration: 8000 });
+      } else {
+        toast.success('Configuração salva');
+      }
     } catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao salvar'); }
     finally { setSalvandoCfg(false); }
   }
@@ -209,6 +221,16 @@ export default function BotIaAreas({ podeEscrever }: { podeEscrever: boolean }) 
           <div><b>ANTHROPIC_API_KEY não está configurada</b> no servidor — o bot não consegue chamar o modelo.</div>
         </Card>
       )}
+      {resumo?.ultimo_erro_modelo === 'anthropic_sem_credito' && (
+        <Card className="flex items-start gap-2 border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" />
+          <div>
+            <b>A IA está sem crédito</b> — a conta da Anthropic ficou sem saldo, e o bot não responde até o crédito voltar
+            {resumo.ultimo_erro_em ? ` (última tentativa: ${new Date(resumo.ultimo_erro_em).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' })})` : ''}.
+            Quem resolve é quem administra a conta, em console.anthropic.com → Plans &amp; Billing. Nada se perde: as mensagens continuam na aba Conversas.
+          </div>
+        </Card>
+      )}
 
       {/* ── quem responde ─────────────────────────────────────────── */}
       <Card className="p-4">
@@ -265,6 +287,13 @@ export default function BotIaAreas({ podeEscrever }: { podeEscrever: boolean }) 
             <Input className="mt-1" type="number" min={1} value={form.horas_silencio_apos_humano} disabled={!podeEscrever}
               onChange={(e) => setForm((f) => ({ ...f, horas_silencio_apos_humano: e.target.value }))} />
             <p className="mt-1 text-[11px] text-muted-foreground">Se alguém da equipe respondeu nesta conversa há menos tempo que isso, o bot não entra.</p>
+          </div>
+          <div className="md:col-span-4">
+            <Label className="flex items-center gap-1 text-xs"><Mail className="h-3.5 w-3.5" />E-mails da varredura mensal</Label>
+            <Input className="mt-1" value={form.varredura_emails} disabled={!podeEscrever}
+              placeholder="nome@cbrio.com.br, outro@cbrio.com.br"
+              onChange={(e) => setForm((f) => ({ ...f, varredura_emails: e.target.value }))} />
+            <p className="mt-1 text-[11px] text-muted-foreground">Quem recebe, no dia 1 de cada mês, o resumo dos temas do WhatsApp. Separe por vírgula (até 5). O e-mail leva só temas e contagens — nunca o texto de ninguém.</p>
           </div>
           <div className="md:col-span-3">
             <Label className="text-xs">Instruções extras pro bot (opcional)</Label>
@@ -380,6 +409,9 @@ export default function BotIaAreas({ podeEscrever }: { podeEscrever: boolean }) 
           )}
         </Card>
       )}
+
+      {/* ── varredura mensal ──────────────────────────────────────── */}
+      <VarreduraMensal podeEscrever={podeEscrever} />
 
       <EditorArea area={editando} onClose={() => setEditando(null)} onSalvo={(r) => {
         setAreas((list) => (list || []).map((x) => (x.area === r.area ? r : x)));
@@ -521,6 +553,290 @@ function Simulador({ podeEscrever }: { podeEscrever: boolean }) {
             <p className="text-xs text-amber-600">O modelo tentou incluir {r.removidos.links} link(s) e {r.removidos.telefones} telefone(s) fora da lista — foram apagados da resposta.</p>
           )}
           {r.uso && <p className="text-[11px] text-muted-foreground">{r.uso.input + r.uso.output} tokens · {r.modelo}</p>}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ── varredura mensal do WhatsApp (26/09/2026) ────────────────────────────
+// Do que as pessoas falaram com o WhatsApp da igreja no mês, e o que o bot não
+// saberia responder. ⚠️ A tela nunca diz "enviado" quando o e-mail não saiu, e
+// "erro" sempre vem com o motivo (a lei de 05/08: caixa verde com zero envio).
+type TemaVarredura = {
+  tema: string; contagem: number; area_sugerida: string; o_bot_saberia: boolean;
+  lacuna: string | null; exemplo_ids: string[];
+};
+type LacunaVarredura = { area: string; lacuna: string; sugestao_conhecimento: string | null };
+type Varredura = {
+  id: string; periodo: string; status: 'rodando' | 'ok' | 'sem_dados' | 'erro';
+  gerado_em: string | null; iniciado_em: string; total_mensagens: number | null; total_conversas: number | null;
+  excluidas_pastoral: number | null; excluidas_conversas_cuidados: number | null;
+  temas: TemaVarredura[]; lacunas: LacunaVarredura[]; modelo: string | null;
+  email_enviado_em: string | null; email_destinos: string[] | null; email_erro: string | null;
+  erro: string | null; forcado: boolean;
+};
+type ExemplosVarredura = {
+  periodo: string;
+  temas: { tema: string; area_sugerida: string; contagem: number; exemplos: { id: string; criado_em: string; texto: string }[] }[];
+};
+type ResultadoRodar = { periodo?: string; pulou?: string; status?: string; erro?: string; email?: string; temas?: number };
+
+const MESES_PT = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho', 'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+function rotuloMes(periodo: string) {
+  const m = /^(\d{4})-(\d{2})$/.exec(periodo || '');
+  return m ? `${MESES_PT[Number(m[2]) - 1]} de ${m[1]}` : periodo;
+}
+function dataHora(iso: string | null | undefined) {
+  return iso ? new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+}
+const ERRO_VARREDURA: Record<string, string> = {
+  anthropic_sem_credito: 'a conta da Anthropic está sem crédito — a varredura não rodou',
+  anthropic_nao_configurada: 'a chave da Anthropic não está configurada no servidor',
+  anthropic_chave_invalida: 'a chave da Anthropic foi recusada (inválida ou revogada)',
+  modelo_sem_resultado: 'o modelo não devolveu nenhum tema válido',
+  modelo_resposta_cortada: 'a resposta do modelo veio cortada (grande demais)',
+  sem_destinatarios: 'nenhum e-mail está configurado para receber',
+  email_sem_canal: 'o servidor não tem canal de e-mail configurado (o resumo ficou só no sistema)',
+};
+function rotuloErro(e: string | null | undefined) { return e ? (ERRO_VARREDURA[e] || e) : 'motivo não informado'; }
+const PULOU_ROTULO: Record<string, string> = {
+  ja_existe: 'já existe varredura deste mês — nada foi refeito',
+  em_curso: 'já há uma varredura deste mês rodando agora',
+  erro_anterior: 'este mês já falhou antes',
+  desligado: 'a varredura está desligada em Comunicação → Envios → Automáticos',
+  periodo_invalido: 'período inválido',
+  migration_ausente: 'a migration 20260926130000 ainda não foi aplicada',
+};
+
+function VarreduraMensal({ podeEscrever }: { podeEscrever: boolean }) {
+  const [lista, setLista] = useState<Varredura[] | null>(null);
+  const [migrationOk, setMigrationOk] = useState(true);
+  const [erro, setErro] = useState<string | null>(null);
+  const [confirmando, setConfirmando] = useState(false);
+  const [rodando, setRodando] = useState(false);
+  const [aviso, setAviso] = useState<string | null>(null);
+  const [exemplos, setExemplos] = useState<ExemplosVarredura | null>(null);
+  const [carregandoEx, setCarregandoEx] = useState(false);
+
+  const carregar = useCallback(async () => {
+    setErro(null);
+    try {
+      const r = await comunicacao.botIa.varreduras();
+      setLista(r?.varreduras || []);
+      setMigrationOk(r?.migration_ok !== false);
+    } catch (e: unknown) {
+      setErro((e as Error)?.message || 'Falha ao carregar as varreduras.');
+    }
+  }, []);
+  useEffect(() => { carregar(); }, [carregar]);
+
+  async function rodarAgora() {
+    if (!podeEscrever) return;
+    if (!confirmando) { setConfirmando(true); return; }
+    setConfirmando(false); setRodando(true); setAviso(null);
+    try {
+      const r: ResultadoRodar = await comunicacao.botIa.rodarVarredura();
+      const mes = rotuloMes(r?.periodo || '');
+      if (r?.pulou) {
+        setAviso(`Varredura de ${mes}: ${PULOU_ROTULO[r.pulou] || r.pulou}.`);
+      } else if (r?.status === 'erro') {
+        setAviso(`A varredura de ${mes} não rodou: ${rotuloErro(r.erro)}.`);
+      } else if (r?.status === 'sem_dados') {
+        setAviso(`Não houve mensagem analisável em ${mes} — nada foi enviado.`);
+      } else if (r?.status === 'ok') {
+        if (r.email === 'enviado') toast.success(`Varredura de ${mes} pronta · ${r.temas ?? 0} tema(s) · e-mail enviado.`);
+        else setAviso(`Varredura de ${mes} pronta, mas o e-mail NÃO saiu: ${rotuloErro(r.email)}.`);
+      } else if (r?.erro) {
+        setAviso(`A varredura falhou: ${rotuloErro(r.erro)}.`);
+      }
+      await carregar();
+    } catch (e: unknown) {
+      // ⚠️ Timeout do navegador não prova que nada aconteceu (lei de 04/08): o
+      // servidor pode ter terminado. Recarregar a lista diz a verdade.
+      setAviso(`Não deu para confirmar o resultado (${(e as Error)?.message || 'erro'}). A varredura pode ter rodado — recarregue a lista antes de tentar de novo.`);
+    } finally { setRodando(false); }
+  }
+
+  async function verExemplos(periodo: string) {
+    if (!podeEscrever) return;
+    if (exemplos?.periodo === periodo) { setExemplos(null); return; }
+    setCarregandoEx(true);
+    try { setExemplos(await comunicacao.botIa.varreduraExemplos(periodo)); }
+    catch (e: unknown) { toast.error((e as Error)?.message || 'Erro ao buscar os exemplos'); }
+    finally { setCarregandoEx(false); }
+  }
+
+  const ultima = lista?.[0] || null;
+  const anteriores = (lista || []).slice(1);
+  const foraUltima = (ultima?.excluidas_pastoral || 0) + (ultima?.excluidas_conversas_cuidados || 0);
+
+  return (
+    <Card className="space-y-3 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div>
+          <p className="flex items-center gap-1.5 text-sm font-semibold"><CalendarSearch className="h-4 w-4 text-primary" />Varredura mensal do WhatsApp</p>
+          <p className="max-w-3xl text-[11px] text-muted-foreground">
+            No dia 1 de cada mês (a partir das 6h), a IA agrupa por tema as mensagens que o WhatsApp da igreja recebeu no mês anterior e aponta o que o bot não saberia responder.
+            Conversas de Cuidados e mensagens pastorais ficam de fora; telefones, CPFs e e-mails são mascarados antes. O e-mail leva só temas e contagens.
+          </p>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="sm" onClick={carregar}><RefreshCw className="h-4 w-4" /></Button>
+          {podeEscrever && (
+            <Button size="sm" variant={confirmando ? 'default' : 'outline'} className="gap-1.5" disabled={rodando || !migrationOk} onClick={rodarAgora}>
+              {rodando ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+              {rodando ? 'Rodando… (até 2 min)' : confirmando ? 'Confirmar: chamar a IA e mandar o e-mail' : 'Rodar agora (mês anterior)'}
+            </Button>
+          )}
+          {confirmando && !rodando && <Button size="sm" variant="ghost" onClick={() => setConfirmando(false)}>Cancelar</Button>}
+        </div>
+      </div>
+
+      {aviso && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs">
+          <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" /><span>{aviso}</span>
+        </div>
+      )}
+      {!migrationOk && (
+        <p className="text-xs text-amber-600">⚠️ A migration <code>20260926130000_wa_bot_varreduras.sql</code> ainda não foi aplicada — a varredura não roda.</p>
+      )}
+      {erro && <p className="text-xs text-red-600">Não foi possível carregar as varreduras: {erro}</p>}
+      {lista === null && !erro && <Spinner />}
+
+      {lista !== null && !ultima && migrationOk && (
+        <p className="text-sm text-muted-foreground">Nenhuma varredura ainda. A primeira roda sozinha no próximo dia 1, ou pelo botão acima.</p>
+      )}
+
+      {ultima && (
+        <div className="space-y-3 rounded-xl border border-border p-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-sm font-semibold capitalize">{rotuloMes(ultima.periodo)}</span>
+            <Badge variant={ultima.status === 'ok' ? 'default' : 'outline'}>
+              {ultima.status === 'ok' ? 'pronta' : ultima.status === 'sem_dados' ? 'sem mensagens' : ultima.status === 'rodando' ? 'rodando' : 'não rodou'}
+            </Badge>
+            {ultima.forcado && <span className="text-[11px] text-muted-foreground">· rodada pelo botão</span>}
+            <span className="text-[11px] text-muted-foreground">· {dataHora(ultima.gerado_em || ultima.iniciado_em)}</span>
+          </div>
+
+          {ultima.status === 'erro' && (
+            <div className="flex items-start gap-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-2.5 text-xs">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-600" />
+              <span>
+                {ultima.erro === 'anthropic_sem_credito'
+                  ? <><b>A conta da Anthropic está sem crédito — a varredura não rodou.</b> Depois que o crédito voltar, use "Rodar agora" para refazer este mês (o cron não re-tenta sozinho).</>
+                  : <>A varredura não rodou: {rotuloErro(ultima.erro)}. Use "Rodar agora" para tentar de novo.</>}
+              </span>
+            </div>
+          )}
+          {ultima.status === 'rodando' && <p className="text-xs text-muted-foreground">Rodando desde {dataHora(ultima.iniciado_em)}.</p>}
+          {ultima.status === 'sem_dados' && (
+            <p className="text-xs text-muted-foreground">
+              Não houve mensagem analisável no período
+              {foraUltima > 0 ? ` (${foraUltima} mensagem(ns) ficaram de fora por serem pastorais ou de Cuidados)` : ''}.
+              Nenhum e-mail foi enviado.
+            </p>
+          )}
+
+          {(ultima.status === 'ok' || ultima.status === 'sem_dados') && (
+            <div className="grid gap-2 text-xs sm:grid-cols-4">
+              <div><div className="text-muted-foreground">Mensagens recebidas</div><div className="text-base font-semibold tabular-nums">{(ultima.total_mensagens ?? 0).toLocaleString('pt-BR')}</div></div>
+              <div><div className="text-muted-foreground">Conversas</div><div className="text-base font-semibold tabular-nums">{(ultima.total_conversas ?? 0).toLocaleString('pt-BR')}</div></div>
+              <div><div className="text-muted-foreground">Fora por serem pastorais</div><div className="text-base font-semibold tabular-nums">{(ultima.excluidas_pastoral ?? 0).toLocaleString('pt-BR')}</div></div>
+              <div><div className="text-muted-foreground">Fora por serem de Cuidados</div><div className="text-base font-semibold tabular-nums">{(ultima.excluidas_conversas_cuidados ?? 0).toLocaleString('pt-BR')}</div></div>
+            </div>
+          )}
+
+          {ultima.status === 'ok' && (
+            <>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-border text-[11px] uppercase tracking-wide text-muted-foreground">
+                      <th className="py-1.5 text-left font-medium">Tema</th>
+                      <th className="px-2 py-1.5 text-right font-medium">Msgs</th>
+                      <th className="px-2 py-1.5 text-left font-medium">Área</th>
+                      <th className="px-2 py-1.5 text-center font-medium">Bot saberia?</th>
+                      <th className="py-1.5 text-left font-medium">O que falta</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(ultima.temas || []).map((t, i) => (
+                      <tr key={`${t.tema}-${i}`} className="border-b border-border/60">
+                        <td className="py-1.5">{t.tema}</td>
+                        <td className="px-2 py-1.5 text-right tabular-nums">{t.contagem}</td>
+                        <td className="px-2 py-1.5">{t.area_sugerida}</td>
+                        <td className="px-2 py-1.5 text-center">{t.o_bot_saberia ? 'sim' : <b className="text-red-600">não</b>}</td>
+                        <td className="py-1.5 text-xs text-muted-foreground">{t.lacuna || '—'}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+
+              {(ultima.lacunas || []).length > 0 && (
+                <div>
+                  <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">O que escrever no conhecimento do bot</p>
+                  <ul className="space-y-1 text-sm">
+                    {ultima.lacunas.map((l, i) => (
+                      <li key={`${l.area}-${i}`}>
+                        <b>{l.area}</b> — {l.lacuna}
+                        {l.sugestao_conhecimento && <div className="text-xs text-muted-foreground">Sugestão: {l.sugestao_conhecimento}</div>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
+
+              <p className={`text-xs ${ultima.email_enviado_em ? 'text-muted-foreground' : 'text-amber-600'}`}>
+                {ultima.email_enviado_em
+                  ? <>E-mail enviado em {dataHora(ultima.email_enviado_em)} para {(ultima.email_destinos || []).join(', ')}.</>
+                  : <>⚠️ O e-mail NÃO saiu: {rotuloErro(ultima.email_erro)}.</>}
+              </p>
+
+              {podeEscrever && (
+                <div className="space-y-2">
+                  <Button size="sm" variant="outline" className="gap-1.5" disabled={carregandoEx} onClick={() => verExemplos(ultima.periodo)}>
+                    {carregandoEx ? <Loader2 className="h-4 w-4 animate-spin" /> : <Eye className="h-4 w-4" />}
+                    {exemplos?.periodo === ultima.periodo ? 'Esconder exemplos' : 'Ver exemplos'}
+                  </Button>
+                  {exemplos?.periodo === ultima.periodo && (
+                    <div className="space-y-2 rounded-lg border border-border bg-muted/30 p-3">
+                      <p className="text-[11px] text-amber-600">São trechos de conversas de pessoas, com telefone, CPF, e-mail e link mascarados. Use para ajustar o conhecimento do bot — não copie para fora do sistema.</p>
+                      {exemplos.temas.map((t, i) => (
+                        <div key={`${t.tema}-${i}`}>
+                          <p className="text-xs font-semibold">{t.tema} <span className="font-normal text-muted-foreground">· {t.area_sugerida}</span></p>
+                          {t.exemplos.length === 0
+                            ? <p className="text-[11px] italic text-muted-foreground">Os exemplos deste tema não estão mais disponíveis.</p>
+                            : (
+                              <ul className="ml-3 list-disc text-xs text-muted-foreground">
+                                {t.exemplos.map((ex) => <li key={ex.id} className="whitespace-pre-wrap">{ex.texto}</li>)}
+                              </ul>
+                            )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {anteriores.length > 0 && (
+        <div>
+          <p className="mb-1 text-[11px] uppercase tracking-wide text-muted-foreground">Meses anteriores</p>
+          {anteriores.map((v) => (
+            <div key={v.id} className="flex flex-wrap justify-between gap-2 border-b border-border/60 py-1 text-xs last:border-0">
+              <span className="capitalize">{rotuloMes(v.periodo)}</span>
+              <span className="text-muted-foreground">
+                {v.status === 'ok'
+                  ? `${(v.temas || []).length} tema(s) · e-mail ${v.email_enviado_em ? 'enviado' : 'não saiu'}`
+                  : v.status === 'sem_dados' ? 'sem mensagens' : v.status === 'rodando' ? 'rodando' : `não rodou · ${rotuloErro(v.erro)}`}
+              </span>
+            </div>
+          ))}
         </div>
       )}
     </Card>

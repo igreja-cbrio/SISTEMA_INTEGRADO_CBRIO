@@ -461,6 +461,44 @@ async function publicoCampanhaAgradecimento() {
   };
 }
 
+/**
+ * Destinos do e-mail da VARREDURA MENSAL do WhatsApp (26/09/2026).
+ * ⚠️ Não é público de membro: é a lista `whatsapp_config.bot_ia.varredura_emails`
+ * (quem recebe o resumo interno), lida pela MESMA régua do serviço
+ * (`botIaRegras.lerConfigBotIa`) — uma régua só pra "quem recebe".
+ */
+async function publicoBotVarredura() {
+  const { lerConfigBotIa } = require('../utils/botIaRegras');
+  const { data, error } = await supabase.from('whatsapp_config').select('bot_ia').eq('id', 1).maybeSingle();
+  if (error) throw error;
+  const emails = lerConfigBotIa(data?.bot_ia).varredura_emails;
+  return {
+    total: emails.length,
+    pessoas: emails.map((e) => ({ nome: e, telefone: null, quando: 'dia 1 de cada mês' })),
+    universo: { rotulo: 'e-mails configurados em Comunicação → Bot → IA por área', qtd: emails.length },
+  };
+}
+
+/** O que impede a varredura de sair — declarado, nunca "0 enviados" com cara de sucesso. */
+async function bloqueiosBotVarredura() {
+  const out = [];
+  try {
+    if (!process.env.ANTHROPIC_API_KEY) out.push('ANTHROPIC_API_KEY não está configurada — a IA não roda.');
+    const { data: cfg } = await supabase.from('whatsapp_config').select('bot_ia').eq('id', 1).maybeSingle();
+    const { lerConfigBotIa } = require('../utils/botIaRegras');
+    if (!lerConfigBotIa(cfg?.bot_ia).varredura_emails.length) out.push('Nenhum e-mail configurado para receber a varredura.');
+    const { isConfigured } = require('./email');
+    if (!isConfigured()) out.push('Nenhum canal de e-mail configurado no servidor — o resumo fica só no sistema.');
+    const { data: ultima, error } = await supabase.from('wa_bot_varreduras')
+      .select('periodo, status, erro').order('periodo', { ascending: false }).limit(1).maybeSingle();
+    if (error && (error.code === '42P01' || error.code === 'PGRST205')) out.push('A migration 20260926130000 ainda não foi aplicada.');
+    else if (ultima?.status === 'erro' && ultima.erro === 'anthropic_sem_credito') {
+      out.push(`A conta da Anthropic está sem crédito — a varredura de ${ultima.periodo} não rodou.`);
+    }
+  } catch { /* bloqueio é informativo: não derruba o item */ }
+  return out;
+}
+
 const CATALOGO = [
   {
     id: 'aniversario_voluntario',
@@ -612,6 +650,22 @@ const CATALOGO = [
     // liga pelo switch desta tela quando o template estiver aprovado na Meta.
     publico: publicoVisitantePesquisa,
   },
+  {
+    id: 'bot_varredura_mensal',
+    nome: 'Varredura mensal do WhatsApp (e-mail)',
+    quando: 'Dia 1 de cada mês, a partir das 6h BRT, de carona no cron horário da Comunicação',
+    regra: 'Lê as mensagens RECEBIDAS no WhatsApp no mês anterior, tira as pastorais (conversas de Cuidados e '
+      + 'palavras de oração, luto, saúde, separação, vício) e o que identifica a pessoa, agrupa por tema com IA e '
+      + 'aponta o que o bot não saberia responder. O e-mail leva só temas, contagens e lacunas — NUNCA o texto de '
+      + 'ninguém. Vai para os e-mails configurados em Comunicação → Bot → IA por área. Desligar aqui para o cron; '
+      + 'o botão "Rodar agora" da tela do bot continua funcionando (é decisão de quem clica).',
+    fonte: 'GET /api/comunicacao/cron/agendamentos → services/botIaVarredura.js',
+    contexto: null, // e-mail, não passa pela fila do WhatsApp
+    envTemplate: null,
+    tabelaPropria: 'wa_bot_varreduras',
+    bloqueios: bloqueiosBotVarredura,
+    publico: publicoBotVarredura,
+  },
 ];
 
 /**
@@ -633,6 +687,21 @@ async function enviosDoItem(item, dias = 30) {
         nao_entregues: rows.filter(r => !r.enviado).length,
         fora_do_historico: true, // não passa pela fila `whatsapp_envios`
         motivo_falha: rows.find(r => !r.enviado)?.motivo || null,
+      };
+    }
+    if (item.tabelaPropria === 'wa_bot_varreduras') {
+      // "Enviados" aqui = varreduras cujo e-mail saiu; "não entregues" = as que
+      // rodaram e o e-mail não saiu, ou que falharam (sem crédito, por exemplo).
+      const { data, error } = await supabase.from('wa_bot_varreduras')
+        .select('status, email_enviado_em, email_erro, erro').gte('iniciado_em', desde);
+      if (error) return { enviados: null, nao_entregues: null, fora_do_historico: true, erro: error.message };
+      const rows = data || [];
+      const falha = rows.find(r => r.status === 'erro' || r.email_erro);
+      return {
+        enviados: rows.filter(r => r.email_enviado_em).length,
+        nao_entregues: rows.filter(r => !r.email_enviado_em && (r.status === 'erro' || r.email_erro)).length,
+        fora_do_historico: true,
+        motivo_falha: falha ? (falha.erro || falha.email_erro) : null,
       };
     }
     if (!item.contexto) return { enviados: 0, nao_entregues: 0 };

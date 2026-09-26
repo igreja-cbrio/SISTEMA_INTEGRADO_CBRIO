@@ -68,6 +68,63 @@ function lerConfigBotIa(raw) {
     limite_conversa_dia: inteiroPositivo(r.limite_conversa_dia, LIMITES_PADRAO.limite_conversa_dia),
     horas_silencio_apos_humano: inteiroPositivo(r.horas_silencio_apos_humano, LIMITES_PADRAO.horas_silencio_apos_humano),
     instrucoes: String(r.instrucoes || '').slice(0, 2000),
+    // Destinos do e-mail da VARREDURA MENSAL (26/09/2026). ⚠️ O dono do fluxo
+    // vive AQUI, na config — nunca e-mail de pessoa escrito no código.
+    varredura_emails: listaEmails(r.varredura_emails),
+  };
+}
+
+/** Teto de destinatários do e-mail da varredura (é resumo interno, não boletim). */
+const TETO_EMAILS_VARREDURA = 5;
+const RE_EMAIL_SIMPLES = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Lista de e-mails validada: aceita array (o que a tela manda) ou texto
+ * separado por vírgula/ponto e vírgula/espaço. lower + trim, sem repetição,
+ * teto de 5. ⚠️ Fail-safe: qualquer valor que não seja lista ou texto ⇒ [].
+ */
+function listaEmails(raw) {
+  let itens = [];
+  if (Array.isArray(raw)) itens = raw;
+  else if (typeof raw === 'string') itens = raw.split(/[,;\s]+/);
+  else return [];
+  const out = [];
+  for (const it of itens) {
+    if (typeof it !== 'string') continue;
+    const e = it.trim().toLowerCase();
+    if (!e || !RE_EMAIL_SIMPLES.test(e) || out.includes(e)) continue;
+    out.push(e);
+    if (out.length >= TETO_EMAILS_VARREDURA) break;
+  }
+  return out;
+}
+
+/**
+ * O objeto que o PUT /bot-ia/config GRAVA em `whatsapp_config.bot_ia`.
+ *
+ * ⚠️⚠️ PRESERVA AS CHAVES QUE A TELA NÃO CONHECE (26/09/2026). O PUT antigo
+ * reescrevia `bot_ia` com 6 chaves fixas — e `varredura_emails`, gravado por
+ * SQL naquele dia, seria APAGADO na primeira vez que alguém salvasse o contato
+ * humano pela tela. Qualquer chave nova que outra frente acrescentar ao jsonb
+ * teria o mesmo destino, em silêncio.
+ *
+ * `bruto` é o jsonb ATUAL do banco (não o normalizado: o normalizado já perdeu
+ * as chaves desconhecidas); `normalizado` é a saída de `lerConfigBotIa` com o
+ * que a pessoa mudou. `contato_link` é derivado e não é persistido.
+ */
+function mesclarConfigBotIa(bruto, normalizado) {
+  const base = bruto && typeof bruto === 'object' && !Array.isArray(bruto) ? { ...bruto } : {};
+  delete base.contato_link;
+  const n = normalizado || lerConfigBotIa(base);
+  return {
+    ...base,
+    ativo: n.ativo,
+    contato_humano: n.contato_humano,
+    limite_dia: n.limite_dia,
+    limite_conversa_dia: n.limite_conversa_dia,
+    horas_silencio_apos_humano: n.horas_silencio_apos_humano,
+    instrucoes: n.instrucoes,
+    varredura_emails: n.varredura_emails,
   };
 }
 
@@ -376,6 +433,7 @@ function montarMensagemUsuario({ conversa = null, perfil = null, historico = [],
 
 module.exports = {
   ACOES, LIMITES_PADRAO, MAX_RESPOSTA_CHARS, AREA_GERAL, TOOL_DECISAO,
+  TETO_EMAILS_VARREDURA, listaEmails, mesclarConfigBotIa,
   normalizarNome, lerConfigBotIa, modoResposta, lerArea, acharArea,
   decidirAntesDoModelo, normalizarDecisao, sanitizarResposta,
   linkWaMe, textoEncaminhamento, montarSystemPrompt, montarMensagemUsuario,

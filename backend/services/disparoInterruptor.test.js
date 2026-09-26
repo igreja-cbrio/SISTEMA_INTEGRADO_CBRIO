@@ -85,4 +85,22 @@ const itemVisitante = CATALOGO.find((i) => i.id === VISITANTE_ID);
 assert.ok(visitanteSrc.includes(`const CONTEXTO = '${itemVisitante.contexto}'`),
   `o contexto do catálogo ("${itemVisitante.contexto}") tem que ser o que o remetente grava na fila`);
 
+// ── A VARREDURA MENSAL do WhatsApp (26/09) · checagem por TEXTO ────────────
+// services/botIaVarredura.js carrega o Supabase, então a conferência é
+// estática, como a do visitante. O item não tem `contexto` (é e-mail, não fila
+// do WhatsApp) — o que tem que concordar é o id.
+const VARREDURA_ID = 'bot_varredura_mensal';
+const varreduraSrc = semComentarios(
+  fs.readFileSync(path.join(__dirname, 'botIaVarredura.js'), 'utf8'),
+);
+assert.ok(varreduraSrc.includes(`const DISPARO_ID = '${VARREDURA_ID}'`),
+  `services/botIaVarredura.js não declara DISPARO_ID = '${VARREDURA_ID}'`);
+assert.ok(varreduraSrc.includes('disparoDesligado(DISPARO_ID)'),
+  'o remetente da varredura mensal não consulta disparoDesligado(DISPARO_ID) — o switch não desligaria nada');
+assert.ok(IDS_CATALOGO.includes(VARREDURA_ID),
+  `"${VARREDURA_ID}" não está no catálogo (${IDS_CATALOGO.join(', ')}) — o switch não apareceria na tela`);
+const itemVarredura = CATALOGO.find((i) => i.id === VARREDURA_ID);
+assert.equal(itemVarredura.envTemplate, null,
+  'a varredura é e-mail — declarar envTemplate pintaria de vermelho um disparo configurado');
+
 console.log('disparoInterruptor: OK');

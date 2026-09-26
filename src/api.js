@@ -4135,6 +4135,13 @@ export const comunicacao = {
     // o modelo leva alguns segundos — o timeout padrão de 30s serve, mas com folga
     simular: (body) => post('/comunicacao/bot-ia/simular', body, { timeout: 60_000 }),
     resumo: (dias = 7) => get(`/comunicacao/bot-ia/resumo?dias=${dias}`),
+    // Varredura mensal do WhatsApp (26/09/2026): temas, contagens e lacunas do
+    // mês. Os exemplos (texto mascarado de conversa) exigem nível 3.
+    varreduras: () => get('/comunicacao/bot-ia/varreduras'),
+    varreduraExemplos: (periodo) => get(`/comunicacao/bot-ia/varreduras/${encodeURIComponent(periodo)}/exemplos`),
+    // ⚠️ Síncrono e chama o modelo (até ~90 s no servidor): timeout com folga,
+    // senão a tela diria "tempo esgotado" com a varredura ainda rodando.
+    rodarVarredura: (periodo) => post('/comunicacao/bot-ia/varreduras/rodar', periodo ? { periodo } : {}, { timeout: 150_000 }),
   },
   // Equipe de atendimento (08/09/2026): titular + suplente por área ('Entrada' =
   // conversa ainda sem área). Substitui a aba Configurações → Atendentes.
