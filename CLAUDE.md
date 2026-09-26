@@ -70,7 +70,8 @@ membros."* Registro escrito em 26/09, depois de conferir o estado VIVO.
 - **App de membros**: #177 (escolha da data, reaplicado sobre a main atual) e
   #179 (guarda de que a data viaja no payload + banner "Geralmente no 4º
   domingo"). ⚠️ O 1º OTA da feature saiu de um checkout numa branch antiga e a
-  frota perdeu 7 PRs por alguns minutos; o corretivo saiu em seguida. A régua
+  frota perdeu 18 PRs (#160–#177, tudo desde 21/09) por alguns minutos; o
+  corretivo saiu em seguida. A régua
   ("OTA só de worktree limpa em `origin/main`") está no CLAUDE.md do app.
 
 ## ⚠️ DEVOCIONAL · vídeo do YOUTUBE toca DENTRO do app (2026-09-25 · migration `20260925150000`)
