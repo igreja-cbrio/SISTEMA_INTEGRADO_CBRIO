@@ -135,6 +135,15 @@ export interface VolServiceType {
   color: string | null;
   created_at: string;
   updated_at: string;
+  // ⚠️ As flags que DEFINEM o culto (24/09/2026). Opcionais no tipo porque a
+  // coluna é NOT NULL mas um payload antigo pode não trazê-las — quem grava é
+  // `backend/utils/tipoCultoFlags`, e lá campo ausente nunca vira escrita.
+  has_kids?: boolean;
+  has_online?: boolean;
+  /** ⚠️ NÃO é "tem YouTube": é o portão do cron que MATERIALIZA os cultos. */
+  has_online_stream?: boolean;
+  /** ⚠️ 'Sede' é o discriminador dos cultos do TEMPLO no Dashboard Semanal. */
+  presencial_label?: string;
 }
 
 export interface VolTeam {

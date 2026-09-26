@@ -10,7 +10,7 @@ import { useState, useEffect, useMemo, useCallback } from 'react';
 import { cuidados as cuidadosApi } from '../api';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table';
-import { Loader2, HeartHandshake, Droplets, Sparkles, Phone, MessageCircle } from 'lucide-react';
+import { Loader2, HeartHandshake, Droplets, Sparkles, Phone, MessageCircle, ChevronDown } from 'lucide-react';
 import { hrefWhatsapp } from '../lib/conversas';
 import { toast } from 'sonner';
 import JornadaTimeline from './jornada/JornadaTimeline';
@@ -96,8 +96,54 @@ export default function JornadaConvertidos({ area, view = 'full' }: { area?: str
 
   const r = data?.resumo;
 
+  // ⚠️⚠️ RECOLHER SÓ É HONESTO COM O RESUMO NO CABEÇALHO.
+  // Pedido do Matheus (21/09/2026): a lista é longa e empurra o resto da tela
+  // para baixo. Mas esconder uma fila de acompanhamento pastoral atrás de um
+  // clique, sem dizer quantas pessoas estão nela e quantas estão atrasadas,
+  // faz o trabalho pendente sumir da vista — é o oposto do que a tela existe
+  // para fazer. Mesma régua do painel do agente de voluntariado (13/08): o
+  // cabeçalho carrega o total e o alerta, então recolher não esconde nada.
+  //
+  // ⚠️ Recolhido por PADRÃO só quando não há atraso. Com gente atrasada ele
+  // abre sozinho — o dado que exige ação não nasce escondido.
+  const atrasados = (data?.pessoas || []).filter((i: any) =>
+    i?.contato?.status === 'atrasado' || i?.batismo?.status === 'atrasado' || i?.next?.status === 'atrasado'
+  ).length;
+  const [aberto, setAberto] = useState<boolean | null>(null);
+  // `null` = ainda não decidido pelo usuário ⇒ vale o padrão derivado do dado.
+  const expandido = aberto === null ? atrasados > 0 : aberto;
+
   return (
     <div className="space-y-4">
+      {/* Cabeçalho recolhível · o resumo fica SEMPRE visível */}
+      {!loading && (
+        <button
+          type="button"
+          onClick={() => setAberto(!expandido)}
+          className="w-full flex items-center justify-between gap-3 rounded-lg border px-3 py-2 text-sm hover:bg-muted/50 transition-colors"
+          aria-expanded={expandido}
+        >
+          <span className="flex items-center gap-2 flex-wrap">
+            <span className="font-semibold">{r?.total ?? 0} convertido{(r?.total ?? 0) === 1 ? '' : 's'}</span>
+            {/* ⚠️ O atraso é o que não pode ficar escondido. */}
+            {atrasados > 0 && (
+              <span className="text-rose-700 dark:text-rose-400 font-medium">
+                · {atrasados} com atraso
+              </span>
+            )}
+            {atrasados === 0 && (r?.total ?? 0) > 0 && (
+              <span className="text-muted-foreground">· nenhum atrasado</span>
+            )}
+          </span>
+          <span className="flex items-center gap-1.5 text-muted-foreground shrink-0">
+            {expandido ? 'ocultar' : 'ver lista'}
+            <ChevronDown className={`h-4 w-4 transition-transform ${expandido ? 'rotate-180' : ''}`} />
+          </span>
+        </button>
+      )}
+
+      {expandido && (
+      <div className="space-y-4">
       {/* Resumo · na linha do tempo os tiles próprios já respondem isso */}
       {r && vista === 'tabela' && (
         <div className={`grid gap-3 ${view === 'next' ? 'grid-cols-1 sm:grid-cols-2' : 'grid-cols-1 sm:grid-cols-3'}`}>
@@ -273,6 +319,8 @@ export default function JornadaConvertidos({ area, view = 'full' }: { area?: str
             ))}
           </TableBody>
         </Table>
+      </div>
+      )}
       </div>
       )}
     </div>

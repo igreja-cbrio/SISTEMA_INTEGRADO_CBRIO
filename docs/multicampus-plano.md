@@ -1,8 +1,8 @@
 # Multi-campus · documento de design (ADR)
 
-> Status: **proposto** · Data: 2026-07-01 · Autor: gestão + Claude Code
-> (via conselho `llm-council`) · Prazo-alvo do go-live do 2º campus:
-> **fim de 2026**.
+> Status: **planejamento retomado** · Revisão: 2026-09-26
+> Origem: gestão + Claude Code (2026-07-01). Alvo atualizado:
+> **possível segundo campus físico em março de 2027**.
 
 Referência viva do projeto que torna o ERP da CBRio **multi-campus** (multi-sede
 física), preservando o campus atual (Sede) sem regressão. Escrito antes da
@@ -10,13 +10,165 @@ primeira migration — a Fase 0 concreta sai deste doc.
 
 ---
 
+## 0. Retomada e plano de entrega (2026-09-26)
+
+**Objetivo atualizado:** preparar o sistema para um possível segundo campus
+físico em março de 2027. O pedido é planejar antes de implementar. Esta revisão
+não aplica migrations, não altera acessos e não ativa um campus novo.
+
+Esta seção substitui o diagnóstico e o calendário de julho abaixo. Os registros
+anteriores são contexto de decisões, não prova do estado atual de produção.
+Não executar os exemplos SQL históricos como se fossem migrations prontas.
+
+### 0.1 O que foi conferido
+
+Código auditado na `main` de setembro e catálogo do projeto Supabase de produção
+`hhntwfawfnxvuobhdfkb`, por consultas somente de leitura em 26/09/2026:
+
+| Evidência | Estado observado | Consequência |
+|---|---|---|
+| `igrejas` | 4 cadastros ativos: Sede, Online e duas CBAs acompanhadas | Cadastro de unidades existe; isso não comprova isolamento operacional |
+| `usuario_igrejas` | 0 vínculos | Ativar o filtro agora bloquearia usuários comuns sem preparar seus acessos |
+| Colunas `igreja_id` | 21 tabelas, incluindo a própria `usuario_igrejas` | Propagação parcial; não usar a estimativa antiga de “5 tabelas” |
+| `pg_policies` | Nenhuma expressão menciona `igreja_id`, `campus`, `usuario_igrejas` ou `current_user_igreja_ids` | Isolamento por campus ainda não está aplicado nas policies |
+| `modulos.escopo_campus` | Integração/Grupos/Kids isolados; Financeiro/RH/Patrimônio compartilhados | Preservar a decisão mais recente de operação administrativa central |
+| `backend/middleware/auth.js` | Sem resolução de campus nos caminhos auditados | A API também precisa impor escopo; RLS sozinha não protege consultas com service role |
+| `backend/routes/painel.js` e `dashboardSemanal.js` | Sem recorte `igreja_id`/campus nos arquivos auditados | Painéis não estão preparados para apresentar recortes independentes |
+| `src/contexts`, portas públicas de Grupos/Batismo e matcher canônico | Sem seleção/propagação de campus nos caminhos auditados | Campo no banco não basta: cada ato precisa de origem validada no servidor |
+| `financeiroV2.js` | Centro de custo já tem filtro/campo `campus` | Reaproveitar e auditar esse modelo; não confundir o campo existente com isolamento completo |
+
+As 20 tabelas de negócio com `igreja_id` observadas: `batismo_inscricoes`,
+`cui_acompanhamentos`, `cui_convertidos`, `cui_jornada180`, `insc_eventos`,
+`int_visitantes`, `kids_pagers`, `kids_salas`, `log_compras`, `log_notas_fiscais`,
+`log_pedidos`, `log_solicitacoes_compra`, `mem_grupo_membros`, `mem_grupos`,
+`mem_membros`, `mem_voluntarios`, `next_inscricoes`, `nsm_eventos`,
+`solicitacoes`, `totem_estacoes`.
+
+Referências de código: migrations `20260701050000`, `20260701060000`,
+`20260701070000`, `20260701080000`, `20260701090000`; `backend/utils/supabase.js`
+(service role); `backend/services/membroMatch.js`; `backend/routes/publicBatismo.js`;
+`backend/routes/publicGrupos.js`; `backend/routes/financeiroV2.js`.
+
+### 0.2 Contrato que deve permanecer igual em todos os módulos
+
+1. **Pessoa única.** O matcher CPF → contato+nome → nascimento+nome continua
+   canônico e global. Uma visita a outro campus não cria uma segunda pessoa.
+   Campus-base, acesso de funcionário e campus do ato são informações distintas.
+   A conciliação global de identidade não autoriza expor a ficha global ao operador.
+2. **Campus do ato é histórico.** Presença, decisão, inscrição, escala e lançamento
+   pertencem ao campus do evento/operação. Transferir o campus-base de alguém não
+   move seus atos antigos. Divergência entre campus pai e filho deve ser recusada.
+3. **Autorização no servidor e no banco.** Campus solicitado pelo cliente é filtro,
+   não autorização. Leitura, escrita, exportação, arquivo e operação em lote devem
+   intersectar módulo, nível, vínculo e campus permitidos. Configurar um módulo
+   como compartilhado não remove suas regras de identidade, PII ou nível.
+4. **Operação central não significa dado público.** Financeiro/RH/Patrimônio ficam
+   centrais, conforme a revisão de julho. Recortes gerenciais de custo e resultado
+   por campus não concedem acesso a salário, contribuição ou ficha individual.
+5. **Indicadores têm universo declarado.** Cada KPI/OKR precisa indicar campus,
+   período, área e população. Percentuais consolidados usam numeradores e
+   denominadores; não são média simples dos percentuais das unidades. Pessoas
+   únicas no consolidado exigem deduplicação, não soma dos totais locais.
+6. **Calendários preservados.** Financeiro continua quarta→terça e frequência
+   segunda→domingo. Acrescentar campus não pode unificar essas semanas.
+7. **Ausência de campus não pode escolher uma unidade por acidente.** O fallback
+   legado para Sede deve ter uma transição explícita. Antes de operar Campus 2,
+   clientes antigos e rotas sem contexto precisam de tratamento testado; não
+   deixar um default silencioso gravar seus dados na Sede.
+
+### 0.3 Ordem de implementação e PRs pequenas
+
+As faixas abaixo são janelas de planejamento, não promessa de prazo. Cada linha
+se divide por módulo, endpoint e grupo de tabelas; não agrupar reescrita global de
+RLS ou de todos os KPIs em uma PR. Nenhuma alteração de autorização/migration
+contorna os gates do AGENTS.md.
+
+| Etapa / janela sugerida | PRs a preparar | Evidência necessária para avançar |
+|---|---|---|
+| A · set/out | Inventário de tabelas, policies, grants, views/RPCs, rotas, cache, jobs, exports e contratos; matriz por módulo e dono de validação | Catálogo vivo confrontado com Git; fluxos da Sede e números de referência registrados sem exportar PII |
+| B · outubro | Resolver campus permitido na API; contexto e cache por usuário/campus; preparar vínculos de acesso; testes de negação | Usuário sem vínculo falha fechado; usuário com dois campi alterna sem carregar dados do anterior; super-admin segue política explícita |
+| C · out/nov | Adicionar dimensão aos atos e agregados faltantes, índices e unicidades; backfill auditável; pais/filhos consistentes | Dois cultos no mesmo horário/data coexistem; zero órfãos; dados históricos classificados sem adivinhar por nome |
+| D · novembro | Ativar escopo por módulos pilotos, primeiro Cultos/Integração, depois Cuidados/Grupos/Next e Voluntariado | API com service role e acesso direto via RLS bloqueiam leitura e escrita cruzadas; regressão da Sede aprovada |
+| E · nov/dez | Kids/totens, portas públicas, eventos e aplicativos; isolamentos de estações, salas e filas | Check-in, responsáveis, etiquetas, inscrições e capacidade respeitam o campus; operação simultânea validada |
+| F · dez/jan | NSM/KPIs/OKRs, dados brutos, caches, painéis semanal/mensal/anual e consolidados | Agregados reconciliados com fontes; sem duplicação; filtros e exportações contam o mesmo universo |
+| G · janeiro | Compras/Solicitações, Marketing/Projetos, custos por campus, RH/Patrimônio centrais e prestação de contas | Aprovações e filas chegam à equipe certa; DRE e rateios têm regra aprovada; matriz de dados sensíveis preservada |
+| H · jan/fev | Notificações, WhatsApp, crons, integrações, reconciliação e observabilidade por campus | Retry/idempotência incluem a dimensão correta; um job não deixa outra unidade sem processamento; alarmes independem de IA |
+| I · fevereiro | Ensaio completo com dados sintéticos, treinamento, operação paralela e plano de reversão | Pelo menos dois ciclos semanais completos, reconciliação da Sede e checklist de incidentes aprovados |
+| J · março | Ativação controlada do segundo campus | Todas as etapas críticas aprovadas; nenhum acesso cruzado ou rota legada sem tratamento |
+
+Modelo de sequência por módulo: contrato e testes → schema aditivo → backfill
+com relatório → API compatível → RLS revisada → UI/app → observação e reconciliação.
+A ativação fica separada da instalação de estruturas. Enquanto só houver Sede em
+operação, preparar o segundo campus não deve alterar os números da Sede.
+
+### 0.4 Cobertura ponta a ponta
+
+| Frente | O que precisa ser tratado | Teste de aceite específico |
+|---|---|---|
+| Cultos/Integração/Produção | Agenda local, tipos/horários, decisões, frequência, cancelamento e materialização | Mesma data/hora em duas sedes sem colisão nem dupla geração |
+| Pessoas/portas de entrada | Matching global, campus-base, origem do ato, contatos secundários e fila de identidade | CPF já existente em outra unidade não duplica nem expõe sua ficha |
+| Cuidados/Jornada/Grupos/Next/Batismo | Encaminhamentos, equipes, agenda, vagas, inscrição e mudança de unidade | Pessoa visita outra unidade e mantém histórico e encaminhamento rastreáveis |
+| Kids/estações | Responsáveis, sala, turma, capacidade, etiqueta, pager e display | Token de uma estação não acessa salas ou crianças fora de seu escopo |
+| Voluntariado | Times locais/compartilhados, escala, concessões e check-in | Líder escala apenas equipes autorizadas; visita não duplica voluntário |
+| Apps de membros e Staff | Campus ativo, identidade, cache, deep links, notificações e versões antigas | Troca de campus não reutiliza dados antigos; deep link valida contexto no servidor |
+| Eventos/inscrições/pagamentos | Dono do evento, locais participantes, capacidades e inscrição global/local | Evento da rede não dobra inscrição nem receita ao consolidar |
+| NSM/KPIs/OKRs | Fonte, meta, período, dimensão, unicidade, materializações e drilldown | Número do card bate com pessoas/atos do recorte; consolidado documenta deduplicação |
+| Financeiro/contas/relatórios | Operação central; atribuição analítica, rateios, transferências e consolidação | Transferência interna não vira receita nova; valores reconciliam com o razão |
+| RH/Patrimônio | Gestão central, lotação/movimentação e responsáveis por ID | Gestor local não ganha acesso à folha ou ao patrimônio fora da concessão |
+| Solicitações/Compras/Logística | Campus solicitante, atendimento central/local, alçadas, estoque e SLA | Aprovação cruza equipes autorizadas; entrega e estoque têm unidade inequívoca |
+| Marketing/Projetos/Planejamento/Governança | Escopo institucional/local, responsáveis, calendário e prestação de contas | Projeto compartilhado aparece no consolidado uma vez, com participações declaradas |
+| Online/Devocionais/Cérebro | Conteúdo institucional versus sinais de participação e documentos restritos | Conteúdo compartilhado não abre dados individuais ou pastorais a outro campus |
+| Jobs/WhatsApp/notificações | Destinatários, partição de filas, retry, rate limit e limites de execução | Falha numa unidade não trava nem duplica trabalho das demais |
+| Auditoria/arquivos/BI | Logs, exports, PDFs, links assinados, busca, storage e snapshots | Mesmo arquivo/dado continua protegido fora da tela e em acesso por ID |
+
+### 0.5 Decisões que precisam ser fechadas antes do código correspondente
+
+- Horários/tipos de culto próprios por sede versus catálogo institucional com
+  configuração local; quem pode criar exceções.
+- Regra de transferência e atuação em vários campi para pessoas, líderes e times,
+  incluindo quando manter ou encerrar vínculos antigos.
+- Rateio gerencial e metas de campus com Financeiro/RH centrais: dimensão analítica
+  por ato, centros de custo e visão permitida à liderança local.
+- Atendimento e alçadas de solicitações: local, central ou híbrido por categoria.
+- Público dos formulários/eventos da rede, capacidade e pagamento por unidade.
+- Destino de dados, estações e jobs quando uma unidade é inativada.
+
+Essas decisões complementam o que já foi acordado; não reabrem automaticamente
+pessoa única, operação central de Financeiro/RH/Patrimônio ou isolamento de PII.
+
+### 0.6 Critérios de segurança, corte e reversão
+
+- Matriz de testes com usuário Sede, usuário Campus 2, usuário multi-campus,
+  membro comum e administrador; cobrir leitura, escrita, IDs adivinhados,
+  exportação, storage e chamadas diretas sem a UI.
+- Testar service role através da API e RLS com anon/authenticated separadamente.
+  Um teste verde em uma camada não comprova a outra.
+- Comparar coortes e somas antes/depois com snapshots agregados; divergência deve
+  ter explicação do domínio, não ser resolvida alterando a meta ou arredondamento.
+- Toda PR de schema traz SQL completo, pré-condições, verificação e compatibilidade
+  com a versão anterior. Não retirar policies protetoras para “destravar” a entrega.
+- Reversão de UI/código não desfaz o campus dos atos já gravados. Depois de operar
+  duas unidades, não voltar para leitores/escritores sem escopo: bloquear a função
+  afetada ou corrigir mantendo o isolamento.
+- A ativação de Campus 2 precisa de aprovação explícita de escopo e acessos.
+  Nenhum dado real de menores, pastoral ou financeiro será usado em demonstração
+  externa ou exportado para ferramenta de avaliação de IA.
+
+### 0.7 Método e limitações desta retomada
+
+Foram consultados Git e catálogo vivo, sem alteração de dados. As duas novas
+revisões dos conselheiros falharam por falta de créditos do workspace; não há
+consenso nem revisão por pares concluída desta versão. A priorização acima é
+proposta técnica para revisão da gestão, não autorização de mudanças de RLS.
+
+---
+
 ## 1. Objetivo e contexto
 
-A CBRio entra em período de expansão e terá um **2º campus físico** até o fim de
-2026. O sistema inteiro (banco, backend, frontend web, app mobile) precisa ganhar
-a **ótica de campus**: cada unidade opera seus próprios cultos, membros, grupos,
-voluntários, financeiro e RH de forma **isolada**, enquanto a **diretoria enxerga
-o consolidado** de toda a rede.
+A CBRio considera abrir um **2º campus físico em março de 2027**. O sistema inteiro (banco, backend, frontend web, app mobile) precisa ganhar
+a **ótica de campus**: cada unidade opera seus próprios cultos, grupos e
+voluntariado, preservando o cadastro único de pessoas. Financeiro/RH/Patrimônio
+permanecem centrais; a **diretoria enxerga o consolidado** de toda a rede.
 
 **A natureza do projeto:** isto **não** é "adicionar uma coluna". É, no essencial,
 um projeto de **isolamento de dados via RLS** — garantir que a liderança de um
@@ -42,7 +194,7 @@ diretoria). Por isso `usuario_igrejas` (acesso) é **M:N**, separado do
 
 ---
 
-## 3. Estado atual (verificado contra o repo · 2026-07-01)
+## 3. Registro histórico de julho (superado pela auditoria da seção 0)
 
 > **✅ FASE 0 CONCLUÍDA (2026-07-01)** — migration `20260701050000` aplicada em
 > produção: `usuario_igrejas` + helper `current_user_igreja_ids()` +
@@ -118,11 +270,13 @@ necessariamente o campus-base da pessoa (ex.: membro da Sede que doa visitando o
 Campus 2). Regra: **transação/decisão/presença = campus do ato**; cadastro do
 membro = campus-base.
 
-### 4.4 Financeiro/RH (decisão #3)
-`igreja_id` em `fin_transacoes`, `fin_faturas`, `rh_funcionarios` e correlatas.
-DRE/folha por campus + **rollup consolidado** para a diretoria
-(`igreja_id IS NULL` na agregação = consolidado; filtro = por campus). A regra
-contábil do empréstimo-não-é-receita segue intacta, agora por campus.
+### 4.4 Financeiro/RH (revisão da decisão #3)
+
+A proposta inicial de separar a operação foi revista em julho: Financeiro/RH
+permanecem centrais, como registra `20260701090000_multicampus_fase1_leva4_fin_rh_central.sql`
+e como foi confirmado em `modulos.escopo_campus` em 26/09/2026. Recortes gerenciais
+por campus, rateios e prestação de contas precisam do contrato analítico da
+seção 0; não acrescentar isolamento operacional a essas tabelas por inferência.
 
 ---
 
@@ -200,7 +354,7 @@ Suíte de **não-vazamento** obrigatória no CI antes de o Campus 2 entrar em pr
 
 ---
 
-## 8. Roadmap faseado (Jul → Dez 2026)
+## 8. Roadmap histórico (Jul → Dez 2026 · substituído pela seção 0.3)
 
 | Fase | Janela | Entregas | Pré-req |
 |---|---|---|---|

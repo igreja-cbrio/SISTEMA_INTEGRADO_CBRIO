@@ -1,14 +1,15 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { online } from '@/api';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
   Users, Eye, ThumbsUp, MessageSquare, TrendingUp, TrendingDown, ExternalLink,
   Youtube, Loader2, RefreshCw, PlayCircle, Info, Cross, HeartHandshake,
-  Clock, HandHelping, Sparkles, AlertCircle, Target, ChevronDown, Zap, Link2, Unlink, CheckCircle2,
+  Clock, HandHelping, Sparkles, AlertCircle, Target, ChevronDown, Zap, Link2, Unlink, CheckCircle2, Wallet,
 } from 'lucide-react';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { toast } from 'sonner';
@@ -18,6 +19,9 @@ import { OnlineDebugPanel } from '@/components/online/OnlineDebugPanel';
 import JornadaConvertidos from '@/components/JornadaConvertidos';
 import QrCultosApelo from '@/components/online/QrCultosApelo';
 import CadastroMembresiaOnline from '@/components/online/CadastroMembresiaOnline';
+import CanalSerieCard from '@/components/online/CanalSerieCard';
+import ArrecadacaoOnlineCard from '@/components/online/ArrecadacaoOnlineCard';
+import FichaKpi from '@/components/online/FichaKpi';
 
 const VALOR_META: Record<string, { label: string; cor: string; corClara: string; icon: any }> = {
   seguir:        { label: 'Seguir a Jesus',          cor: '#8B5CF6', corClara: 'from-violet-500/15 to-violet-500/5', icon: Cross },
@@ -98,6 +102,39 @@ interface DashboardData {
   top_all_time: Video[];
   series: Serie[];
   matriz_online: Record<string, MatrizCell[]>;
+  // ⚠️ Opcional de propósito: o backend monta este bloco isolado e ele pode
+  // vir como `{ erro }` sem derrubar o resto da tela.
+  semana?: SemanaViews | null;
+}
+
+interface DiaViews { data: string; views: number; watch_minutos?: number | null }
+interface CultoSemana {
+  id: string; data: string; hora: string | null; nome: string;
+  ds: number | null; ddus: number | null; pico: number | null; sem_video: boolean;
+}
+
+/** Views da semana anterior (seg→dom, BRT) · ver CardSemanaViews. */
+interface SemanaViews {
+  dias_detalhe?: DiaViews[];
+  // ⚠️ `null` = a consulta falhou; `[]` = não houve culto. Estados diferentes.
+  cultos?: CultoSemana[] | null;
+  erro?: string;
+  detalhe?: string;
+  rotulo?: string;
+  inicio?: string;
+  fim?: string;
+  fonte?: string;
+  consolidando?: boolean;
+  // ⚠️ `null` = não coletado. NUNCA confundir com 0 views.
+  views?: number | null;
+  watch_minutos?: number | null;
+  dias_com_dado?: number;
+  anterior?: { rotulo: string; views: number; dias_com_dado: number } | null;
+  // ⚠️ `pode: false` traz o MOTIVO — a tela nunca calcula % por conta própria.
+  comparacao?: {
+    pode: boolean; motivo?: string; absoluto?: number;
+    percentual?: number; dias_com_dado?: number;
+  } | null;
 }
 
 // ────────────────────────────────────────────────────────────────────────────
@@ -132,6 +169,336 @@ function StatCard({ icon: Icon, label, value, delta, accentClass }: {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// Card "views da semana anterior".
+//
+// ⚠️⚠️ Tudo que este card DECLARA é obrigatório, não enfeite:
+//  · a JANELA com as datas — "semana anterior" sozinho não se confere;
+//  · a FONTE — o gestor confere contra o YouTube Studio, e precisa saber que é
+//    views do CANAL (não dos cultos, não dos vídeos publicados na semana);
+//  · a CONVENÇÃO seg→dom — o financeiro usa quarta→terça e alguém vai perguntar;
+//  · a COBERTURA — dia sem coleta some da soma SEM AVISO, e aí ninguém
+//    distingue "a audiência caiu" de "o cron falhou";
+//  · a CONSOLIDAÇÃO — o YouTube ainda ajusta D-1 e D-2, então na segunda o
+//    número sobe. Número que muda em silêncio depois de publicado queima a
+//    confiança no card.
+//
+// ⚠️ Comparação com a semana retrasada em número ABSOLUTO, sem %: feriado,
+// evento especial e semana com 4 ou 5 cultos movem o número sem dizer nada
+// sobre desempenho (a oscilação medida chega a +74%).
+
+// Detalhamento da semana · abre ao clicar no card.
+//
+// ⚠️⚠️ AS DUAS TABELAS NÃO SE SOMAM, e a tela DIZ isso em voz alta:
+// as views do CANAL incluem vídeo antigo, shorts e cortes; `online_ds`/`ddus`
+// são as views DAQUELE vídeo de culto. Medido em 21/09/2026: os 5 cultos da
+// semana somam 4.638 contra ~12 mil do canal. Sem a frase, quem soma a coluna
+// dos cultos conclui que o card está errado — e para de confiar nos dois.
+function DetalheSemana({ semana, aberto, onClose }: {
+  semana: SemanaViews; aberto: boolean; onClose: () => void;
+}) {
+  const dias = semana.dias_detalhe || [];
+  const cultos = semana.cultos;
+  const faltam = 7 - (semana.dias_com_dado || 0);
+  const cmp = semana.comparacao;
+
+  const nomeDia = (iso: string) => {
+    // ⚠️ Fatiar a string: `new Date('2026-09-14')` é meia-noite UTC e no Rio
+    // vira dia 13 — o rótulo mostraria o dia errado.
+    const [a, m, d] = iso.split('-').map(Number);
+    const semanas = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+    const dow = new Date(Date.UTC(a, m - 1, d)).getUTCDay();
+    return `${semanas[dow]} ${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}`;
+  };
+
+  return (
+    <Dialog open={aberto} onOpenChange={(o) => !o && onClose()}>
+      {/* Padrão da casa para modal alto: flex-col sem overflow no container,
+          corpo com flex-1 + overflow-y-auto + min-h-0. */}
+      <DialogContent className="max-w-2xl max-h-[90vh] flex flex-col">
+        <DialogHeader>
+          <DialogTitle>Views da semana · {semana.rotulo}</DialogTitle>
+          <DialogDescription>
+            {semana.fonte || 'YouTube Analytics'} · segunda a domingo
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex-1 overflow-y-auto min-h-0 space-y-5">
+          {/* ── Views do canal, por dia ── */}
+          <div>
+            <div className="flex items-baseline justify-between mb-2">
+              <h4 className="text-sm font-semibold">Views do canal, por dia</h4>
+              <span className="text-2xl font-bold">
+                {semana.views != null ? formatNumber(semana.views) : '—'}
+              </span>
+            </div>
+
+            {/* Comparação com a semana retrasada */}
+            {semana.anterior && (
+              <div className="mb-2 text-sm">
+                <span className="text-muted-foreground">
+                  Semana anterior ({semana.anterior.rotulo}): {formatNumber(semana.anterior.views)}
+                </span>
+                {cmp?.pode && cmp.percentual != null ? (
+                  <span className={`ml-2 font-semibold ${
+                    cmp.percentual > 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-rose-700 dark:text-rose-400'
+                  }`}>
+                    {cmp.percentual > 0 ? '+' : ''}{cmp.percentual}%
+                    {cmp.absoluto != null && (
+                      <span className="font-normal text-muted-foreground ml-1">
+                        ({cmp.absoluto > 0 ? '+' : ''}{formatNumber(cmp.absoluto)} views)
+                      </span>
+                    )}
+                  </span>
+                ) : (
+                  // ⚠️⚠️ Motivo na frente, nunca um % inventado pela coleta
+                  // parcial: hoje seriam 5 dias contra 7, e o número diria
+                  // -55% de queda que não existiu.
+                  <span className="ml-2 text-amber-700 dark:text-amber-400">
+                    {cmp?.motivo === 'base_zero'
+                      ? 'sem base para percentual (semana anterior zerada)'
+                      : 'variação só com as duas semanas completas'}
+                  </span>
+                )}
+              </div>
+            )}
+
+            {faltam > 0 && (
+              // ⚠️ Não basta dizer "5 de 7": o gestor precisa saber QUE dias
+              // faltam e POR QUE — a Analytics do YouTube fecha o dia com
+              // alguns dias de atraso, e o que falta na segunda-feira é
+              // justamente sábado e domingo, os de maior audiência.
+              <div className="mb-2 text-xs text-amber-700 dark:text-amber-400 bg-amber-500/10 rounded-md px-2.5 py-2">
+                ⚠ {semana.dias_com_dado} de 7 dias coletados — faltam {faltam}.
+                O YouTube fecha os dados de um dia alguns dias depois, então os
+                últimos dias da semana (inclusive o domingo) entram atrasados.
+                O total acima vai <strong>subir</strong>.
+              </div>
+            )}
+
+            {dias.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                Nenhum dia coletado. Use o botão <strong>“Views por dia (130d)”</strong> no
+                cartão do YouTube, acima.
+              </p>
+            ) : (
+              <div className="rounded-lg border divide-y">
+                {dias.map((d) => (
+                  <div key={d.data} className="flex items-center justify-between px-3 py-2 text-sm">
+                    <span className="text-muted-foreground">{nomeDia(d.data)}</span>
+                    <span className="font-semibold tabular-nums">{formatNumber(d.views)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Cultos da semana ── */}
+          <div>
+            <h4 className="text-sm font-semibold mb-1">Cultos da semana</h4>
+            {/* ⚠️⚠️ A frase que impede a conclusão errada. */}
+            <p className="text-xs text-muted-foreground mb-2">
+              Views de cada <strong>transmissão de culto</strong>. Não é a divisão do número
+              acima: o total do canal inclui vídeos antigos, cortes e shorts, então a soma
+              dos cultos é sempre <strong>menor</strong>.
+            </p>
+
+            {cultos === null ? (
+              // Erro não vira lista vazia.
+              <p className="text-sm text-amber-700 dark:text-amber-400">
+                Não foi possível carregar os cultos desta semana.
+              </p>
+            ) : (cultos || []).length === 0 ? (
+              <p className="text-sm text-muted-foreground">Nenhum culto nesta semana.</p>
+            ) : (
+              <div className="rounded-lg border overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-muted/50 text-xs text-muted-foreground">
+                    <tr>
+                      <th className="text-left font-medium px-3 py-2">Culto</th>
+                      <th className="text-right font-medium px-3 py-2" title="Views no dia seguinte ao culto">D+1</th>
+                      <th className="text-right font-medium px-3 py-2" title="Views acumuladas na semana seguinte">D+7</th>
+                      <th className="text-right font-medium px-3 py-2" title="Pico de pessoas assistindo ao mesmo tempo">Pico</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {(cultos || []).map((c) => (
+                      <tr key={c.id}>
+                        <td className="px-3 py-2">
+                          <div className="font-medium">{c.nome}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {nomeDia(c.data)}{c.hora ? ` · ${c.hora}` : ''}
+                            {/* Culto sem vídeo vinculado NUNCA vai ter DS — é
+                                trabalho de gente, e a tela nomeia em vez de
+                                deixar três traços sem explicação. */}
+                            {c.sem_video && (
+                              <span className="ml-1.5 text-amber-700 dark:text-amber-400">
+                                · sem transmissão vinculada
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                        {/* ⚠️ `null` vira "—", nunca 0: D+1 só existe no dia
+                            seguinte e D+7 uma semana depois. Zero diria que
+                            ninguém assistiu. */}
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {c.ds != null ? formatNumber(c.ds) : <span className="text-muted-foreground">—</span>}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {c.ddus != null ? formatNumber(c.ddus) : <span className="text-muted-foreground">—</span>}
+                        </td>
+                        <td className="px-3 py-2 text-right tabular-nums">
+                          {c.pico != null ? formatNumber(c.pico) : <span className="text-muted-foreground">—</span>}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <p className="text-[11px] text-muted-foreground mt-1.5">
+              D+7 aparece uma semana depois do culto — por isso os cultos recentes mostram “—”.
+            </p>
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+// ════════════════════════════════════════════════════════════════════════════
+function CardSemanaViews({ semana }: { semana?: SemanaViews | null }) {
+  const [detalhe, setDetalhe] = useState(false);
+  // ⚠️ O hook fica ANTES do early return: `if (!semana) return null` acima de
+  // um useState quebraria a ordem dos hooks entre renders.
+  if (!semana) return null;
+
+  // ⚠️ Erro NUNCA vira 0 nem card ausente.
+  if (semana.erro) {
+    return (
+      <Card className="border-amber-500/40 bg-amber-500/5">
+        <CardContent className="p-5">
+          <div className="flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 text-amber-600 shrink-0 mt-0.5" />
+            <div>
+              <div className="font-semibold text-amber-800 dark:text-amber-300">Views da semana indisponíveis</div>
+              <div className="text-sm text-muted-foreground mt-1">{semana.erro}</div>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const semDado = semana.views === null || semana.views === undefined;
+  const parcial = !semDado && (semana.dias_com_dado ?? 0) > 0 && (semana.dias_com_dado ?? 0) < 7;
+  // ⚠️⚠️ Quem decide se o % pode aparecer é o SERVIDOR (`compararSemanas`).
+  // Calcular aqui reintroduziria o número falso: com a semana em 5 de 7 dias,
+  // a conta ingênua daria -55% de "queda" que a coleta parcial inventou.
+  const cmp = semana.comparacao;
+  const diffAnterior = cmp?.pode ? (cmp.absoluto ?? null) : null;
+
+  // ⚠️ Só é clicável quando HÁ o que detalhar — card que abre um diálogo vazio
+  // ensina a não clicar.
+  const temDetalhe = !semDado || (semana.cultos || []).length > 0;
+
+  return (
+    <>
+    <Card
+      className={`overflow-hidden relative ${temDetalhe ? 'cursor-pointer hover:shadow-lg transition-shadow' : ''}`}
+      onClick={temDetalhe ? () => setDetalhe(true) : undefined}
+      role={temDetalhe ? 'button' : undefined}
+      tabIndex={temDetalhe ? 0 : undefined}
+      onKeyDown={temDetalhe ? (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setDetalhe(true); } } : undefined}
+    >
+      <div className="absolute inset-0 opacity-50 bg-gradient-to-br from-violet-500/15 to-indigo-500/5" />
+      <CardContent className="p-5 relative">
+        <div className="flex items-start justify-between mb-3">
+          <div className="rounded-xl p-2.5 bg-white/80 dark:bg-black/30 backdrop-blur shadow-sm">
+            <Eye className="h-5 w-5" style={{ color: 'var(--cbrio-primary, #00B39D)' }} />
+          </div>
+          {diffAnterior !== null && diffAnterior !== 0 && (
+            <div className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold ${
+              diffAnterior > 0
+                ? 'bg-emerald-500/20 text-emerald-700 dark:text-emerald-400'
+                : 'bg-gray-500/15 text-muted-foreground'
+            }`}>
+              {diffAnterior > 0 ? <TrendingUp className="h-3 w-3" /> : <TrendingDown className="h-3 w-3" />}
+              {cmp?.percentual != null
+                ? `${cmp.percentual > 0 ? '+' : ''}${cmp.percentual}%`
+                : formatDelta(diffAnterior)}
+            </div>
+          )}
+        </div>
+
+        {semDado ? (
+          // ⚠️ "sem dado" ≠ "0 views". Escrever 0 aqui seria afirmar que
+          // ninguém assistiu numa semana que talvez nem tenha sido coletada.
+          <>
+            <div className="text-2xl font-bold leading-tight text-muted-foreground">Sem dado</div>
+            <div className="text-sm text-muted-foreground mt-1">
+              Views da semana · {semana.rotulo}
+            </div>
+            <div className="text-xs text-amber-700 dark:text-amber-400 mt-2">
+              Nenhum dia desta semana foi coletado ainda.
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="text-3xl font-bold leading-tight">{formatNumber(semana.views)}</div>
+            <div className="text-sm text-muted-foreground mt-1">
+              Views da semana · {semana.rotulo}
+            </div>
+          </>
+        )}
+
+        <div className="text-[10px] text-muted-foreground/70 mt-2 uppercase tracking-wide">
+          {semana.fonte || 'YouTube Analytics'} · segunda a domingo
+        </div>
+
+        {/* As três ressalvas, cada uma com significado próprio */}
+        {parcial && (
+          <div className="text-xs text-amber-700 dark:text-amber-400 mt-2">
+            ⚠ {semana.dias_com_dado} de 7 dias coletados — o total está incompleto.
+          </div>
+        )}
+        {!semDado && semana.consolidando && (
+          <div className="text-xs text-muted-foreground mt-2">
+            Ainda consolidando: o YouTube revisa os últimos dias, então este número ainda pode subir.
+          </div>
+        )}
+        {!semDado && semana.anterior && (
+          <div className="text-xs text-muted-foreground mt-2">
+            Semana anterior ({semana.anterior.rotulo}): {formatNumber(semana.anterior.views)} views
+            {cmp?.pode && cmp.absoluto != null && (
+              <> · {cmp.absoluto > 0 ? '+' : ''}{formatNumber(cmp.absoluto)}</>
+            )}
+            {/* ⚠️ Sem as duas semanas completas, DIZ que não dá para comparar
+                em vez de publicar uma variação que a coleta parcial inventou. */}
+            {cmp && !cmp.pode && cmp.motivo !== 'base_zero' && (
+              <div className="text-amber-700 dark:text-amber-400 mt-1">
+                Comparação só quando as duas semanas estiverem completas.
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* ⚠️ Afordância ESCRITA: um card clicável sem rótulo é um card que
+            ninguém descobre (a lição do ícone cinza de 18px no box de agenda
+            dos grupos, 18/08). */}
+        {temDetalhe && (
+          <div className="text-xs font-medium mt-2" style={{ color: 'var(--cbrio-primary, #00B39D)' }}>
+            Ver detalhamento →
+          </div>
+        )}
+      </CardContent>
+    </Card>
+    {temDetalhe && (
+      <DetalheSemana semana={semana} aberto={detalhe} onClose={() => setDetalhe(false)} />
+    )}
+    </>
   );
 }
 
@@ -219,14 +586,25 @@ function SerieCard({ s }: { s: Serie }) {
   );
 }
 
+// ⚠️ O card virou BOTÃO: pedido do Matheus (23/09/2026) para a Renata parar de
+// perguntar "de onde sai esse número" — a ficha responde de onde vem, desde
+// quando mede e com que periodicidade. `type="button"` e `text-left` porque o
+// conteúdo é um card, não um rótulo centralizado de botão.
 function KpiCard({ kpi }: { kpi: MatrizCell }) {
   const status = kpi.status_trajetoria || 'sem_dado';
   const info = STATUS_INFO[status] || STATUS_INFO.sem_dado;
   const pct = kpi.percentual_meta;
   const pctClamped = pct !== null && pct !== undefined ? Math.max(0, Math.min(100, pct)) : null;
+  const [ficha, setFicha] = useState(false);
 
   return (
-    <div className="rounded-lg bg-card border border-border p-3 hover:border-primary/30 transition-colors">
+    <>
+    {ficha && <FichaKpi kpiId={kpi.kpi_id} onClose={() => setFicha(false)} />}
+    <button
+      type="button"
+      onClick={() => setFicha(true)}
+      title="Ver de onde sai este número"
+      className="w-full text-left rounded-lg bg-card border border-border p-3 hover:border-primary/30 transition-colors">
       <div className="flex items-start justify-between gap-2 mb-2">
         <div className="min-w-0 flex-1">
           <div className="text-[10px] font-mono text-muted-foreground uppercase tracking-wider">{kpi.kpi_id}</div>
@@ -262,7 +640,8 @@ function KpiCard({ kpi }: { kpi: MatrizCell }) {
           </div>
         )}
       </div>
-    </div>
+    </button>
+    </>
   );
 }
 
@@ -433,8 +812,9 @@ function OAuthStatusCardInner() {
       if (ult) {
         const ret = ult.retencao != null ? `${ult.retencao}%` : '—';
         const comp = ult.compartilhamento != null ? `${ult.compartilhamento}%` : '—';
-        const cli = ult.cliques_series != null ? `${ult.cliques_series}%` : '—';
-        toast.success(`Engajamento ${String(ult.mes).slice(0, 7)} · retenção ${ret} · compart. ${comp} · cliques ${cli}`);
+        // ⚠️ "cliques em séries" saiu do toast junto com o card (23/09/2026):
+        // não fazemos mais séries. A coleta continua gravando o campo.
+        toast.success(`Engajamento ${String(ult.mes).slice(0, 7)} · retenção ${ret} · compart. ${comp}`);
       } else {
         const err = (r?.resultados || []).find((x: any) => x.error);
         toast.message(err ? `Sem dados: ${err.error}` : `Coleta executada (${r?.coletados || 0} meses).`);
@@ -442,6 +822,29 @@ function OAuthStatusCardInner() {
       queryClient.invalidateQueries({ queryKey: ['online', 'engajamento'] });
     },
     onError: (e: any) => toast.error(e?.message || 'Erro na coleta de engajamento'),
+  });
+
+  // Backfill das views por dia — a fonte do card "views da semana".
+  // ⚠️ 130 dias numa chamada só: a Analytics devolve o período inteiro com
+  // `dimensions=day`, então o card nasce com semanas de comparação prontas em
+  // vez de encher 5 dias por vez pelo cron.
+  const coletarViewsDia = useMutation({
+    mutationFn: () => online.coletar.viewsDia(130),
+    onSuccess: (r: any) => {
+      // ⚠️ O coletor devolve `ok: false` com motivo em vez de lançar — erro de
+      // Analytics não pode virar "coletado: 0", que se lê como audiência zero.
+      if (r?.ok === false) {
+        toast.error(`Não coletou: ${r?.erro || 'motivo não informado'}`);
+        return;
+      }
+      if (!r?.coletados) {
+        toast.message(r?.aviso || 'A Analytics não devolveu nenhum dia.');
+        return;
+      }
+      toast.success(`${r.coletados} dias coletados · ${r.janela}`);
+      queryClient.invalidateQueries({ queryKey: ['online', 'dashboard'] });
+    },
+    onError: (e: any) => toast.error(e?.message || 'Erro na coleta de views por dia'),
   });
 
   const conectado = status?.conectado;
@@ -512,6 +915,10 @@ function OAuthStatusCardInner() {
               <Button size="sm" variant="outline" onClick={() => coletarEngajamento.mutate()} disabled={coletarEngajamento.isPending}>
                 {coletarEngajamento.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
                 Engajamento (ano)
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => coletarViewsDia.mutate()} disabled={coletarViewsDia.isPending}>
+                {coletarViewsDia.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+                Views por dia (130d)
               </Button>
               <Button size="sm" variant="ghost" onClick={() => desconectar.mutate()} disabled={desconectar.isPending}>
                 <Unlink className="h-3.5 w-3.5 mr-1.5" />
@@ -623,9 +1030,45 @@ function ComunidadeOnlineCard() {
   );
 }
 
+// ⚠️ Lista FECHADA: `?tab=` fora dela cai na primeira aba em vez de deixar a
+// tela em branco. Aba nova entra aqui E no TabsList — senão o deep-link
+// aceita um valor que não tem gatilho.
+const ABAS_ONLINE = ['pessoas', 'canal', 'conteudo', 'financeiro', 'indicadores'] as const;
+
 export default function Online() {
-  const { getAccessLevel, isAdmin } = useAuth();
+  const { getAccessLevel, isAdmin, modulePerms, modulosBloqueados } = useAuth();
   const podeEditarOnline = isAdmin || (getAccessLevel?.(['online']) ?? 0) >= 3;
+
+  // ⚠️⚠️ ESPELHO de `podeVerArrecadacaoOnline` (backend/utils/arrecadacaoOnline.js):
+  // nível 4 em `online`, SEM bypass de role e SEM piso de cargo. NÃO usar
+  // `canAccessModule` aqui — ela libera admin/diretor por `profiles.role`, e um
+  // diretor com `online` nível 1 veria a aba e levaria 403 do servidor, que é
+  // exatamente a aba vazia que este gate existe para impedir.
+  const podeVerArrecadacao = useMemo(() => {
+    if ((modulosBloqueados || []).includes('online')) return false;
+    const nivel = modulePerms?.online?.leitura;
+    return typeof nivel === 'number' && nivel >= 4;
+  }, [modulePerms, modulosBloqueados]);
+
+  // ⚠️ A aba vive na URL para recarregar/compartilhar não jogar a pessoa em
+  // outra aba (padrão da casa — Censo, Comunicação, Marketing).
+  const [abaAtiva, setAbaAtiva] = useState<string>(() => {
+    const t = new URL(window.location.href).searchParams.get('tab');
+    return ABAS_ONLINE.includes(t as any) ? (t as string) : 'pessoas';
+  });
+  const trocarAba = useCallback((v: string) => {
+    setAbaAtiva(v);
+    const url = new URL(window.location.href);
+    url.searchParams.set('tab', v);
+    window.history.replaceState({}, '', url.toString());
+  }, []);
+
+  // ⚠️ Perder o nível 4 (ou chegar pela URL com ?tab=financeiro sem ter) não
+  // pode deixar a pessoa numa aba que não existe na barra — a tela ficaria em
+  // branco sem dizer por quê.
+  useEffect(() => {
+    if (abaAtiva === 'financeiro' && !podeVerArrecadacao) setAbaAtiva('pessoas');
+  }, [abaAtiva, podeVerArrecadacao]);
 
   // ⚠️ Este `queryClient` faltava, e "Recoletar tudo" estava quebrado por isso.
   // Existia um `useQueryClient()` neste MESMO arquivo, mas dentro de
@@ -775,6 +1218,27 @@ export default function Online() {
         </div>
       </div>
 
+      {/* ⚠⚠ ABAS: a tela tinha 14 blocos num scroll só (pedido do Matheus em
+          23/09: "o scroll ta ficando muito longo"). O agrupamento preserva a
+          ordem de leitura que os comentários de cada bloco já declaravam —
+          "gente antes de número" continua valendo, então Pessoas é a 1ª aba.
+          ⚠ Aba inativa é DESMONTADA pelo Radix, então cada card só consulta
+          quando a aba abre — ganho, não efeito colateral. */}
+      <Tabs value={abaAtiva} onValueChange={trocarAba}>
+        <TabsList className="flex flex-wrap h-auto">
+          <TabsTrigger value="pessoas" className="gap-1.5"><HeartHandshake className="h-3.5 w-3.5" />Pessoas</TabsTrigger>
+          <TabsTrigger value="canal" className="gap-1.5"><Youtube className="h-3.5 w-3.5" />Canal</TabsTrigger>
+          <TabsTrigger value="conteudo" className="gap-1.5"><PlayCircle className="h-3.5 w-3.5" />Conteúdo</TabsTrigger>
+          {/* ⚠⚠ A aba do dinheiro só EXISTE para quem o servidor deixaria ver.
+              O card já se esconde sozinho no 403, mas uma ABA vazia faria parecer
+              que a igreja não arrecadou nada — o mesmo erro que o card evita. */}
+          {podeVerArrecadacao && (
+            <TabsTrigger value="financeiro" className="gap-1.5"><Wallet className="h-3.5 w-3.5" />Financeiro</TabsTrigger>
+          )}
+          <TabsTrigger value="indicadores" className="gap-1.5"><Target className="h-3.5 w-3.5" />Indicadores</TabsTrigger>
+        </TabsList>
+
+        <TabsContent value="pessoas" className="mt-0 space-y-6">
       {/* ⚠️ Bloco das ACEITAÇÕES ONLINE, logo abaixo do topo: é o trabalho
           PASTORAL do time do Online (falar com quem decidiu em até 3 dias), e
           fica antes das métricas do canal de propósito — gente antes de número.
@@ -798,7 +1262,9 @@ export default function Online() {
           <JornadaConvertidos area="online" />
         </CardContent>
       </Card>
+        </TabsContent>
 
+        <TabsContent value="canal" className="mt-0 space-y-6">
       <OAuthStatusCard />
 
       {/* Estado vazio - card menor e amigavel */}
@@ -819,14 +1285,23 @@ export default function Online() {
         </Card>
       )}
 
-      {/* Stats do canal */}
+      {/* Stats do canal · a pergunta "como foi a semana" pertence ao mesmo
+          bloco de "como está o canal", então o card da semana entra na MESMA
+          fileira em vez de ganhar seção própria. */}
       {canal && (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
           <StatCard icon={Users}       label="Inscritos"            value={formatNumber(canal.subscriber_count)} delta={data?.delta?.subscriber} accentClass="from-red-500/15 to-rose-500/5" />
           <StatCard icon={Eye}         label="Views totais"         value={formatNumber(canal.view_count)}        delta={data?.delta?.view}        accentClass="from-blue-500/15 to-cyan-500/5" />
           <StatCard icon={PlayCircle}  label="Vídeos publicados"    value={formatNumber(canal.video_count)}       delta={data?.delta?.video}       accentClass="from-emerald-500/15 to-teal-500/5" />
+          <CardSemanaViews semana={data?.semana} />
         </div>
       )}
+
+      {/* O gráfico do canal (views/horas por dia) + de onde vêm as views.
+          ⚠️ Fica logo DEPOIS dos números do dia de propósito: os cards acima
+          são acumulados de anos (views totais, inscritos) e não dizem se o
+          canal está subindo — quem responde isso é a série. */}
+      <CanalSerieCard />
 
       {/* Engajamento de conteúdo do canal (YouTube Analytics).
           Estrutura pronta pra receber da API do YouTube · mostra 0 até a 1ª coleta. */}
@@ -843,13 +1318,25 @@ export default function Online() {
             </p>
           </div>
         </div>
-        <CardContent className="p-4 md:p-5 grid grid-cols-1 md:grid-cols-3 gap-3">
+        {/* ⚠️ "Cliques em séries" SAIU em 23/09/2026 — pedido do Matheus:
+            *"pode remover o card de cliques em series pois nao fazemos mais
+            series."* A igreja parou de organizar pregação em séries, então o
+            CTR de cartão de série media uma coisa que não existe mais e ficava
+            preso em 0%, parecendo fracasso. O único KPI que consumia a métrica
+            (`MKT-ONL-CTR`) já estava inativo.
+
+            ⚠️ A COLETA CONTINUA: `cliques_series_pct` segue sendo gravado por
+            `onlineCollectors.js`. Parar de MOSTRAR é reversível; parar de
+            COLETAR abriria um buraco no histórico que não dá para preencher
+            depois — o YouTube Analytics não devolve retroativo indefinidamente. */}
+        <CardContent className="p-4 md:p-5 grid grid-cols-1 md:grid-cols-2 gap-3">
           <StatCard icon={Eye}          label="Retenção média em vídeos (alvo ≥40%)"        value={`${eng?.retencao ?? 0}%`}          accentClass="from-blue-500/15 to-cyan-500/5" />
           <StatCard icon={ExternalLink} label="Taxa de compartilhamento (alvo ≥5%)"          value={`${eng?.compartilhamento ?? 0}%`}  accentClass="from-pink-500/15 to-rose-500/5" />
-          <StatCard icon={Zap}          label="Cliques em séries no YouTube (alvo ≥15%)"     value={`${eng?.cliques_series ?? 0}%`}    accentClass="from-amber-500/15 to-yellow-500/5" />
         </CardContent>
       </Card>
+        </TabsContent>
 
+        <TabsContent value="conteudo" className="mt-0 space-y-6">
       {/* Top vídeos */}
       {((data?.top_views_mes?.length || 0) > 0 || (data?.top_engajamento_mes?.length || 0) > 0) && (
         <Card className="overflow-hidden">
@@ -942,6 +1429,20 @@ export default function Online() {
         </Card>
       )}
 
+      {/* Performance por Culto · novas metricas YT (PRs #524, #525, #527, #530, #531) */}
+      <CultoYouTubePanel />
+        </TabsContent>
+
+        <TabsContent value="financeiro" className="mt-0 space-y-6">
+      {/* Arrecadação do canal online.
+          ⚠️ O card se esconde sozinho para quem não tem nível 4 em `online` —
+          a coordenação do CANAL (decisão do Matheus em 23/09). O módulo é
+          alcançável por 31 cargos, inclusive Membro e Voluntário, e a lei do
+          módulo irmão (painelArea) é que líder de área não vê doação. */}
+      <ArrecadacaoOnlineCard />
+        </TabsContent>
+
+        <TabsContent value="indicadores" className="mt-0 space-y-6">
       {/* Matriz Online · KPIs por valor */}
       {matrizKeys.length > 0 && (
         <Card className="overflow-hidden">
@@ -981,12 +1482,12 @@ export default function Online() {
         </Card>
       )}
 
-      {/* Performance por Culto · novas metricas YT (PRs #524, #525, #527, #530, #531) */}
-      <CultoYouTubePanel />
-
       {/* Diagnóstico · so admin · pra investigar zeros nas metricas */}
       <ComunidadeOnlineCard />
       {isAdmin && <OnlineDebugPanel />}
+        </TabsContent>
+
+      </Tabs>
 
       {/* Footer info */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 text-xs text-muted-foreground pt-2 border-t border-border">

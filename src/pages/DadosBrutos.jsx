@@ -7,7 +7,7 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useAuth } from '../contexts/AuthContext';
 import { dadosBrutos as dadosApi } from '../api';
 import { useMyKpiAreas } from '../hooks/useMyKpiAreas';
-import { Database, Plus, Pencil, Trash2, X, Save, Calendar, Filter, CheckCircle2, ShieldCheck, Users, HandCoins, Sparkles, HeartHandshake, ClipboardList, Smile, Zap } from 'lucide-react';
+import { Database, Plus, Pencil, Trash2, X, Save, Calendar, Filter, CheckCircle2, ShieldCheck, Users, HandCoins, Sparkles, HeartHandshake, ClipboardList, Smile, Zap, HandHelping } from 'lucide-react';
 import { toast } from 'sonner';
 import EmptyState from '../components/EmptyState';
 import CalendarioCultos from '../components/CalendarioCultos';
@@ -34,17 +34,35 @@ const AREAS_OFICIAIS = [
 // Quick log · 4-6 tipos mais comuns por área. Click pre-preenche tipo+área.
 // Frequencia/decisoes de culto são preenchidas pelo calendário acima · aqui
 // ficam so os tipos avulsos (fora de culto regular).
+// ⚠️⚠️ SÓ TIPO QUE ACEITA LANÇAMENTO ENTRA AQUI.
+// O quick log filtra `entrada_manual !== false` (abaixo), e até 21/09/2026
+// TODOS os 10 ids deste mapa eram `entrada_manual = false` — ou seja, o
+// lançamento rápido estava **VAZIO para todas as áreas**, sem nada na tela
+// dizendo por quê. `conversoes`, `batismos`, `doacoes_valor`, `doadores_count`,
+// `voluntarios_ativos`, `voluntarios_checkin`, `lideres_*` e `nps_*` são
+// alimentados por coletor/módulo e lançar à mão neles concorre com a fonte.
+//
+// ⚠️ Antes de acrescentar um id: conferir que ele é `entrada_manual = true`
+// E que NÃO tem ramo nativo em `_kpi_agregar_dado` — ramo nativo termina com
+// `RETURN` incondicional, então o lançamento seria ignorado EM SILÊNCIO
+// (aconteceu com `solicitacoes_servir_*`: 84 lançamentos desperdiçados).
 const QUICK_LOG_POR_AREA = {
-  kids:   ['conversoes', 'batismos', 'voluntarios_checkin'],
-  bridge: ['conversoes', 'batismos', 'voluntarios_checkin'],
-  ami:    ['conversoes', 'batismos', 'voluntarios_checkin', 'nps_next'],
-  sede:   ['conversoes', 'batismos', 'doacoes_valor', 'doadores_count', 'voluntarios_ativos'],
-  online: ['conversoes', 'batismos'],
-  cba:    ['conversoes', 'batismos', 'lideres_treinados', 'lideres_acompanhados'],
+  kids:   ['atend_capelania_recebidas', 'atend_capelania_atendidas', 'atend_aconselh_recebidas', 'atend_aconselh_atendidas'],
+  bridge: ['atend_capelania_recebidas', 'atend_capelania_atendidas', 'atend_aconselh_recebidas', 'atend_aconselh_atendidas'],
+  ami:    ['atend_capelania_recebidas', 'atend_capelania_atendidas', 'atend_aconselh_recebidas', 'atend_aconselh_atendidas'],
+  sede:   ['atend_capelania_recebidas', 'atend_capelania_atendidas', 'atend_aconselh_recebidas', 'atend_aconselh_atendidas'],
+  // O Online atende fora do sistema (pedido do Matheus em 21/09) e também
+  // acompanha os números do YouTube que nenhum coletor traz.
+  // ⚠️ O Online atende fora do sistema (21/09) e ainda precisa declarar grupos
+  // e generosidade: o automático de grupos conta sempre o número de HOJE (não
+  // sabe responder "quantos havia em março") e a base nominal de contribuições
+  // parou em junho. Ver a migration 20260921190000.
+  online: ['atend_capelania_recebidas', 'atend_capelania_atendidas', 'atend_aconselh_recebidas', 'atend_aconselh_atendidas', 'grupos_ativos_declarado', 'doacoes_valor_declarado'],
+  cba:    ['atend_capelania_recebidas', 'atend_capelania_atendidas', 'atend_aconselh_recebidas', 'atend_aconselh_atendidas'],
 };
 
 // Default para admin/diretor sem área especifica
-const QUICK_LOG_DEFAULT = ['conversoes', 'batismos', 'doacoes_valor', 'voluntarios_ativos', 'nps_geral'];
+const QUICK_LOG_DEFAULT = ['atend_capelania_recebidas', 'atend_capelania_atendidas', 'atend_aconselh_recebidas', 'atend_aconselh_atendidas', 'rh_q12_nota'];
 
 // Icone + cor por família de tipo · usado nos cards do quick log
 const TIPO_VISUAL = {
@@ -66,6 +84,20 @@ const TIPO_VISUAL = {
   lideres_acompanhados:    { Icon: Users,         cor: '#EC4899', label: 'Líderes acompanhados' },
   grupos_ativos:           { Icon: Users,         cor: '#EC4899', label: 'Grupos ativos' },
   devocionais:             { Icon: Sparkles,      cor: '#8B5CF6', label: 'Devocionais' },
+  // Atendimentos lançados à mão: a equipe atende fora do sistema (pedido do
+  // Matheus, 21/09). ⚠️ Estes NÃO têm ramo nativo em `_kpi_agregar_dado` — é
+  // isso que faz o lançamento realmente chegar no KPI.
+  atend_capelania_recebidas: { Icon: HandHelping, cor: '#06B6D4', label: 'Capelania · pedidos' },
+  atend_capelania_atendidas: { Icon: HandHelping, cor: '#06B6D4', label: 'Capelania · atendidos' },
+  atend_aconselh_recebidas:  { Icon: HandHelping, cor: '#06B6D4', label: 'Aconselhamento · pedidos' },
+  atend_aconselh_atendidas:  { Icon: HandHelping, cor: '#06B6D4', label: 'Aconselhamento · atendidos' },
+  // Declarados: o automático existe mas não responde a pergunta (grupos é
+  // retrato de hoje) ou a fonte parou (contribuições, desde junho).
+  grupos_ativos_declarado:        { Icon: Users,     cor: '#EC4899', label: 'Grupos ativos (declarado)' },
+  lideres_treinamento_declarado:  { Icon: Users,     cor: '#EC4899', label: 'Líderes em treinamento (declarado)' },
+  doacoes_valor_declarado:        { Icon: HandCoins, cor: '#F59E0B', label: 'Arrecadado (declarado)' },
+  doadores_count_declarado:       { Icon: HandCoins, cor: '#F59E0B', label: 'Doadores (declarado)' },
+  doadores_recorrentes_declarado: { Icon: HandCoins, cor: '#F59E0B', label: 'Doadores recorrentes (declarado)' },
   nps_geral:               { Icon: Smile,         cor: '#06B6D4', label: 'NPS geral' },
   nps_next:                { Icon: Smile,         cor: '#06B6D4', label: 'NPS Next' },
   nps_lideres:             { Icon: Smile,         cor: '#06B6D4', label: 'NPS líderes' },

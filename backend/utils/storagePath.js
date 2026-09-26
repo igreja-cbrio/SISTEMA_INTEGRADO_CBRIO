@@ -61,6 +61,28 @@ function caminhoNoBucket(valor, bucket) {
 }
 
 /**
+ * Igual a `caminhoNoBucket`, mas EXIGE que o valor seja uma URL pública daquele
+ * bucket — caminho cru devolve `null`.
+ *
+ * ⚠️⚠️ A distinção não é purismo: ela existe porque um bucket LEGADO e o bucket
+ * atual convivem na MESMA coluna. `caminhoNoBucket` aceita caminho cru para
+ * qualquer bucket (é o que a torna idempotente), então usá-la para decidir "isto
+ * é do bucket antigo?" faria todo caminho relativo — que por construção é do
+ * bucket NOVO, porque só o código novo grava assim — ser assinado no bucket
+ * ERRADO. O resultado seria uma URL assinada perfeitamente válida apontando para
+ * um objeto que não existe: link morto, sem erro nenhum.
+ *
+ * Só a URL pública carrega o nome do bucket dentro dela, e é por isso que ela é
+ * a única evidência aceita aqui.
+ */
+function caminhoDeUrlPublica(valor, bucket) {
+  const s = String(valor || '').trim();
+  if (!s || !bucket) return null;
+  if (!s.includes(MARCA_PUBLICA)) return null;
+  return caminhoNoBucket(s, bucket);
+}
+
+/**
  * ⚠️ Recusa caminho vazio, absoluto ou com travessia. Um `..` aqui, num código
  * que um dia assine ou remova arquivos, é o que faz a operação escapar da
  * pasta pretendida.
@@ -120,9 +142,49 @@ function aplicarAssinaturas(obj, campos, bucket, mapaAssinado) {
   return saida;
 }
 
+/**
+ * Separa valores de uma coluna entre um bucket ATUAL e um bucket LEGADO que
+ * convivem nela, devolvendo os caminhos únicos de cada um.
+ *
+ * ⚠️⚠️ Esta é a decisão que, feita errada, produz LINK MORTO SEM ERRO — por isso
+ * mora aqui, no módulo puro que entra no gate, e não dentro do serviço que lê o
+ * banco. Guarda que decide algo e vive em código impuro é guarda que nenhum
+ * teste alcança.
+ *
+ * A régua:
+ *   · URL pública do bucket LEGADO  → legado (é a única evidência que carrega o
+ *     nome do bucket dentro do valor)
+ *   · qualquer outra coisa          → tenta o bucket ATUAL, com `caminhoNoBucket`
+ *     (caminho cru é do atual por construção: só o código novo grava relativo)
+ *
+ * O que não casar em nenhum dos dois — link do SharePoint, URL de terceiro —
+ * simplesmente não aparece em lista nenhuma, e por isso passa intacto na
+ * assinatura.
+ *
+ * ⚠️ NOTA HONESTA SOBRE A ORDEM: testar o legado primeiro é DEFENSIVO, não
+ * load-bearing. Mutante rodado em 17/09/2026 (inverter a ordem) SOBREVIVEU, e
+ * está certo que sobreviva — nenhum valor casa nos dois baldes, porque
+ * `caminhoNoBucket` recusa URL pública de outro bucket. A ordem vira
+ * load-bearing no dia em que um dos dois passar a aceitar o que o outro aceita;
+ * o `continue` está aqui para esse dia. Não afirmo cobertura que não existe.
+ */
+function separarCaminhosPorBucket(valores, bucketAtual, bucketLegado) {
+  const legado = [];
+  const atual = [];
+  for (const v of (valores || [])) {
+    const pLegado = bucketLegado ? caminhoDeUrlPublica(v, bucketLegado) : null;
+    if (pLegado) { legado.push(pLegado); continue; }
+    const pAtual = bucketAtual ? caminhoNoBucket(v, bucketAtual) : null;
+    if (pAtual) atual.push(pAtual);
+  }
+  return { atual: [...new Set(atual)], legado: [...new Set(legado)] };
+}
+
 module.exports = {
   MARCA_PUBLICA,
+  separarCaminhosPorBucket,
   caminhoNoBucket,
+  caminhoDeUrlPublica,
   caminhoSeguro,
   caminhosDosCampos,
   aplicarAssinaturas,

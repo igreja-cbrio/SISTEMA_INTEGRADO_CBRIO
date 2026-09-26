@@ -16,6 +16,7 @@
  */
 
 const router = require('express').Router();
+const { enviarLinkDeAcesso } = require('../utils/magicLink');
 const { verificarTokenEscala } = require('../utils/escalaToken');
 const { responderEscala } = require('../services/escalaResposta');
 const rateLimit = require('express-rate-limit');
@@ -267,18 +268,27 @@ router.post('/request-login', publicLimiter, async (req, res) => {
       ? `/voluntariado/self-checkin?serviceId=${encodeURIComponent(serviceIdSeguro)}`
       : '/voluntariado/checkin/painel';
 
-    const { error: linkErr } = await supabase.auth.admin.generateLink({
-      type: 'magiclink',
+    // REM-03 (17/09/2026): aqui o link era GERADO e JOGADO FORA — `generateLink`
+    // não envia e-mail nenhum. A tela dizia “Link enviado!” e nada chegava; nesta
+    // porta o link É a entrada, então falha de envio TEM que aparecer.
+    const envio = await enviarLinkDeAcesso({
       email,
-      options: { redirectTo: `${frontendUrl}${redirectPath}` },
+      redirectTo: `${frontendUrl}${redirectPath}`,
+      nome: result.name || null,
+      assunto: 'Seu link de acesso ao check-in · CBRio',
+      chamada: 'Você pediu para entrar no check-in de voluntário. É só tocar no botão abaixo — ele já abre você logado.',
+      textoBotao: 'Abrir meu check-in',
+      rodape: 'O link é pessoal e vale por pouco tempo. Se não foi você que pediu, pode ignorar este e-mail.',
+      tag: 'PublicVol',
     });
 
-    if (linkErr) {
-      console.error('[PublicVol] generateLink error:', linkErr.message);
-      return res.status(500).json({ error: 'Erro ao gerar link de acesso' });
+    if (!envio.ok) {
+      return res.status(502).json({
+        error: 'Não conseguimos enviar o link agora. Tente de novo em alguns minutos ou procure um líder.',
+      });
     }
 
-    console.log(`[PublicVol] Magic link enviado para ${maskEmail(email)} (tipo: ${result.type})`);
+    console.log(`[PublicVol] Link de acesso ENVIADO para ${maskEmail(email)} (tipo: ${result.type})`);
     return res.json({ ok: true, maskedEmail: maskEmail(email) });
   } catch (err) {
     console.error('[PublicVol] request-login error:', err.message);
@@ -372,18 +382,29 @@ router.post('/register', publicLimiter, async (req, res) => {
       ? `/voluntariado/self-checkin?serviceId=${encodeURIComponent(serviceIdSeguro)}`
       : '/voluntariado/checkin/painel';
 
-    const { error: linkErr } = await supabase.auth.admin.generateLink({
-      type: 'magiclink',
+    // REM-03 (17/09/2026): mesmo defeito do `request-login` logo acima — o link
+    // era descartado. A conta JÁ FOI CRIADA quando chegamos aqui, e mesmo assim
+    // o erro precisa aparecer: sem o link a pessoa não entra, e dizer “Link
+    // enviado!” seria a mentira que este conserto veio tirar. Repetir o fluxo
+    // cai no `request-login` (o CPF agora existe), então nada se perde.
+    const envio = await enviarLinkDeAcesso({
       email,
-      options: { redirectTo: `${frontendUrl}${redirectPath}` },
+      redirectTo: `${frontendUrl}${redirectPath}`,
+      nome: full_name.trim(),
+      assunto: 'Bem-vindo(a) · seu link de acesso ao check-in · CBRio',
+      chamada: 'Seu cadastro de voluntário foi criado. Toque no botão abaixo para abrir o check-in já logado.',
+      textoBotao: 'Abrir meu check-in',
+      rodape: 'O link é pessoal e vale por pouco tempo. Se não foi você que se cadastrou, procure a liderança.',
+      tag: 'PublicVol',
     });
 
-    if (linkErr) {
-      console.error('[PublicVol] generateLink error:', linkErr.message);
-      return res.status(500).json({ error: 'Conta criada, mas erro ao enviar link de acesso' });
+    if (!envio.ok) {
+      return res.status(502).json({
+        error: 'Cadastro criado, mas não conseguimos enviar o link agora. Toque em “Entrar” de novo em alguns minutos.',
+      });
     }
 
-    console.log(`[PublicVol] Novo voluntario cadastrado: ${maskEmail(email)}`);
+    console.log(`[PublicVol] Novo voluntario cadastrado e link ENVIADO: ${maskEmail(email)}`);
     return res.json({ ok: true, maskedEmail: maskEmail(email) });
   } catch (err) {
     console.error('[PublicVol] register error:', err.message);

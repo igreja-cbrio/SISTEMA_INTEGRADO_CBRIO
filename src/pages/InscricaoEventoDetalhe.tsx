@@ -8,6 +8,7 @@ import confetti from 'canvas-confetti';
 import { inscricoesApi as api } from '../api';
 import { useAuth } from '../contexts/AuthContext';
 import { Card } from '../components/ui/card';
+import { safeHref } from '../lib/safeHref';
 import { Button } from '../components/ui/button';
 import { Input } from '../components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../components/ui/dialog';
@@ -23,6 +24,8 @@ import { idadeEmAnos, faixaLabel, sexoLabel } from '../lib/faixaEtaria';
 // Máscara/validação de CPF do canônico do Contrato de Inscrição — não recriar.
 import { mascaraCpf, cpfValido, soDigitos } from '../lib/inscricao';
 import { imprimirListaInscritos, type Agrupamento } from '../lib/imprimirListaInscritos';
+import { caminhoPublicoEvento } from '../lib/genesisCba';
+import { rotuloStatusEvento } from '../lib/statusEvento';
 // Filtro pelos campos extras do form-builder (ex.: "Em qual ministério você
 // serve?" do Celebra). ⚠️ As opções são o catálogo do evento ∪ o que está
 // respondido — o porquê está no cabeçalho da lib.
@@ -317,7 +320,7 @@ export default function InscricaoEventoDetalhe() {
   useEffect(() => { setLoading(true); carregar(); }, [id]);
   useEffect(() => { api.areas().then((a: any) => setAreas(Array.isArray(a) ? a : [])).catch(() => {}); }, []);
 
-  const link = ev ? `${window.location.origin}/evento/${ev.slug}` : '';
+  const link = ev ? `${window.location.origin}${caminhoPublicoEvento(ev)}` : '';
   function copiar() {
     navigator.clipboard.writeText(link);
     if (ev?.status === 'publicado') toast.success('Link copiado — formulário no ar');
@@ -699,7 +702,7 @@ export default function InscricaoEventoDetalhe() {
             <div className="min-w-0">
               <h1 className="text-2xl font-extrabold break-words">{ev.nome}</h1>
               <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground mt-1.5">
-                <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${STATUS_BADGE[ev.status] || ''}`}>{ev.status}</span>
+                <span className={`rounded px-1.5 py-0.5 text-xs font-medium ${STATUS_BADGE[ev.status] || ''}`}>{rotuloStatusEvento(ev.status)}</span>
                 <span className="rounded bg-foreground/8 px-1.5 py-0.5 text-xs">{ev.area}</span>
                 {ev.serie && (
                   <span className="inline-flex items-center gap-1 text-xs"><Repeat className="h-3 w-3 text-primary" /> {ev.serie.nome}{ev.edicao_rotulo ? ` · ${ev.edicao_rotulo}` : ''}</span>
@@ -725,12 +728,12 @@ export default function InscricaoEventoDetalhe() {
                   que chega na porta e não está inscrito. */}
               {inscricoesFechadas && (
                 <Button size="sm" onClick={reabrirInscricoes} title="Coloca o formulário público de volta no ar">
-                  <Megaphone className="h-3.5 w-3.5 mr-1" /> Reabrir inscrições
+                  <Megaphone className="h-3.5 w-3.5 mr-1" /> Reativar evento
                 </Button>
               )}
               {ev.status === 'publicado' && !prazoVencido && (
                 <Button size="sm" variant="outline" onClick={encerrarInscricoes} title="O formulário público para de aceitar novas inscrições">
-                  <Lock className="h-3.5 w-3.5 mr-1" /> Encerrar inscrições
+                  <Lock className="h-3.5 w-3.5 mr-1" /> Inativar evento
                 </Button>
               )}
               <Button size="sm" variant="outline" onClick={() => setEditOpen(true)}><Pencil className="h-3.5 w-3.5 mr-1" /> Editar</Button>
@@ -2021,7 +2024,7 @@ function ComprovantesBloco({ eventoId, inscricao, podeEditar, onPago }: {
               {/* Signed URL de 15 min (bucket privado). Abre em aba nova: PDF e
                   imagem grande não caberiam legíveis dentro do modal. */}
               {c.url && (
-                <a href={c.url} target="_blank" rel="noreferrer"
+                <a href={safeHref(c.url)} target="_blank" rel="noreferrer"
                   className="text-primary hover:underline inline-flex items-center gap-1 font-medium">
                   <ExternalLink className="h-3 w-3" /> Ver arquivo
                 </a>

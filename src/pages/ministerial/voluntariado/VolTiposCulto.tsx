@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Switch } from '@/components/ui/switch';
 import {
   useVolServiceTypes, useCreateServiceType, useUpdateServiceType,
   useDeleteServiceType, useGenerateServices,
@@ -137,6 +138,14 @@ function ServiceTypeFormDialog({ serviceType, onClose }: { serviceType: VolServi
   const [recurrenceDay, setRecurrenceDay] = useState<string>(serviceType?.recurrence_day?.toString() || '');
   const [recurrenceTime, setRecurrenceTime] = useState(serviceType?.recurrence_time?.slice(0, 5) || '');
   const [color, setColor] = useState(serviceType?.color || '#00B39D');
+  // ⚠️ As flags que definem o culto. Até 24/09/2026 a tela não as mandava e o
+  // tipo nascia nos defaults da coluna — que são OPOSTOS entre si e faziam o
+  // tipo gerar culto toda semana sem Kids, sem online e fora do bloco de
+  // domingo. Os rótulos abaixo dizem o EFEITO, não o nome da coluna.
+  const [hasKids, setHasKids] = useState(serviceType?.has_kids ?? false);
+  const [hasOnline, setHasOnline] = useState(serviceType?.has_online ?? false);
+  const [hasOnlineStream, setHasOnlineStream] = useState(serviceType?.has_online_stream ?? false);
+  const [presencialLabel, setPresencialLabel] = useState(serviceType?.presencial_label || 'Presencial');
 
   const handleSave = () => {
     if (!name.trim()) return toast.error('Nome obrigatório');
@@ -146,6 +155,10 @@ function ServiceTypeFormDialog({ serviceType, onClose }: { serviceType: VolServi
       recurrence_day: recurrenceDay !== '' ? parseInt(recurrenceDay) : null,
       recurrence_time: recurrenceTime || null,
       color,
+      has_kids: hasKids,
+      has_online: hasOnline,
+      has_online_stream: hasOnlineStream,
+      presencial_label: presencialLabel.trim() || 'Presencial',
     };
     if (serviceType) {
       update.mutate({ id: serviceType.id, data }, {
@@ -204,6 +217,55 @@ function ServiceTypeFormDialog({ serviceType, onClose }: { serviceType: VolServi
           <div>
             <Label>Cor</Label>
             <Input type="color" value={color} onChange={e => setColor(e.target.value)} className="h-10 w-20" />
+          </div>
+
+          <div className="space-y-3 rounded-lg border border-[var(--cbrio-border)] p-3">
+            <p className="text-sm font-semibold">O que acontece neste culto</p>
+
+            <label className="flex items-start gap-3 cursor-pointer">
+              <Switch checked={hasOnlineStream} onCheckedChange={setHasOnlineStream} className="mt-0.5" />
+              <span className="text-sm">
+                Gerar os cultos automaticamente toda semana
+                <span className="block text-xs text-[var(--cbrio-text3)]">
+                  Sem isto o tipo existe no catálogo mas nenhum culto é criado sozinho.
+                  Esta mesma opção inclui o culto na coleta automática do YouTube.
+                </span>
+              </span>
+            </label>
+
+            <label className="flex items-start gap-3 cursor-pointer">
+              <Switch checked={hasKids} onCheckedChange={setHasKids} className="mt-0.5" />
+              <span className="text-sm">
+                Tem CBKids em paralelo
+                <span className="block text-xs text-[var(--cbrio-text3)]">
+                  Sem isto, nenhuma criança consegue fazer check-in neste culto.
+                </span>
+              </span>
+            </label>
+
+            <label className="flex items-start gap-3 cursor-pointer">
+              <Switch checked={hasOnline} onCheckedChange={setHasOnline} className="mt-0.5" />
+              <span className="text-sm">
+                É transmitido ao vivo
+                <span className="block text-xs text-[var(--cbrio-text3)]">
+                  Liga a seção de transmissão no lançamento do culto e o formulário
+                  público de decisão online.
+                </span>
+              </span>
+            </label>
+
+            <div>
+              <Label>Rótulo da frequência presencial</Label>
+              <Input
+                value={presencialLabel}
+                onChange={e => setPresencialLabel(e.target.value)}
+                placeholder="Presencial"
+              />
+              <span className="block text-xs text-[var(--cbrio-text3)] mt-1">
+                Use <strong>Sede</strong> nos cultos do templo — é por este rótulo que o
+                Dashboard Semanal separa os cultos da Sede dos demais.
+              </span>
+            </div>
           </div>
         </div>
         <DialogFooter className="flex justify-between">

@@ -4198,7 +4198,12 @@ router.get('/:id', authorizeModule('grupos', 1), async (req, res) => {
     const grupo = grupoRes.data;
 
     // Round 2: líder e grupo de origem (so se houver — em paralelo)
-    const [liderRes, origemRes, supRes] = await Promise.all([
+    // ⚠️ O link da sala vem de `mem_grupo_link` (tabela própria · ver a migration
+    // 20260925180000). Consulta ISOLADA e best-effort: sem a migration aplicada
+    // ou com erro de leitura, a ficha do grupo abre igual — pedir a tabela
+    // dentro do select principal faria o PostgREST recusar a query INTEIRA e a
+    // tela inteira sumiria por causa de um campo.
+    const [liderRes, origemRes, supRes, linkRes] = await Promise.all([
       grupo.lider_id
         ? supabase.from('mem_membros').select('id, nome, telefone, email, foto_url, deleted_at').eq('id', grupo.lider_id).single()
         : Promise.resolve({ data: null }),
@@ -4208,7 +4213,14 @@ router.get('/:id', authorizeModule('grupos', 1), async (req, res) => {
       grupo.supervisor_id
         ? supabase.from('mem_membros').select('id, nome, foto_url').eq('id', grupo.supervisor_id).single()
         : Promise.resolve({ data: null }),
+      supabase.from('mem_grupo_link').select('link, plataforma').eq('grupo_id', id).maybeSingle()
+        .then(r => r, error => ({ data: null, error })),
     ]);
+    // ⚠️ `link_online: null` significa "não cadastrado"; a tela distingue isso de
+    // "não deu pra ler" pelo `link_indisponivel`.
+    grupo.link_online = linkRes?.data?.link || null;
+    grupo.link_plataforma = linkRes?.data?.plataforma || null;
+    grupo.link_indisponivel = Boolean(linkRes?.error);
 
     const membros = (partRes.data || []).map(p => ({
       participacao_id: p.id,
@@ -4260,6 +4272,42 @@ function normIdade(v) {
 const ERRO_ACEITANDO_SEM_LIDER = 'Grupo sem líder não pode ficar aceitando inscrições: defina o líder ou desmarque "aceitando inscrições".';
 
 // POST /api/grupos
+// ⚠️⚠️ O link da sala vive em `mem_grupo_link`, NÃO em `mem_grupos`: aquela
+// tabela tem GRANT DE TABELA para `anon`/`authenticated` (medido em 25/09), e o
+// link é a CREDENCIAL DE ENTRADA da sala — em coluna de lá, qualquer conta do
+// app o leria. Ver a migration 20260925180000.
+//
+// ⚠️ Régua ÚNICA do POST e do PUT: duas cópias divergiriam, e o sintoma seria
+// "criar grupo perde o link, editar não" — indepurável pela tela.
+// ⚠️ Só mexe quando o campo VEIO no corpo (a lei do `patchRedeGrupo`): form com
+// chunk antigo não pode apagar o link ao salvar outra coisa. String vazia APAGA
+// de propósito — aí o campo veio e está vazio, que é o pedido de quem deixou de
+// ser online.
+// ⚠️ Devolve o AVISO em vez de lançar: o grupo já foi gravado, e derrubar a
+// resposta faria a pessoa achar que perdeu o save inteiro.
+async function gravarLinkDaSala(grupoId, d, userId) {
+  if (!('link_online' in d)) return null;
+  const link = String(d.link_online || '').trim();
+  try {
+    if (!link) {
+      const { error } = await supabase.from('mem_grupo_link').delete().eq('grupo_id', grupoId);
+      if (error) throw error;
+    } else {
+      const { error } = await supabase.from('mem_grupo_link').upsert({
+        grupo_id: grupoId, link,
+        plataforma: (d.link_plataforma || '').trim() || null,
+        atualizado_em: new Date().toISOString(),
+        atualizado_por: userId || null,
+      }, { onConflict: 'grupo_id' });
+      if (error) throw error;
+    }
+    return null;
+  } catch (e) {
+    console.warn('[grupos] link da sala nao gravado:', e.message);
+    return 'O grupo foi salvo, mas o link da sala não pôde ser gravado.';
+  }
+}
+
 router.post('/', authorizeModule('grupos', 3), async (req, res) => {
   try {
     const d = req.body;
@@ -4295,8 +4343,9 @@ router.post('/', authorizeModule('grupos', 3), async (req, res) => {
       descricao: d.descricao || '', ativo: true,
     }).select().single();
     if (error) throw error;
+    const avisoLink = await gravarLinkDaSala(data.id, d, req.user?.id);
     syncWhatsappLideres();
-    res.json(data);
+    res.json(avisoLink ? { ...data, aviso_link: avisoLink } : data);
   } catch (e) { console.error('[Grupos create]', e.message); res.status(500).json({ error: 'Erro ao criar grupo' }); }
 });
 
@@ -4341,8 +4390,9 @@ router.put('/:id', authorizeModule('grupos', 3), async (req, res) => {
       descricao: d.descricao || '', ativo: d.ativo ?? true,
     }).eq('id', req.params.id).select().single();
     if (error) throw error;
+    const avisoLink = await gravarLinkDaSala(req.params.id, d, req.user?.id);
     syncWhatsappLideres();
-    res.json(data);
+    res.json(avisoLink ? { ...data, aviso_link: avisoLink } : data);
   } catch (e) { res.status(500).json({ error: 'Erro ao atualizar grupo' }); }
 });
 

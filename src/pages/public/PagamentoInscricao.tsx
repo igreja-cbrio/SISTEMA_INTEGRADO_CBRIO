@@ -18,6 +18,7 @@ import { useParams, Link } from 'react-router-dom';
 import QRCode from 'qrcode';
 import confetti from 'canvas-confetti';
 import { eventoPublico } from '../../api';
+import { safeHref } from '../../lib/safeHref';
 import CartaoBrick from '../../components/pagamento/CartaoBrick';
 import BaixarInstrucoes from './BaixarInstrucoes';
 import { usePublicTheme, PublicThemeToggle } from './publicTheme';
@@ -155,7 +156,7 @@ function ComprovanteCheckin({ token, corTexto }: { token: string; corTexto: stri
         <img src={qr} alt="QR do comprovante de inscrição" style={{ width: 168, height: 168, display: 'block' }} />
       </div>
       <p style={{ fontSize: 12, color: corTexto, marginTop: 8, lineHeight: 1.5 }}>
-        Apresente este QR na entrada do evento — ou abra <a href={url} style={{ color: '#00B39D', fontWeight: 600 }}>o comprovante</a> quando precisar.
+        Apresente este QR na entrada do evento — ou abra <a href={safeHref(url)} style={{ color: '#00B39D', fontWeight: 600 }}>o comprovante</a> quando precisar.
       </p>
     </div>
   );
@@ -598,7 +599,7 @@ export default function PagamentoInscricao() {
             {/* Grupo de dúvidas do evento (21/08): visível pago ou não — dúvida
                 acontece antes E depois de pagar. Link real, nova aba. */}
             {pag.whatsapp_duvidas && (
-              <a href={pag.whatsapp_duvidas} target="_blank" rel="noopener noreferrer" style={{
+              <a href={safeHref(pag.whatsapp_duvidas)} target="_blank" rel="noopener noreferrer" style={{
                 display: 'inline-block', marginTop: 10, padding: '8px 14px', borderRadius: 999,
                 background: 'rgba(37,211,102,0.10)', border: '1px solid rgba(37,211,102,0.35)',
                 color: '#1da851', fontSize: 12.5, fontWeight: 700, textDecoration: 'none',
@@ -681,7 +682,7 @@ export default function PagamentoInscricao() {
                       {pag.metodo ? ` — esta cobrança está como ${METODO_LABEL[pag.metodo] || pag.metodo}.` : '.'}
                     </p>
                     {pag.checkout_url && (
-                      <a href={pag.checkout_url} style={{ textDecoration: 'none' }}>
+                      <a href={safeHref(pag.checkout_url)} style={{ textDecoration: 'none' }}>
                         <button className="pgto-acao" style={{
                           width: '100%', marginTop: 12, padding: '12px 18px', borderRadius: 999,
                           border: `1px solid ${C.inputBorder}`, background: 'transparent',
@@ -715,7 +716,7 @@ export default function PagamentoInscricao() {
                         Você conclui o Pix no ambiente do provedor de pagamento da igreja.
                       </p>
                       {pag.checkout_url && (
-                        <a href={pag.checkout_url} style={{ textDecoration: 'none' }}>
+                        <a href={safeHref(pag.checkout_url)} style={{ textDecoration: 'none' }}>
                           <button className="pgto-acao" style={{
                             width: '100%', marginTop: 10, padding: '13px 18px', borderRadius: 999,
                             border: 'none', background: '#00B39D', color: '#fff',
@@ -815,7 +816,7 @@ export default function PagamentoInscricao() {
                       A igreja não recebe nem guarda o número do seu cartão.
                     </p>
                     {pag.checkout_url && (
-                      <a href={pag.checkout_url} style={{ textDecoration: 'none' }}>
+                      <a href={safeHref(pag.checkout_url)} style={{ textDecoration: 'none' }}>
                         <button className="pgto-acao" style={{
                           width: '100%', marginTop: 10, padding: '13px 18px', borderRadius: 999,
                           border: 'none', background: '#00B39D', color: '#fff',
@@ -856,7 +857,7 @@ export default function PagamentoInscricao() {
                       </>
                     )}
                     {(pag.boleto_url || pag.checkout_url) && (
-                      <a href={pag.boleto_url || pag.checkout_url || '#'} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
+                      <a href={safeHref(pag.boleto_url || pag.checkout_url)} target="_blank" rel="noreferrer" style={{ textDecoration: 'none' }}>
                         <button className="pgto-acao" style={{
                           width: '100%', marginTop: 10, padding: '13px 18px', borderRadius: 999,
                           border: pag.boleto_linha_digitavel ? `1px solid ${C.inputBorder}` : 'none',

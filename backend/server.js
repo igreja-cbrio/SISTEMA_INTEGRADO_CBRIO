@@ -145,7 +145,6 @@ app.use('/api/comunicacao', require('./routes/comunicacao')); // Módulo Comunic
 app.use('/api/revisoes', require('./routes/revisoes'));
 app.use('/api/events', require('./routes/events'));
 app.use('/api/projects', require('./routes/projects'));
-app.use('/api/propostas', require('./routes/propostas')); // Ciclo anual de propostas (projetos/eventos/rotinas)
 app.use('/api/campanhas', require('./routes/campanhas')); // Campanhas de arrecadação (dígito verificador, cronograma, disparos)
 app.use('/api/tasks', require('./routes/tasks'));  // Kanban de tarefas transversal (Projetos/Eventos) · guard por módulo dentro do router
 app.use('/api/expansion', require('./routes/expansion'));
@@ -263,6 +262,13 @@ app.use('/api/public/visitante', require('./routes/publicVisitante'));
 // barrinha travada no domingo do lançamento é o pior momento possível pra ela
 // falhar. Limiter próprio generoso em routes/publicCampanha.js.
 app.use('/api/public/campanhas', require('./routes/publicCampanha'));
+// ⚠️⚠️ FICHA DA CONTRATADA montada ANTES do publicLimiter estrito, pelo mesmo
+// motivo das outras: são ~15 campos, a pessoa salva mais de uma vez, e vários
+// prestadores saem pelo MESMO IP do escritório. Sob 30/15min por IP o
+// formulário morreria por volta da 4ª pessoa — e o custo de falhar aqui é a
+// chave PIX de um fornecedor não entrar. Limiter próprio e generoso vive em
+// routes/publicRhFichaContratada.js.
+app.use('/api/public/rh-ficha-contratada', require('./routes/publicRhFichaContratada'));
 app.use('/api/public', publicLimiter);
 
 app.use('/api/public/rh-onboarding', require('./routes/publicRhOnboarding'));
@@ -287,6 +293,8 @@ app.use('/api/whatsapp-grupos', require('./routes/whatsappGrupos'));
 app.use('/api/whatsapp-cron', require('./routes/whatsappCron'));
 app.use('/api/solicitacoes', require('./routes/solicitacoes'));
 app.use('/api/producao', require('./routes/producao'));
+// Linha do tempo (Fase 3) · montada ANTES do router geral do Marketing
+app.use('/api/marketing/linha', require('./routes/marketingLinha'));
 app.use('/api/marketing', require('./routes/marketing'));
 app.use('/api/cerebro', require('./routes/cerebro'));
 app.use('/api/voluntariado', require('./routes/voluntariado'));

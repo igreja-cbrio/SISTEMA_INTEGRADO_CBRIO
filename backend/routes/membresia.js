@@ -1,4 +1,6 @@
 const router = require('express').Router();
+// Régua do escopo da ficha — módulo PURO, para o gate alcançar (ver escopoFicha.js).
+const { resolverEscopoFicha } = require('../utils/escopoFicha');
 const kidsVisitante = require('../utils/kidsVisitante');
 // Dia BRT — dia de operação da igreja nunca é UTC (das 21h o dia já virou).
 function hojeBRTKids() {
@@ -46,6 +48,7 @@ const {
 // filtrados no payload. Ver o cabeçalho de `utils/dadosSensiveisPessoa.js`.
 const {
   podeVerFinanceiroDePessoa, podeVerPastoralDePessoa, filtrarTimeline,
+
 } = require('../utils/dadosSensiveisPessoa');
 
 const uploadMw = multer({
@@ -169,6 +172,9 @@ function podeEditarMembroTotem(req, membroId) {
 function calcularNivelGenerosidade(ultimaContribuicaoDate) {
   if (!ultimaContribuicaoDate) return 'nunca_contribuiu';
   const dias = Math.floor((Date.now() - new Date(ultimaContribuicaoDate).getTime()) / (1000 * 60 * 60 * 24));
+  // Data futura (erro de digitação: "2030-01-15" em vez de "2020-01-15")
+  // NÃO deve marcar o membro como "ativo". Ver MED-19 do code review.
+  if (dias < 0) return 'nunca_contribuiu';
   if (dias <= 30) return 'ativo';
   if (dias <= 150) return 'irregular';
   return 'inativo';
@@ -182,6 +188,8 @@ function calcularNivelGenerosidade(ultimaContribuicaoDate) {
 function calcularNivelServico(ultimoCheckinDate) {
   if (!ultimoCheckinDate) return 'nunca_serviu';
   const dias = Math.floor((Date.now() - new Date(ultimoCheckinDate).getTime()) / (1000 * 60 * 60 * 24));
+  // Data futura (erro de digitação em check-in retroativo). Idem MED-19.
+  if (dias < 0) return 'nunca_serviu';
   if (dias <= 60) return 'ativo';
   return 'ausente';
 }
@@ -688,6 +696,21 @@ router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
     const id = req.params.id;
     const anoAtual = new Date().getFullYear();
 
+    // ⚠️⚠️ ESCOPO BÁSICO (`?escopo=basico`): ficha sem o bloco financeiro, para
+    // telas onde a pessoa é aberta a trabalho (triagem de voluntário do Kids) e
+    // não há motivo para o extrato de contribuição trafegar junto.
+    // NÃO é só esconder a aba no front: se o payload sair com as contribuições,
+    // elas aparecem no devtools e a privacidade vira decoração. Aqui a consulta
+    // nem chega a rodar.
+    // ⚠️ É ESTREITAMENTO, nunca alargamento: quem não passa em
+    // `podeVerFinanceiroDePessoa` continua sem ver, peça o escopo que pedir.
+    const escopoFicha = resolverEscopoFicha({
+      escopo: req.query.escopo,
+      podeFinanceiro: podeVerFinanceiroDePessoa(req.user),
+      podeMarcadorSensivel: podeVerMarcadorSensivel(req.user),
+    });
+    const escopoBasico = escopoFicha.basico;
+
     // Round 1: tudo que so depende do id (em paralelo)
     const [
       membroRes,
@@ -708,9 +731,11 @@ router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
       supabase.from('mem_grupo_membros')
         .select('*, grupo:mem_grupos(id, nome, categoria, local, dia_semana, horario, lider:mem_membros!lider_id(id, nome))')
         .eq('membro_id', id).order('entrou_em', { ascending: false }),
-      supabase.from('mem_contribuicoes').select('*').eq('membro_id', id).is('deleted_at', null).order('data', { ascending: false }).limit(30),
-      supabase.from('mem_contribuicoes').select('tipo, valor')
-        .eq('membro_id', id).is('deleted_at', null).gte('data', `${anoAtual}-01-01`).lte('data', `${anoAtual}-12-31`),
+      escopoBasico ? Promise.resolve({ data: [] })
+        : supabase.from('mem_contribuicoes').select('*').eq('membro_id', id).is('deleted_at', null).order('data', { ascending: false }).limit(30),
+      escopoBasico ? Promise.resolve({ data: [] })
+        : supabase.from('mem_contribuicoes').select('tipo, valor')
+          .eq('membro_id', id).is('deleted_at', null).gte('data', `${anoAtual}-01-01`).lte('data', `${anoAtual}-12-31`),
       supabase.from('vol_profiles')
         .select('id, full_name, planning_center_id, allocation_status, profile_complete')
         .eq('membresia_id', id).maybeSingle(),
@@ -854,7 +879,9 @@ router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
     let marcadores = null;
     try {
       const { porMembro } = await marcadoresDeMembros([id], {
-        incluirSensiveis: podeVerMarcadorSensivel(req.user),
+        // ⚠️ Mesma régua do bloco financeiro: sem isto o cabeçalho mostraria o
+        // marcador de generosidade e entregaria justamente o que a aba escondeu.
+        incluirSensiveis: escopoFicha.mostrarMarcadorSensivel,
       });
       marcadores = porMembro.get(id) || null;
     } catch (eMarc) {
@@ -867,7 +894,7 @@ router.get('/membros/:id', authorizeModule('membros', 1), async (req, res) => {
     // que `grupos` nível 1 lia o extrato de qualquer pessoa.
     // ⚠️ Omissão DECLARADA (`financeiro_oculto`): campo que some sem aviso é
     // lido como "esta pessoa nunca contribuiu".
-    const podeFinanceiro = podeVerFinanceiroDePessoa(req.user);
+    const podeFinanceiro = escopoFicha.mostrarFinanceiro;
 
     res.json({
       ...membro,
@@ -1822,7 +1849,7 @@ router.get('/membros/:id/reconhecimento-facial', authorizeModule('membros', 1), 
 // POST /api/membresia/historico
 router.post('/historico', authorize('admin', 'diretor'), async (req, res) => {
   try {
-    const body = { ...req.body, registrado_por: req.user.id };
+    const body = { ...req.body, registrado_por: req.user.userId || req.user.id };
     const { data, error } = await supabase
       .from('mem_historico')
       .insert(body)
@@ -3315,12 +3342,27 @@ router.post('/contribuicoes', authorize('admin', 'diretor'), async (req, res) =>
   try {
     const payload = {
       ...req.body,
-      registrado_por: req.user.id,
+      registrado_por: req.user.userId || req.user.id,
       origem: req.body.origem || 'manual',
     };
     if (payload.campanha === '') delete payload.campanha;
     if (payload.forma_pagamento === '') delete payload.forma_pagamento;
     if (payload.referencia_externa === '') delete payload.referencia_externa;
+
+    // Barra data futura na entrada. Sem isto um typo de ano ("2030" em vez
+    // de "2020") já causou dois efeitos ruins: (a) inflava o total do ano
+    // corrente no KPI (MED-18); (b) marcava o membro como "generosidade:ativo"
+    // apesar de ele não contribuir há anos (MED-19). Ao gate: 1 dia de folga
+    // para não brigar com fuso quando alguém lança "hoje" de outro fuso.
+    if (payload.data) {
+      const amanhaMS = Date.now() + 24 * 60 * 60 * 1000;
+      const lancMS = new Date(payload.data).getTime();
+      if (Number.isFinite(lancMS) && lancMS > amanhaMS) {
+        return res.status(400).json({
+          error: 'Data da contribuição não pode ser no futuro. Verifique o ano.',
+        });
+      }
+    }
 
     const { data, error } = await supabase
       .from('mem_contribuicoes')
@@ -3397,11 +3439,14 @@ router.get('/contribuicoes/kpis', async (req, res) => {
       return out;
     };
 
-    // Totais do ano por tipo
+    // Totais do ano por tipo — limite superior evita que um lançamento com
+    // ano futuro digitado errado ("2030-01-15" em vez de "2020-01-15") entre
+    // no total do ano corrente. Ver MED-18 do code review.
     const contribsAno = await fetchTudo(() => supabase
       .from('mem_contribuicoes')
       .select('tipo, valor, data, membro_id')
-      .gte('data', `${anoAtual}-01-01`));
+      .gte('data', `${anoAtual}-01-01`)
+      .lte('data', `${anoAtual}-12-31`));
 
     const totais = { dizimo: 0, oferta: 0, campanha: 0, total: 0 };
     const contribuintesAno = new Set();
@@ -3677,7 +3722,7 @@ router.post('/checkins', authorize('admin', 'diretor'), async (req, res) => {
   try {
     const payload = {
       ...req.body,
-      registrado_por: req.user.id,
+      registrado_por: req.user.userId || req.user.id,
       origem: req.body.origem || 'manual',
     };
     const { data, error } = await supabase

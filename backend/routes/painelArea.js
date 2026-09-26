@@ -13,6 +13,9 @@
 const router = require('express').Router();
 const { authenticate, authorizeModule } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
+const { montarProcedencia } = require('../utils/kpiProcedencia');
+const { montarSerie } = require('../utils/kpiSerie');
+const { periodoAtual } = require('../services/kpiAutoCollector');
 
 router.use(authenticate);
 
@@ -64,6 +67,114 @@ function filtrarCultosPorArea(cultos, area) {
   }
   return cultos;
 }
+
+// A FICHA de um KPI — "de onde sai esse número?"
+//
+// Pedido do Matheus (23/09/2026), depois de a Renata (responsável do Online)
+// perguntar do ONL-17: *"desde quando esse kpi ta medindo, qual a periodicidade
+// dele, de onde sai os dados que alimenta ele"*.
+//
+// ⚠️ Nível 1, o mesmo do painel: quem já vê o número tem direito de saber de
+// onde ele vem. Ficha atrás de um nível mais alto seria transparência que só o
+// gestor alcança — e quem tem a dúvida é quem opera.
+//
+// ⚠️ `desde` é o PRIMEIRO PERÍODO COM VALOR, e não a data de cadastro do KPI.
+// Confundir os dois foi o que fez o agente de voluntariado ler "158 dias de
+// cadastro" como "158 dias sem check-in" e acusar 42 pessoas que serviam.
+router.get('/kpi/:id/procedencia', authorizeModule('painel-area', 1), async (req, res) => {
+  try {
+    const { data: kpi, error } = await supabase
+      .from('kpi_indicadores_taticos')
+      // ⚠️ `fonte_auto` é OBRIGATÓRIO aqui: é o segundo motor de cálculo. Sem
+      // ele a ficha chamava de "preenchido à mão" os 49 KPIs ativos que são
+      // calculados pelo collector JS com `tipo_calculo = 'manual'`.
+      .select('id, indicador, area, periodicidade, tipo_calculo, fonte_auto, formula_config, meta_valor, meta_valor_absoluto, sentido_meta, descricao, ativo')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    if (!kpi) return res.status(404).json({ error: 'KPI não encontrado' });
+
+    // Onde o histórico mora depende de como o KPI é apurado: manual lê os
+    // registros de gente, automático lê os valores calculados. Ler o lugar
+    // errado devolveria "nunca mediu" para um KPI cheio de histórico.
+    const manual = String(kpi.tipo_calculo || '') === 'manual';
+    const [{ data: linhas }, { count }] = await Promise.all([
+      manual
+        ? supabase.from('kpi_registros').select('periodo_referencia')
+            .eq('indicador_id', kpi.id).not('valor_realizado', 'is', null)
+            .order('periodo_referencia')
+        : supabase.from('kpi_valores_calculados').select('periodo_referencia')
+            .eq('kpi_id', kpi.id).not('valor_calculado', 'is', null)
+            .order('periodo_referencia'),
+      manual
+        ? supabase.from('kpi_registros').select('id', { count: 'exact', head: true })
+            .eq('indicador_id', kpi.id).not('valor_realizado', 'is', null)
+        : supabase.from('kpi_valores_calculados').select('kpi_id', { count: 'exact', head: true })
+            .eq('kpi_id', kpi.id).not('valor_calculado', 'is', null),
+    ]);
+
+    const periodos = (linhas || []).map((l) => l.periodo_referencia).filter(Boolean);
+    // ⚠️⚠️ A meta que a ficha mostra tem que ser a que o FAROL usa. O campo
+    // `meta_valor` é nominal; quem pinta o card é `meta_efetiva` da view,
+    // dividida em `meta_periodo`. Medido em 23/09: 10 de 167 KPIs ativos
+    // divergem — o ONL-11 tem nominal 30 e efetiva 106.022/ano (2.038,88 por
+    // semana). "Meta 30" ao lado de um card vermelho com 1.032 faz o indicador
+    // parecer quebrado quando quem estava errada era a ficha.
+    let trajetoria = null;
+    try {
+      const { data } = await supabase.from('vw_kpi_trajetoria_atual')
+        .select('meta_efetiva, meta_periodo').eq('kpi_id', kpi.id).maybeSingle();
+      trajetoria = data || null;
+    } catch { /* a ficha vale sem a meta efetiva */ }
+
+    const ficha = montarProcedencia(kpi, {
+      primeiro_periodo: periodos[0] || null,
+      ultimo_periodo: periodos[periodos.length - 1] || null,
+      total_periodos: count || periodos.length,
+    }, trajetoria);
+
+    // ⚠️⚠️ A TABELA MÊS A MÊS — pedido do Matheus em 23/09/2026: *"queria que
+    // mostrasse essa tabela tbm: mês | escalas | com check-in | %"*.
+    //
+    // ⚠️ As partes NÃO estão gravadas. `kpi_valores_calculados` guarda só o
+    // valor final; o `detalhes` é `{"tipo":"soma_periodo","valor":...}`, sem
+    // numerador nem denominador. Por isso a série é RECALCULADA da fonte por
+    // `kpi_serie_partes`, que repete o recorte de `_kpi_agregar_dado`.
+    //
+    // ⚠️ E é daí que sai o aviso mais útil da ficha: o valor AO VIVO pode não
+    // ser o do card. Medido em 23/09 no ONL-17 — agosto gravado 24,14%, ao vivo
+    // 60,66%, porque a Ariel lançou check-in retroativo depois da apuração das
+    // 07:01. Sem marcar isso, a tabela contradiz o card e ninguém sabe por quê.
+    //
+    // ⚠️ Best-effort: série que falha NÃO derruba a ficha (e `.catch()` numa
+    // cadeia do PostgREST é TypeError — por isso o try/catch em volta do await).
+    let serie = { tem_partes: false, linhas: [], divergencias: 0 };
+    try {
+      const [partes, gravados] = await Promise.all([
+        supabase.rpc('kpi_serie_partes', { p_kpi_id: kpi.id, p_n: 12 }),
+        manual
+          ? supabase.from('kpi_registros').select('periodo_referencia, valor_realizado')
+              .eq('indicador_id', kpi.id).not('valor_realizado', 'is', null)
+              .order('periodo_referencia', { ascending: false }).limit(12)
+          : supabase.from('kpi_valores_calculados').select('periodo_referencia, valor_calculado')
+              .eq('kpi_id', kpi.id).not('valor_calculado', 'is', null)
+              .order('periodo_referencia', { ascending: false }).limit(12),
+      ]);
+      const linhasGravadas = (gravados.data || []).map((g) => ({
+        periodo_referencia: g.periodo_referencia,
+        valor_calculado: manual ? g.valor_realizado : g.valor_calculado,
+      }));
+      // ⚠️⚠️ O período CORRENTE corta o futuro. Medido em 23/09/2026 no ONL-11:
+      // havia 14 registros de W39 a W52 (semanas que ainda não aconteceram),
+      // todos com 0, de um backfill em 24/08 — e a ficha mostrava só eles,
+      // doze linhas de 0%. Zero de semana futura não é resultado, é ausência.
+      serie = montarSerie(partes.data || [], linhasGravadas,
+        periodoAtual(kpi.periodicidade || 'mensal'));
+    } catch { /* série é extra; a ficha vale sem ela */ }
+
+    res.json({ ...ficha, serie });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 router.get('/:area', authorizeModule('painel-area', 1), async (req, res) => {
   try {
@@ -771,5 +882,7 @@ router.get('/:area/pessoas/:id', authorizeModule('painel-area', 1), async (req, 
     res.status(500).json({ error: 'Erro ao abrir pessoa' });
   }
 });
+
+
 
 module.exports = router;

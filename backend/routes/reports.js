@@ -1,4 +1,5 @@
 const router = require('express').Router();
+const { modeloProvado } = require('../utils/modeloIa');
 const { authenticate } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const storage = require('../services/storageService');
@@ -416,7 +417,10 @@ Anexos: ${input.totals.anexos}`;
       closedBlock;
 
     const useHaiku = type === 'phase' && userMessage.length < 80000;
-    const model = useHaiku ? 'claude-haiku-4-5-20251001' : 'claude-sonnet-4-20250514';
+    // ⚠️ O ramo "não-Haiku" apontava para claude-sonnet-4-20250514, que a
+    // Anthropic descontinuou (22/09/2026). Chamada única, sem retry → modelo
+    // PROVADO. Ver backend/utils/modeloIa.js.
+    const model = useHaiku ? 'claude-haiku-4-5-20251001' : (process.env.RELATORIO_AI_MODEL || modeloProvado());
     const maxTokens = useHaiku ? 2048 : 4096;
 
     const agent = await AgentService.createRun('event_report', req.user.userId, { eventId, type, phase_name, model, since_days: input.since_days, mode: 'sync' });

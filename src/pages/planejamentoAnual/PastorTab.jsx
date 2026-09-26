@@ -1,25 +1,35 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import { toast } from 'sonner';
 import {
   ComposedChart, Line, Bar, XAxis, YAxis, Tooltip, Legend, ReferenceLine, ResponsiveContainer,
 } from 'recharts';
 import { planejamentoAnual as api, users as usersApi } from '../../api';
 import {
-  C, cardStyle, btn, input, hint, Badge, EstadoBadge, fmtBRL, fmtData, fmtQuando,
-  MESES, MESES_LONGOS, DIAS_SEMANA, thStyle, tdStyle, rotuloArea, rotuloDiretoria,
+  C, cardStyle, btn, input, label, hint, Badge, EstadoBadge, fmtBRL, fmtData, fmtQuando,
+  MESES, MESES_LONGOS, DIAS_SEMANA, RECORRENCIAS, NATUREZAS, thStyle, tdStyle, rotuloArea, rotuloDiretoria,
+  evidenciaCriterio,
 } from './comum';
 import CalendarioAno from './CalendarioAno';
 
 // Gráfico caixa livre × custo · reusado na visão do Pastor e na simulação de
 // UMA proposta na tela de decisão ("se você aprovar"). Coluna sólida = o que
-// já está no calendário; hachurada = o que a decisão em jogo acrescenta.
+// já está no calendário (aprovado, em tempo real com apontamento); linha
+// tracejada = "todas as propostas" (imutável, se todas fossem aprovadas);
+// hachurada = o que a decisão em jogo acrescenta (só na simulação de UMA
+// proposta). C.purple não existia em comum.jsx antes desta feature — foi
+// acrescentado ali (2026-09-18) só pra esta 3ª série.
 function GraficoOrcamento({ visao, alturaPx = 260, rotuloPendente = 'Aguardando decisão' }) {
   const dados = MESES.map((m, i) => ({
     mes: m,
-    caixa: visao.caixa_livre?.[i] ?? 0,
+    caixa: visao.caixa_livre?.[i] ?? null,
     aprovado: visao.comprometido?.[i] ?? 0,
     pendente: visao.propostos?.[i] ?? 0,
+    todas: visao.todas_propostas?.[i] ?? null,
   }));
+  const temTodas = Array.isArray(visao.todas_propostas);
+  // Sem orçamento enviado pelo Financeiro não há caixa livre — a linha some
+  // (em vez de aparecer zerada, o que mentiria "não há dinheiro nenhum").
+  const temCaixa = Array.isArray(visao.caixa_livre);
   return (
     <div style={{ height: alturaPx }}>
       <ResponsiveContainer width="100%" height="100%">
@@ -29,14 +39,32 @@ function GraficoOrcamento({ visao, alturaPx = 260, rotuloPendente = 'Aguardando 
           <Tooltip formatter={(v) => fmtBRL(v)} />
           <Legend />
           <ReferenceLine y={0} stroke="var(--hairline)" />
-          <Bar dataKey="aprovado" name="Já no calendário" stackId="c" fill={C.primary} />
+          <Bar dataKey="aprovado" name="Aprovado (tempo real)" stackId="c" fill={C.primary} />
           <Bar dataKey="pendente" name={rotuloPendente} stackId="c" fill={C.amber} fillOpacity={0.55} />
-          <Line dataKey="caixa" name="Caixa livre" stroke={C.text} strokeWidth={2} dot={false} />
+          {temCaixa && (
+            <Line dataKey="caixa" name="Orçamento livre" stroke={C.text} strokeWidth={2} dot={false} />
+          )}
+          {temTodas && (
+            <Line dataKey="todas" name="Todas as propostas" stroke={C.purple} strokeWidth={2} strokeDasharray="6 4" dot={false} />
+          )}
         </ComposedChart>
       </ResponsiveContainer>
     </div>
   );
 }
+
+// Critério → campo apontável mais próximo (usado no botão "Apontar" da
+// tabela de critérios). Quando não há mapeamento 1:1 (chaves diferentes),
+// o texto do apontamento leva o nome do critério como prefixo.
+const CRITERIO_PARA_CAMPO = {
+  relevancia: 'alcance',
+  pertencimento: 'pertencimento',
+  transformacao: 'transformacao',
+  visao: 'visao',
+  impacto: 'impacto',
+  custo: 'custo',
+  sustentabilidade: 'descricao',
+};
 
 const SUBS = ['Decisões', 'Retificações', 'Ressalvas', 'Orçamento', 'Calendário', 'Ciclo e publicação'];
 
@@ -47,7 +75,7 @@ const subBtn = (ativo) => ({
 });
 
 // ─── Decisões (ranking + lote + detalhe) ─────────────────────────────────
-function Decisoes({ ciclo, constantes, recarregarCiclo, areas }) {
+function Decisoes({ ciclo, constantes, recarregarCiclo, areas, locais }) {
   const [ranking, setRanking] = useState(null);
   const [sel, setSel] = useState(new Set());
   const [aberta, setAberta] = useState(null);
@@ -81,7 +109,7 @@ function Decisoes({ ciclo, constantes, recarregarCiclo, areas }) {
   };
 
   if (aberta) {
-    return <DetalheProposta id={aberta} constantes={constantes} areas={areas} aoVoltar={async () => { setAberta(null); await carregar(); recarregarCiclo?.(); }} />;
+    return <DetalheProposta id={aberta} constantes={constantes} areas={areas} locais={locais} aoVoltar={async () => { setAberta(null); await carregar(); recarregarCiclo?.(); }} />;
   }
   if (!ranking) return <p style={{ fontSize: 13, color: C.t3 }}>Carregando…</p>;
 
@@ -147,16 +175,21 @@ function Decisoes({ ciclo, constantes, recarregarCiclo, areas }) {
   );
 }
 
-// ─── Detalhe da proposta (consolidado + apontamentos + decisão) ──────────
-function DetalheProposta({ id, constantes, aoVoltar, areas }) {
+// ─── Detalhe da proposta (critérios + apontamentos + decisão) ────────────
+function DetalheProposta({ id, constantes, aoVoltar, areas, locais }) {
   const [p, setP] = useState(null);
   const [pessoas, setPessoas] = useState([]);
-  const [apCampo, setApCampo] = useState('custo');
-  const [apTexto, setApTexto] = useState('');
+  const [apAbertoCriterio, setApAbertoCriterio] = useState(null); // chave do critério com textarea aberta
+  const [apTextoCriterio, setApTextoCriterio] = useState('');
   const [ressalva, setRessalva] = useState(null);   // {texto, responsavel_id, prazo}
   const [exigencia, setExigencia] = useState(null); // {texto}
   const [salvando, setSalvando] = useState(false);
   const [simulacao, setSimulacao] = useState(null); // efeito no orçamento se aprovar
+  // Apontamento de custo/recorrência/data (2026-09-18): qual bloco está com
+  // o campo editável aberto ('custo'|'recorrencia'|'data'|null) + o rascunho
+  // de cada um.
+  const [apontEditando, setApontEditando] = useState(null);
+  const [apontRascunho, setApontRascunho] = useState({});
 
   const criterios = constantes?.criterios || [];
   const campos = constantes?.campos_apontaveis || [];
@@ -166,17 +199,22 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
   }, [id]);
   useEffect(() => { carregar(); }, [carregar]);
   useEffect(() => { usersApi.list().then((u) => setPessoas(Array.isArray(u) ? u : [])).catch(() => {}); }, []);
+
   // Simulação isolada: o endpoint tira TODAS as outras pendentes e deixa só esta
   // proposta na parte hachurada — é o "e se eu aprovar isto?" do spec.
-  useEffect(() => {
+  const recarregarOrcamento = useCallback(async () => {
     if (!p?.ciclo_id) return;
-    api.ciclos.orcamentoPastor(p.ciclo_id, p.id)
-      .then((r) => setSimulacao(r))
-      .catch(() => setSimulacao(null));
+    try { setSimulacao(await api.ciclos.orcamentoPastor(p.ciclo_id, p.id)); }
+    catch { setSimulacao(null); }
   }, [p?.ciclo_id, p?.id]);
+  useEffect(() => { recarregarOrcamento(); }, [recarregarOrcamento]);
 
   if (!p) return <p style={{ fontSize: 13, color: C.t3 }}>Carregando…</p>;
-  const quorumCompleto = Array.isArray(p.avaliacoes);
+  const quorumCompleto = Array.isArray(p.avaliacoes) && p.avaliacoes.length >= p.quorum;
+  const avaliacoesParciais = Array.isArray(p.avaliacoes) ? p.avaliacoes : [];
+
+  const nomeLider = (idLider) => pessoas.find((u) => u.id === idLider)?.name || pessoas.find((u) => u.id === idLider)?.email || '—';
+  const nomeLocal = (idLocal) => (locais || []).find((l) => l.id === idLocal)?.nome || '—';
 
   const decidir = async (corpo) => {
     setSalvando(true);
@@ -187,14 +225,39 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
     } catch (e) { toast.error(e.message || 'Erro ao decidir'); } finally { setSalvando(false); }
   };
 
-  const apontar = async () => {
-    if (!apTexto.trim()) { toast.error('Escreva o apontamento.'); return; }
+  // Apontar um critério específico: mapeia pro campo apontável mais próximo
+  // e, quando a chave difere, prefixa o texto com o nome do critério.
+  const apontarCriterio = async (criterio) => {
+    if (!apTextoCriterio.trim()) { toast.error('Escreva o apontamento.'); return; }
+    const campo = CRITERIO_PARA_CAMPO[criterio.chave] || 'descricao';
+    const precisaPrefixo = campo !== criterio.chave;
+    const texto = precisaPrefixo ? `[${criterio.titulo}] ${apTextoCriterio.trim()}` : apTextoCriterio.trim();
     try {
-      await api.propostas.apontar(p.id, { campo: apCampo, texto: apTexto.trim() });
-      setApTexto('');
+      await api.propostas.apontar(p.id, { campo, texto });
+      setApTextoCriterio('');
+      setApAbertoCriterio(null);
       toast.success('Apontamento enviado ao proponente');
       await carregar();
     } catch (e) { toast.error(e.message || 'Erro ao apontar'); }
+  };
+
+  // ── Apontamento de custo/recorrência/data (Pastor) ──────────────────────
+  const salvarApontamentoPastor = async (campo, corpo) => {
+    try {
+      await api.propostas.apontarPastor(p.id, { campo, ...corpo });
+      setApontEditando(null);
+      toast.success('Apontamento salvo · atualiza o gráfico de orçamento abaixo');
+      await carregar();
+      await recarregarOrcamento();
+    } catch (e) { toast.error(e.message || 'Erro ao apontar'); }
+  };
+  const removerApontamentoPastor = async (campo) => {
+    try {
+      await api.propostas.removerApontamentoPastor(p.id, campo);
+      toast.success('Apontamento removido · voltou ao valor original');
+      await carregar();
+      await recarregarOrcamento();
+    } catch (e) { toast.error(e.message || 'Erro ao remover apontamento'); }
   };
 
   return (
@@ -202,87 +265,255 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
         <div>
           <h3 style={{ margin: 0, fontSize: 16, color: C.text }}>{p.nome}</h3>
-          <span style={{ fontSize: 12, color: C.t3 }}>{rotuloArea(p.area, areas)} · {fmtQuando(p)} · {p.custeio?.rotulo} · líquido {fmtBRL(p.liquido_exibicao)}</span>
+          <span style={{ fontSize: 12, color: C.t3 }}>{rotuloArea(p.area, areas)} · {p.custeio?.rotulo} · líquido {fmtBRL(p.liquido_exibicao)}</span>
         </div>
         <button style={btn('ghost')} onClick={aoVoltar}>Voltar ao ranking</button>
       </div>
 
-      <div style={{ ...cardStyle, padding: 14, overflowX: 'auto' }}>
-        <strong style={{ fontSize: 13, color: C.text }}>Pontuação consolidada</strong>
-        {quorumCompleto ? (
-          <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 8, minWidth: 640 }}>
-            <thead><tr>
-              <th style={thStyle}>Diretoria</th>
-              {criterios.map((c) => <th key={c.chave} style={{ ...thStyle, textAlign: 'center' }}>{c.titulo}</th>)}
-            </tr></thead>
-            <tbody>
-              {p.avaliacoes.map((a) => (
-                <tr key={a.id}>
-                  <td style={{ ...tdStyle, fontWeight: 600 }}>{rotuloDiretoria(a.diretoria)}</td>
-                  {criterios.map((c) => <td key={c.chave} style={{ ...tdStyle, textAlign: 'center' }}>{a['nota_' + c.chave]}</td>)}
-                </tr>
-              ))}
-              <tr>
-                <td style={{ ...tdStyle, fontWeight: 700, color: C.primary }}>Média</td>
-                {(p.medias || []).map((m, i) => <td key={i} style={{ ...tdStyle, textAlign: 'center', fontWeight: 700, color: C.primary }}>{Number(m).toFixed(2)}</td>)}
-              </tr>
-            </tbody>
-          </table>
-        ) : (
-          <p style={{ ...hint, marginTop: 6 }}>Aguardando o quórum das quatro diretorias ({p.avaliacoes_recebidas}/{p.quorum}).</p>
-        )}
-        {quorumCompleto && p.soma != null && (
-          <div style={{ marginTop: 6, fontSize: 13 }}>Soma das médias: <strong style={{ color: C.primary }}>{Number(p.soma).toFixed(2)} / 35</strong></div>
-        )}
-        {quorumCompleto && (
-          <div style={{ marginTop: 8, display: 'grid', gap: 4 }}>
-            {p.avaliacoes.some((a) => a.comentario_geral || Object.values(a.coment_criterios || {}).some(Boolean)) ? (
-              p.avaliacoes.map((a) => (
-                <div key={a.id} style={{ fontSize: 12.5, color: C.t2 }}>
-                  <Badge texto={rotuloDiretoria(a.diretoria)} cor={C.blue} />{' '}
-                  {[...Object.entries(a.coment_criterios || {}).filter(([, t]) => t).map(([k, t]) => `${k}: ${t}`), a.comentario_geral].filter(Boolean).join(' · ') || '—'}
-                </div>
-              ))
-            ) : (
-              <span style={hint}>Nenhum diretor escreveu fundamentação nesta proposta.</span>
-            )}
+      {/* ── Resumo da proposta — o mesmo card que a avaliação dos diretores
+           mostra (AvaliacaoTab.jsx), pro Pastor ver o que o proponente
+           preencheu sem precisar abrir outra tela. */}
+      <div style={{ display: 'grid', gap: 10, padding: 14, borderRadius: 12, border: `1px solid ${C.border}`, background: 'var(--panel, var(--cbrio-card))' }}>
+        <strong style={{ fontSize: 13, color: C.primary }}>Resumo da proposta</strong>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 12 }}>
+          <div><span style={label}>Natureza</span><div style={{ fontSize: 13, color: C.text }}>{NATUREZAS.find((n) => n.valor === p.natureza)?.rotulo || p.natureza || '—'}</div></div>
+          <div><span style={label}>Área</span><div style={{ fontSize: 13, color: C.text }}>{rotuloArea(p.area, areas)}</div></div>
+          <div><span style={label}>Líder responsável</span><div style={{ fontSize: 13, color: C.text }}>{nomeLider(p.lider_id)}</div></div>
+          <div><span style={label}>Quando</span><div style={{ fontSize: 13, color: C.text }}>{fmtQuando(p)}</div></div>
+          <div>
+            <span style={label}>Recorrência</span>
+            <div style={{ fontSize: 13, color: C.text }}>
+              {RECORRENCIAS.find((r) => r.valor === p.recorrencia)?.rotulo || p.recorrencia || '—'}
+              {p.dia_semana != null && ` · ${DIAS_SEMANA[p.dia_semana] || ''}`}
+            </div>
+          </div>
+          <div>
+            <span style={label}>Horário</span>
+            <div style={{ fontSize: 13, color: C.text }}>
+              {p.hora_inicio ? String(p.hora_inicio).slice(0, 5) : '—'}
+              {p.hora_fim ? ` – ${String(p.hora_fim).slice(0, 5)}` : ''}
+            </div>
+          </div>
+          <div><span style={label}>Local</span><div style={{ fontSize: 13, color: C.text }}>{nomeLocal(p.local_id)}</div></div>
+          <div><span style={label}>Público-alvo</span><div style={{ fontSize: 13, color: C.text }}>{p.publico_alvo || '—'}</div></div>
+        </div>
+        {p.descricao && (
+          <div>
+            <span style={label}>Descrição</span>
+            <div style={{ fontSize: 13, color: C.text, whiteSpace: 'pre-wrap' }}>{p.descricao}</div>
           </div>
         )}
       </div>
 
+      {/* ── B) Critérios (notas e argumentações por diretoria, lado a lado) ─
+           Visão exclusiva do Pastor: cada diretoria vira uma coluna, com a
+           nota e o comentário daquele critério — diretorias NUNCA veem a
+           coluna umas das outras (isso só existe aqui, na tela do Pastor). */}
+      <div style={{ ...cardStyle, padding: 14, overflowX: 'auto' }}>
+        <strong style={{ fontSize: 13, color: C.text }}>Critérios</strong>
+        <p style={{ ...hint, marginTop: 2 }}>
+          Notas e argumentações aparecem conforme cada diretoria avalia — visível só a você.
+          As diretorias continuam sem ver a nota ou o comentário umas das outras.
+        </p>
+        <table style={{ width: '100%', borderCollapse: 'collapse', marginTop: 8, minWidth: 760 }}>
+          <thead><tr>
+            <th style={{ ...thStyle, minWidth: 190 }}>Critério</th>
+            <th style={{ ...thStyle, minWidth: 200 }}>Informado pelo proponente</th>
+            {avaliacoesParciais.map((a) => (
+              <th key={a.id} style={{ ...thStyle, textAlign: 'center', minWidth: 150 }}>{rotuloDiretoria(a.diretoria)}</th>
+            ))}
+            <th style={{ ...thStyle, textAlign: 'center' }}>Média</th>
+            <th style={thStyle}></th>
+          </tr></thead>
+          <tbody>
+            <tr>
+              <td style={{ ...tdStyle, fontWeight: 600 }}>Recorrência e data</td>
+              <td style={{ ...tdStyle, color: C.t2 }}>
+                {RECORRENCIAS.find((r) => r.valor === (p.recorrencia_apontada ?? p.recorrencia))?.rotulo || (p.recorrencia_apontada ?? p.recorrencia)}
+                {p.recorrencia_apontada != null && <Badge texto="apontado" cor={C.amber} />}
+                {' · '}{fmtQuando(p)}
+                {p.data_inicio_apontada != null && <>{' → '}{fmtData(p.data_inicio_apontada)} <Badge texto="apontado" cor={C.amber} /></>}
+              </td>
+              {avaliacoesParciais.map((a) => <td key={a.id} style={tdStyle} />)}
+              <td style={tdStyle} />
+              <td style={tdStyle} />
+            </tr>
+            {criterios.map((c, i) => {
+              const notasDoCriterio = avaliacoesParciais.map((a) => a['nota_' + c.chave]).filter((n) => n != null);
+              const mediaParcial = notasDoCriterio.length ? notasDoCriterio.reduce((s, n) => s + Number(n), 0) / notasDoCriterio.length : null;
+              const media = quorumCompleto ? Number((p.medias || [])[i] ?? 0) : mediaParcial;
+              return (
+                <Fragment key={c.chave}>
+                  <tr>
+                    <td style={{ ...tdStyle, width: 190 }}>
+                      <strong style={{ display: 'block', fontSize: 13 }}>{i + 1}. {c.titulo}</strong>
+                      <span style={{ fontSize: 11.5, color: C.t3 }}>{c.descricao}</span>
+                    </td>
+                    <td style={{ ...tdStyle, fontSize: 12.5, color: C.t2, maxWidth: 240 }}>{evidenciaCriterio(c.chave, p)}</td>
+                    {avaliacoesParciais.map((a) => (
+                      <td key={a.id} style={{ ...tdStyle, textAlign: 'center', fontSize: 12.5 }}>
+                        <strong style={{ fontSize: 14, color: C.text }}>{a['nota_' + c.chave] ?? '—'}</strong>
+                        {a.coment_criterios?.[c.chave] && (
+                          <div style={{ fontSize: 11, color: C.t3, marginTop: 2 }}>{a.coment_criterios[c.chave]}</div>
+                        )}
+                      </td>
+                    ))}
+                    <td style={{ ...tdStyle, textAlign: 'center', fontWeight: 700, color: C.primary }}>
+                      {media != null ? media.toFixed(2) : '—'}
+                    </td>
+                    <td style={tdStyle}>
+                      <button style={btn('ghost')} onClick={() => { setApAbertoCriterio(apAbertoCriterio === c.chave ? null : c.chave); setApTextoCriterio(''); }}>
+                        {apAbertoCriterio === c.chave ? 'Cancelar' : 'Apontar'}
+                      </button>
+                    </td>
+                  </tr>
+                  {apAbertoCriterio === c.chave && (
+                    <tr>
+                      <td colSpan={4 + avaliacoesParciais.length} style={tdStyle}>
+                        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                          <textarea style={{ ...input, flex: 1, minWidth: 220, minHeight: 44 }} placeholder={`Apontamento sobre "${c.titulo}"`} value={apTextoCriterio} onChange={(e) => setApTextoCriterio(e.target.value)} />
+                          <button style={btn('soft')} onClick={() => apontarCriterio(c)}>Salvar apontamento</button>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </table>
+        {!avaliacoesParciais.length && <p style={{ ...hint, marginTop: 8 }}>Nenhuma diretoria avaliou ainda.</p>}
+        {!quorumCompleto && avaliacoesParciais.length > 0 && (
+          <p style={{ ...hint, marginTop: 8 }}>Aguardando o quórum das diretorias ({p.avaliacoes_recebidas}/{p.quorum}) — a média acima já considera quem avaliou até agora.</p>
+        )}
+
+        {avaliacoesParciais.some((a) => a.comentario_geral) && (
+          <div style={{ display: 'grid', gap: 6, marginTop: 10 }}>
+            <strong style={{ fontSize: 12.5, color: C.text }}>Comentário geral</strong>
+            {avaliacoesParciais.filter((a) => a.comentario_geral).map((a) => (
+              <div key={a.id} style={{ fontSize: 12.5, color: C.t2 }}>
+                <Badge texto={rotuloDiretoria(a.diretoria)} cor={C.blue} /> {a.comentario_geral}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {/* ── C) Histórico de apontamentos ─────────────────────────────── */}
       <div style={{ ...cardStyle, padding: 14, display: 'grid', gap: 8 }}>
-        <div>
-          <strong style={{ fontSize: 13, color: C.text }}>Apontar nas respostas</strong>
-          <p style={{ ...hint, marginTop: 2 }}>Apontar respostas é prerrogativa sua. O apontamento chega apenas ao proponente.</p>
-        </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <select style={{ ...input, width: 220 }} value={apCampo} onChange={(e) => setApCampo(e.target.value)}>
-            {campos.map((c) => <option key={c.chave} value={c.chave}>{c.rotulo}</option>)}
-          </select>
-          <input style={{ ...input, flex: 1, minWidth: 220 }} placeholder="Apontamento" value={apTexto} onChange={(e) => setApTexto(e.target.value)} />
-          <button style={btn('soft')} onClick={apontar}>Apontar</button>
-        </div>
-        {(p.apontamentos || []).map((a) => (
+        <strong style={{ fontSize: 13, color: C.text }}>Histórico de apontamentos</strong>
+        {(p.apontamentos || []).length ? (p.apontamentos || []).map((a) => (
           <div key={a.id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 12.5, color: C.t2 }}>
             <Badge texto={campos.find((c) => c.chave === a.campo)?.rotulo || a.campo} cor={C.blue} />
             <span style={{ flex: 1 }}>{a.texto}</span>
             <button style={btn('ghost')} onClick={async () => { await api.propostas.removerApontamento(a.id); await carregar(); }}>remover</button>
           </div>
-        ))}
+        )) : <span style={hint}>Nenhum apontamento ainda.</span>}
       </div>
 
-      {simulacao && !simulacao.sem_orcamento && (
+      {/* ── D) Apontamento de custo, recorrência e data ──────────────── */}
+      <div style={{ ...cardStyle, padding: 14, display: 'grid', gap: 12 }}>
+        <div>
+          <strong style={{ fontSize: 13, color: C.text }}>Apontamento de custo, recorrência e data</strong>
+          <p style={{ ...hint, marginTop: 2 }}>
+            Este apontamento já atualiza a linha de orçamento aprovado abaixo, considerando a nova recorrência.
+            O valor original informado pelo proponente nunca é alterado — só o que entra no cálculo do orçamento em tempo real.
+          </p>
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 16 }}>
+        {/* Custo */}
+        <div style={{ display: 'grid', gap: 6 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: C.text }}>Custo</span>
+          <span style={{ ...hint, color: C.t3 }}>Original: {fmtBRL(p.custo)}</span>
+          {p.custo_apontado != null ? (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.amber }}>Apontado: {fmtBRL(p.custo_apontado)}</span>
+              <button style={btn('ghost')} onClick={() => removerApontamentoPastor('custo')}>Remover apontamento</button>
+            </div>
+          ) : apontEditando === 'custo' ? (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <input style={{ ...input, width: 160 }} type="number" step="0.01" placeholder="Novo custo"
+                value={apontRascunho.custo ?? ''} onChange={(e) => setApontRascunho({ ...apontRascunho, custo: e.target.value })} />
+              <button style={btn('soft')} onClick={() => salvarApontamentoPastor('custo', { valor: Number(apontRascunho.custo || 0) })}>Salvar</button>
+              <button style={btn('ghost')} onClick={() => setApontEditando(null)}>Cancelar</button>
+            </div>
+          ) : (
+            <button style={{ ...btn('ghost'), width: 'fit-content' }} onClick={() => setApontEditando('custo')}>Apontar novo valor</button>
+          )}
+        </div>
+
+        {/* Recorrência */}
+        <div style={{ display: 'grid', gap: 6 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: C.text }}>Recorrência</span>
+          <span style={{ ...hint, color: C.t3 }}>
+            Original: {RECORRENCIAS.find((r) => r.valor === p.recorrencia)?.rotulo || p.recorrencia}
+            {p.dia_semana != null && ` · ${DIAS_SEMANA[p.dia_semana]}`}
+          </span>
+          {p.recorrencia_apontada != null ? (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.amber }}>
+                Apontado: {RECORRENCIAS.find((r) => r.valor === p.recorrencia_apontada)?.rotulo || p.recorrencia_apontada}
+                {p.dia_semana_apontado != null && ` · ${DIAS_SEMANA[p.dia_semana_apontado]}`}
+              </span>
+              <button style={btn('ghost')} onClick={() => removerApontamentoPastor('recorrencia')}>Remover apontamento</button>
+            </div>
+          ) : apontEditando === 'recorrencia' ? (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <select style={{ ...input, width: 180 }} value={apontRascunho.recorrencia ?? ''} onChange={(e) => setApontRascunho({ ...apontRascunho, recorrencia: e.target.value })}>
+                <option value="">Recorrência…</option>
+                {RECORRENCIAS.map((r) => <option key={r.valor} value={r.valor}>{r.rotulo}</option>)}
+              </select>
+              <select style={{ ...input, width: 140 }} value={apontRascunho.dia_semana ?? ''} onChange={(e) => setApontRascunho({ ...apontRascunho, dia_semana: e.target.value })}>
+                <option value="">Dia (opcional)</option>
+                {DIAS_SEMANA.map((d, i) => <option key={d} value={i}>{d}</option>)}
+              </select>
+              <button style={btn('soft')} disabled={!apontRascunho.recorrencia} onClick={() => salvarApontamentoPastor('recorrencia', { valor: apontRascunho.recorrencia, dia_semana: apontRascunho.dia_semana === '' || apontRascunho.dia_semana == null ? null : Number(apontRascunho.dia_semana) })}>Salvar</button>
+              <button style={btn('ghost')} onClick={() => setApontEditando(null)}>Cancelar</button>
+            </div>
+          ) : (
+            <button style={{ ...btn('ghost'), width: 'fit-content' }} onClick={() => setApontEditando('recorrencia')}>Apontar novo valor</button>
+          )}
+        </div>
+
+        {/* Data */}
+        <div style={{ display: 'grid', gap: 6 }}>
+          <span style={{ fontSize: 12.5, fontWeight: 600, color: C.text }}>Data de início</span>
+          <span style={{ ...hint, color: C.t3 }}>Original: {fmtQuando(p)}</span>
+          {p.data_inicio_apontada != null ? (
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+              <span style={{ fontSize: 13, fontWeight: 600, color: C.amber }}>Apontado: {fmtData(p.data_inicio_apontada)}</span>
+              <button style={btn('ghost')} onClick={() => removerApontamentoPastor('data')}>Remover apontamento</button>
+            </div>
+          ) : apontEditando === 'data' ? (
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <input style={{ ...input, width: 170 }} type="date" value={apontRascunho.data ?? ''} onChange={(e) => setApontRascunho({ ...apontRascunho, data: e.target.value })} />
+              <button style={btn('soft')} disabled={!apontRascunho.data} onClick={() => salvarApontamentoPastor('data', { valor: apontRascunho.data, precisao: 'dia' })}>Salvar</button>
+              <button style={btn('ghost')} onClick={() => setApontEditando(null)}>Cancelar</button>
+            </div>
+          ) : (
+            <button style={{ ...btn('ghost'), width: 'fit-content' }} onClick={() => setApontEditando('data')}>Apontar novo valor</button>
+          )}
+        </div>
+        </div>
+      </div>
+
+      {/* ── E) Gráfico de orçamento ───────────────────────────────────── */}
+      {simulacao && (
         <div style={{ ...cardStyle, padding: 14, display: 'grid', gap: 6 }}>
           <div>
             <strong style={{ fontSize: 13, color: C.text }}>
               {p.situacao_decisao ? 'Efeito desta proposta no orçamento' : 'Efeito no orçamento, se você aprovar'}
             </strong>
             <p style={{ ...hint, marginTop: 2 }}>
-              A parte sólida é o que já está no calendário; a hachurada é o custo desta proposta.
-              Quando a coluna passa da linha do caixa livre, o mês estoura. Demais propostas
-              pendentes ficam de fora desta simulação.
+              A parte sólida é o que já está aprovado (em tempo real, com os apontamentos); a hachurada é o custo
+              desta proposta. A linha tracejada é "todas as propostas", se todas fossem aprovadas — imutável, sempre
+              com os valores originais. Demais propostas pendentes ficam de fora desta simulação.
             </p>
           </div>
+          {simulacao.sem_orcamento && (
+            <p style={{ ...hint, margin: 0, color: C.amber }}>{simulacao.mensagem}</p>
+          )}
           <GraficoOrcamento visao={simulacao} alturaPx={230} rotuloPendente="Esta proposta" />
           {simulacao.meses_negativos > 0 && (
             <span style={{ fontSize: 12.5, color: C.red, fontWeight: 600 }}>
@@ -290,12 +521,6 @@ function DetalheProposta({ id, constantes, aoVoltar, areas }) {
             </span>
           )}
         </div>
-      )}
-      {simulacao?.sem_orcamento && (
-        <p style={{ ...hint, margin: 0 }}>
-          Sem o orçamento do ciclo (a diretoria Financeira ainda não enviou), não há referência de
-          caixa pra simular o efeito desta proposta.
-        </p>
       )}
 
       {!p.situacao_decisao && quorumCompleto && (
@@ -422,7 +647,7 @@ function Retificacoes({ ciclo, recarregarCiclo }) {
               <button style={btn('danger')} disabled={salvando} onClick={() => agir(p, 'arquivada')}>Reprovar em definitivo</button>
               <button style={btn('ghost')} disabled={salvando} onClick={() => agir(p, 'reaberta_diretores')}>Reabrir para os diretores</button>
             </div>
-            <span style={hint}>Reabrir devolve a proposta ao painel das quatro diretorias e apaga as notas antigas.</span>
+            <span style={hint}>Reabrir devolve a proposta ao painel das diretorias e apaga as notas antigas.</span>
           </div>
         );
       })}
@@ -487,22 +712,31 @@ function OrcamentoPastor({ ciclo }) {
   };
 
   if (!visao) return <p style={{ fontSize: 13, color: C.t3 }}>Carregando…</p>;
-  if (visao.sem_orcamento) return <p style={{ fontSize: 13, color: C.t3 }}>{visao.mensagem}</p>;
 
   return (
     <div style={{ display: 'grid', gap: 12 }}>
-      <p style={{ margin: 0, fontSize: 12.5, color: C.t3, maxWidth: 800 }}>
-        Caixa livre enviado pela diretoria Financeira em {fmtData(String(visao.enviado_em).slice(0, 10))}, contra o custo
-        líquido rateado por mês. A linha de aprovados cobre o que já está no calendário; a de propostos cobre o que
-        ainda aguarda sua decisão. Propostas de vários meses têm o líquido dividido igualmente entre os meses que ocupam.
-      </p>
-      <div style={{ fontSize: 13, fontWeight: 600, color: visao.meses_negativos ? C.red : C.green }}>
-        {visao.meses_negativos
-          ? `${visao.meses_negativos} mês(es) com saldo projetado negativo. Remaneje na tabela do fim da página ou pese isso nas decisões pendentes.`
-          : 'Nenhum mês estoura o caixa livre no cenário atual.'}
-      </div>
+      {visao.sem_orcamento ? (
+        <p style={{ margin: 0, fontSize: 12.5, color: C.amber, maxWidth: 800 }}>{visao.mensagem}</p>
+      ) : (
+        <p style={{ margin: 0, fontSize: 12.5, color: C.t3, maxWidth: 800 }}>
+          Caixa livre enviado pela diretoria Financeira em {fmtData(String(visao.enviado_em).slice(0, 10))}, contra o custo
+          líquido rateado por mês. A linha de aprovados cobre o que já está no calendário; a de propostos cobre o que
+          ainda aguarda sua decisão. Propostas de vários meses têm o líquido dividido igualmente entre os meses que ocupam.
+        </p>
+      )}
+      {!visao.sem_orcamento && (
+        <div style={{ fontSize: 13, fontWeight: 600, color: visao.meses_negativos ? C.red : C.green }}>
+          {visao.meses_negativos
+            ? `${visao.meses_negativos} mês(es) com saldo projetado negativo. Remaneje na tabela do fim da página ou pese isso nas decisões pendentes.`
+            : 'Nenhum mês estoura o caixa livre no cenário atual.'}
+        </div>
+      )}
 
       <div style={{ ...cardStyle, padding: 14 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+          <strong style={{ fontSize: 13, color: C.text }}>Orçamento do ciclo</strong>
+          <button style={btn('ghost')} onClick={carregar}>↻ Atualizar</button>
+        </div>
         <GraficoOrcamento visao={visao} alturaPx={300} />
       </div>
       <span style={hint}>
@@ -529,7 +763,13 @@ function OrcamentoPastor({ ciclo }) {
               {MESES.map((m) => <th key={m} style={{ ...thStyle, textAlign: 'right' }}>{m}</th>)}
             </tr></thead>
             <tbody>
-              {[['Caixa livre', visao.caixa_livre], ['Aprovados no calendário', visao.comprometido], ['Propostos sem decisão', visao.propostos], ['Saldo projetado', visao.saldo]].map(([nome, serie]) => (
+              {[
+                ...(Array.isArray(visao.caixa_livre) ? [['Caixa livre', visao.caixa_livre]] : []),
+                ['Aprovados no calendário (tempo real)', visao.comprometido],
+                ['Propostos sem decisão', visao.propostos],
+                ...(Array.isArray(visao.todas_propostas) ? [['Todas as propostas (se todas fossem aprovadas)', visao.todas_propostas]] : []),
+                ...(Array.isArray(visao.saldo) ? [['Saldo projetado', visao.saldo]] : []),
+              ].map(([nome, serie]) => (
                 <tr key={nome}>
                   <td style={{ ...tdStyle, fontWeight: 600, whiteSpace: 'nowrap' }}>{nome}</td>
                   {serie.map((v, i) => (

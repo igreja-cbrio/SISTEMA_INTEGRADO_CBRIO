@@ -41,7 +41,32 @@ const norm = (v?: string | null) => String(v || '')
 /** Quantos candidatos a lista mostra antes de declarar que truncou. */
 const TETO_SUGESTOES = 20;
 
-type Escopo = { area: string; posId: string; dia: string; periodo: string; semana: string };
+/**
+ * ESCOPO de uma concessão (24/09/2026: + papel, + time, + sábado).
+ * `teamId` cheio = escopo por TIME (a área vem do time, só pra agrupar).
+ * `area = 'geral'` + `dia` = escopo por CULTO (o dia da semana).
+ * `area = 'geral'` sem nada = GERAL (é o que o admin tem).
+ * `papel`: leitor (só lê) · lider (edita) · admin (geral, gerencia estruturas).
+ */
+type Escopo = { papel: string; teamId: string; area: string; posId: string; dia: string; periodo: string; semana: string };
+type TimeOpcao = { v: string; label: string; area: string };
+const PAPEIS = [
+  { v: 'leitor', label: 'Leitor', ajuda: 'abre a Montar escala e só lê' },
+  { v: 'lider', label: 'Líder', ajuda: 'monta e altera a escala' },
+  { v: 'admin', label: 'Admin', ajuda: 'tudo, geral — gerencia pessoas e estruturas' },
+];
+const DIA_LABEL: Record<string, string> = { domingo: 'Domingo', quarta: 'Quarta', sabado: 'Sábado' };
+const DIA_CURTO: Record<string, string> = { domingo: 'Dom', quarta: 'Qua', sabado: 'Sáb' };
+type ConcessaoLinha = {
+  papel?: string | null; area?: string | null; team_id?: string | null; position_id?: string | null;
+  culto_dia?: string | null; culto_periodo?: string | null; culto_semana?: number | null;
+};
+function papelDaLinha(s: ConcessaoLinha | null | undefined): 'leitor' | 'lider' | 'admin' {
+  if (s?.papel === 'admin') return 'admin';
+  const semRecorte = !s?.team_id && !s?.position_id && !s?.culto_dia && !s?.culto_periodo && !s?.culto_semana;
+  if (s?.area === CURINGA.v && semRecorte) return 'admin';   // o geral sem recorte É o admin
+  return s?.papel === 'leitor' ? 'leitor' : 'lider';
+}
 type SubArea = { v: string; label: string };
 
 /**
@@ -54,16 +79,22 @@ type SubArea = { v: string; label: string };
  * `validarEscopoSupervisao` recusa com 400.
  */
 function SeletoresEscopo({
-  valor, onChange, areas, subareasDe, compacto = false,
+  valor, onChange, areas, times, subareasDe, posicoesDoTime, compacto = false,
 }: {
   valor: Escopo;
   onChange: (e: Escopo) => void;
   areas: { v: string; label: string }[];
+  times: TimeOpcao[];
   subareasDe: (area: string) => SubArea[];
+  posicoesDoTime: (teamId: string) => SubArea[];
   compacto?: boolean;
 }) {
-  const subs = subareasDe(valor.area);
+  const porTime = !!valor.teamId;
+  const subs = porTime ? posicoesDoTime(valor.teamId) : subareasDe(valor.area);
   const set = (patch: Partial<Escopo>) => onChange({ ...valor, ...patch });
+  const admin = valor.papel === 'admin';
+  // O select de escopo codifica time como `t:<id>`; área e geral vão crus.
+  const escopoValor = admin ? CURINGA.v : porTime ? `t:${valor.teamId}` : (valor.area || '');
   /**
    * ⚠️ Largura MÍNIMA + `flex-1`, não largura fixa (25/08). Com `sm:w-44` e
    * `sm:w-52` fixos, os cinco seletores somavam mais que o card e o navegador
@@ -74,28 +105,60 @@ function SeletoresEscopo({
   return (
     <>
       <Select
-        value={valor.area}
-        onValueChange={(v) => set({ area: v, posId: '' })}   /* trocar de área zera a subárea */
+        value={valor.papel || 'lider'}
+        onValueChange={(v) => {
+          /* Admin é sempre GERAL sem recorte — o servidor recusa outra coisa. */
+          if (v === 'admin') set({ papel: v, teamId: '', area: CURINGA.v, posId: '', dia: '', periodo: '', semana: '' });
+          else set({ papel: v });
+        }}
       >
-        <SelectTrigger className={w}><SelectValue placeholder="Escolher área" /></SelectTrigger>
-        <SelectContent>{areas.map(a => <SelectItem key={a.v} value={a.v}>{a.label}</SelectItem>)}</SelectContent>
+        <SelectTrigger className={w}><SelectValue placeholder="Papel" /></SelectTrigger>
+        <SelectContent>
+          {PAPEIS.map(p => (
+            <SelectItem key={p.v} value={p.v}>
+              {p.label} <span className="text-muted-foreground">· {p.ajuda}</span>
+            </SelectItem>
+          ))}
+        </SelectContent>
       </Select>
-
-      {subs.length > 0 && (
+      <Select
+        value={escopoValor}
+        disabled={admin}
+        onValueChange={(v) => {
+          /* trocar de escopo zera a subárea; time carrega a própria área */
+          if (v.startsWith('t:')) {
+            const id = v.slice(2);
+            set({ teamId: id, area: times.find(t => t.v === id)?.area || '', posId: '' });
+          } else {
+            set({ teamId: '', area: v, posId: '' });
+          }
+        }}
+      >
+        <SelectTrigger className={w}><SelectValue placeholder="Escolher time, área ou geral" /></SelectTrigger>
+        <SelectContent>
+          <SelectItem value={CURINGA.v}>Geral (todos os times, todos os cultos)</SelectItem>
+          {times.map(t => <SelectItem key={t.v} value={`t:${t.v}`}>Time · {t.label}</SelectItem>)}
+          {areas.filter(a => a.v !== CURINGA.v).map(a => <SelectItem key={a.v} value={a.v}>Área · {a.label}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      {!admin && subs.length > 0 && (
         <Select value={valor.posId || '__todas'} onValueChange={(v) => set({ posId: v === '__todas' ? '' : v })}>
           <SelectTrigger className={w}><SelectValue /></SelectTrigger>
           <SelectContent>
-            <SelectItem value="__todas">Toda a área ({subs.length} subáreas)</SelectItem>
+            <SelectItem value="__todas">{porTime ? `Todo o time (${subs.length} funções)` : `Toda a área (${subs.length} subáreas)`}</SelectItem>
             {subs.map(x => <SelectItem key={x.v} value={x.v}>{x.label}</SelectItem>)}
           </SelectContent>
         </Select>
       )}
+      {admin ? (
+        <span className="text-xs text-muted-foreground">Admin é geral, sem recorte de time ou culto.</span>
+      ) : (<>
 
       <Select
         value={valor.dia || '__qualquer'}
         onValueChange={(v) => {
           const d = v === '__qualquer' ? '' : v;
-          /* Quarta é culto ÚNICO: sair do domingo zera o período. */
+          /* Quarta e sábado são culto ÚNICO: sair do domingo zera o período. */
           set({ dia: d, periodo: d === 'domingo' ? valor.periodo : '' });
         }}
       >
@@ -104,6 +167,7 @@ function SeletoresEscopo({
           <SelectItem value="__qualquer">Qualquer culto</SelectItem>
           <SelectItem value="domingo">Domingo</SelectItem>
           <SelectItem value="quarta">Quarta</SelectItem>
+          <SelectItem value="sabado">Sábado (AMI, Bridge)</SelectItem>
         </SelectContent>
       </Select>
 
@@ -130,6 +194,7 @@ function SeletoresEscopo({
           </SelectContent>
         </Select>
       )}
+      </>)}
     </>
   );
 }
@@ -145,7 +210,7 @@ function rotuloRodizio(s: { culto_dia?: string | null; culto_periodo?: string | 
   const partes: string[] = [];
   if (s.culto_semana) partes.push(`${s.culto_semana}ª sem`);
   if (s.culto_dia) {
-    const dia = s.culto_dia === 'domingo' ? 'Dom' : 'Qua';
+    const dia = DIA_CURTO[s.culto_dia] || s.culto_dia;
     const per = s.culto_periodo === 'manha' ? ' manhã' : s.culto_periodo === 'noite' ? ' noite' : '';
     partes.push(dia + per);
   }
@@ -166,8 +231,11 @@ export default function VolSupervisores() {
   const [cultoDia, setCultoDia] = useState('');
   const [cultoPeriodo, setCultoPeriodo] = useState('');
   const [cultoSemana, setCultoSemana] = useState('');
+  // PAPEL + TIME (24/09/2026): leitor | lider | admin · teamId cheio = escopo por time.
+  const [papel, setPapel] = useState('lider');
+  const [teamId, setTeamId] = useState('');
   const { data: teams = [] } = useQuery<{
-    id: string; area?: string | null; is_active?: boolean;
+    id: string; name?: string | null; area?: string | null; is_active?: boolean;
     positions?: { id: string; name: string; is_active?: boolean }[];
   }[]>({
     queryKey: ['vol-teams-manage'],
@@ -221,6 +289,18 @@ export default function VolSupervisores() {
       .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
   }, [teams]);
   const SUBAREAS = useMemo(() => subareasDe(area), [subareasDe, area]);
+  // Times ATIVOS, pro escopo por time. A área vai junto só pra agrupar a lista.
+  const TIMES = useMemo<TimeOpcao[]>(() => teams
+    .filter(t => t.is_active !== false && t.name)
+    .map(t => ({ v: t.id, label: String(t.name), area: (t.area || '').trim().toLowerCase() }))
+    .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR')), [teams]);
+  const posicoesDoTime = useCallback((id: string): SubArea[] => {
+    const t = teams.find(x => x.id === id);
+    return (t?.positions || []).filter(p => p.is_active !== false && p.id && p.name)
+      .map(p => ({ v: p.id, label: p.name }))
+      .sort((a, b) => a.label.localeCompare(b.label, 'pt-BR'));
+  }, [teams]);
+  const timeLabel = useCallback((id?: string | null) => TIMES.find(t => t.v === id)?.label || null, [TIMES]);
 
   const { data: supers = [], isLoading } = useQuery<any[]>({
     queryKey: ['vol', 'supervisores'],
@@ -270,18 +350,22 @@ export default function VolSupervisores() {
   }, [pool, busca]);
 
   const grantMut = useMutation({
-    mutationFn: () => voluntariado.supervisores.grant(selMembro!.id, area, posId || null, {
+    // Com time, `area` vai vazia: o servidor deriva do time (e recusa admin com recorte).
+    mutationFn: () => voluntariado.supervisores.grant(selMembro!.id, teamId ? '' : area, posId || null, {
       culto_dia: cultoDia || null,
-      // Quarta é culto ÚNICO (decisão do Matheus): nunca manda período nela.
       culto_periodo: cultoDia === 'domingo' ? (cultoPeriodo || null) : null,
       culto_semana: cultoSemana ? Number(cultoSemana) : null,
+      papel,
+      team_id: teamId || null,
     }),
     onSuccess: () => {
+      const base = teamId ? `o time ${timeLabel(teamId) || ''}` : areaLabel(area);
       const alvo = posId
-        ? `${SUBAREAS.find(p => p.v === posId)?.label || 'subárea'} (${areaLabel(area)})`
-        : areaLabel(area);
-      toast.success(`${selMembro!.nome} agora é supervisor de ${alvo}`);
-      setSelMembro(null); setBusca(''); setPosId('');
+        ? `${(teamId ? posicoesDoTime(teamId) : SUBAREAS).find(p => p.v === posId)?.label || 'subárea'} (${teamId ? timeLabel(teamId) : areaLabel(area)})`
+        : base;
+      const nomePapel = PAPEIS.find(p => p.v === papel)?.label || 'Líder';
+      toast.success(`${selMembro!.nome} agora é ${nomePapel} de ${alvo}`);
+      setSelMembro(null); setBusca(''); setPosId(''); setTeamId(''); setPapel('lider');
       setCultoDia(''); setCultoPeriodo(''); setCultoSemana('');
       qc.invalidateQueries({ queryKey: ['vol', 'supervisores'] });
     },
@@ -292,11 +376,13 @@ export default function VolSupervisores() {
   // e revogar, então trocar o turno de alguém exigia apagar e recriar — o que
   // perdia `concedido_por` e `created_at`, a trilha de quem deu o acesso.
   const [editId, setEditId] = useState<string | null>(null);
-  const [editEsc, setEditEsc] = useState<Escopo>({ area: '', posId: '', dia: '', periodo: '', semana: '' });
+  const [editEsc, setEditEsc] = useState<Escopo>({ papel: 'lider', teamId: '', area: '', posId: '', dia: '', periodo: '', semana: '' });
 
   const updateMut = useMutation({
     mutationFn: () => voluntariado.supervisores.update(editId!, {
-      area: editEsc.area,
+      area: editEsc.teamId ? '' : editEsc.area,
+      team_id: editEsc.teamId || null,
+      papel: editEsc.papel || 'lider',
       position_id: editEsc.posId || null,
       culto_dia: editEsc.dia || null,
       // Quarta é culto ÚNICO — nunca manda período nela (o servidor recusa com 400).
@@ -360,13 +446,13 @@ export default function VolSupervisores() {
    * provavelmente foi cadastrado antes do rodízio existir.
    */
   const porTurno = useMemo(() => {
-    const DIA_ORDEM: Record<string, number> = { domingo: 1, quarta: 2 };
+    const DIA_ORDEM: Record<string, number> = { domingo: 1, quarta: 2, sabado: 3 };
     const PER_ORDEM: Record<string, number> = { manha: 1, noite: 2 };
 
     const chave = (x: any) => [x.culto_dia || '', x.culto_periodo || '', x.culto_semana || ''].join('|');
     const rotulo = (x: any) => {
       if (!x.culto_dia) return 'Todo culto (sem turno definido)';
-      const dia = x.culto_dia === 'domingo' ? 'Domingo' : 'Quarta';
+      const dia = DIA_LABEL[x.culto_dia] || x.culto_dia;
       const per = x.culto_periodo === 'manha' ? ' · manhã' : x.culto_periodo === 'noite' ? ' · noite' : '';
       if (!x.culto_semana) return `${dia}${per} — todas as semanas`;
       const ord = x.culto_dia === 'domingo' ? `${x.culto_semana}º` : `${x.culto_semana}ª`;
@@ -375,7 +461,7 @@ export default function VolSupervisores() {
     // Peso: turnos específicos primeiro (na ordem da escala), amplos no fim.
     const peso = (x: any) => {
       if (!x.culto_dia) return 9000;                       // todo culto
-      const base = (DIA_ORDEM[x.culto_dia] || 3) * 1000;
+      const base = (DIA_ORDEM[x.culto_dia] || 4) * 1000;
       if (!x.culto_semana) return base + 500;              // "todas as semanas"
       return base + Number(x.culto_semana) * 10 + (PER_ORDEM[x.culto_periodo] || 0);
     };
@@ -408,7 +494,9 @@ export default function VolSupervisores() {
    * do que a casa combinou. A tela declara em vez de deixar passar.
    */
   const semTurno = useMemo(
-    () => supers.filter((x: any) => !x.culto_dia && x.area !== CURINGA.v),
+    // Time inteiro e admin cobrem todo culto DE PROPÓSITO — só a concessão por
+    // ÁREA sem turno é a que a casa não combinou.
+    () => supers.filter((x: any) => !x.culto_dia && !x.team_id && x.area !== CURINGA.v && papelDaLinha(x) !== 'admin'),
     [supers],
   );
 
@@ -555,14 +643,16 @@ export default function VolSupervisores() {
               empilham em vez de encolher até ficar ilegível. */}
           <div className="flex flex-wrap items-center gap-2">
             <SeletoresEscopo
-              valor={{ area, posId, dia: cultoDia, periodo: cultoPeriodo, semana: cultoSemana }}
-              onChange={(e) => { setArea(e.area); setPosId(e.posId); setCultoDia(e.dia); setCultoPeriodo(e.periodo); setCultoSemana(e.semana); }}
+              valor={{ papel, teamId, area, posId, dia: cultoDia, periodo: cultoPeriodo, semana: cultoSemana }}
+              onChange={(e) => { setPapel(e.papel); setTeamId(e.teamId); setArea(e.area); setPosId(e.posId); setCultoDia(e.dia); setCultoPeriodo(e.periodo); setCultoSemana(e.semana); }}
               areas={AREAS}
+              times={TIMES}
               subareasDe={subareasDe}
+              posicoesDoTime={posicoesDoTime}
             />
             <Button
               onClick={() => grantMut.mutate()}
-              disabled={!selMembro || !area || grantMut.isPending}
+              disabled={!selMembro || (!area && !teamId) || grantMut.isPending}
               className="bg-[#00B39D] hover:bg-[#00B39D]/90 ml-auto"
             >
               {grantMut.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Conceder'}
@@ -622,12 +712,21 @@ export default function VolSupervisores() {
                       <div className="flex items-center justify-between gap-2">
                         <span className="text-sm font-medium">
                           {s.membro?.nome || '—'}
-                          {/* Sem subárea = área inteira. O rótulo diz qual das
+                          {/* PAPEL (24/09): leitor só lê; líder edita; admin é o geral
+                              sem recorte. Dito na linha porque é PERMISSÃO. */}
+                          {papelDaLinha(s) === 'leitor'
+                            ? <span className="ml-2 rounded-full border border-amber-500/50 bg-amber-500/5 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:text-amber-400">Leitor</span>
+                            : papelDaLinha(s) === 'admin'
+                              ? <span className="ml-2 rounded-full border border-violet-500/50 bg-violet-500/5 px-2 py-0.5 text-[11px] font-semibold text-violet-700 dark:text-violet-300">Admin</span>
+                              : <span className="ml-2 rounded-full border px-2 py-0.5 text-[11px] font-semibold text-muted-foreground">Líder</span>}
+                          {(s.team?.name || (s.team_id && timeLabel(s.team_id)))
+                            && <span className="ml-1.5 rounded-full border border-[#00B39D]/40 px-2 py-0.5 text-[11px] font-normal text-[#00806f]">Time · {s.team?.name || timeLabel(s.team_id)}</span>}
+                          {/* Sem subárea = área/time inteiro. O rótulo diz qual das
                               duas coisas é, porque as duas linhas são idênticas
                               de resto e a diferença é de PERMISSÃO. */}
                           {s.position?.name
                             ? <span className="ml-2 rounded-full border px-2 py-0.5 text-[11px] font-normal text-muted-foreground">{s.position.name}</span>
-                            : <span className="ml-2 text-[11px] font-normal text-muted-foreground">· toda a área</span>}
+                            : <span className="ml-2 text-[11px] font-normal text-muted-foreground">{s.team_id ? '· todo o time' : papelDaLinha(s) === 'admin' ? '· tudo' : '· toda a área'}</span>}
                           {rotuloRodizio(s)
                             ? <span className="ml-1.5 rounded-full border border-[#00B39D]/40 bg-[#00B39D]/5 px-2 py-0.5 text-[11px] font-normal text-[#00806f]">{rotuloRodizio(s)}</span>
                             : <span className="ml-1.5 text-[11px] font-normal text-muted-foreground">· todo culto</span>}
@@ -637,6 +736,8 @@ export default function VolSupervisores() {
                             onClick={() => {
                               setEditId(s.id);
                               setEditEsc({
+                                papel: papelDaLinha(s),
+                                teamId: s.team_id || '',
                                 area: s.area || '',
                                 posId: s.position_id || '',
                                 dia: s.culto_dia || '',
@@ -666,14 +767,16 @@ export default function VolSupervisores() {
                               valor={editEsc}
                               onChange={setEditEsc}
                               areas={AREAS}
+                              times={TIMES}
                               subareasDe={subareasDe}
+                              posicoesDoTime={posicoesDoTime}
                               compacto
                             />
                             <div className="flex items-center gap-1.5 sm:ml-auto">
                               <Button
                                 size="sm"
                                 onClick={() => updateMut.mutate()}
-                                disabled={!editEsc.area || updateMut.isPending}
+                                disabled={(!editEsc.area && !editEsc.teamId) || updateMut.isPending}
                                 className="bg-[#00B39D] hover:bg-[#00B39D]/90 gap-1.5"
                               >
                                 {updateMut.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Check className="h-3.5 w-3.5" />}

@@ -101,11 +101,15 @@ export default function PlanejamentoAnual() {
           api.locais().catch(() => []),
           api.areas().catch(() => []),
         ]);
-        setCiclos(Array.isArray(lista) ? lista : []);
+        const listaOk = Array.isArray(lista) ? lista : [];
+        setCiclos(listaOk);
         setConstantes(consts);
         setLocais(locs);
         setAreas(ars);
-        if (lista?.length) await carregarCiclo(lista[0].id);
+        // Padrão de abertura: ciclo 2027 (decisão do Diego 2026-09-18) · cai
+        // pro primeiro da lista se aquele ciclo ainda não existir.
+        const cicloPadrao = listaOk.find((c) => c.ano === 2027) || listaOk[0];
+        if (cicloPadrao) await carregarCiclo(cicloPadrao.id);
       } catch {
         toast.error('Erro ao carregar o Planejamento Anual');
       } finally { setCarregando(false); }
@@ -204,7 +208,7 @@ export default function PlanejamentoAnual() {
             <OrcamentoTab ciclo={ciclo} souFinanceiro={minhaDiretoria === 'financeiro'} />
           )}
           {aba === 3 && ehPastor && (
-            <PastorTab ciclo={ciclo} constantes={constantes} areas={areas} recarregarCiclo={() => carregarCiclo(ciclo.id)} />
+            <PastorTab ciclo={ciclo} constantes={constantes} areas={areas} locais={locais} recarregarCiclo={() => carregarCiclo(ciclo.id)} />
           )}
           {aba === 4 && ehDiretoriaOuSuper && (
             <InsightsTab ciclo={ciclo} areas={areas} />

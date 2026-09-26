@@ -562,7 +562,7 @@ router.delete('/bens/:id', authorizeModule('patrimonio', 4), async (req, res) =>
     const { error } = await supabase.from('pat_bens').update({ status: 'baixado', data_baixa: new Date().toISOString().slice(0, 10) }).eq('id', req.params.id);
     if (error) return res.status(400).json({ error: error.message });
     res.json({ success: true });
-  } catch (e) { res.status(500).json({ error: 'Erro ao dar baixa no bem' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao dar baixa no bem', detalhe: e.message }); }
 });
 
 // ── EDIÇÃO E MOVIMENTAÇÃO EM MASSA ─────────────────────────
@@ -587,6 +587,17 @@ router.delete('/bens/:id', authorizeModule('patrimonio', 4), async (req, res) =>
 // incidente de 27/08/2026 no `bulk/baixa`, diagnosticado pelo agente como
 // "falha silenciosa").
 const LOTE_IDS = 200;
+
+// Valida que todos os ids são UUIDs — sem isso, um id malformado no payload
+// (null, string vazia, id de outra tabela) faz o PostgREST devolver 22P02 no
+// `.in('bem_id', ids)` do bensEmRevisaoAtiva, cai no catch e vira 500 genérico
+// "Erro ao dar baixa em massa" — foi o incidente 8b384376 de 2026-08-27, cujo
+// motivo real ficou preso no log da Vercel. Régua da casa (17/08 · inscrições):
+// erro genérico em ação de operador esconde defeito de configuração por meses.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function idsInvalidos(ids) {
+  return (ids || []).filter(id => typeof id !== 'string' || !UUID_RE.test(id));
+}
 
 async function bensEmRevisaoAtiva(ids) {
   const data = [];
@@ -620,6 +631,8 @@ router.put('/bens/bulk', authorizeModule('patrimonio', 3), async (req, res) => {
   try {
     const { ids, categoria_id, localizacao_id, responsavel_id, status } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
+    const invalidos = idsInvalidos(ids);
+    if (invalidos.length > 0) return res.status(400).json({ error: 'IDs inválidos no payload', ids_invalidos: invalidos });
     if (localizacao_id !== undefined || status === 'baixado') {
       const conflitos = await bensEmRevisaoAtiva(ids);
       if (conflitos.length > 0) return res.status(409).json({ error: mensagemBensEmRevisao(conflitos), bens_em_revisao: conflitos });
@@ -653,6 +666,8 @@ router.put('/bens/bulk/renomear', authorizeModule('patrimonio', 3), async (req, 
   try {
     const { ids, buscar, substituir } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
+    const invalidos = idsInvalidos(ids);
+    if (invalidos.length > 0) return res.status(400).json({ error: 'IDs inválidos no payload', ids_invalidos: invalidos });
     if (!buscar) return res.status(400).json({ error: 'Informe o texto a buscar' });
     const { data: bensAlvo, error: fetchErr } = await supabase.from('pat_bens').select('id, nome').in('id', ids);
     if (fetchErr) return res.status(400).json({ error: fetchErr.message });
@@ -665,7 +680,7 @@ router.put('/bens/bulk/renomear', authorizeModule('patrimonio', 3), async (req, 
       if (!error) atualizados++;
     }
     res.json({ atualizados, sem_ocorrencia: semOcorrencia });
-  } catch (e) { res.status(500).json({ error: 'Erro ao renomear bens em massa' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao renomear bens em massa', detalhe: e.message }); }
 });
 
 // Movimentação (entrada/saída/transferência/manutenção) pra N bens de uma vez
@@ -675,6 +690,8 @@ router.post('/bens/bulk/movimentar', authorizeModule('patrimonio', 3), async (re
   try {
     const { ids, tipo, localizacao_origem_id, localizacao_destino_id, motivo } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
+    const invalidos = idsInvalidos(ids);
+    if (invalidos.length > 0) return res.status(400).json({ error: 'IDs inválidos no payload', ids_invalidos: invalidos });
     if (!tipo) return res.status(400).json({ error: 'Tipo é obrigatório' });
     const conflitos = await bensEmRevisaoAtiva(ids);
     if (conflitos.length > 0) return res.status(409).json({ error: mensagemBensEmRevisao(conflitos), bens_em_revisao: conflitos });
@@ -690,7 +707,7 @@ router.post('/bens/bulk/movimentar', authorizeModule('patrimonio', 3), async (re
       else sucesso++;
     }
     res.json({ sucesso, falhas });
-  } catch (e) { res.status(500).json({ error: 'Erro ao movimentar bens em massa' }); }
+  } catch (e) { res.status(500).json({ error: 'Erro ao movimentar bens em massa', detalhe: e.message }); }
 });
 
 // Dar baixa em N bens de uma vez — mesma lógica do DELETE individual (nunca
@@ -699,6 +716,8 @@ router.post('/bens/bulk/baixa', authorizeModule('patrimonio', 4), async (req, re
   try {
     const { ids, motivo } = req.body;
     if (!Array.isArray(ids) || ids.length === 0) return res.status(400).json({ error: 'Selecione ao menos um bem' });
+    const invalidos = idsInvalidos(ids);
+    if (invalidos.length > 0) return res.status(400).json({ error: 'IDs inválidos no payload', ids_invalidos: invalidos });
     const conflitos = await bensEmRevisaoAtiva(ids);
     if (conflitos.length > 0) return res.status(409).json({ error: mensagemBensEmRevisao(conflitos), bens_em_revisao: conflitos });
     const falhas = [];

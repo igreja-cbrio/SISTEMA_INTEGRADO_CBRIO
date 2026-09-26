@@ -5,6 +5,7 @@ import { financeiro, financeiroV2 } from '../../../api';
 import { Button } from '../../../components/ui/button';
 import { DatePicker } from '@/components/ui/date-picker';
 import { exportPDF } from '../../../lib/export';
+import { safeHref } from '../../../lib/safeHref';
 import SantanderTab from './SantanderTab';
 import EstruturaFiscal from './EstruturaFiscal';
 import ImportarExtratos from './ImportarExtratos';
@@ -284,7 +285,7 @@ function DetalheTransacao({ id, onClose, onEditar, onChanged, podeEditar }) {
             {anexos.map((a) => (
               <div key={a.url} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '5px 0', fontSize: 13 }}>
                 <span>{'📎'}</span>
-                <a href={a.url} target="_blank" rel="noreferrer" style={{ color: C.primary, fontWeight: 600, textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                <a href={safeHref(a.url)} target="_blank" rel="noreferrer" style={{ color: C.primary, fontWeight: 600, textDecoration: 'none', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
                   {a.nome || 'comprovante'}
                 </a>
                 <span style={{ color: C.text3, fontSize: 12 }}>{a.em ? fmtDate(a.em.slice(0, 10)) : ''}</span>

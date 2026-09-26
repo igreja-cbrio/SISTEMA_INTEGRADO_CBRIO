@@ -5,6 +5,9 @@ const { supabase } = require('../utils/supabase');
 const { syncCanal } = require('../services/youtubeCollector');
 const yt = require('../services/youtubeAnalytics');
 const collectors = require('../services/onlineCollectors');
+const { semanaAnteriorBRT, somarViews, compararSemanas } = require('../utils/semanaOnline');
+const canalSerie = require('../utils/canalSerie');
+const arrec = require('../utils/arrecadacaoOnline');
 
 const CRON_SECRET = process.env.CRON_SECRET;
 const { isAuthorizedCron } = require('../utils/cronAuth');
@@ -33,8 +36,28 @@ router.get('/cron/live-monitor', autorizaCron, async (_req, res) => {
   catch (e) { console.error('[live-monitor]', e.message); res.status(500).json({ error: e.message }); }
 });
 router.get('/cron/ds-collect', autorizaCron, async (_req, res) => {
-  try { res.json(await collectors.dsCollector()); }
-  catch (e) { console.error('[ds-collect]', e.message); res.status(500).json({ error: e.message }); }
+  try {
+    const ds = await collectors.dsCollector();
+    // ⚠️ Carona: o `vercel.json` está no TETO de crons do plano, então a coleta
+    // de views/dia pega carona aqui em vez de ganhar slot próprio.
+    // ⚠️ BLOCO PROTEGIDO: falhar aqui não pode derrubar o DS, que é o trabalho
+    // principal deste cron.
+    let views = null;
+    try {
+      views = await collectors.viewsDiaCollector({ dias: 5 });
+    } catch (e) {
+      console.error('[ds-collect/views-dia]', e.message);
+      views = { ok: false, erro: e.message.slice(0, 200) };
+    }
+    res.json({ ...ds, views_dia: views });
+  } catch (e) { console.error('[ds-collect]', e.message); res.status(500).json({ error: e.message }); }
+});
+
+// Backfill manual das views por dia (a Analytics devolve o histórico numa
+// chamada só — é assim que o card nasce com semanas de comparação prontas).
+router.get('/cron/views-dia-collect', autorizaCron, async (req, res) => {
+  try { res.json(await collectors.viewsDiaCollector({ dias: Number(req.query.dias) || 5 })); }
+  catch (e) { console.error('[views-dia-collect]', e.message); res.status(500).json({ error: e.message }); }
 });
 router.get('/cron/ddus-collect', autorizaCron, async (_req, res) => {
   try { res.json(await collectors.ddusCollector()); }
@@ -203,10 +226,26 @@ router.post('/oauth/disconnect', authorize('admin', 'diretor'), async (_req, res
 });
 
 // Execucao manual de coletor (admin/diretor)
-router.post('/coletar/live', authorize('admin', 'diretor'), async (_req, res) => {
+// ⚠️⚠️ COLETA É OPERAÇÃO DO MÓDULO, NÃO PRIVILÉGIO DE CARGO.
+//
+// Pedido do Matheus (23/09/2026): *"a renata ta dizendo que nao tem permissao
+// para clicar nos botoes de coletar pico agr, preciso que ela tenha essa
+// permissao."*
+//
+// Estas rotas exigiam `authorize('admin', 'diretor')` — cargo, não módulo. A
+// Renata é `coordenador-online` (nível 3 de escrita), responsável da área: ela
+// vê a tela inteira e não podia apertar o botão que busca o próprio dado dela.
+// O padrão do módulo já existia logo abaixo (`/comunidade-mensal` usa
+// `authorizeModule('online', 3)`); estas ficaram para trás.
+//
+// ⚠️ O que NÃO muda: `/oauth/disconnect` e `/sync` seguem exigindo admin/diretor.
+// Coletar é ler do YouTube e gravar métrica — reversível, e o pior caso é gastar
+// cota da API. Desconectar derruba a credencial OAuth do canal para todo mundo,
+// e religar depende de quem tem acesso à conta Google.
+router.post('/coletar/live', authorizeModule('online', 3), async (_req, res) => {
   try { res.json(await collectors.liveMonitor()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/ds', authorize('admin', 'diretor'), async (_req, res) => {
+router.post('/coletar/ds', authorizeModule('online', 3), async (_req, res) => {
   try {
     // Vincula o vídeo aos cultos pendentes ANTES de coletar (o DS so age em culto
     // já vinculado · sem isso o botao volta 0 quando o vídeo não foi linkado ainda).
@@ -215,41 +254,60 @@ router.post('/coletar/ds', authorize('admin', 'diretor'), async (_req, res) => {
     res.json({ ...ds, backfill });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/ddus', authorize('admin', 'diretor'), async (_req, res) => {
+router.post('/coletar/ddus', authorizeModule('online', 3), async (_req, res) => {
   try {
     const backfill = await collectors.backfillCultoVideoIds().catch((e) => ({ erro: e.message }));
     const ddus = await collectors.ddusCollector();
     res.json({ ...ddus, backfill });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/subs', authorize('admin', 'diretor'), async (_req, res) => {
+router.post('/coletar/subs', authorizeModule('online', 3), async (_req, res) => {
   try { res.json(await collectors.subsCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/trafego', authorize('admin', 'diretor'), async (_req, res) => {
+router.post('/coletar/trafego', authorizeModule('online', 3), async (_req, res) => {
   try { res.json(await collectors.traficoCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/retencao-curva', authorize('admin', 'diretor'), async (_req, res) => {
+router.post('/coletar/retencao-curva', authorizeModule('online', 3), async (_req, res) => {
   try { res.json(await collectors.retencaoCurvaCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/sub-status', authorize('admin', 'diretor'), async (_req, res) => {
+router.post('/coletar/sub-status', authorizeModule('online', 3), async (_req, res) => {
   try { res.json(await collectors.subStatusCollector()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/backfill-range', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/coletar/backfill-range', authorizeModule('online', 3), async (req, res) => {
   const { data_inicio, data_fim } = req.body || {};
   if (!data_inicio || !data_fim) return res.status(400).json({ error: 'data_inicio e data_fim obrigatórios' });
   try { res.json(await collectors.backfillRange(data_inicio, data_fim)); } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/backfill-cultos', authorize('admin', 'diretor'), async (_req, res) => {
+router.post('/coletar/backfill-cultos', authorizeModule('online', 3), async (_req, res) => {
   try { res.json(await collectors.backfillCultoVideoIds()); } catch (e) { res.status(500).json({ error: e.message }); }
 });
-router.post('/coletar/catch-up', authorize('admin', 'diretor'), async (req, res) => {
+router.post('/coletar/catch-up', authorizeModule('online', 3), async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 5, 20);
     res.json(await collectors.catchUpMetricas({ limit }));
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 // Engajamento de conteúdo · backfill do ano (jan→hoje). ?ano=2026 opcional.
-router.post('/coletar/engajamento', authorize('admin', 'diretor'), async (req, res) => {
+// Backfill manual das views por dia.
+//
+// ⚠️⚠️ POR QUE EXISTE, mesmo já havendo `/cron/views-dia-collect`: aquele é
+// guardado por `autorizaCron`, que aceita o CRON_SECRET **só em HEADER**
+// (`x-cron-secret` ou `Authorization: Bearer`) — nunca em query string, de
+// propósito: segredo em URL vaza no histórico do navegador, no log do servidor
+// e em qualquer print da tela. Abrir a URL do cron no navegador devolve
+// `{"error":"unauthorized"}` e SEMPRE vai devolver.
+//
+// ⇒ O caminho humano é este: autenticado por SESSÃO, disparado por botão, sem
+// nenhum segredo passando pela mão de ninguém. Mesmo padrão de /coletar/ds e
+// /coletar/ddus.
+//
+// ⚠️ O teto de 400 dias mora no coletor (`viewsDiaCollector`), não aqui — é
+// uma régua só, e a Analytics devolve o período inteiro numa chamada.
+router.post('/coletar/views-dia', authorizeModule('online', 3), async (req, res) => {
+  try { res.json(await collectors.viewsDiaCollector({ dias: Number(req.query.dias) || 5 })); }
+  catch (e) { console.error('[coletar/views-dia]', e.message); res.status(500).json({ error: e.message }); }
+});
+router.post('/coletar/engajamento', authorizeModule('online', 3), async (req, res) => {
   try {
     const ano = req.query.ano ? Number(req.query.ano) : undefined;
     res.json(await collectors.engajamentoCollector({ ano }));
@@ -287,6 +345,171 @@ router.get('/engajamento', async (_req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+// GET /api/online/canal-serie?dias=7|28|90
+// ---------------------------------------------------------------------------
+// A série diária do canal (views + horas assistidas) e de onde vêm as views.
+// Alimenta o gráfico do canal e a rosca de tráfego do /online — os dois blocos
+// que a tela NÃO tinha: até 22/09/2026 o módulo não exibia nenhuma série
+// temporal do canal, só números do dia.
+//
+// ⚠️ Endpoint PRÓPRIO, separado do /dashboard, porque o período é filtrável:
+// pendurar no dashboard faria a tela inteira recarregar a cada troca de 7/28/90
+// e recontar as 8 consultas dele à toa.
+//
+// ⚠️ Os dois blocos falham SOZINHOS (`avisos[]`): tráfego indisponível não pode
+// apagar o gráfico, que é a peça principal. Erro nunca vira lista vazia.
+// ---------------------------------------------------------------------------
+router.get('/canal-serie', async (req, res) => {
+  const janela = canalSerie.janelaDoPeriodo(req.query?.dias);
+  const avisos = [];
+  let serie = null;
+  let trafego = null;
+
+  try {
+    const { data, error } = await supabase
+      .from('online_canal_views_dia')
+      .select('data, views, watch_minutos')
+      .gte('data', janela.inicio)
+      .lte('data', janela.fim)
+      .order('data', { ascending: true });
+    if (error) throw error;
+    serie = canalSerie.montarSerie(data, janela);
+  } catch (e) {
+    console.error('[online/canal-serie]', e.message);
+    avisos.push('Não foi possível carregar a série do canal.');
+  }
+
+  try {
+    // ⚠️ Filtra por `periodo_fim` (quando a coleta olhou), não por
+    // `periodo_inicio`: a coleta de tráfego cobre a vida do vídeo, e filtrar
+    // pelo início excluiria vídeo antigo que segue recebendo view no período.
+    const { data, error } = await supabase
+      .from('online_video_trafico')
+      .select('video_id, fonte, views')
+      .gte('periodo_fim', janela.inicio)
+      .limit(4000);
+    if (error) throw error;
+    trafego = canalSerie.agregarTrafego(data);
+  } catch (e) {
+    console.error('[online/canal-serie/trafego]', e.message);
+    avisos.push('Não foi possível carregar as fontes de tráfego.');
+  }
+
+  res.json({
+    ...janela,
+    periodos: canalSerie.PERIODOS,
+    serie,
+    trafego,
+    fonte: 'YouTube Analytics',
+    avisos,
+  });
+});
+
+// GET /api/online/arrecadacao?ano=AAAA
+// ---------------------------------------------------------------------------
+// Arrecadação do canal online: série semanal (QUA→TER), mensal, variação e
+// comparação com o ano anterior.
+//
+// ⚠️⚠️ GUARD PRÓPRIO, e é o ponto mais importante deste endpoint. O módulo
+// `online` é alcançável por **31 cargos com nível ≥ 1 — inclusive "Membro" e
+// "Voluntário"** (medido em 23/09/2026), e desde o conserto de 02/09 o gate da
+// tela é o próprio módulo. Publicar R$ ali contradiz a lei que o módulo irmão
+// já aplica: `painelArea.js` recusa contribuições porque "líder de área não vê
+// doação".
+// ⚠️⚠️ Decisão do Matheus (23/09): quem vê o dinheiro AQUI é a coordenação do
+// CANAL — nível 4 em `online` (`podeVerArrecadacaoOnline`). Quem cuida do
+// dinheiro da igreja vê no módulo Financeiro, não nesta tela.
+// ⚠️ E o guard fica no ENDPOINT, não só na tela: `backend/routes/online.js`
+// não tem nenhum `authorizeModule`, então qualquer pessoa logada (o auth é
+// compartilhado com o app de membros) alcançaria a URL.
+//
+// ⚠️ A agregação é RPC (`fn_online_arrecadacao`): `fin_transacoes` tem 22.618
+// linhas nesta conta e o PostgREST corta em 1.000 **em silêncio**.
+// ---------------------------------------------------------------------------
+router.get('/arrecadacao', async (req, res) => {
+  if (!arrec.podeVerArrecadacaoOnline(req.user)) {
+    return res.status(403).json({
+      error: 'Sem permissão para ver valores de arrecadação.',
+      reason: 'arrecadacao_online_requerido',
+    });
+  }
+
+  const hoje = arrec.hojeBRT();
+  const anoHoje = Number(hoje.slice(0, 4));
+  const anoPedido = Number(req.query?.ano);
+  // ⚠️ FAIL-SAFE: ano torto cai no corrente, nunca vira "NaN-01-01" — o
+  // PostgREST recusaria a data e o endpoint viraria 500 por um query param.
+  const ano = Number.isInteger(anoPedido) && anoPedido >= 2022 && anoPedido <= anoHoje
+    ? anoPedido
+    : anoHoje;
+
+  const inicio = `${ano}-01-01`;
+  // ⚠️ Ano corrente termina HOJE, não em 31/12: ir até o fim do ano encheria a
+  // série de meses vazios e deflacionaria qualquer média.
+  const fim = ano === anoHoje ? hoje : `${ano}-12-31`;
+
+  const avisos = [];
+  let dados = null;
+  let anterior = null;
+
+  try {
+    const { data, error } = await supabase.rpc('fn_online_arrecadacao', {
+      p_inicio: inicio, p_fim: fim,
+    });
+    if (error) throw error;
+    dados = data;
+  } catch (e) {
+    console.error('[online/arrecadacao]', e.message);
+    // ⚠️ Erro NUNCA vira zero: "não conseguimos ler" e "não entrou dinheiro"
+    // levam a decisões opostas.
+    return res.status(500).json({
+      error: 'Não foi possível carregar a arrecadação.',
+      detalhe: e.message,
+    });
+  }
+
+  try {
+    const { data, error } = await supabase.rpc('fn_online_arrecadacao', {
+      p_inicio: `${ano - 1}-01-01`, p_fim: `${ano - 1}-12-31`,
+    });
+    if (error) throw error;
+    anterior = data;
+  } catch (e) {
+    console.error('[online/arrecadacao/anoAnterior]', e.message);
+    // ⚠️ Falhar no ano anterior NÃO derruba o ano corrente, que é a peça
+    // principal — a comparação some e é declarada.
+    avisos.push('Não foi possível carregar o ano anterior para comparação.');
+  }
+
+  const corte = dados?.corte || null;
+  const semanas = arrec.anotarSerie(dados?.semanas, { hoje, corte });
+  const meses = arrec.compararComAnoAnterior(
+    arrec.anotarSerie(dados?.meses, { hoje, corte, campoFim: 'mes' }),
+    anterior?.meses,
+  );
+
+  res.json({
+    ano,
+    anos: Array.from({ length: anoHoje - 2022 + 1 }, (_, i) => 2022 + i),
+    inicio, fim, corte,
+    total: dados?.total ?? null,
+    lancamentos: dados?.lancamentos ?? null,
+    ticket_mediano: dados?.ticket_mediano ?? null,
+    ticket_medio: dados?.ticket_medio ?? null,
+    semanas,
+    meses,
+    semana_atual: arrec.ultimoFechado(semanas),
+    composicao: dados?.composicao || [],
+    concentracao: dados?.concentracao || null,
+    conferencia: arrec.conferencia(dados?.total, dados?.fora_do_recorte),
+    fora_do_recorte: dados?.fora_do_recorte || [],
+    ano_anterior: anterior
+      ? { ano: ano - 1, total: anterior.total, lancamentos: anterior.lancamentos }
+      : null,
+    avisos,
+  });
 });
 
 // GET /api/online/dashboard
@@ -371,6 +594,106 @@ router.get('/dashboard', async (_req, res) => {
       }
     }
 
+    // 5. Views da SEMANA ANTERIOR (seg→dom, BRT)
+    // ⚠️⚠️ BLOCO ISOLADO QUE NUNCA LANÇA: este handler descarta o `error` das
+    // consultas (`const { data } = await ...`) e qualquer exceção aqui
+    // derrubaria a tela INTEIRA do Online com 500.
+    // ⚠️ Erro NUNCA vira 0 nem card ausente — vira `erro` declarado, e a tela
+    // pinta âmbar com o motivo. "Ninguém assistiu" e "a consulta falhou"
+    // levam a decisões opostas.
+    let semana = null;
+    try {
+      const janela = semanaAnteriorBRT();
+      const anterior = semanaAnteriorBRT(Date.parse(`${janela.inicio}T12:00:00Z`));
+
+      const { data: linhas, error: errV } = await supabase
+        .from('online_canal_views_dia')
+        .select('data, views, watch_minutos')
+        .gte('data', anterior.inicio)
+        .lte('data', janela.fim);
+      if (errV) throw new Error(errV.message);
+
+      const atualSem = somarViews(linhas, janela.inicio, janela.fim);
+      const antSem = somarViews(linhas, anterior.inicio, anterior.fim);
+
+      // ⚠️ O detalhamento por CULTO é um RECORTE, não a decomposição do total.
+      // `online_ds`/`online_ddus` são views DAQUELE VÍDEO; o total do card é do
+      // CANAL INTEIRO (vídeos antigos, shorts, cortes). Medido em 21/09: os 5
+      // cultos da semana somam 4.638 contra ~12 mil do canal. A tela DIZ isso —
+      // sem a frase, quem soma os cultos conclui que o card está errado.
+      let cultos = [];
+      try {
+        const { data: cs, error: errC } = await supabase
+          .from('cultos')
+          .select('id, data, hora, online_ds, online_ddus, online_pico, youtube_video_id, service_type_id')
+          .gte('data', janela.inicio)
+          .lte('data', janela.fim)
+          .order('data')
+          .order('hora');
+        if (errC) throw new Error(errC.message);
+
+        const tipos = {};
+        const ids = [...new Set((cs || []).map((c) => c.service_type_id).filter(Boolean))];
+        if (ids.length) {
+          const { data: ts } = await supabase
+            .from('vol_service_types').select('id, name').in('id', ids);
+          for (const t of ts || []) tipos[t.id] = t.name;
+        }
+
+        cultos = (cs || []).map((c) => ({
+          id: c.id,
+          data: c.data,
+          hora: typeof c.hora === 'string' ? c.hora.slice(0, 5) : null,
+          nome: tipos[c.service_type_id] || 'Culto',
+          // ⚠️ `null` ≠ 0: DS só existe em D+1 e DDUS em D+7. Zero aqui diria
+          // que ninguém assistiu, quando ainda nem foi coletado.
+          ds: c.online_ds,
+          ddus: c.online_ddus,
+          pico: c.online_pico,
+          // Culto sem vídeo vinculado nunca vai ter DS — é trabalho de gente,
+          // e a tela declara em vez de mostrar traço sem explicação.
+          sem_video: !c.youtube_video_id,
+        }));
+      } catch (e) {
+        console.error('[online/dashboard/semana/cultos]', e.message);
+        cultos = null;   // ⚠️ null = não deu para ler ≠ [] = não houve culto
+      }
+
+      // Os dias da semana, para o detalhamento. ⚠️ Dia que a Analytics ainda
+      // não fechou simplesmente NÃO vem — e é por isso que `dias_com_dado`
+      // existe: quem vê 5 linhas precisa saber que faltam 2.
+      const diasDaSemana = (linhas || [])
+        .filter((l) => {
+          const d = typeof l?.data === 'string' ? l.data.slice(0, 10) : null;
+          return d && d >= janela.inicio && d <= janela.fim;
+        })
+        .map((l) => ({ data: String(l.data).slice(0, 10), views: l.views, watch_minutos: l.watch_minutos }))
+        .sort((a, b) => (a.data < b.data ? -1 : 1));
+
+      semana = {
+        ...janela,
+        ...atualSem,
+        dias_detalhe: diasDaSemana,
+        cultos,
+        fonte: 'YouTube Analytics · views do canal',
+        // ⚠️ Comparação em número ABSOLUTO, sem %: feriado, evento especial e
+        // semana com 4 ou 5 cultos movem o número sem dizer nada sobre
+        // desempenho — medido, a oscilação semana a semana chega a +74%.
+        anterior: antSem.views === null ? null : {
+          rotulo: anterior.rotulo,
+          views: antSem.views,
+          dias_com_dado: antSem.dias_com_dado,
+        },
+        // ⚠️ A régua decide se o % PODE ser mostrado — a tela só exibe. Com a
+        // semana incompleta ela devolve o motivo, nunca um percentual que a
+        // coleta parcial inventou (5 dias vs 7 daria -55% hoje).
+        comparacao: compararSemanas(atualSem, antSem),
+      };
+    } catch (e) {
+      console.error('[online/dashboard/semana]', e.message);
+      semana = { erro: 'Não foi possível carregar as views da semana.', detalhe: e.message.slice(0, 160) };
+    }
+
     res.json({
       canal: atual,
       delta,
@@ -379,6 +702,7 @@ router.get('/dashboard', async (_req, res) => {
       top_all_time: topAllTime || [],
       series: series || [],
       matriz_online: matrizOnline,
+      semana,
     });
   } catch (e) {
     console.error('[online/dashboard]', e.message);

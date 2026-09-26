@@ -8,6 +8,7 @@
 // de baixar é um <a> de verdade (não window.open): o navegador mostra o destino
 // no toque longo e bloqueador de pop-up não engole o download.
 import { useState } from 'react';
+import { safeHref } from '../../lib/safeHref';
 
 export default function BaixarInstrucoes({ instrucoes, C }: {
   instrucoes: { url: string; nome?: string | null } | null | undefined;
@@ -37,7 +38,7 @@ export default function BaixarInstrucoes({ instrucoes, C }: {
         Elas também vão no seu e-mail de confirmação.
       </p>
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <a href={instrucoes.url} target="_blank" rel="noopener noreferrer" style={{
+        <a href={safeHref(instrucoes.url)} target="_blank" rel="noopener noreferrer" style={{
           flex: 1, minWidth: 160, textAlign: 'center', textDecoration: 'none',
           padding: '12px 16px', borderRadius: 999, background: '#00B39D', color: '#fff',
           fontSize: 14, fontWeight: 700,

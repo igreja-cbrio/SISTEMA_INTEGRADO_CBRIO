@@ -195,6 +195,7 @@ export default function InscricaoBatismo() {
     deficiencia_descricao: '',
     motivo: '',
     observacoes: '',
+    data_batismo: '',
     horario_culto: '',
     area_kpi: '', // opcional · 'sede' (default) | 'ami' | 'bridge' | 'online'
     website: '', // honeypot
@@ -216,14 +217,27 @@ export default function InscricaoBatismo() {
     aviso_optin: AVISO_OPTIN,
   });
   const submittingRef = useRef(false);
+  // ⚠️ As datas de batismo abertas (25/09/2026). Antes o formulário só sabia da
+  // próxima; quem queria o mês seguinte não tinha como pedir e esperava a data
+  // atual passar — ~3 semanas e meia por mês.
+  const [datas, setDatas] = useState<{ data_batismo: string; horarios: typeof horarios }[]>([]);
 
   useEffect(() => {
     batismoPublico.horarios()
-      .then((r: { data_batismo: string; horarios: typeof horarios }) => {
+      .then((r: { data_batismo: string; horarios: typeof horarios; datas?: typeof datas }) => {
         setProximaData(r.data_batismo);
-        const hs = Array.isArray(r.horarios) ? r.horarios : [];
+        // ⚠️ `datas` é campo NOVO. Se o servidor for antigo (ou falhar em
+        // devolvê-lo), cai na data única — a tela nunca fica sem nada.
+        const ds = Array.isArray(r.datas) && r.datas.length
+          ? r.datas
+          : [{ data_batismo: r.data_batismo, horarios: Array.isArray(r.horarios) ? r.horarios : [] }];
+        setDatas(ds);
+        const hs = ds[0].horarios || [];
         setHorarios(hs);
-        // pré-seleciona o 1º horário aberto (se a pessoa ainda não escolheu)
+        // ⚠️ A PRIMEIRA data vem pré-marcada de propósito: "o próximo batismo é
+        // dia X" é o que a igreja comunica no púlpito e no WhatsApp. Um seletor
+        // vazio pedindo escolha dissolveria isso.
+        setForm(f => (f.data_batismo ? f : { ...f, data_batismo: ds[0].data_batismo }));
         if (hs.length) setForm(f => (f.horario_culto ? f : { ...f, horario_culto: hs[0].horario }));
       })
       .catch(() => {
@@ -259,6 +273,7 @@ export default function InscricaoBatismo() {
     if (!validarNascimento(form.data_nascimento)) return setError('Informe sua data de nascimento.');
     if (!SEXOS.includes(form.sexo)) return setError('Selecione o sexo.');
     if (!form.tamanho_camisa) return setError('Escolha o tamanho da camisa.');
+    if (datas.length > 1 && !form.data_batismo) return setError('Escolha a data do batismo.');
     if (horarios.length && !form.horario_culto) return setError('Escolha o horário do batismo.');
     // ⚠️ Exigido só quando a pessoa AFIRMOU — a mesma condição que mostrou o
     // campo (régua única). Exigir campo que a tela não mostrou deixa o
@@ -286,6 +301,11 @@ export default function InscricaoBatismo() {
         deficiencia_descricao: form.deficiencia_descricao.trim() || null,
         motivo: form.motivo || null,
         observacoes: form.observacoes || null,
+        // ⚠️⚠️ A DATA PRECISA IR NO PAYLOAD. Sem isto o seletor pintaria na tela
+        // e o servidor gravaria a primeira data assim mesmo — que é exatamente
+        // o defeito do fan-out do app que esta mudança conserta. Escolher e o
+        // sistema ignorar é pior que não poder escolher.
+        data_batismo: form.data_batismo || null,
         horario_culto: form.horario_culto || null,
         area_kpi: form.area_kpi || null,
         aceita_termos: aceitaTermos,
@@ -455,6 +475,68 @@ export default function InscricaoBatismo() {
                   ]}
                 />
               </Row>
+
+              {/* ⚠️⚠️ DATA DO BATISMO (25/09/2026) — pedido do Matheus: *"hoje uma
+                  pessoa queria se inscrever para um batismo do mês que vem"*.
+                  Antes só existia a próxima data, e quem queria a seguinte tinha
+                  de esperar a atual passar: ~3 semanas e meia de espera por mês.
+
+                  ⚠️ Só aparece com MAIS DE UMA data. Com uma só, um seletor de
+                  um item é ruído — e o texto "Próximo batismo: X" no topo já diz
+                  tudo. */}
+              {datas.length > 1 && (
+                <div style={{ marginBottom: 20, marginTop: 4 }}>
+                  <label style={{ display: 'block', fontSize: 12, color: 'var(--cbrio-text3)', marginBottom: 8 }}>
+                    Data do batismo <span style={{ color: '#ef4444' }}>*</span>
+                  </label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
+                    {datas.map(d => {
+                      const on = form.data_batismo === d.data_batismo;
+                      const hs = d.horarios || [];
+                      // Vagas do mês inteiro: `null` (sem teto) não soma.
+                      const vagas = hs.reduce((t, h) => (h.vagas_restantes == null ? t : t + h.vagas_restantes), 0);
+                      const semVaga = hs.length === 0;
+                      return (
+                        <button
+                          key={d.data_batismo}
+                          type="button"
+                          disabled={semVaga}
+                          onClick={() => {
+                            // ⚠️ Trocar a data TROCA os horários e limpa o que
+                            // estava escolhido: "09:30" de setembro não é o
+                            // mesmo slot de novembro, e a ocupação é por data.
+                            setHorarios(hs);
+                            setForm(f => ({
+                              ...f,
+                              data_batismo: d.data_batismo,
+                              horario_culto: hs.some(h => h.horario === f.horario_culto)
+                                ? f.horario_culto
+                                : (hs[0]?.horario || ''),
+                            }));
+                          }}
+                          style={{
+                            display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 2,
+                            minHeight: 56, padding: '11px 14px', borderRadius: 12,
+                            cursor: semVaga ? 'not-allowed' : 'pointer', textAlign: 'left',
+                            border: `1.5px solid ${on ? '#00B39D' : C.inputBorder}`,
+                            background: on ? 'rgba(0,179,157,0.12)' : (C.isDark ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.03)'),
+                            color: on ? '#00B39D' : 'var(--cbrio-text)',
+                            opacity: semVaga ? 0.5 : 1,
+                            fontFamily: 'inherit', transition: 'border-color 0.15s, background 0.15s',
+                          }}
+                        >
+                          <span style={{ fontSize: 15, fontWeight: on ? 700 : 600 }}>
+                            {formatDataLonga(d.data_batismo)}
+                          </span>
+                          <span style={{ fontSize: 11.5, color: on ? '#00B39D' : 'var(--cbrio-text3)', opacity: on ? 0.9 : 1 }}>
+                            {semVaga ? 'sem vaga' : `${vagas} vaga(s)`}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Horário do batismo · opções (só os disponíveis · lotados já
                   não vêm do backend). Antes era lista suspensa (Matheus · 16/07). */}

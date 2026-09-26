@@ -430,6 +430,106 @@ function validarTravas({ propostas, avaliacoesPorProposta, decisoesPorProposta, 
   };
 }
 
+// ── Apontamento do Pastor (custo/recorrência/data · 2026-09-18) ─────────
+// O Pastor pode apontar, na tela de decisão, um valor DIFERENTE do que o
+// proponente informou para custo/recorrência/data — sem alterar o valor
+// original (auditoria). O apontamento só vale para o cálculo da linha
+// "aprovadas em tempo real" do orçamento (usarApontamento: true); a linha
+// "todas as propostas" (imutável) NUNCA usa apontamento.
+const MULTIPLICADOR_RECORRENCIA = {
+  unica: 1, diaria: 365, semanal: 52, mensal: 12, trimestral: 4, semestral: 2, personalizada: 1,
+};
+
+function valorEfetivoProposta(p) {
+  const ap = (v, orig) => (v === null || v === undefined ? orig : v);
+  return {
+    custo: ap(p.custo_apontado, Number(p.custo || 0)),
+    recorrencia: ap(p.recorrencia_apontada, p.recorrencia),
+    diaSemana: ap(p.dia_semana_apontado, p.dia_semana),
+    dataInicio: ap(p.data_inicio_apontada, p.data_inicio),
+    precisaoInicio: ap(p.precisao_inicio_apontada, p.precisao_inicio),
+  };
+}
+
+// Custo ANUAL equivalente ao custo informado, dada a recorrência.
+function custoAnualizado(custoBase, recorrencia) {
+  const fator = MULTIPLICADOR_RECORRENCIA[recorrencia] ?? 1;
+  return Number(custoBase || 0) * fator;
+}
+
+// Distribui o custo de UMA proposta pelos 12 meses do ano do ciclo.
+// usarApontamento=false (linha "todas as propostas" · imutável): SEMPRE os
+// valores originais submetidos, nunca os apontados pelo Pastor.
+// usarApontamento=true (linha "aprovadas em tempo real"): usa
+// valorEfetivoProposta (valor apontado quando existir).
+//
+// - única/personalizada: custo líquido (custo − arrecadação prevista, se
+//   tem_arrecadacao) distribuído nos meses ocupados por data_inicio..data_fim
+//   (reusa mesesOcupados/rateioMensal — a MESMA régua do orçamento atual).
+// - recorrente (diária/semanal/mensal/trimestral/semestral): simplificação
+//   DELIBERADA — distribui o custo ANUALIZADO igualmente pelos 12 meses do
+//   ano do ciclo (custo mensal fixo = anualizado / 12), independente de
+//   quando a proposta "começa". Evolução futura: cronograma de desembolso.
+function distribuirCustoPorMes(proposta, { usarApontamento } = {}) {
+  const efetivo = usarApontamento ? valorEfetivoProposta(proposta) : {
+    custo: Number(proposta.custo || 0),
+    recorrencia: proposta.recorrencia,
+    diaSemana: proposta.dia_semana,
+    dataInicio: proposta.data_inicio,
+    precisaoInicio: proposta.precisao_inicio,
+  };
+  const recorrencia = efetivo.recorrencia || 'unica';
+
+  if (recorrencia === 'unica' || recorrencia === 'personalizada') {
+    // Reusa a régua já existente de rateio (mesosOcupados/rateioMensal),
+    // aplicada sobre os campos EFETIVOS (apontados ou originais).
+    const base = {
+      ...proposta,
+      custo: efetivo.custo,
+      data_inicio: efetivo.dataInicio,
+      precisao_inicio: efetivo.precisaoInicio,
+    };
+    return rateioMensal(base);
+  }
+
+  // Recorrente: custo anualizado / 12, igual em todos os meses.
+  const porMes = new Array(12).fill(0);
+  const mensal = Math.round((custoAnualizado(efetivo.custo, recorrencia) / 12) * 100) / 100;
+  for (let i = 0; i < 12; i += 1) porMes[i] = mensal;
+  return porMes;
+}
+
+// Soma o custo mensal de TODAS as propostas que entraram no funil (exclui
+// só rascunho e arquivada — a régua "se todas fossem aprovadas" inclui
+// enviada/aprovada/aprovada_ressalvas/reprovada/retificada) · usarApontamento
+// SEMPRE false: é a linha imutável de referência.
+function custoMensalTodasPropostas(propostas) {
+  const total = new Array(12).fill(0);
+  (propostas || [])
+    .filter((p) => !p.deleted_at && !['rascunho', 'arquivada'].includes(p.estado))
+    .forEach((p) => {
+      distribuirCustoPorMes(p, { usarApontamento: false }).forEach((v, i) => {
+        total[i] = Math.round((total[i] + v) * 100) / 100;
+      });
+    });
+  return total;
+}
+
+// Soma o custo mensal só das propostas "no calendário" (aprovada ou
+// aprovada_ressalvas) · usarApontamento SEMPRE true: é a linha "em tempo
+// real", que reflete o que o Pastor apontou.
+function custoMensalAprovadas(propostas) {
+  const total = new Array(12).fill(0);
+  (propostas || [])
+    .filter((p) => !p.deleted_at && ['aprovada', 'aprovada_ressalvas'].includes(p.estado))
+    .forEach((p) => {
+      distribuirCustoPorMes(p, { usarApontamento: true }).forEach((v, i) => {
+        total[i] = Math.round((total[i] + v) * 100) / 100;
+      });
+    });
+  return total;
+}
+
 // ── Orçamento (caixa livre e visão do Pastor · SEMPRE derivados) ────────
 const LINHAS_ORCAMENTO = ['dizimos_ofertas', 'outras_receitas', 'folha', 'despesas_operacionais', 'provisoes'];
 
@@ -449,6 +549,15 @@ function caixaLivreMensal(valores) {
  * Visão orçamentária do Pastor: por mês, caixa livre × custo dos
  * aprovados no calendário × custo dos propostos com quórum e sem
  * decisão × saldo projetado. Proposta sem quórum NÃO conta (teste 2).
+ *
+ * `soma` usa `distribuirCustoPorMes(..., { usarApontamento: true })` — a
+ * MESMA régua de `custoMensalAprovadas` — e não o `rateioMensal` cru: (1)
+ * proposta recorrente (semanal/mensal/...) precisa do custo ANUALIZADO/12
+ * em vez de cair inteiro no mês de `data_inicio` (rateioMensal só sabe
+ * distribuir única/personalizada); (2) o apontamento de custo/recorrência/
+ * data do Pastor (2026-09-18) precisa refletir aqui — sem isso "Esta
+ * proposta" no gráfico da tela de decisão ficava sempre nos valores
+ * originais, nunca no que o Pastor acabou de apontar.
  */
 function orcamentoDoPastor({ propostas, avaliacoesPorProposta, decisoesPorProposta, quorum, caixaLivre, suposicoes = SUPOSICOES }) {
   const vivas = (propostas || []).filter((p) => !p.deleted_at);
@@ -461,7 +570,9 @@ function orcamentoDoPastor({ propostas, avaliacoesPorProposta, decisoesPorPropos
   const soma = (lista) => {
     const total = new Array(12).fill(0);
     lista.forEach((p) => {
-      rateioMensal(p).forEach((v, i) => { total[i] = Math.round((total[i] + v) * 100) / 100; });
+      distribuirCustoPorMes(p, { usarApontamento: true }).forEach((v, i) => {
+        total[i] = Math.round((total[i] + v) * 100) / 100;
+      });
     });
     return total;
   };
@@ -550,9 +661,13 @@ function projetarProposta({ proposta, avaliacoes, decisoes, apontamentos, quorum
           verificada_por: vigente.ressalva_verificada_por || null,
         } : null,
       apontamentos: (apontamentos || []).filter((ap) => !ap.deleted_at),
-      avaliacoes: quorumCompleto ? avs : null, // cego até o quórum, como os diretores
-      medias: quorumCompleto ? mediasPorCriterio(avs) : null,
-      soma: quorumCompleto ? mediasPorCriterio(avs).reduce((s, m) => s + m, 0) : null,
+      // 2026-09-18: o Pastor SEMPRE recebe as avaliações (mesmo parciais,
+      // conforme cada diretoria avalia) — diferente do avaliador, para quem
+      // o cego-até-o-quórum continua valendo. Médias/soma seguem sobre o
+      // que já foi avaliado (avs pode ter menos que `quorum` itens).
+      avaliacoes: avs,
+      medias: avs.length ? mediasPorCriterio(avs) : null,
+      soma: avs.length ? mediasPorCriterio(avs).reduce((s, m) => s + m, 0) : null,
       diff_retificacao: proposta.versao_anterior ? diffRetificacao(proposta.versao_anterior, proposta) : null,
     };
   }
@@ -602,6 +717,13 @@ module.exports = {
   // orçamento
   caixaLivreMensal,
   orcamentoDoPastor,
+  // apontamento do Pastor
+  MULTIPLICADOR_RECORRENCIA,
+  valorEfetivoProposta,
+  custoAnualizado,
+  distribuirCustoPorMes,
+  custoMensalTodasPropostas,
+  custoMensalAprovadas,
   // visibilidade
   projetarProposta,
 };

@@ -2169,6 +2169,9 @@ router.get('/jornada-convertidos', authorizeModule('jornada-convertidos', 1), as
       i.data_decisao = i.data_culto; // nome do campo na régua de tempo
       i.dias_parado = jt.diasParado(i, hojeBRT);
       i.total_marcos = jt.totalMarcos(i);
+      // SEPARADO do total: contato não é engajamento (lei em utils/jornadaTempo).
+      i.total_engajamento = jt.totalEngajamento(i);
+      i.dias_ate_engajar = jt.diasAteEngajar(i);
     }
 
     const total = itens.length;
@@ -2197,7 +2200,17 @@ router.get('/jornada-convertidos', authorizeModule('jornada-convertidos', 1), as
         // calculada sobre poucos, e por quê. Silêncio aqui faz um número
         // frágil parecer sólido.
         datas_de_importacao: [...datasImport].sort(),
-        engajaram: itens.filter((i) => i.total_marcos > 0).length,
+        // ENGAJOU = tem marco de ENGAJAMENTO (contato fora). Com o contato
+        // dentro, esta coorte dizia 97% enquanto só 12% tinham qualquer marco
+        // além dele — o número media o trabalho da equipe, não a resposta da
+        // pessoa. Ver a lei do engajamento em utils/jornadaTempo.
+        engajaram: itens.filter((i) => i.total_engajamento > 0).length,
+        sem_nenhum_engajamento: itens.filter((i) => i.total_engajamento === 0).length,
+        // Contato continua publicado, como o que ele é: alcance pastoral.
+        contato_feito: itens.filter((i) => i.marcos?.contato?.alcancado).length,
+        // Mediana de dias até o PRIMEIRO marco de engajamento (só data confiável)
+        mediana_ate_engajar: jt.mediana(itens.map((i) => i.dias_ate_engajar).filter((d) => d !== null)),
+        engajaram_com_data_confiavel: itens.filter((i) => i.dias_ate_engajar !== null).length,
         sem_nenhum_marco: itens.filter((i) => i.total_marcos === 0).length,
         // marcador sensível fora da resposta ⇒ a tela declara que está incompleta
         sensiveis_ocultos: !podeGenerosidade,

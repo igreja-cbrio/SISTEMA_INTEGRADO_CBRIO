@@ -91,6 +91,15 @@ const FILTRO_STATUS = [
   { key: 'rejeitado', label: 'Rejeitados / sem interesse', casa: ['rejeitado', 'cancelado', 'enc_sem_interesse', 'lid_recusado'] },
 ];
 
+const FILTRO_STATUS_GRUPO = [
+  { key: 'todos', label: 'Todas as pendências', casa: null },
+  { key: 'lider', label: 'Aguardando o líder', casa: ['pendente'] },
+  { key: 'coordenacao', label: 'Precisa da coordenação', casa: ['devolvido', 'sem_contato'] },
+  { key: 'encaminhado', label: 'Encaminhadas', casa: ['encaminhado'] },
+];
+
+const STATUS_PEDIDO_ABERTO = new Set(['pendente', 'devolvido', 'sem_contato', 'encaminhado']);
+
 // Funções possíveis do vínculo do novo líder num grupo EXISTENTE — entra como
 // MAIS UM no roster; o líder principal (quem recebe o WhatsApp de aprovação)
 // só muda se a equipe trocar na tela do grupo (Marcos · 17/07).
@@ -152,6 +161,14 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
   // resposta errada com cara de resposta.
   const [transfAviso, setTransfAviso] = useState(null);
   const [loading, setLoading] = useState(true);
+
+  const [vista, setVista] = useState(() => {
+    try { return new URLSearchParams(window.location.search).get('entrada_view') === 'grupos' ? 'grupos' : 'pessoas'; }
+    catch { return 'pessoas'; }
+  });
+  const [grupoExpandidoId, setGrupoExpandidoId] = useState(null);
+  const [fStatusGrupo, setFStatusGrupo] = useState('todos');
+  const [origemAntesGrupos, setOrigemAntesGrupos] = useState('todas');
 
   const [busca, setBusca] = useState('');
   const [fOrigem, setFOrigem] = useState('todas');   // todas | inscricao | next
@@ -529,6 +546,56 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
     };
   }, [rowsBase, janela.temporadaIni]);
 
+  // A visão Por grupo é outra projeção da MESMA fila. Entram somente pedidos
+  // de inscrição que ainda exigem uma decisão; Next, renovação, candidatura e
+  // transferência continuam disponíveis na visão Por pessoa, sem sumir da caixa.
+  const gruposPendentes = useMemo(() => {
+    const bucket = FILTRO_STATUS_GRUPO.find(f => f.key === fStatusGrupo)?.casa || null;
+    const porGrupo = new Map();
+    for (const r of rowsBase) {
+      if (r.tipo !== 'pedido' || !STATUS_PEDIDO_ABERTO.has(r.statusKey)) continue;
+      if (bucket && !bucket.includes(r.statusKey)) continue;
+      const p = r.raw;
+      const grupo = p.mem_grupos;
+      const grupoId = p.grupo_id || grupo?.id;
+      if (!grupoId) continue;
+      const atual = porGrupo.get(grupoId) || {
+        id: grupoId,
+        nome: grupo?.nome || 'Grupo sem nome',
+        codigo: grupo?.codigo || null,
+        bairro: grupo?.bairro || null,
+        lider: grupo?.mem_membros?.nome || null,
+        capacidade: grupo?.capacidade ?? null,
+        itens: [],
+        aguardandoLider: 0,
+        coordenacao: 0,
+        encaminhados: 0,
+        maisAntigoMs: Infinity,
+      };
+      atual.itens.push(r);
+      if (r.statusKey === 'pendente') atual.aguardandoLider += 1;
+      else if (['devolvido', 'sem_contato'].includes(r.statusKey)) atual.coordenacao += 1;
+      else if (r.statusKey === 'encaminhado') atual.encaminhados += 1;
+      const criadoMs = new Date(r.data).getTime();
+      if (!Number.isNaN(criadoMs) && criadoMs < atual.maisAntigoMs) atual.maisAntigoMs = criadoMs;
+      porGrupo.set(grupoId, atual);
+    }
+    return [...porGrupo.values()]
+      .map(g => {
+        const horas = Number.isFinite(g.maisAntigoMs) ? (Date.now() - g.maisAntigoMs) / 36e5 : 0;
+        const nivel = horas >= 72 ? 3 : g.coordenacao > 0 ? 2 : horas >= 24 ? 1 : 0;
+        return { ...g, horas, nivel };
+      })
+      .sort((a, b) => b.nivel - a.nivel || b.coordenacao - a.coordenacao || a.maisAntigoMs - b.maisAntigoMs || b.itens.length - a.itens.length);
+  }, [rowsBase, fStatusGrupo]);
+
+  const estatGrupos = useMemo(() => ({
+    grupos: gruposPendentes.length,
+    pessoas: gruposPendentes.reduce((n, g) => n + g.itens.length, 0),
+    criticos: gruposPendentes.filter(g => g.horas >= 72).length,
+    coordenacao: gruposPendentes.reduce((n, g) => n + g.coordenacao, 0),
+  }), [gruposPendentes]);
+
   const { pageItems, paginacaoProps } = usePaginacaoLocal(rows, 50);
 
   // ── Helpers portados do fluxo de pedidos ──
@@ -735,11 +802,126 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
     if (abrir && r.tipo === 'lider') carregarGrupos();
   };
 
+  const trocarVista = (proxima) => {
+    setVista(proxima);
+    setExpandedId(null);
+    setGrupoExpandidoId(null);
+    setSelected(new Set());
+    if (proxima === 'grupos') {
+      setOrigemAntesGrupos(fOrigem);
+      setFOrigem('inscricao');
+      setSoContatoRuim(false);
+    } else {
+      setFOrigem(origemAntesGrupos);
+    }
+    try {
+      const url = new URL(window.location.href);
+      if (proxima === 'grupos') url.searchParams.set('entrada_view', 'grupos');
+      else url.searchParams.delete('entrada_view');
+      window.history.replaceState({}, '', url);
+    } catch { /* navegação segue mesmo sem URL persistida */ }
+  };
+
+  const renderPainelLinha = (r) => {
+    if (r.tipo === 'pedido') {
+      const p = r.raw;
+      return <PainelPedido
+        p={p}
+        eventos={eventosCache[p.id]}
+        podeEditar={podeEditar}
+        capacidadeInfo={capacidadeInfo}
+        rejectingId={rejectingId} setRejectingId={setRejectingId}
+        motivoRej={motivoRej} setMotivoRej={setMotivoRej}
+        sugerindoId={sugerindoId} abrirSugestao={abrirSugestao}
+        grupoSugestao={grupoSugestao} setGrupoSugestao={setGrupoSugestao}
+        motivoSel={motivoSel} setMotivoSel={setMotivoSel}
+        motivoLivre={motivoLivre} setMotivoLivre={setMotivoLivre}
+        motivoSugestaoFinal={motivoSugestaoFinal}
+        gruposAtivos={gruposAtivos}
+        enviandoSugestao={enviandoSugestao}
+        aprovar={aprovar} rejeitar={rejeitar} sugerir={sugerir}
+        aprovarDireto={aprovarDireto} carregarGrupos={carregarGrupos}
+        pausarInscricoes={pausarInscricoes}
+        fecharSugestao={() => { setSugerindoId(null); setGrupoSugestao(''); setMotivoSel(''); setMotivoLivre(''); }}
+      />;
+    }
+    if (r.tipo === 'renov') return <PainelRenovacao row={r.raw} podeEditar={podeEditar} onTriado={depois} />;
+    if (r.tipo === 'transf') return <PainelTransferencia
+      t={r.raw} podeEditar={podeEditar} gruposAtivos={gruposAtivos}
+      carregarGrupos={carregarGrupos} onResolvido={depois}
+    />;
+    if (r.tipo === 'lider') return <PainelLider
+      insc={r.raw} podeEditar={podeEditar} gruposAtivos={gruposAtivos}
+      acaoLoading={lidAcaoLoading}
+      recusandoId={lidRecusandoId} setRecusandoId={setLidRecusandoId}
+      motivoRec={lidMotivoRec} setMotivoRec={setLidMotivoRec}
+      vinculandoId={lidVinculandoId} abrirVinculo={abrirVinculoLider}
+      fecharVinculo={() => { setLidVinculandoId(null); setLidVincGrupoId(''); }}
+      vincGrupoId={lidVincGrupoId} setVincGrupoId={setLidVincGrupoId}
+      vincFuncao={lidVincFuncao} setVincFuncao={setLidVincFuncao}
+      aceitar={aceitarLider} recusar={recusarLider} vincular={vincularLider}
+      onCriarGrupo={onCriarGrupoParaLider}
+    />;
+    return <PainelNext
+      e={r.raw} podeEditar={podeEditar}
+      devDevolutiva={devDevolutiva} setDevDevolutiva={setDevDevolutiva}
+      devCanal={devCanal} setDevCanal={setDevCanal}
+      devObs={devObs} setDevObs={setDevObs}
+      devGrupoId={devGrupoId} setDevGrupoId={setDevGrupoId}
+      gruposAtivos={gruposAtivos} salvando={salvandoDev}
+      salvar={() => salvarDevolutiva(r.raw)}
+    />;
+  };
+
   return (
     <div style={{ paddingTop: 14 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 14 }}>
+        <div style={{ display: 'inline-flex', border: `1px solid ${C.border}`, borderRadius: 10, overflow: 'hidden' }}>
+          {[
+            ['pessoas', 'Por pessoa'],
+            ['grupos', 'Por grupo'],
+          ].map(([key, label]) => {
+            const ativo = vista === key;
+            return (
+              <button key={key} type="button" onClick={() => trocarVista(key)} aria-pressed={ativo} style={{
+                padding: '8px 18px', border: 0, cursor: 'pointer', fontSize: 13,
+                fontWeight: ativo ? 700 : 500, background: ativo ? C.primaryBg : 'transparent',
+                color: ativo ? C.primary : C.t3,
+              }}>
+                {label}
+              </button>
+            );
+          })}
+        </div>
+        <span style={{ fontSize: 12, color: C.t3 }}>
+          {vista === 'grupos'
+            ? 'Somente inscrições que ainda precisam de decisão, agrupadas pelo grupo escolhido.'
+            : 'Todas as entradas, uma pessoa por linha.'}
+        </span>
+      </div>
+
+      {!loading && vista === 'grupos' && (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10, marginBottom: 14 }}>
+          <ResumoCard titulo="Grupos com pendências" valor={estatGrupos.grupos} />
+          <ResumoCard titulo="Inscrições aguardando" valor={estatGrupos.pessoas} />
+          <ResumoCard
+            titulo="Grupos críticos"
+            valor={estatGrupos.criticos}
+            destaque={estatGrupos.criticos > 0 ? 'pedido mais antigo há 3+ dias' : null}
+            corDestaque={C.red}
+          />
+          <ResumoCard
+            titulo="Ação da coordenação"
+            valor={estatGrupos.coordenacao}
+            destaque={estatGrupos.coordenacao > 0 ? 'recusados ou sem contato' : null}
+            corDestaque={C.violet}
+          />
+        </div>
+      )}
+
       {/* Pulso da fila — leitura, sem botões. Reflete os filtros de origem,
           período e busca (não o de status — é o retrato por status). */}
-      {!loading && (
+      {!loading && vista === 'pessoas' && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10, marginBottom: 14 }}>
           <ResumoCard titulo="Entradas hoje" valor={estat.hoje} />
           <ResumoCard
@@ -791,7 +973,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
           A varredura que eu fazia no banco, agora dentro do sistema. Segue os
           MESMOS filtros dos cards (origem, período, busca) pra não existirem
           duas verdades na mesma tela. */}
-      {!loading && estat.pedidos > 0 && (
+      {!loading && vista === 'pessoas' && estat.pedidos > 0 && (
         <div style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 14, marginBottom: 14, overflow: 'hidden' }}>
           <button
             onClick={() => setPainelAberto(v => !v)}
@@ -910,7 +1092,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
       {/* ── Líderes · quem falta responder (pedido da Naná/Nélio · 04/08) ──
           Conferência da lista (respondeu × não respondeu · MESMO endpoint do
           card da aba Envios) + pedidos parados aguardando o líder aprovar. */}
-      {!loading && (
+      {!loading && vista === 'pessoas' && (
         <div style={{ background: C.card, border: '1px solid var(--hairline)', borderRadius: 14, marginBottom: 14, overflow: 'hidden' }}>
           <button
             onClick={() => setLideresAberto(v => !v)}
@@ -1017,24 +1199,32 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
           <Search size={14} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', color: C.t3 }} />
           <Input placeholder="Nome, telefone ou grupo..." value={busca} onChange={e => setBusca(e.target.value)} style={{ paddingLeft: 32 }} />
         </div>
-        <select value={fOrigem} onChange={e => setFOrigem(e.target.value)} style={selStyle}>
-          <option value="todas">Origem</option>
-          <option value="inscricao">Inscrição de grupos</option>
-          <option value="next">Next</option>
-          <option value="lideres">Novos líderes/anfitriões</option>
-          <option value="renovacao">Renovação de temporada</option>
-          <option value="transferencia">Transferências (app)</option>
-        </select>
-        <select value={fStatus} onChange={e => setFStatus(e.target.value)} style={selStyle}>
-          {FILTRO_STATUS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
-        </select>
+        {vista === 'pessoas' ? (
+          <>
+            <select value={fOrigem} onChange={e => setFOrigem(e.target.value)} style={selStyle}>
+              <option value="todas">Origem</option>
+              <option value="inscricao">Inscrição de grupos</option>
+              <option value="next">Next</option>
+              <option value="lideres">Novos líderes/anfitriões</option>
+              <option value="renovacao">Renovação de temporada</option>
+              <option value="transferencia">Transferências (app)</option>
+            </select>
+            <select value={fStatus} onChange={e => setFStatus(e.target.value)} style={selStyle}>
+              {FILTRO_STATUS.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+            </select>
+          </>
+        ) : (
+          <select value={fStatusGrupo} onChange={e => setFStatusGrupo(e.target.value)} style={selStyle}>
+            {FILTRO_STATUS_GRUPO.map(f => <option key={f.key} value={f.key}>{f.label}</option>)}
+          </select>
+        )}
         <select value={fPeriodo} onChange={e => { const v = e.target.value; setFPeriodo(v === 'temporada' || v.startsWith('ano:') ? v : Number(v)); }} style={selStyle}>
           {FILTRO_PERIODO.map(p => <option key={p.dias} value={p.dias}>{p.label}</option>)}
         </select>
       </div>
 
       {/* Barra de lote — aparece só quando há pendentes na visão */}
-      {podeEditar && pendentesVisiveis.length > 1 && (
+      {vista === 'pessoas' && podeEditar && pendentesVisiveis.length > 1 && (
         <div style={{
           display: 'flex', gap: 10, alignItems: 'center', marginBottom: 12, padding: '8px 12px',
           background: selected.size ? C.primaryBg : C.card, borderRadius: 10,
@@ -1058,7 +1248,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
       {/* ⚠️ Origem fora do ar é DECLARADA. "Nenhuma transferência pendente" e "a
           consulta falhou" levam a decisões opostas — e a segunda, silenciosa,
           deixaria pedido de líder parado sem ninguém saber que existe. */}
-      {transfAviso && (
+      {vista === 'pessoas' && transfAviso && (
         <div style={{ background: C.amberBg, border: `1px solid ${C.amber}44`, color: C.amber, borderRadius: 10, padding: '8px 12px', fontSize: 12.5, marginBottom: 12 }}>
           {transfAviso} As outras origens da caixa seguem completas.
         </div>
@@ -1066,6 +1256,16 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
 
       {loading ? (
         <div style={{ padding: 60, textAlign: 'center', color: C.t3 }}>Carregando...</div>
+      ) : vista === 'grupos' ? (
+        <VisaoPorGrupo
+          grupos={gruposPendentes}
+          grupoExpandidoId={grupoExpandidoId}
+          onToggleGrupo={id => setGrupoExpandidoId(atual => atual === id ? null : id)}
+          expandedId={expandedId}
+          onTogglePessoa={toggleExpand}
+          renderPainel={renderPainelLinha}
+          idadeDe={idadeDe}
+        />
       ) : rows.length === 0 ? (
         <div style={{ padding: 60, textAlign: 'center', background: C.card, borderRadius: 16, border: '1px dashed var(--hairline)', color: C.t3, fontSize: 13 }}>
           <Inbox size={28} style={{ margin: '0 auto 10px', display: 'block', opacity: 0.5 }} />
@@ -1207,62 +1407,7 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
                       {aberto && (
                         <tr style={{ borderBottom: `1px solid ${C.border}` }}>
                           <td colSpan={podeEditar ? 7 : 6} style={{ padding: '0 12px 14px' }}>
-                            {r.tipo === 'pedido'
-                              ? <PainelPedido
-                                  p={p}
-                                  eventos={eventosCache[p.id]}
-                                  podeEditar={podeEditar}
-                                  capacidadeInfo={capacidadeInfo}
-                                  rejectingId={rejectingId} setRejectingId={setRejectingId}
-                                  motivoRej={motivoRej} setMotivoRej={setMotivoRej}
-                                  sugerindoId={sugerindoId} abrirSugestao={abrirSugestao}
-                                  grupoSugestao={grupoSugestao} setGrupoSugestao={setGrupoSugestao}
-                                  motivoSel={motivoSel} setMotivoSel={setMotivoSel}
-                                  motivoLivre={motivoLivre} setMotivoLivre={setMotivoLivre}
-                                  motivoSugestaoFinal={motivoSugestaoFinal}
-                                  gruposAtivos={gruposAtivos}
-                                  enviandoSugestao={enviandoSugestao}
-                                  aprovar={aprovar} rejeitar={rejeitar} sugerir={sugerir}
-                                  aprovarDireto={aprovarDireto} carregarGrupos={carregarGrupos}
-                                  pausarInscricoes={pausarInscricoes}
-                                  fecharSugestao={() => { setSugerindoId(null); setGrupoSugestao(''); setMotivoSel(''); setMotivoLivre(''); }}
-                                />
-                              : r.tipo === 'renov'
-                              ? <PainelRenovacao row={r.raw} podeEditar={podeEditar} onTriado={depois} />
-                              : r.tipo === 'transf'
-                              ? <PainelTransferencia
-                                  t={r.raw}
-                                  podeEditar={podeEditar}
-                                  gruposAtivos={gruposAtivos}
-                                  carregarGrupos={carregarGrupos}
-                                  onResolvido={depois}
-                                />
-                              : r.tipo === 'lider'
-                              ? <PainelLider
-                                  insc={r.raw}
-                                  podeEditar={podeEditar}
-                                  gruposAtivos={gruposAtivos}
-                                  acaoLoading={lidAcaoLoading}
-                                  recusandoId={lidRecusandoId} setRecusandoId={setLidRecusandoId}
-                                  motivoRec={lidMotivoRec} setMotivoRec={setLidMotivoRec}
-                                  vinculandoId={lidVinculandoId} abrirVinculo={abrirVinculoLider}
-                                  fecharVinculo={() => { setLidVinculandoId(null); setLidVincGrupoId(''); }}
-                                  vincGrupoId={lidVincGrupoId} setVincGrupoId={setLidVincGrupoId}
-                                  vincFuncao={lidVincFuncao} setVincFuncao={setLidVincFuncao}
-                                  aceitar={aceitarLider} recusar={recusarLider} vincular={vincularLider}
-                                  onCriarGrupo={onCriarGrupoParaLider}
-                                />
-                              : <PainelNext
-                                  e={r.raw}
-                                  podeEditar={podeEditar}
-                                  devDevolutiva={devDevolutiva} setDevDevolutiva={setDevDevolutiva}
-                                  devCanal={devCanal} setDevCanal={setDevCanal}
-                                  devObs={devObs} setDevObs={setDevObs}
-                                  devGrupoId={devGrupoId} setDevGrupoId={setDevGrupoId}
-                                  gruposAtivos={gruposAtivos}
-                                  salvando={salvandoDev}
-                                  salvar={() => salvarDevolutiva(r.raw)}
-                                />}
+                            {renderPainelLinha(r)}
                           </td>
                         </tr>
                       )}
@@ -1277,6 +1422,148 @@ export default function GruposEntrada({ podeEditar = false, onMudou, onCriarGrup
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function VisaoPorGrupo({
+  grupos, grupoExpandidoId, onToggleGrupo, expandedId, onTogglePessoa, renderPainel, idadeDe,
+}) {
+  if (grupos.length === 0) {
+    return (
+      <div style={{ padding: 60, textAlign: 'center', background: C.card, borderRadius: 16, border: '1px dashed var(--hairline)', color: C.t3, fontSize: 13 }}>
+        <Inbox size={28} style={{ margin: '0 auto 10px', display: 'block', opacity: 0.5 }} />
+        Nenhum grupo com inscrições pendentes nesses filtros.
+      </div>
+    );
+  }
+
+  const idadeGrupo = (g) => {
+    if (!Number.isFinite(g.maisAntigoMs)) return '—';
+    if (g.horas < 24) return 'hoje';
+    const dias = Math.max(1, Math.floor(g.horas / 24));
+    return dias === 1 ? 'há 1 dia' : `há ${dias} dias`;
+  };
+
+  const situacaoGrupo = (g) => {
+    if (g.horas >= 72) return { label: 'Crítico', cor: C.red, bg: C.redBg };
+    if (g.coordenacao > 0) return { label: 'Coordenação', cor: C.violet, bg: C.violetBg };
+    if (g.horas >= 24) return { label: 'Atenção', cor: C.amber, bg: C.amberBg };
+    return { label: 'No prazo', cor: C.green, bg: C.greenBg };
+  };
+
+  return (
+    <div style={{ background: C.card, borderRadius: 16, border: '1px solid var(--hairline)', boxShadow: 'var(--shadow)', overflow: 'hidden' }}>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', minWidth: 820, borderCollapse: 'collapse', fontSize: 13 }}>
+          <thead>
+            <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+              <Th>Grupo</Th>
+              <Th>Líder</Th>
+              <Th w={150}>Pendências</Th>
+              <Th w={125}>Mais antiga</Th>
+              <Th w={105}>Capacidade</Th>
+              <Th w={125}>Situação</Th>
+              <th style={{ width: 40 }} />
+            </tr>
+          </thead>
+          <tbody>
+            {grupos.map(g => {
+              const aberto = grupoExpandidoId === g.id;
+              const situacao = situacaoGrupo(g);
+              return (
+                <FragmentRow key={g.id}>
+                  <tr
+                    onClick={() => onToggleGrupo(g.id)}
+                    style={{
+                      borderBottom: aberto ? 'none' : `1px solid ${C.border}`,
+                      borderLeft: `4px solid ${situacao.cor}`,
+                      cursor: 'pointer', background: aberto ? C.primaryBg : 'transparent',
+                    }}
+                  >
+                    <td style={{ padding: '13px 10px' }}>
+                      <div style={{ color: C.text, fontWeight: 750 }}>{g.nome}</div>
+                      <div style={{ color: C.t3, fontSize: 11 }}>
+                        {[g.codigo, g.bairro].filter(Boolean).join(' · ') || 'Sem código ou bairro'}
+                      </div>
+                    </td>
+                    <td style={{ padding: '13px 10px', color: g.lider ? C.t2 : C.red }}>
+                      {g.lider || 'Sem líder definido'}
+                    </td>
+                    <td style={{ padding: '13px 10px' }}>
+                      <div style={{ color: C.text, fontWeight: 800, fontSize: 16 }}>{g.itens.length}</div>
+                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 2, fontSize: 10.5 }}>
+                        {g.aguardandoLider > 0 && <span style={{ color: C.amber }}>{g.aguardandoLider} líder</span>}
+                        {g.coordenacao > 0 && <span style={{ color: C.violet }}>{g.coordenacao} coordenação</span>}
+                        {g.encaminhados > 0 && <span style={{ color: C.blue }}>{g.encaminhados} encaminhada{g.encaminhados === 1 ? '' : 's'}</span>}
+                      </div>
+                    </td>
+                    <td style={{ padding: '13px 10px', color: situacao.cor, fontWeight: g.horas >= 24 ? 700 : 500 }}>
+                      {idadeGrupo(g)}
+                    </td>
+                    <td style={{ padding: '13px 10px', color: C.t2 }}>
+                      {g.capacidade == null ? 'Não definida' : `até ${g.capacidade}`}
+                    </td>
+                    <td style={{ padding: '13px 10px' }}>
+                      <span style={{ fontSize: 10.5, padding: '3px 9px', borderRadius: 99, background: situacao.bg, color: situacao.cor, fontWeight: 700, whiteSpace: 'nowrap' }}>
+                        {situacao.label}
+                      </span>
+                    </td>
+                    <td style={{ padding: '13px 10px', color: C.t3 }}>
+                      {aberto ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+                    </td>
+                  </tr>
+
+                  {aberto && (
+                    <tr style={{ borderBottom: `1px solid ${C.border}` }}>
+                      <td colSpan={7} style={{ padding: '0 14px 16px 18px' }}>
+                        <div style={{ background: C.bg, border: `1px solid ${C.border}`, borderRadius: 12, overflow: 'hidden' }}>
+                          <div style={{ padding: '9px 12px', borderBottom: `1px solid ${C.border}`, color: C.t2, fontSize: 11.5 }}>
+                            {g.itens.length} inscriç{g.itens.length === 1 ? 'ão' : 'ões'} em aberto · abra uma pessoa para decidir
+                          </div>
+                          {g.itens.map(r => {
+                            const pessoaAberta = expandedId === r.key;
+                            const st = STATUS_ROW[r.statusKey] || STATUS_ROW.pendente;
+                            const idade = idadeDe(r);
+                            return (
+                              <div key={r.key} style={{ borderBottom: `1px solid ${C.border}` }}>
+                                <button
+                                  type="button"
+                                  onClick={() => onTogglePessoa(r)}
+                                  aria-expanded={pessoaAberta}
+                                  style={{
+                                    width: '100%', border: 0, padding: '10px 12px', background: pessoaAberta ? C.primaryBg : 'transparent',
+                                    display: 'grid', gridTemplateColumns: 'minmax(180px, 1.4fr) minmax(150px, 1fr) 155px 24px',
+                                    gap: 12, alignItems: 'center', textAlign: 'left', cursor: 'pointer', color: C.text, font: 'inherit',
+                                  }}
+                                >
+                                  <span>
+                                    <strong style={{ display: 'block' }}>{r.nome}</strong>
+                                    <span style={{ color: C.t3, fontSize: 11 }}>{r.telefone || r.email || 'Sem contato cadastrado'}</span>
+                                  </span>
+                                  <span style={{ color: C.t3, fontSize: 11.5 }}>
+                                    Inscrição em {fmtData(r.data)}
+                                    {idade && <strong style={{ display: 'block', color: idade.cor }}>{idade.rotulo}</strong>}
+                                  </span>
+                                  <span style={{ fontSize: 10.5, padding: '3px 9px', borderRadius: 99, background: st.bg, color: st.cor, fontWeight: 700, whiteSpace: 'nowrap', justifySelf: 'start' }}>
+                                    {st.label}
+                                  </span>
+                                  <span style={{ color: C.t3 }}>{pessoaAberta ? <ChevronDown size={15} /> : <ChevronRight size={15} />}</span>
+                                </button>
+                                {pessoaAberta && <div style={{ padding: '0 12px 12px' }}>{renderPainel(r)}</div>}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </FragmentRow>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

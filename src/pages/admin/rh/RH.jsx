@@ -5,6 +5,14 @@ import { Button } from '../../../components/ui/button';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '../../../components/ui/card';
 import { StatisticsCard } from '../../../components/ui/statistics-card';
 import Paginacao, { usePaginacaoLocal } from '../../../components/Paginacao';
+// ⚠️ Catálogo e régua dos documentos do RH — fonte ÚNICA, no gate pelo npm test.
+// O tipo do documento NUNCA vem da extensão do arquivo (ver documentosRh.ts).
+import {
+  DOCS_CLT, DOCS_PJ,
+  faltando as faltandoDocs,
+  foraDoCatalogo as foraDoCatalogoDocs,
+  tipoEhExtensao as tipoEhExtensaoDoc,
+} from '../../../lib/documentosRh';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../../components/ui/tabs';
 import { ScrollArea, ScrollBar } from '../../../components/ui/scroll-area';
 import { Select as ShadSelect, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../../../components/ui/select';
@@ -2071,12 +2079,14 @@ function FuncionarioFormModal({ open, data, onClose, onSave, funcionarios = [], 
     if (file.size > 5 * 1024 * 1024) { setUploadError('A imagem deve ter no máximo 5MB'); return; }
     setUploading(true);
     try {
-      const ext = file.name.split('.').pop();
-      const filePath = `colaboradores/${crypto.randomUUID()}.${ext}`;
-      const { error } = await supabase.storage.from('rh-fotos').upload(filePath, file, { upsert: true });
-      if (error) throw error;
-      const { data: { publicUrl } } = supabase.storage.from('rh-fotos').getPublicUrl(filePath);
-      upd('foto_url', publicUrl);
+      // ⚠️⚠️ Sobe pelo BACKEND, nunca direto do browser. O upload direto exigia
+      // policies de INSERT/UPDATE/DELETE abertas para QUALQUER conta
+      // `authenticated` no bucket — e o auth é compartilhado com o app dos
+      // membros, então qualquer pessoa com login no app podia sobrescrever ou
+      // apagar arquivo de RH sabendo o caminho. Essas policies foram revogadas.
+      const r = await rh.uploadFotoNova(file);
+      if (!r?.foto_url) throw new Error('resposta sem foto_url');
+      upd('foto_url', r.foto_url);
     } catch (err) {
       console.error('Erro upload:', err);
       setUploadError('Erro ao enviar foto. Tente novamente.');
@@ -2446,17 +2456,10 @@ function BeneficiosSection({ data, onSave }) {
 // PJ/PJ+ usam o conjunto PJ; CLT/PREBENDA usam o conjunto CLT (ver docKeyDe()).
 const DOCS_OBRIGATORIOS = {
   CLT: [
-    { tipo: 'contrato', label: 'Contrato de Trabalho' },
-    { tipo: 'rg', label: 'RG' },
-    { tipo: 'cpf', label: 'CPF' },
-    { tipo: 'ctps', label: 'CTPS' },
-    { tipo: 'comprovante_residencia', label: 'Comprovante de Residência' },
+    ...DOCS_CLT,
   ],
   PJ: [
-    { tipo: 'contrato', label: 'Contrato de Prestação de Serviços' },
-    { tipo: 'cnpj', label: 'Cartão CNPJ' },
-    { tipo: 'cpf', label: 'CPF do Representante' },
-    { tipo: 'rg', label: 'RG do Representante' },
+    ...DOCS_PJ,
   ],
 };
 // PJ e PJ+ → conjunto PJ; o resto (CLT/PREBENDA) → conjunto CLT.
@@ -2465,22 +2468,35 @@ const docKeyDe = (t) => String(t || '').toUpperCase().startsWith('PJ') ? 'PJ' : 
 function DocumentosSection({ data, onNewDoc, onDeleteDoc }) {
   const [uploading, setUploading] = useState(false);
   const [docError, setDocError] = useState('');
+  // ⚠️⚠️ O TIPO é escolhido ANTES do arquivo, e guardado num ref — nunca
+  // deduzido da extensão. O código antigo fazia
+  // `ext === 'pdf' ? 'contrato' : ext`, e por isso todo Cartão CNPJ em PDF era
+  // gravado como "contrato" e o checklist nunca ficava verde. É a causa de
+  // haver 1 documento em todo o RH.
+  const tipoEscolhidoRef = useRef(null);
   const fileRef = useRef(null);
 
-  // Verificar docs obrigatórios faltando
-  const obrigatorios = DOCS_OBRIGATORIOS[docKeyDe(data.tipo_contrato)] || [];
-  const docsExistentes = (data.documentos || []).map(d => d.tipo?.toLowerCase());
-  const docsFaltando = obrigatorios.filter(req => !docsExistentes.some(t => t === req.tipo || t?.includes(req.tipo)));
+  const conjunto = DOCS_OBRIGATORIOS[docKeyDe(data.tipo_contrato)] || [];
+  const docsFaltando = faltandoDocs(data.documentos, data.tipo_contrato);
+  const semTipoValido = foraDoCatalogoDocs(data.documentos, data.tipo_contrato);
   const today = new Date().toISOString().slice(0, 10);
   const docsVencidos = (data.documentos || []).filter(d => d.data_expiracao && d.data_expiracao < today);
+
+  function pedirArquivo(tipo) {
+    tipoEscolhidoRef.current = tipo;
+    fileRef.current?.click();
+  }
 
   async function handleUploadDoc(file) {
     if (!file) return;
     if (file.size > 10 * 1024 * 1024) { setDocError('Arquivo deve ter no máximo 10MB'); return; }
+    // ⚠️ Fail-closed: sem tipo escolhido NÃO envia. Cair num default
+    // ("contrato") é exatamente o bug que este conserto elimina — e gravar o
+    // documento errado é pior que não gravar, porque pinta o checklist de verde.
+    const tipo = tipoEscolhidoRef.current;
+    if (!tipo) { setDocError('Escolha o tipo do documento antes de enviar.'); return; }
     setUploading(true);
     try {
-      const ext = file.name.split('.').pop();
-      const tipo = ext.toLowerCase() === 'pdf' ? 'contrato' : ext.toLowerCase();
       const fd = new FormData();
       fd.append('arquivo', file);
       fd.append('nome', file.name);
@@ -2490,7 +2506,10 @@ function DocumentosSection({ data, onNewDoc, onDeleteDoc }) {
     } catch (e) {
       console.error(e);
       setDocError('Erro ao enviar documento: ' + e.message);
-    } finally { setUploading(false); }
+    } finally {
+      setUploading(false);
+      tipoEscolhidoRef.current = null;
+    }
   }
 
   return (
@@ -2500,9 +2519,18 @@ function DocumentosSection({ data, onNewDoc, onDeleteDoc }) {
         <div style={{ display: 'flex', gap: 6 }}>
           <input ref={fileRef} type="file" accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,.xls,.xlsx" style={{ display: 'none' }}
             onChange={e => { handleUploadDoc(e.target.files?.[0]); e.target.value = ''; }} />
-          <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()} disabled={uploading}>
-            {uploading ? '⏳ Enviando...' : '📎 Upload'}
-          </Button>
+          {/* ⚠️ O tipo é ESCOLHIDO aqui. Sem seleção não há upload — ver o
+              comentário do handleUploadDoc. */}
+          <select
+            value=""
+            disabled={uploading}
+            onChange={(e) => { if (e.target.value) pedirArquivo(e.target.value); e.target.value = ''; }}
+            style={{ fontSize: 12, padding: '6px 8px', borderRadius: 6, border: `1px solid ${C.border}`, background: C.inputBg, color: C.text }}
+          >
+            <option value="">{uploading ? '⏳ Enviando…' : '📎 Enviar documento…'}</option>
+            {conjunto.map((d) => <option key={d.tipo} value={d.tipo}>{d.label}</option>)}
+            <option value="outro">Outro documento</option>
+          </select>
           <Button variant="ghost" size="sm" onClick={() => onNewDoc(data.id)}>+ Manual</Button>
         </div>
       </div>
@@ -2511,8 +2539,42 @@ function DocumentosSection({ data, onNewDoc, onDeleteDoc }) {
         <div style={{ padding: '10px 14px', background: '#f59e0b12', border: '1px solid #f59e0b30', borderRadius: 8, marginBottom: 10 }}>
           <div style={{ fontSize: 11, fontWeight: 700, color: C.amber, marginBottom: 4 }}>Documentos obrigatórios faltando ({docsFaltando.length})</div>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {/* ⚠️ O chip é BOTÃO: clicar envia JÁ com o tipo certo. É o caminho
+                mais curto entre "falta isto" e "mandei isto", e o que impede a
+                pessoa de escolher o tipo errado na lista. */}
             {docsFaltando.map(d => (
-              <span key={d.tipo} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: '#f59e0b20', color: C.amber, fontWeight: 500 }}>{d.label}</span>
+              <button
+                key={d.tipo}
+                type="button"
+                title={d.dica ? `${d.dica} — clique para enviar` : 'Clique para enviar'}
+                disabled={uploading}
+                onClick={() => pedirArquivo(d.tipo)}
+                style={{ fontSize: 11, padding: '3px 9px', borderRadius: 4, background: '#f59e0b20', color: C.amber, fontWeight: 500, border: `1px solid ${C.amber}40`, cursor: uploading ? 'default' : 'pointer' }}
+              >
+                📎 {d.label}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+      {/* ⚠️⚠️ O PASSIVO do bug da extensão: arquivos gravados com tipo `pdf`,
+          `jpg`, `xlsx`… Eles existem e não contam para o checklist. Aparecem
+          DECLARADOS em vez de escondidos — esconder faria a pessoa reenviar o
+          que já está lá, e é reenvio que ninguém faz. */}
+      {semTipoValido.length > 0 && (
+        <div style={{ padding: '10px 14px', background: '#64748b12', border: `1px solid ${C.border}`, borderRadius: 8, marginBottom: 10 }}>
+          <div style={{ fontSize: 11, fontWeight: 700, color: C.text2, marginBottom: 4 }}>
+            Sem tipo identificado ({semTipoValido.length})
+          </div>
+          <div style={{ fontSize: 11, color: C.text3, marginBottom: 6 }}>
+            Estes arquivos estão guardados, mas não contam no checklist. Reenvie pelo tipo certo
+            (o botão acima) ou apague se for duplicado.
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+            {semTipoValido.map(d => (
+              <span key={d.id} style={{ fontSize: 11, padding: '2px 8px', borderRadius: 4, background: C.inputBg, color: C.text3 }}>
+                {d.nome}{tipoEhExtensaoDoc(d.tipo) ? ' • tipo veio do arquivo' : ` • ${d.tipo}`}
+              </span>
             ))}
           </div>
         </div>
@@ -3036,6 +3098,14 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
   }
 
   if (!data || !open) return null;
+  // ⚠️⚠️ O estado vem PRONTO do servidor (`ficha_estado`), não é recalculado
+  // aqui. Duas respostas para "a ficha está completa?" divergiriam no primeiro
+  // campo novo — e a tela diria uma coisa enquanto o painel de pendentes e o
+  // bloqueio de pagamento dizem outra.
+  // ⚠️ E a régua é CommonJS no backend: importá-la no bundle do front puxaria a
+  // árvore inteira do servidor para o navegador.
+  const fichaPj = data.ficha_estado || { aplicavel: false, preenchida: false, completa: false, aceita: false, faltando: [] };
+  const fc = data.ficha_contratada || {};
   return (
     <div style={{ position: 'fixed', inset: 0, zIndex: 1000, display: 'flex' }}>
       {/* Overlay */}
@@ -3071,6 +3141,70 @@ function FuncionarioDetailPanel({ open, data, onClose, funcs = [], podeRemun = t
           </div>
         </div>
         <div style={{ padding: '24px 28px' }}>
+      {/* ⚠️⚠️ FICHA DA CONTRATADA (Anexo II) · preenchida pelo próprio prestador.
+          Sem este bloco o dado era gravado e ficava INVISÍVEL — foi o que
+          aconteceu no primeiro preenchimento real (22/09): a pessoa enviou e a
+          ficha do colaborador não mostrava nada. É a mesma classe do avatar que
+          o app gravava e o ERP não lia.
+          ⚠️ Aparece em QUALQUER status (não só `em_admissao`, como o bloco de
+          admissão abaixo): quem já é ativo é justamente quem estava sem ter
+          onde preencher. */}
+      {!editMode && fichaPj.aplicavel && (
+        <div style={{ marginBottom: 20, padding: 16, borderRadius: 12, border: `1px solid ${fichaPj.completa ? C.primary + '40' : C.amber + '40'}`, background: (fichaPj.completa ? C.primary : C.amber) + '0d' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <div style={{ fontSize: 13, fontWeight: 700, color: fichaPj.completa ? C.primary : C.amber, textTransform: 'uppercase', letterSpacing: 0.5 }}>
+              🏢 Ficha da contratada
+            </div>
+            {/* ⚠️ Três estados, não dois: "não enviou", "enviou incompleta" e
+                "completa" pedem ações diferentes de quem libera o pagamento. */}
+            <span style={{ fontSize: 11, fontWeight: 600, color: fichaPj.completa ? C.primary : C.amber }}>
+              {!fichaPj.preenchida ? 'não enviada' : (fichaPj.completa ? (fichaPj.aceita ? 'completa e assinada' : 'completa') : 'incompleta')}
+            </span>
+          </div>
+
+          {!fichaPj.preenchida && (
+            <div style={{ fontSize: 12, color: C.text2, marginTop: 6 }}>
+              O prestador ainda não enviou os dados da empresa. Sem eles, o pagamento não deve ser liberado.
+            </div>
+          )}
+
+          {fichaPj.preenchida && (
+            <div style={{ fontSize: 12, color: C.text2, marginTop: 10, display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 4 }}>
+              {fc.razao_social && <div style={{ gridColumn: '1 / -1' }}>Razão social: <b style={{ color: C.text }}>{fc.razao_social}</b></div>}
+              {fc.cnpj && <div>CNPJ: <b style={{ color: C.text }}>{fc.cnpj}</b></div>}
+              {fc.regime_tributario && <div>Regime: <b style={{ color: C.text }}>{fc.regime_tributario}</b></div>}
+              {fc.endereco_sede && <div style={{ gridColumn: '1 / -1' }}>Sede: <b style={{ color: C.text }}>{fc.endereco_sede}</b></div>}
+              {fc.rep_nome && <div style={{ gridColumn: '1 / -1' }}>Representante: <b style={{ color: C.text }}>{fc.rep_nome}</b></div>}
+              {fc.email_contratual && <div style={{ gridColumn: '1 / -1' }}>E-mail contratual: <b style={{ color: C.text }}>{fc.email_contratual}</b></div>}
+              {/* ⚠️ Dado bancário só aparece para quem pode ver confidencial —
+                  o backend já REDIGE o bloco inteiro abaixo do nível 4, então
+                  aqui ele simplesmente não vem. */}
+              {fc.pix_chave && <div style={{ gridColumn: '1 / -1' }}>PIX ({fc.pix_tipo}): <b style={{ color: C.text }}>{fc.pix_chave}</b></div>}
+              {fc.banco && <div>Banco: <b style={{ color: C.text }}>{fc.banco}</b>{fc.agencia ? ` · Ag ${fc.agencia}` : ''}{fc.conta ? ` · CC ${fc.conta}` : ''}</div>}
+              {fc.conta_titular && <div style={{ gridColumn: '1 / -1' }}>Titular: <b style={{ color: C.text }}>{fc.conta_titular}</b>{fc.titular_confere === false ? ' ⚠️ diferente da contratada' : ''}</div>}
+              {/* ⚠️ Titular diferente é DESTACADO: o Anexo II exige que coincida,
+                  e a pessoa declarou que não — quem paga precisa ver isso. */}
+              {fc.titular_confere === false && fc.titular_motivo && (
+                <div style={{ gridColumn: '1 / -1', color: C.amber }}>Motivo: {fc.titular_motivo}</div>
+              )}
+            </div>
+          )}
+
+          {fichaPj.preenchida && !fichaPj.completa && (
+            <div style={{ fontSize: 12, color: C.amber, marginTop: 8 }}>
+              Falta preencher: {fichaPj.faltando.join(', ')}.
+            </div>
+          )}
+
+          {fichaPj.aceita && fc.aceite_em && (
+            <div style={{ fontSize: 11, color: C.text3, marginTop: 8 }}>
+              Declaração aceita em {fmtDate(String(fc.aceite_em).slice(0, 10))}
+              {fc.aceite_nome_digitado ? ` por ${fc.aceite_nome_digitado}` : ''}.
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Admissão · onboarding em andamento (tudo que tinha no módulo de admissão) */}
       {data.status === 'em_admissao' && !editMode && (
         <div style={{ marginBottom: 20, padding: 16, borderRadius: 12, border: '1px solid #8b5cf640', background: '#8b5cf60d' }}>

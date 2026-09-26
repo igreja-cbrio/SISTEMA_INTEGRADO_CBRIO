@@ -21,6 +21,143 @@ decisões/time-lapse do sistema). Regras de manutenção:
   vivo (lição `cui_atendimentos`: achado de auditoria baseado em arquivo de
   migration que nunca foi aplicado em prod).
 
+## ⚠️ DEVOCIONAL · vídeo do YOUTUBE toca DENTRO do app (2026-09-25 · migration `20260925150000`)
+
+Pedido do Marcos: *"a pessoa clica para ver mas não sai do app, nós apenas
+passamos um vídeo do YouTube lá"*. "Editar item" ganhou **Usar link** ao lado do
+envio de arquivo; o `PUT /itens/:id` aceita `video_url` (só YouTube, via
+`linkDoYoutube` — espelho de `idDoYoutube` do app) e guarda o link CANÔNICO
+`watch?v=<id>`, aposentando o arquivo que houvesse (apagado do Storage).
+- `20260925150000` é DADO: põe o culto de **1 Crônicas** (vídeo `e2-TJDiAS0U`,
+  série QUARTA COM DEUS do módulo Online) no item de quarta 02/09 do Quarta com
+  Deus. ⚠️ Depende da `20260925120000`. Só grava onde `video_url IS NULL`.
+- ⚠️ Vídeo PRIVADO não toca embutido; "não listado" toca.
+
+## ⚠️ DEVOCIONAL · VÍDEO no item (2026-09-25 · migration `20260925120000`)
+
+Pedido do Marcos: *"subir vídeos nas devocionais, ter uma boa visualização,
+colocar fullscreen"*. "Editar item" (`DevocionalAdmin.tsx`) ganhou **Vídeo**.
+
+- ⚠️⚠️ **O arquivo NÃO passa pela API** (o Vercel corta o corpo em ~4,5 MB).
+  `POST /devocional-planos/itens/:id/video/upload` só emite link ASSINADO
+  (`createSignedUploadUrl`, bucket público `devocional-videos`, 500 MB); o
+  navegador sobe direto por XHR (com progresso) e o `PUT /itens/:id` grava
+  `video_path` — a `video_url` é montada NO SERVIDOR.
+- ⚠️ `caminhoEhDoItem` (`backend/utils/devocionalVideo.js`, no gate): o caminho
+  tem que ser `itens/<ESTE id>/<n>.<ext>`. Sem isso um item apontaria pro vídeo
+  de outro e, ao trocar, APAGARIA o arquivo dele.
+- O vídeo é salvo **na hora do envio**, separado do "Salvar" do texto — nenhum
+  arquivo fica no Storage sem item. O antigo é apagado DEPOIS do update.
+- Sem a migration: as rotas respondem **503** dizendo qual migration falta; o
+  app cai no select sem `video_url` (42703) e segue funcionando.
+- ⚠️ Prefira **MP4 (H.264)**: `.mov` do iPhone costuma ser HEVC e pode não
+  tocar no Android. O limite GLOBAL de upload do projeto Supabase pode ser menor
+  que os 500 MB do bucket — se der 413, é ele.
+
+## ⚠️⚠️ DEVOCIONAL · o APP lê e grava DIRETO em 7 tabelas — grants + RLS (2026-09-23 · migration `20260923180000`)
+
+A casa nova do Devocional no app (Bíblia · Planos · Comentários · Anotações ·
+Leituras · Aplicativo-CBRio #164/#165) foi construída pelo **Codex** em 02/09 e
+**as 5 tabelas dela nasceram fora do git**: `devocional_inscricoes`,
+`devocional_mural`, `devocional_registros_pessoais`, `devocional_leituras_biblia`,
+`devocional_leituras_planos` (+ colunas novas em `devocional_planos`:
+`slug`/`continuo`/`inscricao_habilitada`/`destaque` · e em `devocional_itens`:
+`edicao_*`/`ordem_no_ciclo`/`autor` · + RPCs `listar_devocional_mural(int)` e
+`resumo_meus_planos_devocionais()`). **Nenhuma migration em repo nenhum.**
+
+Em 23/09, logado como membro, o Marcos recebeu **`42501 permission denied for
+table devocional_planos`** (idem `devocional_leituras_biblia` e
+`devocional_registros_pessoais`). **42501 é GRANT de tabela, não RLS**: o aperto
+do papel `authenticated` da auditoria de 06/09 (aplicado fora do git) revogou o
+acesso, e as tabelas novas nunca tiveram grant. A migration `20260923180000` é a
+**primeira vez que o schema de ACESSO delas entra no repo** (o DDL das tabelas em
+si segue só no banco — ⏳ dumpar).
+
+- **GRANT só do que o app usa** (tabela a tabela, comentado no cabeçalho da
+  migration) · `anon` sem nada · RLS por membro via `current_user_membro_id()`
+  (molde de `20260521270000`) · planos/itens **só leitura** pra logado — o ERP
+  escreve pelo backend com `service_role` (sai a policy `FOR ALL USING(true)` de
+  maio).
+- ⚠️ **O check-in do app grava em `devocional_leituras_planos` E em
+  `mem_devocionais`** (upsert ⇒ precisa de UPDATE) — o KPI do valor Investir
+  continua vindo de `mem_devocionais`.
+- ⚠️ A RPC `listar_devocional_mural` monta `autor_nome` de `mem_membros`, que é
+  fechada pra membro comum: se ela **não** for `SECURITY DEFINER`, o feed de
+  Comentários sai sem nome. Conferência no fim do arquivo da migration.
+- ⚠️ **Conteúdo parado em 04/09**: último `devocional_itens` de qualquer plano é
+  04/09/2026 (Quarta com Deus, edição "1 Crônicas"); planos semanais todos
+  `ativo=false`. Sem item do dia toda porta de plano diz "ainda não foi
+  publicado" — é conteúdo (Cuidados → planos), não bug.
+- Régua que fica: **tabela que o APP lê direto precisa de GRANT explícito pra
+  `authenticated` + RLS própria, em migration** — a auditoria que aperta o papel
+  não sabe o que o app lê se não estiver no repo.
+
+## ⚠️⚠️ GENESIS CBA · evento de IGREJA PARCEIRA · a pessoa NÃO vira da CBRio (2026-09-24 · migration `20260924150000`)
+
+Pedido do Matheus: primeiro Genesis numa igreja ligada à CBA, com inscrição pelo
+sistema, mas *"essas pessoas não devem contar nos nossos números, nem logar no
+nosso app, devem ter dados separados"*. Porta `/genesis/:slug` + botão **"Novo
+Genesis CBA"** em `/inscricoes` (molde com as 5 perguntas da igreja parceira ·
+`src/lib/genesisCba.ts`).
+
+**A régua**: evento é de parceira ⇔ `insc_eventos.igreja_id` aponta para
+`igrejas.tipo = 'cba_acompanhada'` (o tipo já existia desde maio). `igreja_id`
+NULL = CBRio (todos os eventos anteriores). Helper: `backend/services/igrejaParceira.js`.
+
+⚠️⚠️ **Separação por AUSÊNCIA, não por filtro.** Todos os números da CBRio (NSM,
+KPI, jornada, painel, cuidados) saem de `mem_membros` e derivados — como a pessoa
+da parceira **nunca nasce lá**, ela não conta em lugar nenhum. Filtro só nos
+leitores que olham `inscricoes` direto:
+
+| onde | o que faz |
+|---|---|
+| porta pública (`inscreverEspinha`) | pula `processarIdentidade` INTEIRO (até o 'ligar' escreve contato/CPF tardio/observação) · só grava o consentimento · não avisa a área |
+| trigger `trg_inscricoes_parceira_sem_membro` | o BANCO recusa `membro_id` em inscrição de parceira — cobre fila de órfãs, import, backfill de CPF |
+| `vw_inscricoes_unificadas` | ramo da espinha exclui parceira (patch DINÂMICO sobre a def viva) ⇒ fila de órfãs, "Todas", portas e dashboard |
+| import e-Inscrição (`importarEInscricao.executar`) | não roda o matcher · leitura falhada = trata como parceira |
+| app (`/app/eventos`, `/inscrever`, `/minhas`) | não lista · 404 · o fallback por CPF não traz |
+| `notificarNovoEventoApp` | não manda push de evento de parceira |
+| dashboard de inscrições | arrecadação exclui eventos de parceira |
+| painel RH | fora da agenda da casa |
+
+- ⚠️ `PUT /eventos/:id` só troca a igreja **enquanto o evento não tem inscrição
+  viva** (409): trocar com gente dentro misturaria as duas bases.
+- Evento de parceira nasce com `no_totem = false` (o totem é o hall da CBRio).
+- `GET|POST /inscricoes/igrejas-parceiras` = catálogo curto (só `cba_acompanhada`).
+- ⚠️ **NÃO usar o desenho de maio** (pessoa CBA em `mem_membros` com `igreja_id`):
+  é separação por filtro, e uma consulta esquecida contamina o número.
+- ⏳ **Aberto**: Genesis pago cai no PSP e no caixa da CBRio (o dashboard de
+  inscrições já exclui, o financeiro não sabe da parceira) · a parceira não tem
+  login no ERP (Fase 2 do multicampus) — a CBRio exporta a lista · LGPD: o termo
+  deve nomear a igreja parceira como destinatária.
+- Guardas: `src/test/genesisCba.test.ts` (molde + estáticas das travas).
+
+### ⚠️ 2ª forma (mesmo dia): Genesis CBA é uma SÉRIE PERMANENTE · migration `20260924170000`
+
+Correção do Matheus: *"crie um evento Genesis CBA, deixe ele sempre aberto, e aí
+nós colocamos as datas, ativamos ou inativamos, colocamos a igreja sede… e
+retiraria essa opção de Genesis CBA, deixa o próprio CBA como responsável
+atrelado ao pastor Nélio"*.
+
+- **O botão "Novo Genesis CBA" e o molde no formulário SAÍRAM.** Agora é UMA
+  `insc_series` (`slug_base = 'genesis'`, área **CBA**, `responsavel_id` = o login
+  do ERP do pastor Nélio, resolvido por e-mail na migration). Cada Genesis é uma
+  EDIÇÃO (`insc_eventos`) com data + `igreja_id` (a igreja sede).
+- Painel **Inscrições → "Genesis CBA"** (`src/components/inscricoes/GenesisPainel.tsx`):
+  todos os Genesis, igreja, inscritos, Ativar/Inativar (= publicar/encerrar),
+  "Novo Genesis" (data + igreja sede obrigatória), resumo e "por igreja".
+  O card da série na lista também abre esse painel.
+- `GET /inscricoes/genesis` · `POST /inscricoes/genesis/edicoes` (formulário vem
+  da edição mais recente, senão do molde `backend/utils/genesisCba.js`).
+- **Link sempre aberto `/genesis`** (`GenesisPublico.tsx` + `GET /api/public/evento/serie/:slugBase`,
+  declarada ANTES de `/:slug`): 1 Genesis ativo → vai direto; vários → a pessoa
+  escolhe; nenhum → avisa.
+- O **responsável da série** recebe o aviso de cada inscrição (porta pública).
+- ⚠️ `nova-edicao` genérica passou a **herdar `igreja_id`**: sem isso "Duplicar"
+  numa edição de parceira criava evento da CBRio e as pessoas virariam cadastro.
+- Área **CBA** entrou no catálogo `areas` (setor Ministerial). Não está no
+  `AREA_MODULO_BOOST`, então não dá permissão a ninguém.
+
 ## 📍 ANTES DE INVESTIGAR "onde mora X", LEIA O MAPA (2026-08-20)
 
 Pedido do Matheus: *"queria que já tivesse um contexto definido de cada módulo,
@@ -61,6 +198,110 @@ pra eliminar. Para forçar o estado de agora: `/mapa` (skill) ou o comando acima
 
 ⚠️ **`src/pages/atlas/atlas.html` NÃO é fonte.** É uma TELA do sistema (`/atlas`),
 escrita à mão e desatualizada. Não citar como referência.
+
+## ⚠️⚠️ SERVIR · PAPÉIS (leitor/líder/admin), escopo por TIME e por DIA DO CULTO, e o DOMINGO DE PREFERÊNCIA da pessoa (2026-09-24 · migrations `20260924120000` + `20260924120100`)
+
+Pedido do Marcos (23/09): *"Nenhuma · Leitor (time | culto | geral) · Líder = editor
+(time | culto | geral) · Admin (eu e o Matheus)"*, com "culto" no sentido do **dia**
+(domingo, quarta, sábado), e *"cada um tem um domingo de preferência e ao clicar
+para escalar naquela posição, ele filtra as pessoas que estão naquele time
+priorizando quem colocou aquele domingo como rodízio"*.
+
+- **`vol_area_supervisores.papel`** (`leitor|lider|admin`, default **`lider`**) e
+  **`team_id`** (escopo por TIME). ⚠️ As 37 concessões vivas ficam byte a byte:
+  quem tinha concessão editava ⇒ nasce `lider`; `team_id` NULL = escopo por área.
+  `culto_dia` aceita **`sabado`** (AMI/Bridge); `rodizioCulto.DIA_POR_INDICE[6]`.
+  Unique do escopo inclui o time; `papel` fica FORA (um papel por escopo — edita).
+- **Régua `utils/supervisorArea.js`:** concessão de time casa **só pelo id** da
+  equipe (`equipeSupervisionada`/`_cobre`) — "líder da Banda" não vira "líder do
+  Louvor". **Alvo sem `team_id` é NEGADO** pra concessão de time (mesma lei da
+  equipe sem área). `geral` + `culto_dia` = escopo por culto: vê toda equipe,
+  recorte aplicado culto a culto. Novas: `soEditores` · `somenteLeitura` ·
+  `papelMaior` · `cultoNoEscopo`. `_semRecorte` exige `!team_id`.
+- ⚠️⚠️ **`supervisorAreasApp(req, { escrita: true })`** nas 5 rotas que ALTERAM
+  (POST/PATCH/DELETE escala · POST/DELETE checkin): devolve só concessões que
+  escrevem; leitor cai em 403 `somente_leitura: true` (`negarSupervisao`).
+  **A régua sempre recebe `grants`, nunca `areas`** — `string[]` normaliza SEM
+  recorte e `supervisionaTudo(['geral'])` daria acesso total a um "leitor de
+  domingo". Todo alvo passou a levar `team_id`. O PATCH ganhou `culto` no alvo
+  (antes, supervisor com rodízio nunca conseguia mover: "sem data não dá pra
+  afirmar").
+- ⚠️⚠️ **RESILIENTE À ORDEM DO ROLLOUT:** `concessoesDoMembro`, o GET web de
+  supervisores, `rodizioSemanaDosPerfis` e o GET team-members caem pro select
+  antigo em **42703** — o ERP sobe no merge e a migration é manual; sem isso todo
+  supervisor perderia a Montar escala no intervalo. POST/PATCH devolvem 503 com o
+  nome da migration.
+- **`vol_profiles.rodizio_semana`** (1..4, NULL = sem preferência) — da PESSOA,
+  não do vínculo. `utils/preferenciaRodizio.ordenarPorPreferencia` **ORDENA,
+  NUNCA FILTRA** (prefere esta semana → sem preferência → prefere outra; alfabético
+  dentro). `GET /app/voluntariado/escala-pool?team_id=&service_id=` lista o TIME
+  (dedupe por pessoa, `in` em lotes de 100 — Integração tem 264) já ordenado;
+  `PATCH /app/voluntariado/me/rodizio` (self-service) e `PUT /team-members/:id`
+  `{ rodizio_semana }` (web, grava no perfil) escrevem.
+- `GET escala/servicos` filtra os cultos por `cultoNoEscopo` e devolve
+  `somente_leitura`/`papel`; `GET escala/:id` idem; `/voluntariado/supervisor` idem.
+- **Web:** `VolSupervisores.tsx` — seletor de Papel + Escopo (Geral · Time · Área)
+  + Sábado; admin força geral sem recorte (servidor recusa outra coisa). Badge de
+  papel e de time na linha. Aviso "sem turno" ignora time e admin (cobrem todo
+  culto de propósito). `VolEquipes.tsx` — `SemanaDoMembro` ao lado de "Cultos de".
+- Testes: `npm run test:supervisor-subarea` (+27 casos) · `test:rodizio-culto`
+  (sábado) · `node backend/services/preferenciaRodizio.test.js`.
+- ⏳ Admin no app = líder geral; "gerenciar pessoas e estruturas" continua sendo a
+  web (nível do módulo). Kids por horário · nomes dos líderes · Banda→Louvor
+  seguem pendentes de decisão.
+
+## ⚠️⚠️ ESCALA PELO APP · o ID acompanha o NOME (2026-09-23 · SEM migration)
+
+`POST`/`PATCH /api/app/voluntariado/escala` gravavam **só `team_name` e
+`position_name`**. Consequência medida em 23/09, nos dois lados da mesma tela:
+- quem era **escalado pelo app** nascia com `team_id`/`position_id` NULL e não
+  casava **vaga nenhuma** na web — `utils/volCobertura.montarCobertura` casa por
+  `(team_id, position_id)` e a pessoa caía em `sobrando`;
+- quem era **movido pelo app** ficava com o `team_id` do time de **onde saiu**: a
+  web (id) seguia mostrando a pessoa no time antigo; o app (nome) já mostrava no
+  novo. Duas fontes discordando em silêncio.
+
+Agora `resolverEquipeId(nome)` + `resolverPosicaoId(teamId, nome)` gravam os IDs
+junto com os nomes, e a resposta devolve `team_id`/`position_id`.
+- ⚠️⚠️ **Só equipe ATIVA resolve.** `"Vocal"`, `"Recepção"`, `"Baixo"`, `"Câmeras"`
+  existem como `vol_teams` **inativos** (lixo do import, 129 times · 13 ativos);
+  resolver por eles moveria a linha pra um time morto. Sem ativa ⇒ `team_id` NULL
+  e a leitura cai no nome, como antes.
+- ⚠️⚠️ **Mudança SÓ de função não re-resolve o time pelo nome gravado** — nas
+  ~1.000 linhas do Planning Center `team_name` **é a posição** ("Vocal") e o
+  `team_id` é o que diz Banda. A posição é resolvida contra o `team_id` atual.
+- Trocar de equipe **zera `position_id`** quando nenhuma função veio no corpo:
+  "Vocal" não existe na Integração.
+- Contexto: o app passou a montar a escala **por TIME** (carrossel · duas etapas
+  · vaga "faltam N"), lendo a `composicao` que este endpoint manda desde 25/08.
+  A régua de leitura mora no app (`lib/escalaTimes.ts`) e tolera as duas
+  gerações de dado: nome que é time vence; senão `team_id`; senão o próprio nome.
+
+## 🗑️ MÓDULO PROPOSTAS REMOVIDO (2026-09-23 · migration `20260923120000`)
+
+Decisão do Marcos: *"remova o módulo de propostas do sistema, acabe com ele"*. Era
+o ciclo anual de propostas de projetos/eventos/rotinas (spec Yago, 2026-07-30,
+`/propostas`, `prop_*`). **Medido antes de apagar (23/09, service_role): 0
+propostas, 0 avaliações, 0 deliberações, 0 anexos** — só sobrava 1 ciclo, 1
+diretor de área e 5 parâmetros de teste. Nunca foi usado de verdade; o sucessor
+é o **Planejamento Anual** (`plan_*`, 2026-08), que não compartilha tabela nem
+função com ele e segue intacto.
+
+- **Saiu do código:** `src/pages/Propostas.tsx` · `backend/routes/propostas.js` ·
+  rota `/propostas` e lazy import no `App.tsx` · item do menu no `AppShell.jsx`
+  · `export const propostas` do `src/api.js` · mount `/api/propostas` no
+  `server.js` · entrada `'propostas'` do `ROUTE_MODULE_MAP` (`auth.js`).
+- **Sai do banco (migration):** linha de `modulos` (id 80) + 34 linhas de
+  `cargo_modulo_permissao` · `prop_proposta` sai da whitelist do
+  `app_soft_delete` (a função é recriada sem ela) · `fn_prop_transicionar`,
+  `fn_prop_derivados` e o trigger · as 16 tabelas `prop_*` com CASCADE.
+- ⚠️ As 5 migrations `2026073*_propostas_*` e `20260805000000_propostas_fluxo_
+  simplificado` ficam no repo como histórico; a `20260817180000` (whitelist)
+  cita `prop_proposta` mas é idempotente e não recria nada.
+- A seção *"Propostas · `/:id` engolia `/avaliar` e `/mural`"* mais abaixo é
+  histórica: a lição (guarda de UUID no `/:id`) continua valendo pros outros
+  módulos; o arquivo que ela cita não existe mais.
+- `docs/mapa/propostas.md` some na regeneração do mapa (gerador lê o código).
 
 ## ⚠️ LEI · Contrato de porta — toda entrada de PESSOA no sistema (2026-07-17)
 
@@ -113,6 +354,49 @@ tira-se a condição.
 casar o texto `if (!cepCompleto(cep))` passava verde com o código quebrado —
 era exatamente a forma que estava em produção. O teste conta chaves, acha onde o
 bloco do sexo fecha e exige que o CEP venha depois. Mutante fiel = re-aninhar.
+
+## ⚠⚠ LEI · `mem_grupos` tem privilégio POR COLUNA (2026-09-17 · migration `20260917150000`)
+
+`authenticated` **não tem mais `SELECT` de tabela** em `mem_grupos`: tem uma
+lista de 34 colunas. Ficaram de fora **`complemento`** (apto/bloco da casa do
+anfitrião · 12 grupos) e **`observacoes`** (nota interna).
+
+**Por quê (REM-04):** medido em 17/09 com a conta de teste — um membro comum
+logado lia as 36 colunas dos 109 grupos pelo PostgREST. É o mesmo dado que o
+PR #2941 acabou de tirar do deep-link público; a porta dos fundos continuava
+aberta. E com o signup do provedor de auth ABERTO (AUTH-01), “qualquer conta
+logada” = qualquer pessoa da internet. **Rua e número seguem visíveis de
+propósito** (decisão da Natasha); o que sai é o complemento.
+
+⚠⚠ **COLUNA NOVA NASCE SEM PRIVILÉGIO.** Ao adicionar coluna em `mem_grupos`
+que o APP precise ler, acrescente no `GRANT SELECT (...)` — senão a tela do
+grupo leva **42501** e o defeito aparece no celular do líder, não aqui.
+
+⚠⚠ **`select('*')` em `mem_grupos` agora é erro.** O app pede colunas
+explícitas (`grupo-detalhe.tsx`, `grupo-editar.tsx`, `lib/jornada.ts`) e o front
+web não lê a tabela direto — travado por `src/test/magicLinkEnvio.test.ts`.
+`is_lider_grupo()` é `security definer`, então a foto de capa não depende disto.
+
+## ✅ AUDITORIA DO BANCO · as 3 migrations manuais entraram no repo (2026-09-17)
+
+Rodaram à mão no SQL Editor e só agora viraram arquivo aqui — o repo estava
+descrevendo um banco que não era o de produção:
+
+| arquivo | o que a conferência do Marcos devolveu |
+|---|---|
+| `20260909130000_logistica_policies...` | as 7 tabelas `log_*` com **RLS ligada, 5 policies do molde, 0 estranhas** |
+| `20260623000000_patrimonio_baseline...` | as 6 `pat_*` com **RLS ligada e ACL toda `false`** (anon e authenticated sem select/insert/update/delete) ⇒ o arquivo é no-op em produção, como ele previa |
+| `20260909140000_devocionais_indice_unico_parcial` | `uq_mem_devocionais_dia ... WHERE (deleted_at IS NULL)` — **o índice virou parcial** |
+
+⚠️ **O carimbo do patrimônio é 23/06 de propósito** (16 migrations posteriores
+citam as `pat_*`; com carimbo de setembro o replay de um banco novo morria em
+junho). Ele só pode viver aqui **depois do PASSO 5**, que registra a migration à
+mão em `supabase_migrations.schema_migrations` — sem isso um `supabase db push`
+vê uma migration não registrada e mais velha que o histórico e tenta rodar de novo.
+
+⚠️ O baseline do patrimônio **não faz um ambiente novo subir até o fim**: destrava
+o replay até 10/08, e em `20260818160000` a cadeia ainda morre (13 linhas em
+`plan_locais` com UUIDs de produção chumbados). É o próximo tampão.
 
 ## ⚠⚠ LEI · `generateLink` NÃO MANDA E-MAIL (2026-09-16 · SEM migration)
 
@@ -753,6 +1037,147 @@ Lei de 10/08 respeitada: palpite por nome só grava com confirmação humana
 (`origem='sexo_inferido_ia'`, `confirmado_por`) e nome ambíguo/raro é declarado
 pela liderança (`sexo_declarado_lideranca`). **Sobram 7 sem sexo**, todos de
 nome ambíguo ou raro — ficam para identificação nominal, nunca palpite.
+
+## ⚠️⚠️ MEMBRESIA · os cadastros-fantasma da decisão ONLINE (2026-09-24 · SEM migration)
+
+Pedido do Matheus, com o print da lista de Membresia filtrada em "Sem CPF":
+*"essas pessoas que vem do online, sem cpf e dado nenhum, preciso que vc remova
+dos membros, esta poluindo."*
+
+### O que são (medido, não suposto)
+
+A coordenação do Online assiste ao culto no YouTube e lança à mão quem escreve
+no **CHAT** que está aceitando Jesus. O formulário **exige telefone**, então ela
+preenche `00000000000`; no campo NOME vai o **@handle do YouTube**, a única
+coisa que ela tem. Cada lançamento desses cria um `mem_membros`.
+
+⚠️ **E eles ficam nas 7 PRIMEIRAS linhas da lista**: a ordenação é por nome e
+`@` vem antes das letras no ASCII. É por isso que "está poluindo" salta aos
+olhos — não é volume, é posição.
+
+| | |
+|---|---|
+| cadastros | **12** · criados em **14/09 (8)** e **21/09 (4)** |
+| decisão online lançada à mão | ago/2026: **2** · set/2026: **19** — é prática NOVA |
+| dos 19 de setembro | **7 com telefone real** (viram cadastro, e devem virar) × **12 com `00000000000`** |
+| pendurado em cada um | 1 decisão + 1 fila pastoral + 1 trilha + 1 `nsm_eventos` + 1 observação · **ZERO nas outras 93 FKs** |
+
+⚠️ **A separação é limpa**: não há zona cinzenta entre "pessoa real" e fantasma.
+
+### ⚠️⚠️ A LEI: apagar o CADASTRO não apaga a DECISÃO
+
+A decisão de fé é **real** — alguém escreveu no chat que estava aceitando Jesus.
+O que não existe é dado de contato. São coisas separáveis, e o sistema já sabia
+disso (o precedente é o **Kids**, que registra a decisão e não cria a pessoa,
+por LGPD art. 14 §1º).
+
+⇒ **SOFT-DELETE só do `mem_membros`.** Medido antes de executar:
+- todas as 98 FKs para `mem_membros` são `SET NULL`, e o soft-delete **nem as
+  toca** — decisão, fila, trilha e NSM ficam intactos;
+- **`recalcular_nsm()` lê `cui_convertidos`** (filtrando o `deleted_at` DELA) e
+  **nunca olha `mem_membros.deleted_at`** ⇒ o denominador não muda;
+- **`fn_nsm_sinais_engajados` devolve `{}` para os 12** ⇒ nunca estiveram no
+  numerador. Conferido depois: `nsm_estado` **inalterado** (online 19/0/0,00% ·
+  central e cbrio 156/16/10,26%);
+- **`GET /cuidados/convertidos`** lê `cui_convertidos` direto, sem join ⇒ a fila
+  da Renata sobrevive inteira;
+- o **@handle não se perde**: está gravado igual em `mem_membros.nome`,
+  `cultos_decisoes_pessoas.nome` **e** `cui_convertidos.nome`.
+
+⚠️⚠️ **`cui_convertidos.membro_id` NÃO é solto (não vira NULL), e é decisão:**
+`garantirMembro()` (`routes/cuidados.js:1559`) só chama o matcher quando
+`membro_id` está vazio. Soltar o ponteiro faria o fantasma **RENASCER** no dia
+em que alguém direcionasse a pessoa pro Next ou pro batismo.
+
+⚠️ **A matview NÃO se atualiza sozinha**: `vw_pessoas_papeis_mat` ainda tinha os
+12 depois do soft-delete (ela só roda via `refresh_vw_pessoas_papeis_mat`, sob
+demanda em `routes/jornada.js`, **sem cron**). Rodar o refresh faz parte da
+limpeza — sem ele, os KPIs que a leem continuam contando os apagados.
+
+### ⚠️ A régua da seleção são TRÊS sinais, não "sem CPF"
+
+A lei de 17/08 ("exclusão em lote exige dois sinais") com uma correção medida:
+**três critérios de AUSÊNCIA não são dois sinais** — ausência não identifica
+ninguém. `cpf IS NULL` + sem e-mail + telefone ruim pega **270 cadastros**, 258
+de gente real. A régua que dá exatamente 12:
+
+1. **PROCEDÊNCIA** — o cadastro nasceu de uma decisão `tipo_decisao='online'`;
+2. **SEM CHAVE** — sem CPF, sem e-mail **com forma de e-mail**, sem telefone de
+   10–11 dígitos não repetidos;
+3. **SEM ENGAJAMENTO** — nenhum vínculo em grupo, batismo, Next, voluntariado,
+   contribuição, login, inscrição ou perfil de voluntário.
+
+⚠️⚠️ **"e-mail com FORMA de e-mail", nunca "e-mail preenchido"**: nos 2 mais
+recentes a coordenação passou a pôr o handle **no campo e-mail**
+(`@wil66lobo`, `@lorenjacksonde`), e `email IS NOT NULL` os deixaria passar. O
+contorno MUTA — a régua tem que olhar a forma do valor, não a presença dele.
+
+**Executado em 24/09**: backup em `backups._bk_20260924_online_sem_chave` (12
+linhas · lei de 16/09: foto de reparo nasce no schema `backups`, nunca no
+`public`), soft-delete pela RPC `app_soft_delete`, matview atualizada.
+Resultado: **0 fantasmas · 4.623 → 4.611 membros vivos · 12 decisões, 12 filas,
+12 trilhas e 12 eventos de NSM preservados**. Reversível com `app_restore`.
+
+### ⚠️⚠️ A TORNEIRA CONTINUA ABERTA — e é decisão do Matheus
+
+Sem fechar, volta ~6/semana. O que fechar custa, medido:
+
+- **A régua tem que morar no TRIGGER** `tg_cultos_dec_pessoas_resolve_membro`,
+  não no Express: a rota manda `membro_id: null` de propósito e quem cria é o
+  trigger, que também serve a porta pública, o app e o totem. Guarda só no JS é
+  contornada por 4 caminhos (é a lei do "guarda em código impuro").
+- O precedente está pronto: o ramo `IF NEW.tipo_decisao = 'kids' THEN
+  NEW.membro_id := NULL; RETURN NEW; END IF;` — acrescentar uma condição.
+- ⚠️⚠️ **MAS o efeito colateral é real e estreia sem histórico**: com
+  `membro_id` NULL, `tg_cultos_dec_pessoas_jornada` insere `mem_trilha_valores`
+  e `nsm_eventos` **toda vez** (o `NOT EXISTS ... = NULL` é sempre verdadeiro);
+  o dedup da fila passa a ser por **nome + data**, perdendo homônimos; o
+  denominador da NSM muda de `COUNT(DISTINCT membro_id)` para `COUNT(*)`; e
+  `cadastrado = (NEW.membro_id IS NOT NULL)` vira false sempre, **derrubando o
+  card `convertidos_cadastrados`** — parece que a equipe parou de cadastrar.
+  Medido: hoje há **0 linhas** com `membro_id IS NULL` nessas três tabelas — o
+  caminho "órfão" nunca rodou com dado real.
+- **A correção de raiz é a PORTA, não a saída**: enquanto o telefone for
+  obrigatório, toda régua corre atrás do placeholder da vez (hoje
+  `00000000000`; amanhã `21999999999`, que tem DDD válido e **casa por
+  telefone+nome no cadastro de outra pessoa**). Telefone opcional na decisão
+  online + campo próprio pro handle é o que tira o incentivo.
+
+### ⚠️⚠️ ACHADO DE CARONA · a decisão online manual NÃO conta no culto
+
+`fn_cultos_dec_online_form_incrementa` só incrementa `cultos.decisoes_online`
+quando **`fonte = 'form_publico'`**. As decisões que a coordenação lança à mão
+ficam registradas nominalmente e **não entram no número do culto**. Medido em
+setembro: 09/09 tem 2 nominais e contador **0** · 13/09 19:00 tem 3 e contador
+**0** · 20/09 tem 1 em cada culto e contador **0**.
+
+⚠️ Ou seja **o trabalho dela está subcontado em ~9 decisões só em setembro**, e
+é esse número que alimenta KPI, painel e dashboard semanal. O caminho manual
+existe (`decisoes_online_extra`, de 14/09) e foi usado **uma vez** (16/09).
+⚠️ Consertar exige decidir a interação com `decisoes_online_extra`, senão quem
+lançar nominalmente **e** preencher o extra conta duas vezes. Decisão pendente.
+
+### ⚠️ O que ficou pendente de GENTE
+
+- **11 dos 12 estão com `primeiro_contato_em` carimbado e nenhum como
+  `contato_impossivel`** — logo entram no NUMERADOR do indicador de contato.
+  ⚠️ E o padrão do carimbo é de higienização de fila, não de conversa: **5
+  marcações em 7 segundos** (15/09) e **3 em 9 segundos** (21/09). **NÃO
+  reclassifiquei**: se ela respondeu pelo chat do YouTube, foi contato real, e
+  reescrever em massa por dedução é a lei da casa sendo quebrada. É pergunta
+  para a Renata.
+- **`@leandrobeanes3264` e `@lezandrobeanes3264`** diferem por uma letra e têm o
+  mesmo sufixo — provavelmente a mesma pessoa (lançada em cultos diferentes,
+  09/09 e 13/09). Sem chave, não dá para afirmar.
+- **`renata.v.rangel` e `marciafernandes4711`** estão com `area='sede'` na fila,
+  não `online`.
+- ⚠️ **A queixa não fica 100% resolvida**: os handles continuam aparecendo em
+  `/painel/nsm/pessoas` e na aba Convertidos do Cuidados, porque as duas leem
+  `cui_convertidos`. É o correto (a decisão é real), mas é bom ele saber.
+- **O quadro maior**: a base tem **1.909 cadastros vivos sem CPF** e **455 sem
+  chave nenhuma** — os 12 são 2,6% destes. A maioria vem de imports antigos
+  (`import_next_historico_2025_2026` 64, `grupos_import_2026` 13,
+  `pco_import_2026` 12) e de 276 sem origem declarada. Escopo separado.
 
 ## ⚠️⚠️ VISITANTES · a porta pública `/visitante` (QR nos cartazes · voucher · pesquisa) (2026-09-09 · migration `20260909120000`)
 
@@ -3004,6 +3429,106 @@ consumidor**.
   somente-leitura (é o inventário das 9 portas; a exclusão vive no módulo dono do
   evento).
 
+## ⚠️⚠️ QR POR LOCAL · o contador perdia 12% e enviesava CONTRA o cartaz cheio (2026-09-22 · SEM migration)
+
+Pedido do Matheus: campanha de voluntariado em outubro com QR no **templo** e
+na **feirinha** (hall), os dois levando à MESMA inscrição, para comparar de
+onde veio o escaneamento. Quem olha o número é a Ariel (que já tem **nível 4**
+em `links`, então cria e lê sozinha).
+
+### ⚠️⚠️ O MECANISMO JÁ EXISTIA INTEIRO — e estava vazio
+
+| peça | estado em 22/09 |
+|---|---|
+| N links curtos para o MESMO destino | permitido (só `slug` é unique) · **nunca usado**: 11 links, 11 destinos |
+| `link_curto.onde` ("onde este QR está fisicamente") | existe desde 08/08 · **vazio em 11 de 11** |
+| registro de escaneamento (`link_curto_acesso`) | 94 acessos |
+| `vw_link_curto_stats` (acessos · 7d · 30d · último) | pronto, e a tela já exibe |
+| cartaz 1920×1080 com o título em 82px | pronto (`QrLinkDialog`) |
+
+⇒ **Nenhuma tela nova foi construída.** A resposta de "qual QR foi mais
+escaneado" é a lista de `/links`, que ordena por `criado_em desc` e mostra
+`onde` + acessos por linha.
+
+⚠️ **`normalizarDestino` PRESERVA a query string** (`new URL(v).toString()`),
+e o redirect repassa o destino literal — provado em produção:
+`/r/<slug>` → `Location: /inscricao-voluntariado?qr=vol-templo`. Por isso os
+dois links nascem com `?qr=<slug>` no destino: **inerte hoje** (o formulário
+não lê param nenhum), mas **gravado no cartaz impresso** — medir INSCRIÇÃO
+depois não vai exigir reimprimir nada.
+
+### ⚠️⚠️ O DEFEITO: 12% de perda, e ela é DIRECIONAL
+
+O insert era fire-and-forget **depois** do `res.redirect()`, e em serverless o
+container congela ao responder. Medido contra produção — ⚠️ **sequencial não
+mostra o problema** (5 de 5 passam):
+
+```
+25 simultâneos   →  13 gravados na hora
++25 simultâneos  →  44 no total   ← parte dos "perdidos" da 1ª rodada chegou
+                                    atrasada, no container reaproveitado
+estado final     →  44 de 50 = 12% perdidos, estável após 65s
+```
+
+⚠️⚠️ **A perda só acontece sob CONCORRÊNCIA**, então o cartaz do templo (todo
+mundo escaneando no mesmo minuto no fim do culto) perde proporcionalmente MAIS
+que o de um corredor de passagem. O erro empurra exatamente contra o local
+movimentado — na única comparação que a campanha existe para fazer.
+
+⇒ **`backend/utils/registroAcesso.js`** (`esperarRegistro`, no gate): o insert
+virou **awaited, ANTES do redirect, com TETO de 1200ms**.
+⚠️ O teto é o que preserva a promessa original do arquivo ("quem escaneou não
+espera por estatística"): banco lento faz a pessoa seguir viagem e perde-se a
+LINHA, nunca a pessoa. Custo medido: `/r/` responde em ~300ms, o insert soma
+~100ms.
+
+- ⚠️ **`{ error }` do supabase-js**: ele NÃO rejeita em erro de banco. Tratar só
+  o `catch` contaria como `gravado` um insert que o Postgres recusou.
+- ⚠️ **Teto inválido cai no default**: `setTimeout(fn, NaN)` dispara na hora, o
+  await viraria no-op e os 12% voltariam calados.
+- ⚠️ `clearTimeout` no `finally` — timer pendurado mantém o event loop vivo.
+- Guarda estática impede voltar ao `.then(()=>{},()=>{})` ou ir para depois do
+  redirect.
+
+### ⚠️ O ALARME QUE A MEDIÇÃO DESMENTIU
+
+Suspeitei do **`s-maxage=30`** da borda (o comentário do código diz que ele
+existe para "a CDN servir o culto inteiro sem tocar no banco"). **Não agrega
+nada**: 50 de 50 voltaram `x-vercel-cache: MISS`, inclusive as 25 simultâneas.
+**O cache NÃO foi tocado** — mexer ali trocaria um problema medido por uma
+suposição.
+
+### ⚠️ O que o número consegue e NÃO consegue dizer
+
+- **Escaneamento tem n**: 300-800 no mês ÷ 2 locais. **Inscrição não teria**:
+  o volume real é jun 2 · jul 19 · ago 25 · set 10, e ÷ 5 locais daria ~12 por
+  local, onde "templo 15 × hall 9" é indistinguível de sorteio. Foi por isso
+  que a escolha foi **2 locais, e escaneamento** (decisão do Matheus).
+- ⚠️⚠️ **Mede EXPOSIÇÃO, não eficácia**: o templo tem ~1.700 pessoas sentadas,
+  a feirinha tem quem passa. O templo vence quase por definição. O achado
+  acionável aqui é o **zero** ("a feirinha teve 6 no mês"), não o ranking.
+- O link `voluntariado` que já existia (8 acessos) **NÃO vai em cartaz** — é o
+  grupo de CONTROLE (quem chegou sem passar por QR).
+
+### ⚠️ Lição de MÉTODO: o mutante sobreviveu porque o TESTE media a coisa errada
+
+O mutante que apaga o `clearTimeout` passou nos 13 testes. Não era teste fraco
+por descuido: o caso cronometrava `Date.now()`, e **o `await` retorna quando a
+corrida resolve, com ou sem timer pendurado**. O tempo não observa essa guarda
+— **`vi.getTimerCount()` observa**. Teste corrigido, mutante morto.
+⇒ **Régua: antes de aceitar "o mutante sobreviveu", perguntar se o teste tem
+como OBSERVAR o efeito da guarda.**
+
+### ⚠️ NÃO usar o módulo Campanhas para isto
+
+`camp_*` é de **arrecadação**: `meta_centavos` NOT NULL CHECK > 0 e o **dígito
+de centavo captura crédito REAL do extrato bancário**. Pôr voluntariado ali
+exige inventar meta em reais, e ocupar um dígito faria a campanha puxar dinheiro
+de verdade. **Zero** noção de local/origem/clique e **zero** ligação com
+`vol_inscricoes` (a única menção é `segmento='voluntarios'` num disparo, que lê
+`vol_profiles` para saber PARA QUEM mandar mensagem — o inverso de medir quem
+entra). Cronograma e disparo, se precisar, já existem em **Comunicação → Envios**.
+
 ## ⚠️ GTM · container de página entra pelo COMPONENTE, nunca no index.html (2026-08-18 · SEM migration)
 
 Pedido do Gustavo (GTM): instalar o container `GTM-PQHGF574` na página de
@@ -4605,7 +5130,7 @@ pelo construtor**. Um clique em Salvar teria orfanado as 113.
   `insc_eventos.campos->>'key'` com `jsonb_object_keys(inscricoes.dados)`; a cura
   é buscar a chave original em `ext_eventos`, nunca reescrever `dados`.
 
-## ⚠️ Propostas · `/:id` engolia `/avaliar` e `/mural` (2026-08-03 · SEM migration)
+## ⚠️ Propostas · `/:id` engolia `/avaliar` e `/mural` (2026-08-03 · SEM migration · ⚠️ módulo REMOVIDO em 2026-09-23, seção histórica)
 
 As abas **Avaliar** e **Mural da reunião** não abriam: `GET /:id` é declarado na
 linha ~248 de `routes/propostas.js` e as duas rotas LITERAIS vêm depois (~411 e
@@ -5740,7 +6265,8 @@ Janeiro`). Isso é, ao mesmo tempo, "não explica propósito" e "o nome não bat
   console exige renomear aqui**, senão o motivo 2 volta. O acoplamento está
   escrito no comentário do topo do arquivo.
 - Rotas públicas servidas por rewrite estático hoje: `/privacidade`,
-  `/aplicativo`. As por rota React: `/suporte`, `/politica-reembolso`.
+  `/aplicativo`, `/natal` (temporária, ver seção do Natal 2026). As por rota
+  React: `/suporte`, `/politica-reembolso`.
 - ⚠️ **Lição de método (erro meu, registrado):** procurei `"/privacidade"` no
   bundle de produção, não achei e concluí que a página não existia — ela existe,
   como arquivo estático. **Ausência de rota no bundle não prova ausência de
@@ -5751,6 +6277,32 @@ Janeiro`). Isso é, ao mesmo tempo, "não explica propósito" e "o nome não bat
   estão verificados no **Search Console por outra conta Google** ("Play Console
   org"). Se uma verificação futura falhar por propriedade de domínio, é isso — e
   o conserto é adicionar a conta do console como proprietária, não é código.
+
+## 🎄 `/natal` · cronograma público e TEMPORÁRIO do Natal 2026 (2026-09-17)
+
+`cbrio.org/natal` é o cronograma do Natal 2026 (CBLab), aberto **sem login** para
+ser mandado a voluntários, músicos e parceiros que não têm conta no sistema.
+Mesmo padrão de `/privacidade` e `/aplicativo`: **`public/natal.html`** + rewrite
+`"/natal" → "/natal.html"` no `vercel.json`, **antes** do catch-all do SPA.
+
+- ⚠️⚠️ **REMOVER DEPOIS DE 25/12/2026.** É página de evento, não de produto. A
+  limpeza são dois passos: apagar `public/natal.html` e tirar a linha do rewrite.
+  O prazo também está no comentário do topo do arquivo.
+- **Não carrega nenhum dado sensível e não fala com o backend.** Os 25 marcos do
+  cronograma estão embutidos como JSON literal dentro do próprio HTML — zero
+  `fetch`, zero `/api/`, zero Supabase. Por isso ela pode ser aberta: não há o
+  que vazar. **Se alguém pedir "puxa a agenda do banco", isso deixa de valer** e
+  a página passa a precisar de porta pública de verdade (padrão `/r/`).
+- O que cada visitante marcar (entregue, em andamento, marco novo) fica no
+  **`localStorage` do aparelho dele** — não é compartilhado e não sobe pra lugar
+  nenhum. A versão oficial é a que está commitada aqui; mudar o plano de todo
+  mundo = editar `public/natal.html` e deployar.
+- `<meta name="robots" content="noindex, nofollow">`: aberta por link, mas fora
+  do Google — `public/robots.txt` é `Allow: /`, então o controle é na página.
+- Origem: o arquivo nasceu como HTML solto gerado fora do repo. A tentativa de
+  publicar como artifact do Claude falhou porque **artifact com estado
+  compartilhado (`db`) não pode ser tornado público** e o workspace da CBRio tem
+  compartilhamento público de artifact desligado — daí ter vindo pro sistema.
 
 ## ⚠️ Google Tag Manager · SÓ no domínio público, nunca no ERP (2026-07-29)
 
@@ -6419,7 +6971,7 @@ mostra a posição de cada lente e as divergências.
   oráculo. Consenso do conselho **não é evidência**; para fatos, validar contra o
   código/banco/fontes, não contra o "consenso".
 
-## ⚠️ IA fora do ar = `ANTHROPIC_API_KEY` inválida na Vercel (2026-07-22)
+## ⚠️ IA fora do ar · chave inválida (401) OU sem saldo (400) (2026-07-22 · 2026-09-24)
 
 Sintoma: telas/crons que usam IA quebram todos ao mesmo tempo com **401
 `authentication_error` "API key is invalid"** — NPS (gerar perguntas), agente
@@ -6434,6 +6986,56 @@ da Anthropic → atualizar `ANTHROPIC_API_KEY` (Production) na Vercel → **rede
 (a Vercel só aplica env nova em deployment novo; não há ignored build step, então
 qualquer commit na main serve). Diagnóstico rápido: `get_runtime_errors` da Vercel
 agrupa por `authentication_error`.
+
+### ⚠️⚠️ São DOIS erros diferentes, e o conserto de um NÃO serve para o outro (2026-09-24)
+
+O Matheus apertou "Gerar de novo" no relatório do censo e recebeu **400**. Ler
+a seção acima e sair trocando a env teria sido o conserto errado.
+
+| | 22/07 (a seção acima) | **24/09** |
+|---|---|---|
+| HTTP | **401** | **400** |
+| `type` | `authentication_error` | `invalid_request_error` |
+| mensagem | *"API key is invalid"* | *"Your credit balance is too low (...) purchase credits"* |
+| causa | chave rotacionada; o valor na Vercel ficou velho | **saldo da conta Anthropic acabou** |
+| conserto | nova key → env na Vercel → **redeploy** | **comprar crédito** em console.anthropic.com → Plans & Billing |
+| deploy? | sim, obrigatório | **não** — volta sozinho no próximo tique dos crons |
+
+⚠️⚠️ **Trocar a chave no 400 não resolve e ainda cria um problema**: a chave
+NOVA sai da MESMA organização, com o MESMO saldo zerado, e o redeploy dá a
+impressão de que "alguma coisa foi feita".
+
+⚠️ **O sintoma aparece primeiro onde alguém CLICA, não onde começa.** O relatório
+do censo foi o que ele viu, mas a medição em `agent_runs` mostrou que a parada
+era de **~36 horas** e já tinha **70 execuções falhadas**: último sucesso do
+`incident_backend_diagnostician` em **22/09 11:30**, do
+`incident_automation_diagnostician` em **23/09 11:05**, do
+`piloto_triage_watcher` em **23/09 11:31** — e nada depois disso.
+
+⇒ **`agent_runs` é o termômetro da chave**, e responde em uma consulta:
+
+```sql
+select agent_type, status, count(*), max(created_at)
+from agent_runs where created_at >= now() - interval '3 days'
+group by 1,2 order by 4 desc;
+```
+
+⚠️ **Não existe alarme para isso.** O `monitorAutomacoes` vigia pipeline de
+DADO, não a chave; e os agentes que abririam incidente são justamente os que
+não rodam sem crédito — **o vigia morre junto com o vigiado**. Foi por isso que
+36 horas passaram sem ninguém saber. Alarme de saldo teria de ser um cron
+BARATO, sem IA, olhando `agent_runs` (ou a própria API da Anthropic).
+
+⚠️ **O que fica parado é TUDO o que usa a chave** (é uma só): relatório e
+Leitura da IA do censo · NPS · agente de primeiro contato · agente
+batismo/Next · Central de Agentes · `developer_agent` (o "Resolver todos" dos
+Diagnósticos) · Cérebro · nfScanner · parser do WhatsApp · bot de IA por área ·
+agente executor financeiro e `rotina_gestor` (Railway).
+
+⚠️ **Nada se perde**: o relatório anterior continua na tela (o de 21/09, com
+1.353 respostas), e a falha é na GERAÇÃO. Mas as 70 execuções que falharam
+**não são refeitas sozinhas** — quem depende de janela (a triagem de incidente
+de 5 em 5 min) simplesmente perdeu aquelas rodadas.
 
 ## ⚠️ LEI · NUNCA nomear pessoa como dono de fluxo neste arquivo (2026-08-05)
 
@@ -6643,20 +7245,34 @@ mudança incluir qualquer destes itens:
 
 ## Migrations do Supabase
 
-Sempre que uma PR incluir arquivos em `supabase/migrations/`:
+⚠️⚠️ **DECISÃO DO DIEGO (2026-09-24): Claude aplica migration DIRETO em
+produção, via MCP do Supabase (`apply_migration`/`execute_sql`), SEM esperar
+confirmação do usuário.** Revoga a regra antiga de "colar o SQL e esperar
+alguém rodar no SQL Editor" — o MCP já está conectado neste projeto
+(`hhntwfawfnxvuobhdfkb.supabase.co`, o mesmo do `SUPABASE_URL` do backend) e
+é mais rápido que o caminho manual. Trade-off aceito conscientemente: erro na
+migration vai direto pra produção, sem checagem humana no meio.
 
-1. Avisar claramente o usuário **antes do merge** que há migration nova.
-2. **Colar o SQL completo da migration direto na conversa** (dentro de um
-   bloco ```sql) para que o usuário possa copiar e rodar no SQL Editor
-   sem precisar abrir o arquivo. NÃO basta apontar o caminho do arquivo —
-   sempre enviar o conteúdo na mensagem.
-3. Aguardar confirmação do usuário de que a migration foi aplicada no
-   Supabase de produção antes de mergear — senão o backend em prod
-   quebra ao chamar a tabela/coluna.
+Sempre que uma migration nova for necessária:
 
-A única exceção é quando a mudança é puramente idempotente e
-backwards-compatible (ex.: `ADD COLUMN IF NOT EXISTS` opcional) e o
-código tolera ausência da coluna.
+1. Escrever o arquivo em `supabase/migrations/` (o repo continua sendo a
+   fonte versionada — nunca aplicar só via MCP sem o arquivo correspondente,
+   senão o histórico do repo diverge do banco vivo, a mesma armadilha que
+   este arquivo já documenta várias vezes).
+2. Aplicar via `mcp__supabase__apply_migration` (DDL) ou `execute_sql`
+   (consulta/backfill), com o MESMO SQL do arquivo.
+3. **Conferir no CATÁLOGO que a mudança pegou** (`information_schema`,
+   `pg_constraint`, `SELECT` na tabela/coluna nova) — nunca só confiar no
+   `{"success": true}` da chamada. É a lei repetida à exaustão neste arquivo:
+   medir o resultado, não o retorno da chamada.
+4. Avisar o usuário no chat que a migration foi aplicada (nome do arquivo +
+   resumo de 1 linha do que mudou) — transparência, não pedido de permissão.
+
+Se a migration for destrutiva de verdade (`DROP TABLE`, `DROP COLUMN`, perda
+de dado real) as leis de segurança deste arquivo continuam valendo por cima
+disto — aplicar sozinho é só para migration aditiva/de schema normal do dia a
+dia. Destrutivo em tabela com dado ainda pede confirmação explícita (ver
+"Quando parar e perguntar antes de mergear", mais abaixo).
 
 ## Convenções do repositório
 
@@ -6940,6 +7556,102 @@ porta. Outros: `graphify god-nodes` (hubs · `notificar()` com 101 arestas,
 `authenticate()` com 92), `graphify explain <id>`, `graphify path "A" "B"`.
 ⚠️ `explain`/`affected` pedem o **id do nó** (`backend_routes_grupos_aprovarpedidocore`),
 não o caminho do arquivo; nome ambíguo devolve a lista de candidatos.
+
+## Marketing · LINHA DO TEMPO · Fase 1 no ar (2026-09-25 · migration `20260925100000` APLICADA)
+
+Primeira fase da aba que vai substituir o Kanban do Marketing. Plano completo, matriz do ciclo
+e as migrations F2–F5 (ainda NÃO aplicadas) vivem no PR #3050 (`docs/modulo-marketing/linha-do-tempo/`).
+
+- **Subtarefa (checklist) ganhou dono e tempo:** `membro_id`, `esforco_valor` + `esforco_unidade`
+  (`horas` | `dias`), `prazo`, `concluido_em/por`, `exige_registro` + `registro`.
+- ⚠️⚠️ **DOIS TEMPOS, nunca um:** esforço + prazo da SUBTAREFA (quanto a pessoa trabalha e até
+  quando entrega aquela parte) × **entrega FINAL** da demanda (`marketing_campanhas.prazo_entrega`,
+  a data que o solicitante vê em Solicitações). Algo de 2 dias pode ser entregue em 3 semanas.
+- **Card:** `culto` (cbrio/ami/kids), `prioridade`, `visibilidade` (`equipe` · `so_lider` ·
+  `lider_move`), `prazo_inicial`, `concluido_em`, `atualizado_por` + `marketing_card_prazo_historico`.
+- ⚠️⚠️ **Líder ≠ nível de módulo:** o `AREA_MODULO_BOOST` dá nível 5 à equipe inteira. Líder =
+  role admin/diretor OU `marketing_membros.habilidade = 'coordenador'`
+  (`contextoSubtarefa` em `routes/marketing.js`). Nunca usar `isAdminLike` para isso.
+- **Régua PURA `backend/utils/marketingChecklist.js`** (`src/test/marketingChecklist.test.ts`):
+  - quem MARCA: líder sempre · em `lider_move`/`so_lider` SÓ o líder · em `equipe`, o dono do item,
+    o responsável do card ou nível ≥3 (o Kanban de hoje não perdeu ninguém);
+  - quem EDITA a estrutura: líder ou nível ≥3 (em card do líder, só o líder);
+  - valor inválido é **400, nunca coerção** (`'2'` não vira 2 · `'dia'` não vira `horas`);
+  - item com `exige_registro` não fecha sem texto (o banco também recusa por CHECK).
+- `PATCH /checklist/:itemId` desceu para `authorizeModule('marketing', 1)` — a régua decide.
+  `PATCH /cards/:id` grava `atualizado_por` (service_role não tem `auth.uid`), e só o líder muda
+  culto/prioridade/visibilidade.
+
+### Fase 2 · a série gera as próprias tarefas (migration `20260925110000`)
+
+- **Uma tarefa por ETAPA × CULTO** (CBRio, AMI, Kids), nascida da fase do evento
+  (`event_cycle_phases`) + a matriz (`marketing_ciclo_padroes` com `culto`/`visibilidade` +
+  `marketing_ciclo_itens_padrao`). Fase sem padrão não gera tarefa. A matriz é editável em
+  `/marketing/admin` → Padrões (responsável, quem vê, subtarefas com esforço em horas ou dias).
+- ⚠️⚠️ **A ativação do ciclo usa as etapas da categoria OU o criativo padrão**
+  (`utils/templatesCiclo`). Medido na Fase 0: as 11 etapas existem só com `category_id` NULL, e a
+  ativação filtrava pela categoria — ativar uma Série criava um ciclo VAZIO, sem erro. Ciclo sem
+  etapa nenhuma agora é erro, não ciclo vazio.
+- `POST /api/events` ativa o ciclo sozinho quando a categoria está em `marketing_categoria_cultos`
+  (hoje só a Série). Feriado, Rotina de Liturgia etc. NÃO ganham ciclo.
+- Kanban e `/cards` escondem as tarefas `so_lider` (Pré Briefing, Debrief) de quem não é líder.
+- O card que nasce da fase tem `event_phase_id` e nenhum `cycle_phase_task_id`; o `enrichCards`
+  monta o mesmo objeto de fase para o Kanban tratar os dois iguais.
+- Etapa que o modelo antigo já tinha concluído nasce concluída (com a data real); o item que
+  exige registro fica aberto (não se inventa texto).
+
+### Fase 3 · a aba Linha do tempo (migration `20260925170000` · aplicar JUNTO com o deploy)
+
+- ⚠️ O número é **170000**, não o `120000` do plano: aquele já era de `devocional_itens_video`.
+- **Gatilho `fn_marketing_checklist_fecha_card`**: todas as subtarefas feitas ⇒ card `concluido`;
+  alguém DESMARCA uma ⇒ volta a `producao`. ⚠️ Só o desmarcar explícito reabre — as 39 etapas
+  fechadas em lote em 25/09 têm item de registro aberto e não podem reabrir sozinhas. Vale também
+  no Kanban (é por isso que migration e deploy vão juntos).
+- ⚠️⚠️ **O gatilho roda no banco e NÃO avisa ninguém**: o aviso de entrega ao solicitante
+  (`marketing_card_entregue`) é do backend. `avisarSeChecklistConcluiu` (em `routes/marketing.js`,
+  awaited) é chamado pelo `PATCH /checklist/:itemId` e pelo `DELETE` de item, com a MESMA
+  `avisarEntregue` do `PATCH /cards/:id`. Marcar subtarefa pela linha do tempo usa ESSE PATCH —
+  não existe porta de escrita própria da linha.
+- **`GET /api/marketing/linha?ano=`** (`routes/marketingLinha.js`, montada ANTES do router geral):
+  semanas + 4 frentes já recortadas pelo perfil. Régua pura em `utils/marketingLinha.js`
+  (`src/test/marketingLinha.test.ts`): semana dom→sáb **dentro do ano** (semana 1 pode ter 1 dia) ·
+  timestamptz lido em BRT · Institucionais = card com evento · Sistema = veio de campanha/solicitação
+  · Interno = resto · pendência só até a semana atual (depois é previsto).
+- **Rotina** = `marketing_rotina_execucoes` (compromisso × pessoa × domingo da semana; sem linha =
+  aberto). `PUT|DELETE /linha/rotina/:compromissoId/:semanaInicio` — a própria pessoa ou o líder.
+  ⚠️ Só é cobrada a partir de `ROTINA_DESDE` (2026-09-27): cobrar o passado pintaria tudo de vermelho.
+- `levelOf`/`contextoSubtarefa` saíram de `routes/marketing.js` para `services/marketingContexto.js`
+  (a linha usa a mesma régua de líder).
+
+### Fase 4 · Pendentes + editor do líder (migration `20260925130000` · APLICADA pelo Marcos em 25/09)
+
+- **Migration**: `marketing_campanhas.sugerido_membro_id` + `fn_marketing_sugerir_membro(tipo)` (formato
+  pedido → `marketing_etiquetas_tipo.habilidade_padrao` → a ÚNICA pessoa ativa com essa habilidade; 2+ ou
+  sem formato = sem sugestão). A sugestão **não atribui nada** — só pré-preenche.
+- **5ª frente `Pendentes`** (`frentes.pen` no `GET /linha`, **só para o líder**): campanhas em `triagem`,
+  semana = `data_necessaria` (ou criação + 7 dias). É a caixa de entrada do Pedro ⇒ **qualquer pedido
+  esperando pinta a frente de vermelho**, não só os vencidos. No front ela é a ÚLTIMA de `FRENTES`
+  (`soLider`), então as outras não mudam de lugar para quem não é líder.
+- **Rotas (só líder · `exigirLider`)** em `routes/marketingLinha.js`:
+  `POST /linha/pendentes/:campanhaId/alocar` · `POST /linha/tarefas` (Interno) · `PATCH /linha/tarefas/:id`.
+  Régua pura em **`backend/utils/marketingAlocacao.js`** (`src/test/marketingAlocacao.test.ts`, 15 casos ·
+  2 mutantes rodados e mortos: entrega-antes-do-prazo liberada · carga contando item feito).
+- ⚠️⚠️ **DOIS TEMPOS**: cada subtarefa tem esforço + prazo próprios; a entrega final
+  (`marketing_campanhas.prazo_entrega`) **não pode ser antes do último prazo de subtarefa** (400).
+  Alocar exige responsável, prioridade, "o que você espera" e esforço+prazo por item.
+- ⚠️ **Alocar tira da triagem ANTES de criar o card** (UPDATE condicionado a `status='triagem'`): dois
+  cliques não alocam duas vezes (409). Se o card/checklist falhar, a campanha volta pra triagem e o card
+  sai (soft).
+- **Avisos saíram de `routes/marketing.js` para `services/marketingAvisos.js`** (`avisarEntregue`,
+  `avisarSeChecklistConcluiu`, `avisarPrazoAjustado`, `avisarAtribuidos`) — Kanban e linha do tempo usam a
+  MESMA redação e a mesma `chaveDedup`. Editar avisa só quem ENTROU (dono novo ou item novo/realocado);
+  remover o último item aberto passa pelo aviso de entrega (o gatilho pode ter fechado o card).
+- **Carga ao vivo** (`GET /linha` → `carga[membro][semana]` em horas, só líder): itens abertos, semana =
+  prazo do item ou da tarefa, atrasado cai na semana 1. **Dia = 8h** até a Fase 5 trazer a capacidade real.
+  O editor (`linha/EditorTarefa.jsx`, um só para alocar/nova/editar) mostra "já na agenda + desta = total"
+  e, no modo editar, tira da base o que a própria tarefa já somava.
+- ⏳ Fora desta fase: campo "que formato você imagina?" no formulário (sem ele quase nenhum pedido chega
+  com sugestão) · modal Responsabilidades com a matriz real · Fase 5 (planner em horas + capacidade).
 
 # ⚠️ REGRAS OBRIGATÓRIAS DE SEGURANÇA (não regredir · 2026-05-21)
 
@@ -7615,14 +8327,57 @@ confundir, não misturar estratégico com rotina:
 (migrations `20260609120000` e `20260610120000`). Nunca renomear slug/rota (quebra
 ROUTE_MODULE_MAP, matriz de permissões e bookmarks).
 
-### Legado REMOVIDO (não funciona mais assim · não tratar como ativo)
-O antigo **"Planejamento Anual"** (propostas → aprovação diretor→diretoria → materializa em
-event/project) foi **aposentado** — nunca foi usado (0 propostas). Removidos: telas
-`/planejamento/anual` (`AnualCiclos.jsx` + `AnualCicloDetalhe.jsx`) e `Planejamento.jsx` (PMO);
-tabelas `planejamento_propostas`/`_audit`/`_setores`/`_areas_setor` **dropadas** (migration
-`20260610130000`). **Mantidos:** `event_liturgia_templates` (o hub usa) e `planejamento_ciclos`
-(dormente · pode virar portão "ano aberto/fechado"). As colunas `events.proposta_id`/
-`projects.proposta_id` ficaram (só a FK saiu · inócuas).
+### Legado REMOVIDO em 2026-06-10, RECONSTRUÍDO desde então · "Planejamento Anual" (correção de registro 2026-08-26)
+O `Planejamento Anual` original (propostas → aprovação diretor→diretoria → materializa em
+event/project) foi de fato **aposentado em 2026-06-10** — nunca havia sido usado (0 propostas).
+Removidos naquele momento: telas `/planejamento/anual` (`AnualCiclos.jsx` +
+`AnualCicloDetalhe.jsx`) e `Planejamento.jsx` (PMO); tabelas `planejamento_propostas`/`_audit`/
+`_setores`/`_areas_setor` **dropadas** (migration `20260610130000`). `event_liturgia_templates`
+(o hub usa) e `planejamento_ciclos` (dormente) sobreviveram; as colunas `events.proposta_id`/
+`projects.proposta_id` ficaram órfãs (só a FK saiu · inócuas). **Isso é história — não confundir
+com o que existe hoje.**
+
+⚠️⚠️ **Um módulo NOVO e DISTINTO nasceu depois com o MESMO nome** ("Planejamento Anual" · commits
+`e8ae2fbe` "telas do módulo (fase 4)" e `f00b833a` "gráfico na decisão, calendário do ano e régua
+2026-2030" — ou seja, teve fases 1-3 anteriores nunca registradas aqui). **Está VIVO, em produção,
+e é o fluxo oficial validado com o Yago em 2026-08-26.** Achado por investigação direta (grep +
+leitura de código + banco vivo), não por este arquivo — que ficou 2+ meses desatualizado nesse
+ponto. Módulo: `src/pages/planejamentoAnual/` · rotas `/api/planejamento-anual`
+(`backend/routes/planejamentoAnual.js`) · tabelas `plan_ciclos`, `plan_propostas`,
+`plan_avaliacoes`, `plan_decisoes`, `plan_apontamentos`, `plan_ciclo_avaliadores`,
+`plan_areas_diretoria`, `plan_locais`, `plan_orcamentos`, `plan_orcamento_valores`,
+`plan_calendario_itens`, `plan_conflitos_aceitos` — **sem nenhuma relação** com as tabelas
+`planejamento_propostas*` dropadas acima.
+
+**Fluxo (validado com o Yago 2026-08-26 · só as datas de abertura/fechamento de cada fase ainda
+podem mudar):**
+1. **Ciclo por ano** (2026-2030): o Pastor (cargo `pastor-presidente`, ou super-admin) cria o
+   ciclo e abre/fecha as janelas de **submissão** e **avaliação** independentemente.
+2. **Proposta**: qualquer proponente cria em `rascunho`, edita livremente, e **envia** — o envio
+   é validado no SERVIDOR contra a janela de submissão (não só na tela).
+3. **Avaliação cega por diretoria**: cada diretoria (ministerial, criativo, financeiro etc.) tem
+   um assento (`plan_ciclo_avaliadores`) e dá notas nos 7 critérios sem ver a nota das outras,
+   até completar o quórum (todas as diretorias avaliarem).
+4. **Decisão — exclusiva do Pastor**: com quórum completo, o Pastor vê o ranking e decide por
+   proposta (ou em lote): `aprovada` · `aprovada_ressalvas` (com responsável e prazo) ·
+   `reprovada` (com exigência e prazo) · `arquivada`.
+5. **Retificação**: proposta reprovada tem **1 rodada de 5 dias** para o proponente corrigir; o
+   Pastor decide de novo (aprovar/ressalvas/arquivar em definitivo, ou reabrir para as diretorias
+   reavaliarem do zero).
+6. **Calendário e conflitos**: propostas aprovadas entram no calendário do ciclo; o sistema
+   detecta conflitos de local/data e o Pastor pode aceitá-los com justificativa, ou remanejar a
+   proposta.
+7. **Orçamento**: a diretoria Financeiro preenche o orçamento mensal do ciclo (linhas fixas +
+   caixa livre) e envia ao Pastor, que vê uma visão orçamentária consolidada (inclusive
+   simulando o efeito de aprovar uma proposta isolada).
+8. **Publicação**: travas automáticas (quórum, conflitos não aceitos) bloqueiam a publicação até
+   estarem resolvidas; ao publicar, o calendário definitivo é congelado numa versão
+   (`fn_plan_publicar_ciclo`), e divergências futuras (proposta que saiu/mudou/entrou depois) são
+   detectadas contra esse snapshot.
+
+⚠️ **Lição de método**: este é um caso vivo da própria regra deste arquivo ("validar contra o
+código/banco vivo antes de tratar qualquer afirmação como verdade") — a seção acima ficou errada
+por dois meses porque ninguém confirmou contra o código depois que o módulo novo nasceu.
 
 ### Dívida técnica (código morto · sem chamador · NÃO é referência viva)
 Para não arriscar a liturgia (arquivo de 760 linhas), ficaram intactos mas **órfãos**: o
@@ -13351,6 +14106,30 @@ handler em `backend/agents/apply/financeiroApply.js` (→ applied/failed).
   ⚠️ As rotas de leitura de `agents.js` migraram pro cliente REST (pool pg não
   conecta no Vercel · PR #920).
 
+## Site público · aba SÉRIES (`cbrio.com.br/series`) (2026-09-24 · SEM migration)
+
+Pedido do Matheus: tema anual 2027 + uma série por mês (inspiração life.church/media/wake-up).
+Páginas `/series` e `/series/:slug` (no ERP, prévia em `/novosite/series`), item "Séries" no NAV
+do site. **Conteúdo é arquivo, não banco**: `src/pages/public/novosite/series2027.ts` (TEMA_ANUAL +
+12 séries · `titulo: null` = card "Série em breve", sem página). PDFs/artes em `public/series/2027/`.
+- ⚠️ **Nada se publica à mão**: a mensagem libera vídeo (YouTube, carregado só no clique) e PDF no
+  DIA dela em BRT (`src/lib/seriesSite.ts` · comparação de STRING, nunca `new Date('YYYY-MM-DD')`,
+  que é 21h do dia anterior no Rio). Data inválida nunca libera. Teste: `src/test/seriesSite.test.ts`
+  (também valida slugs únicos e que cada mensagem cai no mês da série).
+- ⚠️ Não trocar `slug` depois de divulgado (link compartilhado quebra). Arquivo é público: zero PII.
+- `SerieDetalhe` remonta por `key={slug}`: o `useChrome` só observa `.ns-reveal` na montagem.
+- **Conteúdo 2027 preenchido em 24/09** a partir da planilha "Séries de Pregação 2027.xlsx" (tema anual
+  **Coragem · 2 Timóteo 1:7**). Decisões do Matheus: descrição pública da série = TEXTO SINTETIZADO (descrição + objetivos das mensagens, sem as notas internas); antes era a coluna "Coragem" (a coluna
+  "Descrição" é anotação INTERNA — "punch para natal", "31WISE" — e fica fora); o objetivo de cada
+  mensagem (coluna "Mensagem") aparece SEMPRE. Fases (Empoderamento/Alcance/Consolidação), eventos e
+  anúncios da planilha também ficam fora. Lista sem foto no topo (pedido).
+- **Layout (24/09, pedido do Matheus):** a lista é página corrida CLARA (sem faixa azul, sem onda) e a
+  série abre com uma FAIXA 3:1 só com a arte (ex.: 2400×800) — o nome vem escrito NA ARTE; a página só
+  escreve o nome quando não há imagem. Header forçado sólido (`<SiteHeader scrolled>`): com fundo claro o
+  menu branco sumiria. Vozes (julho) = 4 pregadores (2 internos, 2 externos), tema encorajamento, em aberto.
+- ⏳ Futuro possível: puxar os vídeos da playlist do YouTube (`online_series`/`online_videos`) em vez
+  de colar o ID à mão.
+
 ## /novosite · prévia da home do novo site público (2026-05-30)
 
 Rota PÚBLICA standalone `/novosite` (+ `/novosite/quem-somos`) fora do
@@ -13642,6 +14421,83 @@ dos KPIs). Tipo é **encerrado** (`is_active=false`), nunca apagado.
 - ⚠️ O **cutoff "de hoje pra cá"** de 18/05 foi **REVERTIDO** em 09/06
   (`20260609160000`): com a NSM em janela móvel de 90d ele escondia gap que JÁ
   contava no denominador. `vw_nsm_sem_dados` cobre tudo; o recorte é do consumidor.
+## ⚠️⚠️ O CRUD de tipo de culto descartava as flags que DEFINEM o culto (2026-09-24 · SEM migration)
+
+Causa raiz dos 3 tipos CBKIDS fantasmas de agosto, atacada a pedido do Matheus.
+`POST /voluntariado/service-types` aceitava só `name`, `description`,
+`recurrence_day`, `recurrence_time`, `color`; o `PUT`, esses + `is_active`. Todo
+o resto nascia no **default da coluna** — e os defaults são **OPOSTOS entre si**:
+
+| coluna | default | onde foi criada |
+|---|---|---|
+| `has_online_stream` | **true** | `migrations_manual/20260420` (fora do fluxo) |
+| `has_kids` | false | migration `20260514120000` |
+| `has_online` | false | migration `20260514120000` |
+| `presencial_label` | `'Presencial'` | migration `20260514120000` |
+
+⇒ Tipo criado pela tela nascia **materializando culto toda semana** (o cron
+`/kpis/cultos/auto-create` filtra `has_online_stream=true`) e, ao mesmo tempo,
+**sem Kids** (portão duro do totem, do resumo Kids e da coleta da Integração),
+**invisível ao pipeline online** (`has_online=false` → o live-monitor devolve
+`reason:'fora_de_janela'`, que **aponta a causa errada**) e **fora do bloco de
+domingo** (`dashboardSemanal.js:434,1053` discrimina o templo por
+`presencial_label='Sede'`). E o `PUT` também não as aceitava, então **não havia
+caminho de UI para consertar** — por isso o tipo novo do corte de domingo nasceu
+por SQL.
+
+- **Régua PURA em `backend/utils/tipoCultoFlags.js`** (no gate ·
+  `src/test/tipoCultoFlags.test.ts`, 25 casos · **4 mutantes RODADOS e mortos**:
+  default virando `true` → 6 vermelhos · default aplicado no PUT → 3 · coagir
+  valor em vez de recusar → 7 · `presencial_label` sem trim → 3).
+- ⚠️⚠️ **O default de CRIAÇÃO é `has_online_stream: false`, e é deliberado.** O
+  lado caro de errar é o `true`: tipo criado sem pensar (ou de teste) vira
+  fábrica semanal de cultos, cada linha custando ~1,3 s de gatilho de KPI/NSM e
+  entrando em denominador. `false` deixa o tipo inerte até alguém ligá-lo de
+  propósito — visível e reversível.
+- ⚠️ **`false` não é "ausente".** A coluna é NOT NULL, então o banco não
+  distingue "ninguém decidiu" de "decidiram que não". Quem preserva a distinção é
+  a régua: no `PUT`, campo AUSENTE não entra no patch (`undefined` some no JSON);
+  `false` EXPLÍCITO entra.
+- ⚠️ **Valor não-booleano é RECUSADO, nunca coagido** — `Boolean('false')` é
+  `true`, e aqui o palpite decidiria se criança faz check-in.
+- ⚠️ **O POST NÃO passou a EXIGIR as flags**, e é decisão: com o Skew Protection
+  ligado (21/08) o bundle antigo segue servido por até 12 h, então mesmo um PR
+  único front+back deixaria aba aberta tomando **400 com mensagem genérica**
+  ("Erro ao criar"). Default seguro no servidor resolve sem quebrar ninguém.
+- **Na tela** (`VolTiposCulto.tsx`) os controles dizem o **EFEITO**, não o nome da
+  coluna: *"Gerar os cultos automaticamente toda semana"*, *"Tem CBKids em
+  paralelo — sem isto nenhuma criança consegue fazer check-in"*, *"É transmitido
+  ao vivo"*, e o rótulo presencial explicando que **'Sede'** é o que põe o culto
+  no bloco de domingo.
+- **`backend/scripts/_tipos_culto_diagnostico.cjs`** (100% SOMENTE LEITURA · sem
+  `--exec`) relata o passado em 5 regras e **não corrige nada** — a flag certa
+  depende do que o culto É, e isso é decisão de gente.
+
+### ⚠️⚠️ ABERTO · `has_online_stream` tem DOIS sentidos, e o Bridge paga a conta
+
+A coluna foi criada para dizer **"tem transmissão no YouTube"** — o texto da
+própria `migrations_manual/20260420` diz *"Cultos sem online (ex.: Bridge) ficam
+de fora da coleta automática D+1/D+7"*, e ela faz
+`UPDATE ... SET has_online_stream = false WHERE LOWER(name) LIKE '%bridge%'`.
+Depois alguém a transformou no **portão do cron que MATERIALIZA culto**
+(`kpis.js:785`).
+
+⇒ Pela letra do código, **o `auto-create` não cria os cultos do Bridge**. Não foi
+possível medir nesta sessão (sem credencial de service role na máquina) — rodar
+o script de diagnóstico responde: a regra **[A]** dele é exatamente esse caso.
+
+⚠️ **NÃO "consertar" trocando o filtro para `has_online`**: Bridge tem
+`has_online=false` também, e a troca pararia de criar os cultos presenciais que
+o cron hoje cria. O conserto de raiz é **separar "o que o culto TEM" de "o culto
+deve ser GERADO"** — coluna própria de materialização (migration) ou o gate
+passar a ser `vigente_de`. É decisão do Matheus/Marcos Paulo, com migration, e
+ficou **fora** desta leva de propósito: a leva fecha a porta de entrada sem
+mexer no comportamento de nenhum tipo existente.
+
+⚠️ `POST /service-types/:id/generate` insere em **`vol_services`** (escalas do
+voluntariado), **não** em `cultos` — não é o mesmo furo e não foi tocado. Ele
+segue sem filtrar vigência, o que é follow-up próprio.
+
 ## ⚠️ Batismo · categoria etária do batizando · 4 faixas (2026-08-19 · migration `20260819160000`)
 
 Faixas definidas pelo Matheus: **criança < 13 · adolescente 13–17 · jovem 18–25
@@ -15421,6 +16277,600 @@ sobreviveria. É a lição de 24/08 aplicada de novo.
 tem 8, 10, 12, 13 ou 16 scripts. Em **27/08/2026 são 20**. **Contar no
 `.github/workflows/deploy-vercel.yml`, nunca decorar** — cada número que este
 arquivo já registrou envelheceu, este inclusive.
+
+
+## ⚠️⚠️ LEI · entrada manual só vale em `dado_tipo` SEM ramo nativo (2026-09-21 · migration `20260921120000`)
+
+Pedido do Matheus sobre o módulo Online: card de views da semana anterior ·
+auditar se os KPIs estão sendo alimentados · e *"o online faz diversos
+atendimentos e esse kpi precisa ser alimentado, porem eles fazem de forma
+externa ao sistema, entao preciso de uma forma manual para alimentar esse
+kpi"*.
+
+**A auditoria achou algo pior que os vazios que ele apontou.**
+
+### ⚠️⚠️ A LEI, e ela já custou 84 lançamentos
+
+`_kpi_agregar_dado` é uma cadeia de `ELSIF p_dado_tipo = '…'` terminada por um
+**fallback** que agrega de `dados_brutos` (filtrando por área e período). Mas
+vários ramos nativos terminam assim:
+
+```sql
+SELECT count(*) INTO v_resultado FROM public.cui_acompanhamentos ...;
+RETURN v_resultado;          -- ← INCONDICIONAL
+```
+
+`count(*)` **nunca é NULL**, então o `RETURN` sempre dispara e **o fallback é
+inalcançável**. Ligar `entrada_manual = true` num tipo assim faz a equipe
+lançar, a tela dizer "salvo", e o KPI **não se mover — sem erro, sem log**.
+
+⚠️⚠️ **E isso NÃO é hipótese: `solicitacoes_servir_recebidas` tinha 47
+lançamentos manuais e `_alocadas` 37.** São **84 números que alguém da equipe
+digitou e o sistema nunca leu** (o KPI lê `vol_inscricoes`). O custo não é só o
+KPI errado — é a equipe alimentando um campo que não alimenta nada e concluindo
+que o sistema não funciona.
+
+⇒ **A entrada manual entra em `dado_tipo` NOVO**, que não aparece em nenhum
+`ELSIF`: `atend_capelania_recebidas` · `atend_capelania_atendidas` ·
+`atend_aconselh_recebidas` · `atend_aconselh_atendidas`. Os 10 KPIs de
+capelania/aconselhamento foram repontados para eles (seguro: os 5 de capelania
+tinham **0 valores calculados**).
+
+⚠️ A migration carrega **duas guardas em SQL que ABORTAM**: uma se algum tipo
+novo ganhar ramo nativo depois, outra (invariante final) se **qualquer** tipo
+ativo for manual e tiver ramo nativo ao mesmo tempo. `src/test/entradaManualKpi.test.ts`
+(15 casos, no gate) é o espelho estático disso.
+
+### ⚠️⚠️ O problema caro estava nos KPIs que TÊM VALOR, não nos vazios
+
+`voluntarios_checkin` **não tinha filtro de área nenhum** na função. Prova:
+
+| KPI | área | 2026-09 |
+|---|---|---|
+| AMI-15 | ami | **30,43** |
+| BRG-14 | bridge | **30,43** |
+| KIDS-14 | kids | **30,43** |
+| ONL-17 | online | **30,43** |
+| SED-10 | sede | **30,43** |
+
+É o percentual de check-in da **igreja inteira**, publicado 5 vezes com rótulo
+de área. Os números REAIS do mês: Online **29,17%** (24 escalados / 7 check-in)
+· Kids **37,27%**. Nenhum é 30,43.
+
+⚠️ **KPI com valor errado é pior que KPI vazio**: o vazio ninguém usa; este vai
+para a reunião. Consertado por **patch dinâmico** (`vol_teams.area` via
+`vol_schedules.team_id`), com guarda de âncora única e prova no catálogo.
+
+⚠️⚠️ **E `vol_teams.area` NÃO são as áreas do KPI**: tem Cuidados, Integração,
+KIDS, Louvor, Marketing, Online, Produção, Voluntariado. **Só KIDS e Online
+casam** — ami/bridge/sede passariam a devolver NULL para sempre, então os 3
+foram **desativados** com o motivo escrito. Melhor KPI ausente que KPI errado.
+
+### ⚠️ ONL-20 e a família "% de voluntarios que pararam de servir"
+
+A fórmula é `voluntarios_recuperados / voluntarios_inativos_3m` = taxa de
+**RECUPERAÇÃO**, não de saída — e com `menor_melhor` + meta 5 o farol pedia que
+recuperar voluntário fosse **raro** (mesma família do churn com meta 90 de
+24/08). Os dois lados leem `mem_voluntarios.ate`, **NULL em 635 de 635**: não
+existe fluxo de baixa, então nunca houve base.
+
+⇒ Os 5 foram **desativados**, não renomeados.
+⚠️ **Consertar só o `sentido_meta` seria o pior caminho**: faria um número que
+mede outra coisa acender farol — pior que o vazio, porque passaria a ser lido.
+⚠️ **Derivar "inativo = sem escala há 90 dias" foi considerado e RECUSADO**:
+"a igreja desligou esta pessoa" e "não apareceu há 90 dias" são fatos
+diferentes, e colapsá-los em `ate` apaga a distinção para sempre. Medir
+ausência é KPI NOVO com nome próprio — decisão de gente.
+
+⚠️ **A régua de renomear**: só é seguro quando a FÓRMULA sempre foi aquela (aí
+o rótulo estava errado e a série continua válida — foi o caso de ONL-19, que
+dizia "check-in" medindo alocação de solicitação de servir, e de ONL-02/ONL-06,
+os dois "% de crescimento"). Quando a fórmula muda, o certo é desativar e criar
+id novo.
+
+### ⚠️⚠️ O atalho rápido do /dados-brutos estava VAZIO para todas as áreas
+
+Achado de carona: os **10 ids** de `QUICK_LOG_POR_AREA` eram **todos**
+`entrada_manual = false`, e o quick log filtra `entrada_manual !== false`. Ou
+seja, o lançamento rápido não mostrava nada, em área nenhuma, sem dizer por quê.
+Repontado para os tipos que de fato aceitam lançamento.
+⚠️ Antes de acrescentar id ali: conferir que é `entrada_manual = true` **E** que
+não tem ramo nativo.
+
+### ⚠️⚠️ O card de views: subtrair snapshot ERRA 45% na semana que ele abriria
+
+`online_canal_snapshot.view_count` é o **acumulado** do canal, e o YouTube o
+**revisa para baixo** ao depurar views. Medido em 126 dias: **9 dias com queda**
+· maior **−7.197** · total depurado **−28.568**.
+
+A semana 14–20/09 — a primeira que o card mostraria — tem **−5.377 no dia 16**:
+a subtração daria **6.642** contra **~12.019** reais. Card que erra na primeira
+semana em que é aberto não volta a ser lido.
+
+⇒ Fonte certa: **YouTube Analytics API** (`metrics=views&dimensions=day`), que é
+o número do Studio. Tabela `online_canal_views_dia` + `viewsDiaCollector`, com
+**UPSERT dos últimos dias de propósito** (o YouTube ainda ajusta D-1 e D-2 — é o
+upsert que deixa o número se corrigir sozinho).
+
+⚠️ **Sem cron novo** — carona no `/cron/ds-collect`, em **bloco protegido**
+(falhar ali não pode derrubar o DS, que é o trabalho principal daquele cron). O
+`vercel.json` está no teto.
+
+⚠️⚠️ **O CRON_SECRET só viaja em HEADER — abrir a URL do cron no navegador
+SEMPRE devolve `unauthorized`** (`isAuthorizedCron` lê `x-cron-secret` e
+`Authorization`, nunca `req.query`). Foi o que aconteceu em 21/09 ao tentar
+rodar o backfill. **Não "facilitar" aceitando `?secret=`**: a URL fica no
+histórico do navegador, no log de acesso, no `Referer` e no print que alguém
+manda no chat. ⇒ Todo cron de coleta do Online tem **gêmeo humano** autenticado
+por SESSÃO (`POST /coletar/views-dia`, botão "Views por dia (130d)" na tela),
+e `src/test/cronSecretHeader.test.ts` trava as duas pontas.
+
+⚠️ **Semana SEG→DOM em BRT** (`backend/utils/semanaOnline.js`, no gate):
+`isoWeek.js` decide tudo em UTC, então usá-lo direto faria a semana virar às
+**21h de domingo** — bem na faixa do culto de domingo à noite. QUAL semana se
+decide com `hojeBRT`; `isoWeekRange` só gera datas.
+⚠️ **NÃO criar uma terceira definição de semana** neste sistema (já há duas:
+frequência seg→dom e financeira quarta→terça).
+
+⚠️ **O que o card DECLARA, e nada disso é enfeite**: a janela com as DATAS · a
+FONTE (o gestor confere contra o Studio) · a convenção seg→dom · a **cobertura**
+(dia sem coleta some da soma sem avisar, e aí ninguém distingue queda de
+audiência de cron que falhou) · a **consolidação** (na segunda o número ainda
+sobe). E `views: null` **nunca vira 0** — "não coletamos" e "ninguém assistiu"
+levam a decisões opostas.
+
+⚠️ **Comparação com a semana retrasada em número ABSOLUTO, sem %**: feriado,
+evento especial e semana com 4 ou 5 cultos movem o número sem dizer nada sobre
+desempenho (oscilação medida: **+74%**).
+
+### Verificação
+
+`tsc -b` sem cache · `npm run build` · `npm test` · **os 29 scripts** do gate ·
+`lint:hooks`. **10 mutantes RODADOS e mortos** (5 na régua da semana, 5 no guard
+da migration).
+⚠️ **Um deles SOBREVIVEU na primeira rodada e o teste é que estava fraco**: a
+checagem de `origem_tabela` casava numa janela de 700 chars e pegava o `NULL` do
+tipo SEGUINTE. Régua: **ao testar item de uma lista, recortar a entrada exata** —
+janela de N caracteres alcança o vizinho e valida o errado.
+⚠️ **O laço do gate quebrou de novo pela armadilha de 31/08**: `for s in $(grep
+-o "npm run test:x")` divide em 3 palavras e roda 87 "scripts" inexistentes.
+**Falha idêntica em todos é assinatura de laço quebrado, não de teste vermelho.**
+
+### ⚠️⚠️ 2ª leva (mesmo dia) · "por que o crescimento de grupos não é alimentado?"
+
+Pergunta do Matheus vendo o painel. **A causa não era falta de alimentação — é
+incapacidade estrutural**, e a medição mostra em uma linha:
+
+```
+grupos_ativos · online · setembro/2026 → 22
+grupos_ativos · online · março/2026    → 22    ← O MESMO NÚMERO
+```
+
+O ramo de `grupos_ativos` conta `WHERE ativo = true` **sem nenhum filtro de
+período**: devolve o número de HOJE para qualquer data pedida. Como ONL-08 é
+`delta_pct`, ele compara **hoje com hoje** e dá **0% para sempre**. Idem ONL-09
+(`lideres_treinados`, que filtra `saiu_em IS NULL` — o estado de hoje).
+
+⚠️ **E o histórico que a pergunta supõe NÃO EXISTE**: os 22 grupos online têm
+`created_at` entre 19/06 e 22/07 e são todos da temporada T2-2026 — 19/06 é a
+assinatura de carga em massa, não a data real de cada grupo. Não há ciclo
+anterior no banco para comparar.
+
+⚠️⚠️ **ONL-06 FICA COMO ESTÁ, e isso é o cuidado principal**: `frequencia_grupos`
+**filtra por área** e devolveu **47** para o Online, com 23,68% de crescimento
+REAL. Criar um tipo manual ao lado dele daria **duas verdades sobre o mesmo
+número** — é o erro que a migration evita, não o que ela comete. Há mutante.
+
+**Generosidade** (ONL-22/23/24) tinha **dois defeitos somados**: publicava o
+mesmo valor nas 5 áreas (consequência da decisão de 14/08 de não segmentar
+doação por área) **e** a fonte parou — `mem_contribuicoes` tem **1 linha desde
+julho e ZERO em setembro**. O **−99,7%** que o painel mostrava não era queda de
+doação; era a base nominal parada desde junho.
+
+⇒ Migration `20260921190000`: 5 tipos `*_declarado` (mesma lei — **sem ramo
+nativo**) e os KPIs de grupos + a generosidade **do Online** repontados.
+⚠️ **As outras áreas NÃO foram tocadas**: o pedido foi do Online, e repontar
+criaria digitação mensal para equipes que não pediram. ⚠️⚠️ **Mas o resíduo dos
+GRUPOS é real e está declarado na migration**: o defeito de `grupos_ativos` é
+ESTRUTURAL, então **AMI-10, BRG-09, SED-05, AMI-08, BRG-07 e SED-03 continuam
+devolvendo 0% por construção**. Estender é tirar o `lower(area) = 'online'` de
+dois UPDATEs — e é decisão de quem vai digitar.
+⚠️ `agregacao = 'last'` nos de ESTOQUE (quantos grupos existem) e `'sum'` nos de
+FLUXO — somar estoque mês a mês contaria o mesmo grupo várias vezes.
+
+### ⏳ PENDENTE DE GENTE (não é código)
+
+1. ⚠️ **Aplicar a migration** — sem ela o `voluntarios_checkin` segue publicando
+   o número da igreja como se fosse da área, e os tipos manuais não existem.
+2. **Rodar o backfill de views**: `GET /api/online/cron/views-dia-collect?dias=130`
+   com o `CRON_SECRET` — a Analytics devolve o histórico numa chamada só, então
+   o card nasce com semanas de comparação prontas. Sem isso ele mostra "Sem dado"
+   até o primeiro `ds-collect`.
+3. **A equipe do Online lançar os atendimentos** em `/dados-brutos` — é o que
+   faz ONL-01 e ONL-05 saírem do vazio. ⚠️ **Usar a data do ATENDIMENTO**, nunca
+   a do lançamento (é o defeito do `npsKpiSync` de 18/08: carimbar com a data
+   errada colapsa a série).
+4. **Decidir de quem é a rotina de dar baixa em voluntário** — sem isso nenhum
+   KPI de saída pode existir, nas 5 áreas.
+5. **Preencher a área das equipes de voluntariado** (`vol_teams.area`) se a casa
+   quiser check-in por área em ami/bridge/sede.
+
+⚠️ **Resíduos declarados, NÃO corrigidos aqui**: `frequencia_next` e
+`solicitacoes_*` seguem sem filtro de área na função (hoje mascarados por
+`cui_acompanhamentos` vazia — bomba armada, não estrago em curso) · ONL-16 é
+`soma_periodo` de `voluntarios_ativos`, que devolve CONTAGEM com nome de
+porcentagem · `soma_periodo` continua ignorando o `p_periodo_referencia` (já
+registrado em 18/08; mexer move valores de períodos publicados).
+## ⚠️⚠️ ONLINE · o gráfico do canal, e por que o SNAPSHOT não serve de série (2026-09-22 · SEM migration)
+
+Pedido do Matheus: *"gostaria que vc implementesse esse layout na pagina do
+online"* (dashboard com série temporal + rosca de tráfego). O `/online` mostrava
+só números do DIA — "views totais" e "inscritos", que são **acumulados de anos**
+e não dizem se o canal está subindo ou caindo. Não havia **nenhuma série
+temporal do canal** na tela.
+
+### ⚠️⚠️ A MEDIÇÃO QUE DECIDIU A FONTE — e derruba a escolha óbvia
+
+O caminho natural seria derivar "views do dia" subtraindo dois
+`online_canal_snapshot`. Medido em 22/09/2026, nos últimos 90 dias:
+
+| coluna | o que a medição mostrou |
+|---|---|
+| `subscriber_count` | **6 valores distintos em 90 dias** (26.700 → 27.200, em degraus de 100) — o YouTube **ARREDONDA** a contagem pública |
+| `view_count` | **CAIU em 25 dos 90 dias** — o YouTube revisa o acumulado para baixo ao depurar |
+
+⇒ A sparkline de inscritos seria uma **escada**, e a série de views teria **25
+dias negativos**. A fonte é **`online_canal_views_dia`** (a Analytics por DIA, a
+mesma do card da semana de 21/09), que tem `views` e `watch_minutos`.
+
+⚠️ **Régua que passa disto**: acumulado de terceiro **não vira série por
+subtração** sem antes conferir se ele é monotônico. Aqui ele não é — e o efeito
+seria um gráfico com cara de medição desenhando dias que não existiram.
+
+### ⚠️⚠️ A ROSCA DE TRÁFEGO É 71% DO CANAL, NÃO O CANAL
+
+`online_video_trafico` é consultado **por VÍDEO** (`filters: video==`), então o
+que existe é a fatia dos vídeos COM coleta. Medido em 22/09, janela de 28 dias:
+
+| | |
+|---|---|
+| série do canal | **43.522 views** |
+| soma do tráfego | **30.855 views em 23 vídeos** (71%) |
+
+**A tela DECLARA a base** ("30.855 views em 23 vídeo(s) com coleta — não é o
+canal inteiro"). Sem isso, alguém soma as fatias, compara com o card ao lado e
+conclui que **sumiu view**.
+
+### As leis da régua (`backend/utils/canalSerie.js` · pura, no gate via `npm test`)
+
+- ⚠️⚠️ **`normalizarPeriodo` é FAIL-SAFE**: `Number('abc')` é NaN e NaN em
+  aritmética de data vira `"NaN-NaN-NaN"`, que o PostgREST recusa — **o endpoint
+  inteiro viraria 500 por causa de um query param torto**. É a lição de
+  `resolverJanelaPeriodo` (02/09), que já custou uma tela nascendo quebrada.
+- ⚠️ **Dia em BRT**: às 23h do Rio o dia UTC já virou, e a janela começaria
+  adiantada.
+- ⚠️⚠️ **Dia sem coleta NÃO vira ponto zero** e a linha fica com **buraco**
+  (`connectNulls={false}`): reta por cima faria **falha de cron parecer
+  audiência estável**. Medido: 26 de 28 dias coletados, último em **19/09** — a
+  Analytics fecha o dia com 2-3 dias de atraso, e a tela diz isso.
+- ⚠️ **Total NULL sem coleta, nunca 0** — "não coletamos" e "ninguém assistiu"
+  levam a decisões opostas.
+- ⚠️ **Minutos → horas na RÉGUA**, não na tela: duas telas dividindo por 60 por
+  conta própria divergem no primeiro arredondamento.
+- ⚠️⚠️ **A CAUDA do tráfego vira uma fatia declarada, nunca some** — a soma tem
+  que fechar 100% (lei do corte de bairro do censo, 16/09).
+- ⚠️ **Fonte desconhecida do YouTube NÃO é descartada**: vira o próprio código
+  (`FONTE_NOVA_DO_YT`), que é feio e verdadeiro. O YouTube acrescenta tipo novo
+  sem avisar, e descartar faria a soma não fechar **em silêncio**.
+
+### ⚠️ Endpoint PRÓPRIO, e os dois blocos falham sozinhos
+
+`GET /api/online/canal-serie?dias=7|28|90` é **separado do `/dashboard`**:
+pendurar nele faria a tela inteira recarregar a cada troca de período e
+**recontar as 8 consultas do dashboard à toa**. Série e tráfego têm `try`
+próprio com `avisos[]` — tráfego indisponível **não apaga o gráfico**, que é a
+peça principal, e erro nunca vira lista vazia.
+
+⚠️ O tráfego filtra por **`periodo_fim`**, não `periodo_inicio`: a coleta cobre a
+vida do vídeo, e filtrar pelo início **excluiria vídeo antigo que segue
+recebendo view** no período.
+
+**9 mutantes RODADOS e mortos**: ponto zero em dia sem coleta → 1 vermelho ·
+total 0 em vez de NULL → 3 · período fail-open → 1 · hoje em UTC → 1 · cauda
+descartada → 2 · fonte desconhecida descartada → 1 · minutos não virando horas →
+1 · janela um dia a mais → 1 · base de vídeos não declarada → 2.
+
+⏳ **O que o layout pedido tinha e NÃO foi implementado, por falta de DADO** (e
+não vai ser preenchido com mock): **receita** (o canal não é monetizado no nosso
+banco), **dispositivos** (`online_video_trafico` guarda fonte, não device) e
+**"ao vivo agora"** (existe o `live-monitor`, mas ele grava pico no culto, não
+um estado consultável de "está no ar"). Card que mostra número inventado é pior
+que card ausente.
+
+## ⚠️⚠️ ONLINE · a arrecadação, e as 4 coisas que o dado desmentiu (2026-09-23 · migration `20260923120000`)
+
+Pedido do Matheus: *"quero uma aba para mostrar as analises da arrecadacao do
+online. a nossa arrecadacao do online, e toda arrecadacao que entra pro
+santander (...) arrecadacao semanal apenas do online, arrecadacao mensal,
+variacao de uma semana pra outra, variacao de um mes para o outro (...) quero
+poder comparar com o ano anterior tbm."* + planilha `Pix_Online_2026_Resumo_Mensal.xlsx`
+do sistema contábil como reforço.
+
+### ⚠️⚠️ 1 · "TODA arrecadação que entra no Santander" está FACTUALMENTE ERRADO
+
+Medido em 23/09, na própria conta, desde 2025:
+
+| o que a conta também recebe | valor |
+|---|---|
+| **"Dinheiro" com classe `transferencia`** (entre contas próprias) | **R$ 2.114.763** |
+| **cartão de crédito + débito** = repasse da maquininha do culto **PRESENCIAL** | R$ 471.291 |
+| **1 linha** de "Crédito em Conta" `extraordinaria` — câmbio / Eagle Brook Church | R$ 1.041.067 |
+| 162 linhas de "Crédito em Conta" `ordinaria` = rendimento de aplicação | R$ 33,75 |
+
+⇒ Somar literalmente o que ele pediu **dobraria o total e seria dupla contagem
+pura**. **A planilha do contábil exclui tudo isso — ela é o critério revelado; a
+frase era a intenção mal formulada.**
+
+### ⚠️⚠️ 2 · A conta Santander é 11% do Pix da igreja — e a premissa NÃO é derivável
+
+| conta | Pix/TED/Transf. 2026 | lançamentos |
+|---|---|---|
+| **Itaú** 3200/01111-6 | **R$ 7.789.249** | 18.202 |
+| Santander 3957 | R$ 963.520 | 2.875 |
+
+No Itaú o Pix é **Dízimos em Geral R$ 5,58 mi** — 6× o Santander. Não existe
+campo em `fin_contas`, view ou comentário que ligue a conta ao canal online.
+⇒ **O Matheus CONFIRMOU em 23/09** que a chave Pix do culto online aponta para o
+Santander e o Itaú é o presencial. A premissa fica registrada no `COMMENT` de
+`fn_online_conta_id()` **com a data da decisão**, porque o dado sozinho não a
+sustenta.
+
+### ⚠️⚠️ 3 · A semana é QUARTA→TERÇA, e o motivo é o D+1
+
+Dia da semana dos 2.546 créditos de 2026: **segunda 1.349 (53%)** · quarta 565 ·
+terça 235 · sexta 208 · quinta 189 · **sábado 0 · domingo 0**.
+
+**Nenhuma doação é creditada no fim de semana** — a oferta do culto de domingo
+liquida na segunda. Na semana `fin_semana_qua_ter` o domingo 20/09 e a segunda
+21/09 caem na **MESMA** semana (conferido na função); na seg→dom o dinheiro do
+domingo cai na semana **SEGUINTE**.
+
+⚠️ O pedido dizia "a mesma lógica do dashboard semanal" — mas o dashboard tem
+**DUAS** semanas, e a de dinheiro é qua→ter (lei de 08/07, que reverteu a
+unificação de 01/06 por dar número diferente do fechamento). Decisão do Matheus
+em 23/09, com o número na mão.
+
+⚠️⚠️ **E a planilha NÃO tem a data da doação**: `Data da Contribuição` é
+**idêntica a `Data do Crédito` em 2.546 de 2.546**. A data real não existe em
+lugar nenhum, nem no contábil. Por isso a tela DIZ que não sabe quanto cada
+culto arrecadou.
+
+### ⚠️⚠️ 4 · A variação semanal é o calendário de ~10 pessoas
+
+**Top 10 doadores = 39,8% do total** · top 50 = 76,1% · 583 doadores ·
+ticket **médio R$ 351 contra mediano R$ 100** · lançamentos ≥ R$ 5.000 = 24,3%
+do valor. Uma doação avulsa de R$ 5 mil move a semana em ~20%.
+
+⇒ A concentração fica **colada na variação** na tela, e a mediana vem na frente
+da média. Sem isso, "a semana caiu 59%" se lê como queda de generosidade.
+
+### A trava principal · `backend/utils/arrecadacaoOnline.js` (régua PURA, no gate)
+
+⚠️⚠️ **A importação do balanço é SEMANAL e 53% do dinheiro cai na segunda** ⇒ a
+janela corrente está **SEMPRE parcial**. Medido no próprio dia: a semana em
+curso tinha **R$ 90** contra R$ 17.664 da anterior — a variação ingênua seria
+**−99,5%, TODA semana**.
+
+`periodoFechado` exige **DUAS** condições, por motivos diferentes:
+- `fim <= hoje` — a semana que ainda corre não acabou;
+- `fim <= corte` — ela pode ter acabado e **o balanço dela não ter sido
+  importado**. O `corte` é a data máxima do dado **na conta**, derivada do banco
+  — nunca constante, que envelheceria no primeiro atraso de import.
+
+⚠️ **Fail-safe**: sem corte conhecido, NÃO assume fechado.
+⚠️ **A variação só existe com os DOIS lados fechados** — anterior parcial
+(import atrasado no meio) é a mesma armadilha ao contrário.
+⚠️ **Base zero devolve `null`**, nunca 0 nem `Infinity`.
+
+⚠️⚠️ **`'2026-09' <= '2026-09-23'` é TRUE por prefixo de string** — sem expandir
+o mês para o último dia dele, **o mês CORRENTE apareceria como fechado**, o
+contrário do que a régua existe para impedir. Foi o teste que pegou.
+⚠️ `ultimoDiaDoPeriodo` usa `Date.UTC`: é aritmética de calendário, e o fuso
+local joga a virada para o mês errado (só observável num fuso à frente de UTC —
+o caso força `Asia/Tokyo`).
+
+### ⚠️ O recorte NÃO usa lista de planos de conta, de propósito
+
+A planilha do contábil filtra 5 planos escritos à mão, e **dois já têm morte
+marcada**: `Dizimo Domingo 10:00` (o culto das 10:00 foi ENCERRADO no corte de
+24/08/2026) e `Campanha 2025` (a campanha do Kids abriu em 06/09 e nasce com
+outro nome). Plano fora da lista **sumiria em silêncio** e o número pareceria
+queda de doação — é a lei do bairro se repetindo.
+
+⇒ O critério é **exclusão declarada**: receita viva (o WHERE canônico das
+`vw_fin_semana_*`, as **4** condições, incluindo o anti dupla contagem OFX) +
+**forma eletrônica**, com a cauda do que ficou de fora publicada e a **soma
+fechando**. Plano novo ENTRA e aparece na composição.
+⚠️ **Consequência declarada**: o total fica ~8% acima da planilha
+(R$ 961.364 × R$ 888.884 em 2026), porque inclui Bazar, Retiro AMI e Outras
+Contribuições.
+
+⚠️ **`forma_pagamento` é TEXT LIVRE sem CHECK**, e os valores reais são `'Pix'`,
+`'TED'`, `'Transferência'` (com acento e maiúscula), mais `'Transferencia'` sem
+acento no histórico e **11 linhas NULAS**. Um `in ('pix','ted')` cru devolve
+**ZERO** — e zero se lê como "a arrecadação caiu".
+
+### ⚠️⚠️ QUEM VÊ O DINHEIRO é a coordenação do CANAL · nível 4 em `online`
+
+Decisão do Matheus (23/09): *"apenas a renata pode ver o dinheiro no modulo do
+online"*.
+
+⚠️⚠️ **Mas a LEI de 05/08 proíbe nomear pessoa como dona de fluxo no código** —
+o que o código guarda é o PAPEL, e quem o ocupa vive no BANCO. ⇒ o critério é
+**`modulePerms.online.leitura >= 4`** (`podeVerArrecadacaoOnline`, régua pura no
+gate). Medido em 23/09: a Renata é `Coord Onl` **com a ÁREA Online**, e o
+`AREA_MODULO_BOOST['online']` já a eleva a **nível 5** — ela passa sem nenhuma
+mudança de cadastro. Trocar quem vê é mexer em `/admin/permissoes`, não aqui.
+
+⚠️⚠️ **O "APENAS" é literal, e é o que separa esta régua do gate financeiro
+padrão**: quem cuida do dinheiro da igreja (`financeiro` ≥ 2) **NÃO vê este
+card** — o lugar dele é o módulo Financeiro. Sem isso a arrecadação apareceria
+para **11 cargos** (Coord Financ, Assist Financ, Dir RH, os de membresia 3…).
+
+⚠️⚠️ **SEM bypass de `role` e SEM piso de cargo**, de propósito — é a lei de
+`dadosSensiveisPessoa`: `getEffectiveLevel` tem `cargoNivelLeitura` como PISO, e
+um cargo com nível base alto passaria **sem ter o módulo**. Piso serve para
+decidir quanto detalhe mostrar numa tela já aberta; é errado para decidir se
+dinheiro sai pela rede. Na prática Dev e Dir Estrat já têm `online` = 5.
+⚠️ **Deny explícito por usuário vence o nível** (mesma ordem do `authorizeModule`).
+
+⚠️ Passam hoje: **Renata** (Coord Onl · boost da área) · **Pedro Paulo Menezes**
+(Dir Criat, tem a área Online no cadastro) · Dev · Dir Estrat. Tirar o Pedro
+Paulo é tirar a área dele — decisão de cadastro, não de código.
+
+⚠️ O guard fica **no endpoint**, porque `backend/routes/online.js` não tem
+nenhum `authorizeModule`: sem ele, qualquer pessoa logada (o auth é
+compartilhado com o app de membros) alcançaria a URL.
+⚠️ O card se esconde inteiro no 403 — card vazio faria parecer que a igreja não
+arrecadou nada.
+
+### ⚠️ A FONTE é só o BALANÇO importado
+
+Decisão do Matheus (23/09): *"por enquanto, vms usar apenas oq vem do
+balanco"*. A leitura é **exclusivamente `fin_transacoes`** — nunca
+`fin_lancamentos_brutos` (são duas camadas do MESMO dinheiro: abril tem
+R$ 1,58 mi no bruto contra R$ 102 mil no balanço) e nunca `pag_cobrancas`
+(LEI Nº 6 — foi somar duas camadas que criou a dupla contagem de ~R$ 1,5 mi).
+⚠️ Corolário: o número **anda no ritmo da importação semanal**, e é por isso
+que o `corte` existe e o período em curso não entra em comparação.
+
+### ⚠️ A agregação é RPC, não leitura
+
+`fn_online_arrecadacao(inicio, fim) → jsonb` devolve série semanal, mensal,
+composição, concentração, cauda e o corte numa viagem só. **`fin_transacoes` tem
+22.618 linhas nesta conta e o PostgREST corta em 1.000 em silêncio** — agregar
+no cliente devolveria ~12% do valor de 2022 sem erro nenhum. E a semana
+financeira é função SQL: espelho em JS é o que derrubou a unificação de 01/06.
+
+### ⚠️ O nº de SEGUNDAS entra na comparação anual
+
+Com 53% do valor caindo na segunda, **um mês com 5 segundas tem ~11% a mais que
+um com 4, sem nada ter mudado** — e o calendário muda de ano para ano. A RPC
+devolve `dias_segunda` por mês e a tabela marca ⚠ quando o calendário difere do
+ano anterior.
+
+### ⚠️ A "queda" de 2024 NÃO é dado incompleto (correção de um alarme meu)
+
+Reportei que 2024 (−65% contra 2023) parecia import faltando. **Errado**: os 12
+meses têm dado, sem buraco, média de R$ 39 mil/mês e mediana estável em R$ 100.
+A série longa conta uma história real — 2022 era o pico pós-pandemia (cultos
+online), 2023-24 a volta ao presencial, 2025-26 a retomada (~R$ 100 mil/mês).
+
+### ⏳ Pendente de GENTE
+
+1. ✅ **Migration `20260923120000` APLICADA em 23/09/2026** e conferida no
+   CATÁLOGO (não no `success: true`): as 3 funções existem, `anon` e
+   `authenticated` **sem execute**, só `service_role`. RPC exercitada em
+   produção: **R$ 961.364,04 · 2.873 lançamentos · 39 semanas · corte 23/09 ·
+   top 10 doadores = 38,4%** — e a semana 39 veio com **R$ 90** (1 lançamento),
+   que é exatamente o caso que a trava de período parcial existe para não
+   publicar como queda.
+2. **Conferir 9 lançamentos com o financeiro**: o banco tem 9 linhas que a
+   planilha não tem (R$ 8.107 de R$ 888.884 · 0,9%), **idênticas em todo campo
+   observável** às incluídas e com `updated_at` posterior à criação
+   (reclassificação). 5 dos 9 meses batem **ao centavo**. Não é o sistema que
+   está errado — a planilha é que saiu incompleta.
+3. ✅ **Resolvido em 23/09**: quem vê o valor é a coordenação do canal
+   (nível 4 em `online`). O financeiro vê no módulo Financeiro.
+
+### ⚠️ Duas sessões no MESMO módulo no mesmo dia (23/09)
+
+O PR da arrecadação e o PR #3010 (ficha de KPI no Online) foram escritos em
+paralelo, por sessões diferentes, e conflitaram no `Online.tsx` — os dois
+acrescentavam import e card na mesma tela. O merge resolveu unindo: `CanalSerieCard`,
+`ArrecadacaoOnlineCard` e `FichaKpi` coexistem, cada um montado uma vez.
+
+⚠️ **`mergeStateStatus: DIRTY` no `gh pr view` é conflito com a main, e ele
+IMPEDE o `qualidade` de rodar** — o CI fica parecendo "só o Vercel passou", que
+se lê como workflow quebrado. Antes de investigar o CI de um PR, conferir o
+`mergeStateStatus`.
+
+⚠️ **Gate revalidado INTEIRO depois do merge**, não só o que eu escrevi:
+auto-merge junta texto, não prova que o resultado compila nem que as duas telas
+continuam montadas. Foi `grep -c "<Componente"` que provou os três.
+
+
+## ⚠️ ONLINE · a tela virou 5 ABAS, e a do dinheiro só EXISTE com nível 4 (2026-09-23 · SEM migration)
+
+Pedido do Matheus: *"gostaria que dentro do online tivesse uma aba do financeiro
+(apenas o financeiro do online), pois o scroll ta ficando muito longo"*.
+
+**Medido antes: 14 blocos empilhados num scroll único** (1.428 linhas), e o
+único `Tabs` da tela era interno ao card de top vídeos. Uma aba só de financeiro
+tiraria **1 de 14** — não resolve o motivo declarado. Por isso a tela ganhou
+abas de topo, com **Financeiro como aba própria**, que é o pedido literal.
+
+| aba | blocos |
+|---|---|
+| **Pessoas** (padrão) | QR do apelo · cadastro de membresia · novos convertidos 90d |
+| **Canal** | OAuth · sem-dados · stats + semana · série do canal · engajamento |
+| **Conteúdo** | top vídeos · maiores hits · séries · performance por culto |
+| **Financeiro** | arrecadação |
+| **Indicadores** | matriz Valor×Online (+ ficha de KPI) · diagnóstico · debug |
+
+⚠️ **Pessoas é a 1ª aba de propósito**: o comentário do bloco no código já dizia
+*"gente antes de número"*, e ele era o primeiro do scroll. Agrupar não pode
+reescrever a ordem de leitura que a tela já declarava.
+
+### ⚠️⚠️ A aba do dinheiro só pode EXISTIR para quem o servidor deixaria ver
+
+`ArrecadacaoOnlineCard` **se esconde sozinho no 403** (`return null`). Sem gate
+na própria ABA, ela apareceria para os 31 cargos que alcançam `online` e ficaria
+**vazia** — o mesmo erro que o card existe para evitar ("card vazio faria parecer
+que a igreja não arrecadou nada").
+
+⚠️⚠️ **E a régua NÃO pode ser `canAccessModule`**: ela libera admin/diretor por
+`profiles.role`, e a lei do dinheiro (23/09) é explícita em **não ter bypass de
+role nem piso de cargo**. Um diretor com `online` nível 1 veria a aba e levaria
+403 — a aba vazia pela porta dos fundos. A tela lê
+`modulePerms?.online?.leitura >= 4` direto, espelhando
+`podeVerArrecadacaoOnline`, e o teste do gate **casa o nível contra o
+`NIVEL_VE_DINHEIRO` do backend**: mudou lá, quebra aqui.
+
+- ⚠️ **`typeof nivel === 'number'`**, nunca truthy: a string `'5'` não é nível.
+- ⚠️ **Deny explícito do módulo vence**, como no `authorizeModule`.
+- ⚠️ **Quem chega por `?tab=financeiro` sem o nível é devolvido para a 1ª aba** —
+  sem isso a tela fica em branco, sem dizer por quê.
+
+### ⚠️ Ganho de carona: aba inativa NÃO consulta
+
+`TabsContent` do Radix **desmonta** o conteúdo inativo, então `CanalSerieCard`,
+`ArrecadacaoOnlineCard`, `CultoYouTubePanel` e `JornadaConvertidos` só fazem
+fetch quando a aba abre. Os dois primeiros usam react-query, então voltar à aba
+lê do cache. ⚠️ O `Tabs` aninhado de "Por views / Por engajamento" tem `Root`
+próprio e não colide com o de topo.
+
+### ⚠️ A aba vive na URL, e o catálogo é FECHADO
+
+`?tab=` (padrão da casa — Censo, Comunicação, Marketing). `ABAS_ONLINE` é lista
+fechada: valor fora dela cai na 1ª aba em vez de deixar a tela branca. **Aba
+nova entra no catálogo E no `TabsList`** — no catálogo sem gatilho, o deep-link
+aceita um valor que não tem como ser alcançado pela barra (tem teste).
+
+### ⚠️ Método
+
+O reagrupamento foi feito **fatiando por marcador de texto, sem reindentar** —
+o diff fica como linhas movidas, legível na revisão, e o interior de nenhum
+bloco foi tocado. ⚠️ O que o typecheck **não** pega é bloco perdido no recorte:
+quem provou foi `grep -o "<Componente" | uniq -c` exigindo **1 de cada um dos
+10**. ⚠️ E o **build** é o verificador de JSX desbalanceado em `.tsx`, não o
+`tsc` (lição de 17/08).
+
+Guarda: `src/test/onlineAbaFinanceiro.test.ts` (12 casos · no `npm test`).
+**9 mutantes RODADOS e mortos**: `canAccessModule` de volta → 4 vermelhos ·
+nível 4→1 → 2 · aba sempre visível → 1 · nível truthy → 1 · deny ignorado → 1 ·
+`?tab=` sem validar → 1 · preso na aba sem nível → 1 · aba sem gatilho → 1 ·
+card fora da aba → 2.
 
 ## Online · visao do canal YouTube (somente leitura)
 
@@ -20322,3 +21772,137 @@ já tem nascimento, **o valor digitado é descartado**. O dado existente vence.
 nascimento** — e o modal vai pedir de novo, porque o perfil não está ligado. É
 honesto (não dá pra afirmar que é a mesma pessoa), e o só-onde-vazio protege o
 valor bom no momento em que o vínculo acontecer.
+
+## ⚠️⚠️ RH · o documento pessoal saiu do bucket PÚBLICO, e o bucket FECHOU (2026-09-17 · migrations `rh_fotos_revogar_escrita_authenticated` + `rh_fotos_bucket_privado`)
+
+Autorizado pelo Matheus (*"pode fechar o bucket e revogar as policies"*), ao
+desenhar onde a **Ficha Cadastral da Contratada (Anexo II)** ficaria no RH.
+
+### O que estava aberto, medido antes de tocar
+
+| | |
+|---|---|
+| objetos no `rh-fotos` | **1** — um RG em PDF, 288.582 bytes, de 18/08 |
+| funcionários com foto | **0** (`foto_url` nulo em todas as linhas vivas) |
+| policies do bucket | **3**, `INSERT/UPDATE/DELETE` para **`authenticated`**, sem escopo de pasta |
+
+⚠️⚠️ **O RG de um colaborador real baixava com `curl`, sem nenhum header de
+autenticação** — HTTP 200, 288 KB. A URL pública estava gravada em
+`rh_documentos.storage_path`.
+
+⚠️⚠️ **E a escrita era pior que a leitura**: o auth do Supabase é **compartilhado
+com o app dos membros**, então qualquer pessoa que baixasse o app e criasse conta
+podia **sobrescrever ou apagar documento de RH** sabendo o caminho do objeto. É a
+mesma família da lei nº 11 (`GRANT` amplo em `profiles`): permissão de escrita
+concedida a um papel que qualquer pessoa alcança.
+
+⚠️ **A varredura RHP-01 (09/2026) já tinha corrigido o módulo RH do sistema — o
+app do Staff ficou de fora por ter caminho próprio de upload.** Régua: ao fechar
+um bucket, procurar **todos** os escritores, não só o do módulo que deu origem.
+
+### ⚠️⚠️ A ORDEM é load-bearing, e cada passo espera o DEPLOY do anterior
+
+1. **código para de ESCREVER** no bucket (PR #2967) → deploy confirmado **pelo SHA da main**
+2. **as 3 policies revogadas** — revogar antes do passo 1 quebraria o upload de foto do RH
+3. **backend aprende a ASSINAR o bucket legado** (PR #2968) → deploy confirmado
+4. **bucket privado** — fechar antes do passo 3 transformaria o RG em **link morto**
+
+### ⚠️ O arquivo NÃO foi movido, e é decisão
+
+Mover exigiria a `service_role` fora do servidor (não há `.env` com ela nesta
+máquina; o `.env` da raiz só tem `MAGIC_API_KEY`). E `backend/utils/storagePath.js`
+foi escrito em 16/08 **exatamente para o caso oposto** — o cabeçalho dele diz
+*"derivar o caminho na LEITURA e assinar na hora (...) assim o bucket fecha sem
+migração de dados"*. Então `anexosRhDocumentos` passou a assinar **nos dois
+buckets**, e `BUCKET_DOCS_RH_LEGADO` **fica enquanto houver linha apontando para
+a URL pública antiga** — removê-la transforma esses documentos em link morto.
+
+⚠️⚠️ **`caminhoNoBucket` aceita caminho CRU para qualquer bucket** (é o que a
+torna idempotente), então usá-la para decidir *"isto é do bucket antigo?"* manda
+todo caminho relativo — que é do bucket **NOVO** por construção, porque só o
+código novo grava assim — para o bucket velho. O resultado é uma **URL assinada
+perfeitamente válida apontando para objeto que não existe**: link morto, sem erro
+e sem log. Por isso existe `caminhoDeUrlPublica`, que **exige a marca do
+Storage** — a URL pública é a única evidência que carrega o nome do bucket dentro
+do valor.
+
+⚠️ E a decisão mora em **`separarCaminhosPorBucket`, no módulo PURO do gate**,
+não no serviço que lê o banco: é a lição de 01/09 — *guarda que decide algo e
+vive em código impuro é guarda que nenhum teste alcança*.
+
+### ⚠️⚠️ LEI NOVA · fechar bucket público NÃO expulsa o que já está no CDN
+
+O `success: true` da migration e o catálogo (`public = false`) diziam fechado, e
+**o mesmo `curl` continuou baixando o RG**. A medição dos headers explicou:
+
+```
+cf-cache-status: HIT · cache-control: public, max-age=3600
+<mesma URL com ?cb=aleatório>  ->  HTTP 400 {"code":"NoSuchBucket"}
+```
+
+⇒ **O origin fechou na hora; o EDGE do Cloudflare continua servindo a URL exata.**
+Só URL já cacheada sobrevive — qualquer outra do bucket responde 400 imediatamente.
+
+⚠️⚠️ **E o `max-age` declarado NÃO é o prazo.** Medido na mesma sessão: o objeto
+seguia `cf-cache-status: HIT` **~50 min depois do fechamento e ~85 min depois do
+primeiro acesso**, com `max-age=3600` — ou seja o Edge TTL do Cloudflare do
+Supabase é **maior que o `cache-control` que ele devolve**, e o header `age` não
+vem, então **não dá para saber quanto falta**. Tratar "1 hora" como prazo é
+promessa que a medição não sustenta: o correto é dizer *"até o edge expirar, e
+não sabemos quando"*.
+⚠️ Bater na URL repetidamente **não acelera nada** e só arrisca renovar a
+entrada — monitorar com intervalo largo.
+
+**A régua que fica:** ao fechar bucket público, `public = false` é o **começo** da
+janela, não o fim. Até o TTL expirar, todo link que já circulou **continua
+funcionando**. Corolários:
+- **Conferir o efeito com cache-buster** (`?cb=`), nunca só a URL nua — a URL nua
+  mede o cache, não o origin.
+- Se o conteúdo for sensível **e o link tiver circulado**, fechar o bucket **não
+  é contenção suficiente**. ⚠️ E **mover o objeto também não resolve o já
+  cacheado** — a entrada no edge é chaveada pela URL, não pelo objeto: mover faz
+  a URL virar 404 **no origin**, e o edge segue servindo o que guardou. Contenção
+  IMEDIATA de link já cacheado exige **purge no CDN**, que no Supabase é do lado
+  deles (suporte), não nosso. O que mover resolve é o **depois**.
+- ⇒ **A ordem certa é a inversa**: para conteúdo sensível, **nunca deixar entrar
+  em bucket público**. Depois que entrou e o link circulou, não existe desfazer
+  completo — só encurtar a exposição.
+- Vale para a régua já registrada de que **a cópia local é irrevogável**: o edge
+  é mais uma cópia que o `UPDATE` não alcança.
+
+### ⚠️ Onde a foto de colaborador passou a morar
+
+Bucket **`avatars`** (convenção da casa: `fotos-membros` tem 652 objetos,
+`avatars` 38, e `rh_funcionarios.foto_url` **já cai** em `mem_membros.foto_url`).
+É isso que permitiu fechar o `rh-fotos` **inteiro** sem quebrar avatar nenhum —
+com 0 funcionários com foto, nunca ia ser tão barato.
+
+⚠️ **`POST /api/rh/foto` não tem `:id`** de propósito: o modal de admissão envia
+a foto **antes** de o funcionário existir, então não há id para pendurar. Era por
+isso que o `RH.jsx` subia do browser.
+
+### Verificação
+
+`typecheck` sem cache · `build` · `vitest` (**4.391**) · **os 29 scripts** do
+gate · `lint:hooks` · os 3 módulos **carregados de verdade** (`node --check` não
+pega `ReferenceError` de import faltando) · `grep` por `rh-fotos` em `src/` e
+`backend/` sobrando **só comentários**.
+
+**4 mutantes RODADOS, 3 mortos**: legado aceitando caminho cru → **8 vermelhos** ·
+sem dedup → 2 · legado ignorando o bucket declarado → 2.
+⚠️ O 4º (**inverter a ordem dos baldes**) **SOBREVIVEU e está DECLARADO no
+código**: é equivalente **por construção** — nenhum valor casa nos dois baldes,
+porque `caminhoNoBucket` recusa URL pública de outro bucket. O `continue` fica
+como defesa para o dia em que isso mudar. Não afirmar cobertura que não existe.
+
+⚠️ **CORREÇÃO DE REGISTRO**: este arquivo diz, em pontos diferentes, que o gate
+tem 8, 10, 12, 13, 16, 20 ou 21 scripts. Em **17/09/2026 são 29**. **Contar no
+`.github/workflows/deploy-vercel.yml`, nunca decorar** — cada número que este
+arquivo já registrou envelheceu, este inclusive.
+
+### ⏳ Pendente de GENTE (não é código)
+
+O RG legado segue **fisicamente no `rh-fotos`**, servido por signed URL de 1h.
+Quando a equipe reenviar aquele documento pela ficha (agora o upload vai direto
+para o `documentos-rh`), o objeto antigo pode ser apagado e
+`BUCKET_DOCS_RH_LEGADO` sai do código. **É 1 arquivo.**

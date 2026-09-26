@@ -16,8 +16,10 @@
 ## Backend
 - `backend/routes/online.js`
 Guard: `authorizeModule('online', 3)`
-<details><summary>Endpoints (39)</summary>
+<details><summary>Endpoints (43)</summary>
 - `GET /api/online/aceitacoes`
+- `GET /api/online/arrecadacao`
+- `GET /api/online/canal-serie`
 - `GET /api/online/cron/backfill-cultos`
 - `GET /api/online/cron/catch-up`
 - `GET /api/online/cron/ddus-collect`
@@ -30,6 +32,7 @@ Guard: `authorizeModule('online', 3)`
 - `GET /api/online/cron/sync`
 - `GET /api/online/cron/trafego-collect`
 - `GET /api/online/cron/verificar`
+- `GET /api/online/cron/views-dia-collect`
 - `GET /api/online/cultos-metricas`
 - `GET /api/online/dashboard`
 - `GET /api/online/debug/analytics-test`
@@ -53,6 +56,7 @@ Guard: `authorizeModule('online', 3)`
 - `POST /api/online/coletar/sub-status`
 - `POST /api/online/coletar/subs`
 - `POST /api/online/coletar/trafego`
+- `POST /api/online/coletar/views-dia`
 - `POST /api/online/comunidade-mensal`
 - `POST /api/online/oauth/disconnect`
 - `POST /api/online/sync`
@@ -60,9 +64,12 @@ Guard: `authorizeModule('online', 3)`
 
 **Réguas puras (backend/utils)**
 
+- `backend/utils/arrecadacaoOnline.js`
+- `backend/utils/canalSerie.js`
 - `backend/utils/cronAuth.js`
 - `backend/utils/decisaoToken.js`
 - `backend/utils/linkInscricaoApp.js`
+- `backend/utils/semanaOnline.js`
 - `backend/utils/supabase.js`
 
 **Serviços**
@@ -79,15 +86,21 @@ Guard: `authorizeModule('online', 3)`
 - `cultura_mensal`
 - `kpi_indicadores_taticos`
 - `online_canal_snapshot`
+- `online_canal_views_dia`
 - `online_engajamento`
 - `online_oauth_tokens`
 - `online_video_retencao_curva`
 - `online_video_trafico`
 - `online_videos`
+- `vol_service_types`
 - `vw_culto_stats`
 - `vw_kpi_trajetoria_atual`
 - `vw_online_oauth_status`
 - `vw_online_series_kpi`
+
+**RPCs**
+
+- `fn_online_arrecadacao`
 
 **Namespace no front (src/api.js)**
 

@@ -1,7 +1,7 @@
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Button } from '../../components/ui/button';
 import { useAuth } from '../../contexts/AuthContext';
-import { Kanban, CalendarRange, BarChart3, Settings, Smartphone, HeartHandshake, LayoutDashboard } from 'lucide-react';
+import { Kanban, CalendarRange, BarChart3, Settings, Smartphone, HeartHandshake, LayoutDashboard, GanttChart } from 'lucide-react';
 
 // Header do Marketing consolidado (Dashboard · Kanban · Planner · Comunicados ·
 // Generosidade · Analytics · Admin) · destaca a aba atual.
@@ -19,6 +19,7 @@ export default function MarketingNav() {
   const items = [
     { path: '/marketing',                  label: 'Dashboard',  icon: LayoutDashboard },
     { path: '/marketing/kanban',           label: 'Kanban',     icon: Kanban },
+    { path: '/marketing/demandas',         label: 'Demandas', icon: GanttChart },
     ...(isCoord ? [{ path: '/marketing/planner', label: 'Planner', icon: CalendarRange }] : []),
     // Aba "App" (17/08) · reúne Comunicados + Destaques da Home + Fotos de
     // Batismo, que antes eram 3 lugares diferentes pra publicar no MESMO app.

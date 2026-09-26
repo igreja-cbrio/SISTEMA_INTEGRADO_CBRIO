@@ -258,7 +258,6 @@ export const events = {
   setVisivelPainelRh: (id, visivel_painel_rh) => patch(`/events/${id}/visivel-painel-rh`, { visivel_painel_rh }),
 };
 
-// Módulo Propostas · ciclo anual (Fase 1A: configuração)
 // Campanhas de arrecadação · meta, dígito verificador, cronograma e disparos.
 // ⚠️ A soma do arrecadado vem SEMPRE do servidor (view `vw_camp_arrecadacao`) —
 // nenhuma tela recalcula dinheiro no cliente.
@@ -297,43 +296,6 @@ export const campanhas = {
     list: (id) => get(`/campanhas/${id}/agradecimentos`),
     rodar: () => post('/campanhas/agradecimentos/rodar', {}),
   },
-};
-
-export const propostas = {
-  config: {
-    ciclos: () => get('/propostas/config/ciclos'),
-    criarCiclo: (data) => post('/propostas/config/ciclos', data),
-    atualizarCiclo: (id, data) => put(`/propostas/config/ciclos/${id}`, data),
-    parametros: (cicloId) => get(`/propostas/config/ciclos/${cicloId}/parametros`),
-    salvarParametros: (cicloId, data) => put(`/propostas/config/ciclos/${cicloId}/parametros`, data),
-    areas: () => get('/propostas/config/areas'),
-    salvarArea: (areaId, data) => put(`/propostas/config/areas/${areaId}`, data),
-    aux: () => get('/propostas/config/aux'),
-    criterios: (cicloId) => get(`/propostas/config/ciclos/${cicloId}/criterios`),
-    criarCriterio: (cicloId, data) => post(`/propostas/config/ciclos/${cicloId}/criterios`, data),
-    atualizarCriterio: (id, data) => put(`/propostas/config/criterios/${id}`, data),
-    removerCriterio: (id) => del(`/propostas/config/criterios/${id}`),
-  },
-  aux: () => get('/propostas/aux'),
-  list: (params) => get('/propostas' + (params ? '?' + new URLSearchParams(params) : '')),
-  get: (id) => get(`/propostas/${id}`),
-  criar: (data) => post('/propostas', data),
-  atualizar: (id, data) => put(`/propostas/${id}`, data),
-  transicao: (id, acao, comentario) => post(`/propostas/${id}/transicao`, { acao, comentario }),
-  historico: (id) => get(`/propostas/${id}/historico`),
-  remover: (id) => del(`/propostas/${id}`),
-  uploadAnexo: (id, file) => { const fd = new FormData(); fd.append('file', file); return requestFile(`/propostas/${id}/anexos`, fd); },
-  removerAnexo: (anexoId) => del(`/propostas/anexos/${anexoId}`),
-  // Fase 2 · avaliação + mural
-  avaliarFila: (cicloId) => get('/propostas/avaliar' + (cicloId ? `?ciclo_id=${cicloId}` : '')),
-  avaliacao: (id) => get(`/propostas/${id}/avaliacao`),
-  salvarAvaliacao: (id, data) => post(`/propostas/${id}/avaliacao`, data),
-  mural: (cicloId) => get(`/propostas/mural?ciclo_id=${cicloId}`),
-  deliberar: (id, data) => post(`/propostas/${id}/deliberar`, data),
-  // Fase 3
-  posEvento: (id) => get(`/propostas/${id}/pos-evento`),
-  salvarPosEvento: (id, data) => post(`/propostas/${id}/pos-evento`, data),
-  consolidarCiclo: (cicloId) => post(`/propostas/config/ciclos/${cicloId}/consolidar`, {}),
 };
 
 // Módulo Censo · plataforma de pesquisas (censo demográfico, pulso, evento).
@@ -385,6 +347,18 @@ export const censo = {
   perfil: (pesquisaId) => get(`/censo/perfil?pesquisa_id=${pesquisaId}`),
   perfilMapa: (pesquisaId) => get(`/censo/perfil/mapa?pesquisa_id=${pesquisaId}`),
   relatorio: (pesquisaId) => get(`/censo/relatorio?pesquisa_id=${pesquisaId}`),
+  // Potencial · as listas acionáveis. ⚠️ SÃO DUAS CHAMADAS E DOIS NÍVEIS: o
+  // resumo é nível 2 e traz só contagens; a lista NOMINAL é nível 4, porque 34
+  // cargos têm nível 2 no censo — entre eles "Membro" e "Voluntário" — e a lista
+  // carrega nome, telefone e convicção religiosa (dado sensível na LGPD).
+  potencialResumo: (pesquisaId) => get(`/censo/potencial/resumo?pesquisa_id=${pesquisaId}`),
+  potencial: (pesquisaId) => get(`/censo/potencial?pesquisa_id=${pesquisaId}`),
+  // Encaminha alguém da lista para a fila de cuidado DO CENSO (`cen_cuidado`).
+  // ⚠️ Não é a `cui_batismo_next_fila`: aquela exige FK para `cui_convertidos`,
+  // onde só 18 dos 178 existem — e criar os outros lá derrubaria dois KPIs de
+  // Cuidados que contam por `data_culto` sem filtrar origem.
+  potencialParaCuidado: (respostaId, tipo = 'conversa', observacao) =>
+    post('/censo/potencial/cuidado', { resposta_id: respostaId, tipo, observacao }),
   // ⚠️ 600s pelo MESMO motivo da leitura logo abaixo — e aqui a régua já existia
   // sete linhas adiante quando eu escrevi esta sem timeout. O relatório roda
   // Opus 5 sobre o perfil inteiro e passa de 30s; a tela dizia "Tempo esgotado"
@@ -518,6 +492,12 @@ export const inscricoesApi = {
   recusarComprovante: (eventoId, inscricaoId, comprovanteId, motivo) =>
     post(`/inscricoes/eventos/${eventoId}/inscricoes/${inscricaoId}/comprovantes/${comprovanteId}/recusar`, { motivo }),
   criarEvento: (data) => post('/inscricoes/eventos', data),
+  // Igrejas PARCEIRAS (CBA · Genesis 24/09): quem se inscreve não vira pessoa da CBRio
+  igrejasParceiras: () => get('/inscricoes/igrejas-parceiras'),
+  criarIgrejaParceira: (data) => post('/inscricoes/igrejas-parceiras', data),
+  // Genesis CBA · a série permanente (edições = data + igreja sede)
+  genesis: () => get('/inscricoes/genesis'),
+  criarEdicaoGenesis: (data) => post('/inscricoes/genesis/edicoes', data),
   atualizarEvento: (id, data) => put(`/inscricoes/eventos/${id}`, data),
   excluirEvento: (id) => del(`/inscricoes/eventos/${id}`),
   novaEdicao: (id, data) => post(`/inscricoes/eventos/${id}/nova-edicao`, data),
@@ -613,6 +593,10 @@ export const eventoPublico = {
     const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
   }),
   // Textos canônicos de consentimento (o snapshot gravado é sempre o do backend)
+  // Edições NO AR de uma série (ex.: /genesis, o link sempre aberto)
+  serie: (slugBase) => fetch(`${API}/public/evento/serie/${encodeURIComponent(slugBase)}`).then(async r => {
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
+  }),
   textos: () => fetch(`${API}/public/evento/textos`).then(async r => {
     const j = await r.json(); if (!r.ok) throw new Error(j.error || 'Erro'); return j;
   }),
@@ -1961,6 +1945,11 @@ export const patrimonio = {
 };
 
 export const rh = {
+  // ⚠️ Foto de colaborador sobe pelo BACKEND (o upload direto do browser exigia
+  // policies abertas no bucket para qualquer conta `authenticated`, incluindo as
+  // do app dos membros — revogadas). Sem `:id` porque o modal de admissão envia
+  // a foto antes de o cadastro existir.
+  uploadFotoNova: (file) => { const fd = new FormData(); fd.append('foto', file); return requestFile('/rh/foto', fd); },
   dashboard: () => get('/rh/dashboard'),
   dashboardSeries: (meses = 12) => get(`/rh/dashboard/series?meses=${meses}`),
   acessos: () => get('/rh/acessos'),
@@ -1980,6 +1969,7 @@ export const rh = {
     concluirAdmissao: (id) => post(`/rh/funcionarios/${id}/concluir-admissao`),
     setGestor: (id, gestorId) => put(`/rh/funcionarios/${id}/gestor`, { gestor_id: gestorId || null }),
     onboardingLink: (id, regenerar = false) => post(`/rh/funcionarios/${id}/onboarding-link`, { regenerar }),
+    fichaContratadaLink: (id, regenerar = false) => post(`/rh/funcionarios/${id}/ficha-contratada-link`, { regenerar }),
     uploadFoto: (id, file) => {
       const fd = new FormData();
       fd.append('foto', file);
@@ -2010,6 +2000,10 @@ export const rh = {
     create: (funcId, data) => post(`/rh/funcionarios/${funcId}/ferias`, data),
     update: (id, data) => patch(`/rh/ferias/${id}`, data),
     remove: (id) => del(`/rh/ferias/${id}`),
+    // Vínculo com o backbone de Solicitações (categoria ferias/licenca) ·
+    // ver "RH · aponta pro RH de forma acionável" no CLAUDE.md.
+    porSolicitacao: (solicitacaoId) => get(`/rh/solicitacoes/${solicitacaoId}/ferias`),
+    registrarDeSolicitacao: (solicitacaoId, data) => post(`/rh/solicitacoes/${solicitacaoId}/ferias`, data),
   },
   // Cobertura de férias/licença (substituto herda módulos operacionais · expira sozinho)
   coberturas: {
@@ -2038,6 +2032,12 @@ export const rh = {
   },
   // Admissão agora é um status do colaborador (em_admissao) — ver rh.funcionarios
   // (create com status 'em_admissao', update de admissao_dados, concluirAdmissao).
+  fichaContratada: {
+    pendentes: () => get('/rh/ficha-contratada/pendentes'),
+    // ⚠️ `seco` mostra quem entraria SEM enviar nada — prévia antes de falar
+    // com prestador externo.
+    cobrar: (seco = false) => post(`/rh/ficha-contratada/cobrar${seco ? '?seco=1' : ''}`, { seco }),
+  },
   onboarding: {
     pendentes: () => get('/rh/onboarding/pendentes'),
     preview: () => post('/rh/onboarding/preview', {}),
@@ -2190,6 +2190,10 @@ export const painelArea = {
   registrarNps: (area, body) => post(`/painel-area/${encodeURIComponent(area)}/nps`, body),
   // Aba Pessoas (AMI/Bridge) · quem declarou frequentar a área, com faixa etária
   pessoas: (area) => get(`/painel-area/${encodeURIComponent(area)}/pessoas`),
+  // A ficha do KPI: de onde sai o número, desde quando mede, com que
+  // periodicidade. ⚠️ Nível 1, o mesmo do painel — quem vê o número tem direito
+  // de saber de onde ele vem.
+  procedenciaKpi: (kpiId) => get(`/painel-area/kpi/${encodeURIComponent(kpiId)}/procedencia`),
   // Detalhe da pessoa (sem contribuições)
   pessoa: (area, id) => get(`/painel-area/${encodeURIComponent(area)}/pessoas/${id}`),
 };
@@ -2381,6 +2385,10 @@ export const totemKids = {
       const s = q.toString();
       return get(`/totem-kids/decisoes/registro${s ? `?${s}` : ''}`);
     },
+    // "Essa criança já aceitou a Jesus?" (21/09/2026) · TRÊS estados no retorno:
+    // `com_decisao` · `sem_decisao` (a criança existe e não tem registro) · e
+    // não achar nada. Colapsar os dois primeiros é afirmar que não houve.
+    buscar: (q) => get(`/totem-kids/decisoes/buscar?q=${encodeURIComponent(q || '')}`),
     candidatos: (id) => get(`/totem-kids/decisoes/fila/${id}/candidatos`),
     resolver: (id, body) => patch(`/totem-kids/decisoes/fila/${id}`, body),
   },
@@ -2579,7 +2587,28 @@ export const marketing = {
       remove:     (id) => del(`/marketing/admin/ciclo-padroes/${id}`),
       aplicar:    (categoryId) => post('/marketing/admin/ciclo-padroes/aplicar', categoryId ? { category_id: categoryId } : {}),
     },
+    // Subtarefas padrão de cada etapa do ciclo (linha do tempo · 2026-09-25)
+    cicloItens: {
+      list:   (categoryId) => get('/marketing/admin/ciclo-itens' + (categoryId ? '?category_id=' + encodeURIComponent(categoryId) : '')),
+      create: (data) => post('/marketing/admin/ciclo-itens', data),
+      update: (id, data) => patch(`/marketing/admin/ciclo-itens/${id}`, data),
+      remove: (id) => del(`/marketing/admin/ciclo-itens/${id}`),
+    },
   },
+};
+
+// Linha do tempo do Marketing (Fase 3 · 2026-09-25). Marcar subtarefa de card
+// continua em marketing.checklist.update; aqui só a leitura e a rotina.
+export const marketingLinha = {
+  get: (ano) => get(`/marketing/linha${ano ? `?ano=${encodeURIComponent(ano)}` : ''}`),
+  marcarRotina: (compromissoId, semanaInicio, membroId) =>
+    put(`/marketing/linha/rotina/${encodeURIComponent(compromissoId)}/${encodeURIComponent(semanaInicio)}`, { membro_id: membroId }),
+  desmarcarRotina: (compromissoId, semanaInicio, membroId) =>
+    del(`/marketing/linha/rotina/${encodeURIComponent(compromissoId)}/${encodeURIComponent(semanaInicio)}?membro_id=${encodeURIComponent(membroId)}`),
+  // Fase 4 · editor do líder
+  alocar: (campanhaId, body) => post(`/marketing/linha/pendentes/${encodeURIComponent(campanhaId)}/alocar`, body),
+  criarTarefa: (body) => post('/marketing/linha/tarefas', body),
+  editarTarefa: (id, body) => patch(`/marketing/linha/tarefas/${encodeURIComponent(id)}`, body),
 };
 
 export const solicitacoes = {
@@ -2781,7 +2810,7 @@ export const membresia = {
   },
   membros: {
     list: (params) => get('/membresia/membros' + (params ? '?' + new URLSearchParams(params) : '')),
-    get: (id) => get(`/membresia/membros/${id}`),
+    get: (id, opts) => get(`/membresia/membros/${id}` + (opts?.escopo ? `?escopo=${encodeURIComponent(opts.escopo)}` : '')),
     timeline: (id) => get(`/membresia/membros/${id}/timeline`),
     // Respostas do censo desta pessoa. O bloco sensível vem filtrado pelo
     // servidor conforme cen_acesso_sensivel — ter membresia não é autorização
@@ -4336,6 +4365,7 @@ export const devocionalPlanos = {
   publicarItensLote: (id, itens, sobrescrever = false) => post(`/devocional-planos/${id}/itens-lote`, { itens, sobrescrever }),
   createItem: (id, body) => post(`/devocional-planos/${id}/itens`, body),
   updateItem: (itemId, body) => put(`/devocional-planos/itens/${itemId}`, body),
+  videoUpload: (itemId, body) => post(`/devocional-planos/itens/${itemId}/video/upload`, body),
   removeItem: (itemId) => del(`/devocional-planos/itens/${itemId}`),
   adesao: (id, params) => get(`/devocional-planos/${id}/adesao` + (params ? '?' + new URLSearchParams(params) : '')),
   enviarHoje: (id) => post(`/devocional-planos/${id}/enviar-hoje`, {}),
@@ -4604,6 +4634,14 @@ export const online = {
   comunidadeMensal: (mes, valor) => post('/online/comunidade-mensal', { mes, valor }),
   dashboard: () => get('/online/dashboard'),
   engajamento: () => get('/online/engajamento'),
+  // Série diária do canal + fontes de tráfego, com período filtrável (7/28/90).
+  // ⚠️ Query própria, separada do dashboard: trocar o período não pode
+  // recarregar a tela inteira.
+  canalSerie: (dias) => get(`/online/canal-serie?dias=${dias}`),
+  // ⚠️ Exige nível 4 em `online` (a coordenação do CANAL — decisão do Matheus
+  // em 23/09). 403 aqui é o caso NORMAL: o módulo é alcançável por 31 cargos,
+  // inclusive Membro e Voluntário, e quase nenhum vê valores.
+  arrecadacao: (ano) => get(`/online/arrecadacao${ano ? `?ano=${ano}` : ''}`),
   cultosMetricas: (limit) => get('/online/cultos-metricas' + (limit ? '?limit=' + limit : '')),
   series: (order) => get('/online/series' + (order ? '?order=' + order : '')),
   serie: (id) => get('/online/series/' + id),
@@ -4620,6 +4658,10 @@ export const online = {
     backfillCultos: () => post('/online/coletar/backfill-cultos', {}),
     catchUp: (limit = 5) => post(`/online/coletar/catch-up?limit=${limit}`, {}),
     engajamento: (ano) => post(`/online/coletar/engajamento${ano ? `?ano=${ano}` : ''}`, {}),
+    // ⚠️ Views por dia (Analytics). O gêmeo /cron/views-dia-collect exige o
+    // CRON_SECRET em HEADER e nunca funciona no navegador — este é o caminho
+    // humano, autenticado por sessão.
+    viewsDia: (dias = 5) => post(`/online/coletar/views-dia?dias=${dias}`, {}),
   },
   debug: {
     canaisAutorizados: () => get('/online/debug/canais-autorizados'),
@@ -4658,6 +4700,9 @@ export const planejamentoAnual = {
     create: (ano) => post('/planejamento-anual/ciclos', { ano }),
     janelas: (id, corpo) => patch(`/planejamento-anual/ciclos/${id}/janelas`, corpo),
     avaliadores: (id, avaliadores) => put(`/planejamento-anual/ciclos/${id}/avaliadores`, { avaliadores }),
+    removerAvaliador: (id, diretoria) => del(`/planejamento-anual/ciclos/${id}/avaliadores/${diretoria}`),
+    responsaveisOrcamento: (id) => get(`/planejamento-anual/ciclos/${id}/orcamento/responsaveis`),
+    salvarResponsaveisOrcamento: (id, profileIds) => put(`/planejamento-anual/ciclos/${id}/orcamento/responsaveis`, { profile_ids: profileIds }),
     propostas: (id, params) => get(`/planejamento-anual/ciclos/${id}/propostas` + (params ? '?' + new URLSearchParams(params) : '')),
     ranking: (id) => get(`/planejamento-anual/ciclos/${id}/ranking`),
     conflitos: (id) => get(`/planejamento-anual/ciclos/${id}/conflitos`),
@@ -4688,6 +4733,21 @@ export const planejamentoAnual = {
     remanejar: (id, corpo) => put(`/planejamento-anual/propostas/${id}/remanejar`, corpo),
     apontar: (id, corpo) => post(`/planejamento-anual/propostas/${id}/apontamentos`, corpo),
     removerApontamento: (apontamentoId) => del(`/planejamento-anual/apontamentos/${apontamentoId}`),
+    // Apontamento de custo/recorrência/data (2026-09-18) — distinto do
+    // `apontar` acima (que é comentário sobre um campo genérico).
+    apontarPastor: (id, { campo, valor, dia_semana, precisao } = {}) =>
+      put(`/planejamento-anual/propostas/${id}/apontamento-pastor`, { campo, valor, dia_semana, precisao }),
+    removerApontamentoPastor: (id, campo) =>
+      put(`/planejamento-anual/propostas/${id}/apontamento-pastor`, { campo, valor: null }),
+    configRotina: (id) => get(`/planejamento-anual/propostas/${id}/config-rotina`),
+    salvarConfigRotina: (id, corpo) => put(`/planejamento-anual/propostas/${id}/config-rotina`, corpo),
+  },
+  // Execução do Planejamento (2026-09-23) · lista consolidada de propostas
+  // aprovadas + detalhe somente-leitura + materialização de Projeto/Evento.
+  execucao: {
+    propostas: (params) => get('/planejamento-anual/execucao/propostas' + (params ? '?' + new URLSearchParams(params) : '')),
+    proposta: (id) => get(`/planejamento-anual/execucao/propostas/${id}`),
+    materializar: (id, tipo) => post(`/planejamento-anual/propostas/${id}/materializar`, { tipo }),
   },
 };
 
@@ -4731,6 +4791,13 @@ export const apresentacoes = {
 export const onboardingPublico = {
   get: (token) => get(`/public/rh-onboarding/${encodeURIComponent(token)}`),
   salvar: (token, dados) => post(`/public/rh-onboarding/${encodeURIComponent(token)}`, dados),
+};
+
+// Ficha da CONTRATADA (Anexo II) · porta pública PRÓPRIA, separada do
+// onboarding: o público é disjunto (só PJ) e este link carrega dado bancário.
+export const fichaContratadaPublica = {
+  get: (token) => get(`/public/rh-ficha-contratada/${encodeURIComponent(token)}`),
+  salvar: (token, dados) => post(`/public/rh-ficha-contratada/${encodeURIComponent(token)}`, dados),
 };
 
 

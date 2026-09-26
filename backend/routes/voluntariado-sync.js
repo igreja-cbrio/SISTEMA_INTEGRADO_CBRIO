@@ -208,13 +208,11 @@ router.post('/sync-historical', async (req, res) => {
 // ══════════════════════════════════════════════════════════════
 router.post('/sync-auto', async (req, res) => {
   try {
-    // Accept CRON_SECRET as alternative auth
-    const cronSecret = process.env.CRON_SECRET;
-    const authHeader = req.headers['x-cron-secret'];
-    if (cronSecret && authHeader === cronSecret) {
-      // OK — cron authorized
-    }
-    // Otherwise normal auth already validated by middleware
+    // Auth já validada pelo `router.use(authenticate, authorizeModule('voluntariado', 3))`
+    // no topo. O bloco anterior comparava `x-cron-secret === CRON_SECRET` de forma
+    // não-constant-time, mas era código morto (o middleware rejeita antes do handler
+    // se o JWT não bater). Se quiser expor essa rota também para Vercel Cron,
+    // criar rota separada `/cron/sync-auto` com `requireCron` de `utils/cronAuth`.
 
     const { basic: credentials } = getPCCredentials();
     const serviceTypes = await fetchAllServiceTypes(credentials);

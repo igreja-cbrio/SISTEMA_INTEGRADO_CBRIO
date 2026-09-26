@@ -25,6 +25,7 @@ import {
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription,
 } from '@/components/ui/dialog';
@@ -60,6 +61,15 @@ type Candidato = Crianca & {
   idade_na_data: number | null; tokens_comuns: number;
   idade_veta: boolean; idade_confere: boolean;
 };
+
+type BuscaItem = {
+  crianca_id: string; nome: string; data_nascimento: string | null;
+  ativa: boolean; visitante: boolean; data_conversao_ficha: string | null;
+  estado: 'com_decisao' | 'sem_decisao';
+  total_decisoes: number; primeira: string | null; ultima: string | null;
+  decisoes: { data: string | null; culto: string | null }[];
+};
+type BuscaResultado = { termo: string; itens: BuscaItem[]; total: number; truncado: boolean; aviso?: string };
 
 type Resumo = {
   total: number; aplicada: number; pendente: number; resolvida: number; descartada: number;
@@ -102,6 +112,32 @@ export default function KidsDecisoesRegistro() {
   const [janela, setJanela] = useState<{ rotulo?: string } | null>(null);
   const [truncado, setTruncado] = useState(false);
   const [dias, setDias] = useState(365);
+
+  // ── BUSCA "essa criança já aceitou a Jesus?" (21/09/2026) ────────────────
+  // ⚠️⚠️ TRÊS estados, e colapsá-los é o bug: achou com decisão · achou SEM
+  // decisão · não achou. "Não achei" e "achei e não tem" levam a ações opostas
+  // (procurar outra grafia × registrar a decisão).
+  const [termo, setTermo] = useState('');
+  const [busca, setBusca] = useState<BuscaResultado | null>(null);
+  const [buscando, setBuscando] = useState(false);
+  const [erroBusca, setErroBusca] = useState<string | null>(null);
+
+  const procurar = useCallback(async (q: string) => {
+    const t = q.trim();
+    if (t.length < 2) { setBusca(null); setErroBusca(null); return; }
+    setBuscando(true);
+    setErroBusca(null);
+    try {
+      setBusca(await totemKids.decisoes.buscar(t));
+    } catch (e: any) {
+      // ⚠️ Falha NUNCA vira "não encontrada": seria afirmar que a criança não
+      // existe a partir de uma consulta que não respondeu.
+      setBusca(null);
+      setErroBusca(e?.message || 'Não foi possível buscar agora.');
+    } finally {
+      setBuscando(false);
+    }
+  }, []);
 
   const [alvo, setAlvo] = useState<LinhaFila | null>(null);
   const [candidatos, setCandidatos] = useState<Candidato[] | null>(null);
@@ -266,6 +302,88 @@ export default function KidsDecisoesRegistro() {
           </span>
         </CardContent></Card>
       )}
+
+      {/* ══════════════════ BUSCAR CRIANÇA ══════════════════ */}
+      <Card>
+        <CardContent className="p-3 space-y-3">
+          <div className="flex items-center gap-2">
+            <Search className="h-4 w-4 text-muted-foreground shrink-0" />
+            <Input
+              value={termo}
+              onChange={(e) => { setTermo(e.target.value); procurar(e.target.value); }}
+              placeholder="Procurar criança pelo nome — ex.: já aceitou a Jesus?"
+              className="h-9"
+            />
+            {buscando && <Loader2 className="h-4 w-4 animate-spin text-muted-foreground shrink-0" />}
+            {termo && (
+              <Button variant="ghost" size="sm" onClick={() => { setTermo(''); setBusca(null); setErroBusca(null); }}>
+                <X className="h-4 w-4" />
+              </Button>
+            )}
+          </div>
+
+          {/* ⚠️ erro NUNCA se disfarça de "não encontrada" */}
+          {erroBusca && (
+            <div className="text-xs text-red-600 flex items-start gap-2">
+              <AlertTriangle className="h-4 w-4 mt-0.5 shrink-0" /> {erroBusca}
+            </div>
+          )}
+
+          {!erroBusca && busca && !busca.itens.length && (
+            <div className="text-xs text-muted-foreground">
+              Nenhuma criança com esse nome na base do Kids.{' '}
+              <strong>Isso não quer dizer que ela não aceitou</strong> — pode ser outra grafia.
+              Tente o primeiro nome sozinho, ou o sobrenome.
+            </div>
+          )}
+
+          {!erroBusca && busca && busca.itens.length > 0 && (
+            <div className="space-y-1.5">
+              {busca.itens.map((c) => (
+                <div key={c.crianca_id} className="flex items-start justify-between gap-3 rounded-md border p-2">
+                  <div className="min-w-0">
+                    <div className="text-sm font-medium truncate flex items-center gap-2">
+                      {c.nome}
+                      {/* ⚠️ inativa aparece MARCADA, nunca escondida: sumir com ela
+                          produz o falso negativo que esta busca existe pra evitar */}
+                      {!c.ativa && <span className="text-[10px] rounded px-1 py-0.5 bg-muted text-muted-foreground">ficha inativa</span>}
+                      {c.visitante && <span className="text-[10px] rounded px-1 py-0.5 bg-muted text-muted-foreground">visitante</span>}
+                    </div>
+                    {c.estado === 'com_decisao' ? (
+                      <div className="text-xs text-emerald-600 dark:text-emerald-400">
+                        {/* ⚠️ O nome do culto JÁ CARREGA a data ("Domingo 11:30 — 26/07/2026"),
+                            medido em produção: mostrar os dois repetiria a data na
+                            mesma linha. Culto quando há; a data crua só quando não há. */}
+                        Já aceitou a Jesus · {c.decisoes.map((d) => d.culto || (d.data ? d.data.split('-').reverse().join('/') : 'sem data registrada')).join(' · ')}
+                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground">
+                        Sem decisão registrada
+                        {/* ⚠️ a ficha pode ter data e não haver decisão nominal — os
+                            dois são mostrados em vez de a tela escolher um. */}
+                        {c.data_conversao_ficha && (
+                          <> · ⚠️ mas a <strong>ficha</strong> tem conversão em {c.data_conversao_ficha.split('-').reverse().join('/')}</>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                  {c.data_nascimento && (
+                    <div className="text-[11px] text-muted-foreground shrink-0">
+                      nasc. {c.data_nascimento.split('-').reverse().join('/')}
+                    </div>
+                  )}
+                </div>
+              ))}
+              {/* ⚠️ truncar em silêncio é a doença do seletor de supervisor */}
+              {busca.truncado && (
+                <div className="text-[11px] text-muted-foreground">
+                  Mostrando {busca.itens.length} de {busca.total} — refine a busca.
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
 
       {/* ══════════════════ A CONFERIR ══════════════════ */}
       <div className="space-y-2">

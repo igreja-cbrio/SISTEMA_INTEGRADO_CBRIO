@@ -41,7 +41,7 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **kids** | `/ministerial/totem-kids` `/ministerial/kids` `/ministerial/totem-kids/criancas` … | `totemKids.js` | [kids](kids.md) |
 | **links** | — | `links.js` | [links](links.md) |
 | **logistica** | — | `logistica.js` | [logistica](logistica.md) |
-| **marketing** | `/marketing` `/marketing/kanban` `/marketing/planner` … | `batismoFotos.js` `comunicados.js` | [marketing](marketing.md) |
+| **marketing** | `/marketing` `/marketing/kanban` `/marketing/demandas` … | `batismoFotos.js` `comunicados.js` | [marketing](marketing.md) |
 | **membresia** | — | `jornada.js` `lgpd.js` | [membresia](membresia.md) |
 | **membros** | — | `membresia.js` `pessoas.js` | [membros](membros.md) |
 | **membros-financeiro** | — | `membresia.js` | [membros-financeiro](membros-financeiro.md) |
@@ -54,9 +54,9 @@ de cada um tem rotas, arquivos, endpoints, réguas e tabelas.
 | **patrimonio** | — | `patrimonio.js` | [patrimonio](patrimonio.md) |
 | **permissoes** | — | `permissoes.js` | [permissoes](permissoes.md) |
 | **planejamento-anual** | `/planejamento-anual` | — | [planejamento-anual](planejamento-anual.md) |
+| **planejamento-execucao** | `/planejamento-execucao` | — | [planejamento-execucao](planejamento-execucao.md) |
 | **producao** | `/producao` | `producao.js` | [producao](producao.md) |
 | **projects** | — | `projects.js` | [projects](projects.md) |
-| **propostas** | `/propostas` | `propostas.js` | [propostas](propostas.md) |
 | **relatorios** | — | `relatorios.js` | [relatorios](relatorios.md) |
 | **rh** | — | `events.js` `painelRh.js` | [rh](rh.md) |
 | **santander** | — | `santander.js` | [santander](santander.md) |
@@ -74,7 +74,7 @@ Telas dos apps e o que cada uma chama: [APPS.md](APPS.md)
 
 Antes de escrever régua nova, conferir se já existe uma:
 
-`backend/utils/` tem **178** arquivos, **162** com teste.
+`backend/utils/` tem **204** arquivos, **187** com teste.
 
 <details><summary>Lista completa</summary>
 
@@ -93,17 +93,21 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/appRateLimit.js` | `src/test/appRateLimit.test.ts` |
 | `backend/utils/apresentacaoHistorico.js` | `src/test/apresentacaoHistorico.test.ts` |
 | `backend/utils/apresentacaoHorario.js` | `src/test/apresentacaoHorario.test.ts` |
+| `backend/utils/arrecadacaoOnline.js` | `src/test/arrecadacaoOnline.test.ts` `src/test/onlineAbaFinanceiro.test.ts` |
 | `backend/utils/assuntoGrupoConversa.js` | `src/test/assuntoGrupoConversa.test.ts` |
-| `backend/utils/atividadeVoluntario.js` | `src/test/atividadeVoluntario.test.ts` |
+| `backend/utils/atividadeVoluntario.js` | `src/test/agenteVolInativoIdErrado.test.ts` `src/test/atividadeVoluntario.test.ts` |
 | `backend/utils/authUsers.js` | `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/avaliacaoAnonimato.js` | `src/test/avaliacaoAnonimato.test.ts` |
 | `backend/utils/avisoAgregado.js` | `src/test/avisoAgregado.test.ts` |
 | `backend/utils/avisoComprovante.js` | `src/test/avisoComprovante.test.ts` |
 | `backend/utils/avisoEscala.js` | `src/test/avisoEscala.test.ts` |
 | `backend/utils/avisoGrupoApp.js` | `src/test/avisoGrupoApp.test.ts` `src/test/avisoSaidaGrupo.test.ts` |
+| `backend/utils/avisoGrupoAprovado.js` | `src/test/avisoGrupoAprovado.test.ts` |
+| `backend/utils/batismoData.js` | `src/test/batismoData.test.ts` |
 | `backend/utils/batismoHorario.js` | `src/test/batismoHorario.test.ts` |
 | `backend/utils/blocoCulto.js` | `src/test/blocoCulto.test.ts` |
 | `backend/utils/botIaRegras.js` | `src/test/botIaRegras.test.ts` |
+| `backend/utils/buscaCriancaDecisao.js` | `src/test/buscaCriancaDecisao.test.ts` |
 | `backend/utils/cadastrosKids.js` | `src/test/cadastrosKids.test.ts` |
 | `backend/utils/campanhaAgradecimento.js` | `backend/services/campanhaDigito.test.js` |
 | `backend/utils/campanhaDoacao.js` | `src/test/campanhaDoacao.test.ts` |
@@ -113,6 +117,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/campoKey.js` | `src/test/campoKey.test.ts` |
 | `backend/utils/camposCondicionais.js` | `src/test/camposCondicionais.test.ts` |
 | `backend/utils/camposContato.js` | `src/test/paginacaoExtrato.test.ts` `src/test/saneamentoInscricaoApp.test.ts` `src/test/telefoneCodigoPais.test.ts` |
+| `backend/utils/canalSerie.js` | `src/test/canalSerie.test.ts` |
 | `backend/utils/capacidadeCulto.js` | `src/test/capacidadeCulto.test.ts` |
 | `backend/utils/censoCampoCadastro.js` | `src/test/censoCampoCadastro.test.ts` |
 | `backend/utils/censoConsentimento.js` | `src/test/censoConsentimento.test.ts` |
@@ -120,6 +125,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/censoGrafico.js` | `src/test/censoGrafico.test.ts` |
 | `backend/utils/censoIaFiltro.js` | `src/test/censoIaSemPerguntaAberta.test.ts` `src/test/censoIaSemPii.test.ts` |
 | `backend/utils/censoPerguntas.js` | `src/test/censoConsentimento.test.ts` `src/test/censoFormEspelho.test.ts` `src/test/censoPerguntas.test.ts` `src/test/censoQuestionario2026.test.ts` |
+| `backend/utils/censoPotencial.js` | `src/test/censoPotencial.test.ts` |
 | `backend/utils/censoPrefill.js` | `src/test/censoPrefill.test.ts` `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/censoRelatorioDados.js` | `src/test/censoRelatorioDados.test.ts` `src/test/censoRelatorioMaterial.test.ts` |
 | `backend/utils/censoRespostaToken.js` | `src/test/censoRespostaToken.test.ts` |
@@ -134,8 +140,9 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/cotaMeta.js` | `src/test/cotaMeta.test.ts` |
 | `backend/utils/cpf.js` | `src/test/censoFormEspelho.test.ts` `src/test/cpfResponsavel.test.ts` |
 | `backend/utils/cpfResponsavel.js` | `src/test/cpfResponsavel.test.ts` |
+| `backend/utils/crescimentoDs.js` | `src/test/crescimentoDs.test.ts` |
 | `backend/utils/criancaApresentacao.js` | `src/test/cultoApresentacao.test.ts` |
-| `backend/utils/cronAuth.js` | `src/test/portasPublicasPii.test.ts` |
+| `backend/utils/cronAuth.js` | `src/test/cronSecretHeader.test.ts` `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/cultoJanela.js` | `src/test/cultoJanela.test.ts` |
 | `backend/utils/cultoToken.js` | `src/test/checkinAutoatendimento.test.ts` `src/test/cultoToken.test.ts` `src/test/decisaoToken.test.ts` |
 | `backend/utils/cursorLote.js` | `src/test/cursorLote.test.ts` |
@@ -146,6 +153,7 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/decisaoCampos.js` | `src/test/decisaoCampos.test.ts` |
 | `backend/utils/decisaoToken.js` | `src/test/decisaoToken.test.ts` |
 | `backend/utils/desativarMembro.js` | `src/test/desativarMembro.test.ts` |
+| `backend/utils/devocionalVideo.js` | — |
 | `backend/utils/diagnosticoAutonomia.js` | `src/test/diagnosticoAutonomia.test.ts` |
 | `backend/utils/digitoCampanha.js` | `backend/services/campanhaDigito.test.js` |
 | `backend/utils/divisorMandala.js` | `src/test/divisorMandala.test.ts` |
@@ -160,12 +168,16 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/equipeAtendimento.js` | `src/test/equipeAtendimento.test.ts` |
 | `backend/utils/escalaLinhaEquipe.js` | `src/test/escalaLinhaEquipe.test.ts` |
 | `backend/utils/escalaToken.js` | `src/test/escalaToken.test.ts` |
+| `backend/utils/escopoFicha.js` | `src/test/escopoFicha.test.ts` |
 | `backend/utils/eventoCheckinToken.js` | `src/test/checkinAutoatendimento.test.ts` |
 | `backend/utils/exclusaoInscricaoLote.js` | `src/test/exclusaoInscricaoLote.test.ts` |
 | `backend/utils/falhaInfra.js` | `src/test/falhaInfra.test.ts` |
+| `backend/utils/fichaCobranca.js` | `src/test/fichaCobranca.test.ts` |
+| `backend/utils/fichaContratada.js` | `src/test/fichaContratada.test.ts` |
 | `backend/utils/fotoApresentacao.js` | `src/test/fotoApresentacao.test.ts` `src/test/fotoApresentacaoRotas.test.ts` |
 | `backend/utils/fotoVoluntario.js` | `src/test/fotoVoluntario.test.ts` |
 | `backend/utils/freioBot.js` | `src/test/freioBot.test.ts` |
+| `backend/utils/genesisCba.js` | `src/test/genesisCba.test.ts` |
 | `backend/utils/grupoCapaApp.js` | `src/test/grupoCapaApp.test.ts` |
 | `backend/utils/grupoEdicaoApp.js` | `src/test/grupoEdicaoApp.test.ts` |
 | `backend/utils/grupoOnline.js` | `src/test/assuntoGrupoConversa.test.ts` |
@@ -183,16 +195,23 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/kidsResponsavel.js` | `backend/routes/incidentRemediation.test.js` |
 | `backend/utils/kidsSituacao.js` | `src/test/kidsSituacao.test.ts` |
 | `backend/utils/kidsVisitante.js` | `src/test/kidsVisitante.test.ts` |
+| `backend/utils/kpiProcedencia.js` | `src/test/kpiProcedencia.test.ts` |
+| `backend/utils/kpiSerie.js` | `src/test/kpiSerie.test.ts` |
 | `backend/utils/lentesDomingo.js` | `src/test/lentesDomingo.test.ts` `src/test/turnoCulto.test.ts` |
 | `backend/utils/linkInscricaoApp.js` | `src/test/linkInscricaoApp.test.ts` |
 | `backend/utils/lotesEvento.js` | `src/test/lotesEvento.test.ts` |
+| `backend/utils/magicLink.js` | `src/test/magicLinkEnvio.test.ts` `src/test/portasPublicasPii.test.ts` |
 | `backend/utils/marcoAtribuicao.js` | `src/test/marcoAtribuicao.test.ts` |
+| `backend/utils/marketingAlocacao.js` | `src/test/marketingAlocacao.test.ts` |
+| `backend/utils/marketingChecklist.js` | `src/test/marketingChecklist.test.ts` |
 | `backend/utils/marketingCores.js` | `src/test/marketingCores.test.ts` |
+| `backend/utils/marketingLinha.js` | `src/test/marketingLinha.test.ts` |
 | `backend/utils/marketingOcupacao.js` | `src/test/marketingOcupacao.test.ts` |
 | `backend/utils/marketingSemanas.js` | `src/test/marketingSemanas.test.ts` |
 | `backend/utils/marketingSolicitante.js` | `src/test/marketingSolicitante.test.ts` |
 | `backend/utils/membrosPagina.js` | `src/test/membrosPagina.test.ts` |
 | `backend/utils/mlAvisoEntrega.js` | `src/test/mlAvisoEntrega.test.ts` |
+| `backend/utils/modeloIa.js` | `src/test/modeloIa.test.ts` |
 | `backend/utils/moduloDaAreaEvento.js` | `src/test/moduloDaAreaEvento.test.ts` |
 | `backend/utils/motivoFalha.js` | `src/test/motivoFalha.test.ts` |
 | `backend/utils/nextGestaoApp.js` | `src/test/nextGestaoApp.test.ts` |
@@ -211,11 +230,14 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/periodoDoacoes.js` | `src/test/periodoDoacoes.test.ts` |
 | `backend/utils/periodoYtd.js` | `src/test/periodoYtd.test.ts` |
 | `backend/utils/pessoaDiretaCampos.js` | `src/test/grupoPessoaDireta.test.ts` |
+| `backend/utils/podeExportar.js` | `src/test/censoPotencial.test.ts` |
 | `backend/utils/portaFluxos.js` | — |
+| `backend/utils/preferenciaRodizio.js` | `backend/services/preferenciaRodizio.test.js` |
 | `backend/utils/primeiroContatoRegua.js` | `src/test/primeiroContatoRegua.test.ts` |
 | `backend/utils/prontidaoCadastro.js` | `src/test/cadastroPessoaCompleto.test.ts` `src/test/prontidaoCadastro.test.ts` |
 | `backend/utils/pushLotes.js` | `src/test/pushLotes.test.ts` |
 | `backend/utils/redePatchGrupo.js` | — |
+| `backend/utils/registroAcesso.js` | `src/test/registroAcesso.test.ts` |
 | `backend/utils/remetenteEmail.js` | `src/test/remetenteEmail.test.ts` |
 | `backend/utils/resilientFetch.js` | — |
 | `backend/utils/responderFalha.js` | `src/test/telemetria500.test.ts` |
@@ -229,9 +251,11 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/rpcsCliente.js` | `src/test/rpcsCliente.test.ts` |
 | `backend/utils/saneamentoInscricaoApp.js` | `src/test/saneamentoInscricaoApp.test.ts` |
 | `backend/utils/sanitize.js` | — |
+| `backend/utils/saudeAutomacao.js` | `src/test/saudeAutomacao.test.ts` |
 | `backend/utils/saudeBanco.js` | `src/test/saudeBanco.test.ts` |
 | `backend/utils/saudeCrianca.js` | `src/test/portasAlinhadas.test.ts` |
 | `backend/utils/semFalhar.js` | `src/test/postgrestCatch.test.ts` |
+| `backend/utils/semanaOnline.js` | `src/test/semanaOnline.test.ts` |
 | `backend/utils/sentry.js` | `backend/middleware/errorHandler.test.js` `backend/services/systemWebOps.test.js` |
 | `backend/utils/sexoDeclarado.js` | `src/test/sexoDeclarado.test.ts` |
 | `backend/utils/sexoPeloNome.js` | — |
@@ -241,6 +265,8 @@ Antes de escrever régua nova, conferir se já existe uma:
 | `backend/utils/supervisorArea.js` | `backend/services/supervisorSubarea.test.js` `src/test/supervisorArea.test.ts` |
 | `backend/utils/suporteApp.js` | `src/test/suporteApp.test.ts` |
 | `backend/utils/telefoneVoluntario.js` | `src/test/telefoneVoluntario.test.ts` |
+| `backend/utils/templatesCiclo.js` | `src/test/marketingLinhaFase2.test.ts` |
+| `backend/utils/tipoCultoFlags.js` | `src/test/tipoCultoFlags.test.ts` |
 | `backend/utils/totemCerco.js` | `src/test/totemCerco.test.ts` |
 | `backend/utils/trechoCep.js` | `src/test/cepObrigatorio.test.ts` `src/test/trechoCep.test.ts` |
 | `backend/utils/turnoDomingo.js` | `src/test/turnoDomingo.test.ts` |

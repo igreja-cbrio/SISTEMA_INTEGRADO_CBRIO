@@ -20,16 +20,19 @@ nenhum módulo reivindica são exatamente os candidatos a esse buraco.
 guard (públicas, totens, `/perfil`). Significa que ninguém decidiu — vale
 conferir.
 
-## Telas sem ModuleGuard (79)
+## Telas sem ModuleGuard (84)
 
 | rota | arquivo | pública? |
 |---|---|---|
 | `/cadastro-membresia` | `src/pages/public/CadastroMembresia` | sim |
 | `/onboarding/:token` | `src/pages/public/OnboardingColaborador` | sim |
+| `/ficha-contratada/:token` | `src/pages/public/FichaContratada` | sim |
 | `/inscricao-batismo` | `src/pages/public/InscricaoBatismo` | sim |
 | `/batismo/acesso` | `src/pages/public/BatismoAcesso` | sim |
 | `/apresentacao-criancas` | `src/pages/public/ApresentacaoCriancas` | sim |
 | `/evento/:slug` | `src/pages/public/EventoExterno` | sim |
+| `/genesis` | `src/pages/public/GenesisPublico` | sim |
+| `/genesis/:slug` | `src/pages/public/EventoExterno` | sim |
 | `/pagamento/:token` | `src/pages/public/PagamentoInscricao` | sim |
 | `/doar` | `src/pages/public/Doar` | sim |
 | `/doar/:token` | `src/pages/public/Doar` | sim |
@@ -58,6 +61,8 @@ conferir.
 | `/motion` | `src/pages/public/Motion` | sim |
 | `/novosite` | `src/pages/public/NovoSite` | sim |
 | `/novosite/quem-somos` | `src/pages/public/QuemSomos` | sim |
+| `/novosite/series` | `src/pages/public/SeriesLista` | sim |
+| `/novosite/series/:slug` | `src/pages/public/SerieDetalhe` | sim |
 | `/suporte` | `src/pages/public/Suporte` | sim |
 | `/nps/publica/:token` | `src/pages/public/NpsPublica` | sim |
 | `/censo/p/:slug` | `src/pages/public/CensoPublica` | sim |
@@ -104,7 +109,7 @@ conferir.
 | `/admin/grupos/temporadas` | `src/pages/admin/TemporadasGrupos` | sim |
 | `/suporte` | `src/pages/public/Suporte` | sim |
 
-## Arquivos de rota que nenhum módulo reivindica (74)
+## Arquivos de rota que nenhum módulo reivindica (75)
 
 - `backend/routes/agentTasks.js`
 - `backend/routes/agenteBatismoNext.js`
@@ -158,6 +163,7 @@ conferir.
 - `backend/routes/publicMembresia.js`
 - `backend/routes/publicNext.js`
 - `backend/routes/publicNps.js`
+- `backend/routes/publicRhFichaContratada.js`
 - `backend/routes/publicRhOnboarding.js`
 - `backend/routes/publicVisitante.js`
 - `backend/routes/publicVolEmail.js`

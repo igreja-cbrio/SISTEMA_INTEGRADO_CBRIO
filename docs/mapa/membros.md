@@ -127,6 +127,7 @@ Guard: `authorizeModule('membros', 1 | 2 | 3 | padrão)`
 - `backend/utils/dadosSensiveisPessoa.js`
 - `backend/utils/decisaoCampos.js`
 - `backend/utils/desativarMembro.js`
+- `backend/utils/escopoFicha.js`
 - `backend/utils/kidsVisitante.js`
 - `backend/utils/membrosPagina.js`
 - `backend/utils/prontidaoCadastro.js`

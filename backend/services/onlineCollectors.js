@@ -1168,11 +1168,77 @@ async function verificarColetaOnline() {
   };
 }
 
+
+/**
+ * Views do canal POR DIA → `online_canal_views_dia`.
+ *
+ * ⚠️⚠️ Existe porque subtrair dois `online_canal_snapshot` ERRA: `view_count`
+ * é acumulado e o YouTube o revisa PARA BAIXO ao depurar views. Medido em
+ * 21/09/2026, sobre 126 dias: **9 dias com queda**, a maior de -7.197. Na
+ * semana 14–20/09 a subtração daria 6.642 contra ~12.019 reais — **-45%**.
+ *
+ * ⚠️ UPSERT dos últimos dias DE PROPÓSITO: o YouTube ainda ajusta D-1 e D-2, e
+ * é o upsert que deixa o número se corrigir sozinho. Sem ele, o primeiro valor
+ * coletado (incompleto) ficaria gravado para sempre.
+ *
+ * ⚠️ Nunca pede o dia de HOJE: o Analytics só fecha o dia depois que ele
+ * termina, e um dia parcial gravado como final subestima a semana.
+ */
+async function viewsDiaCollector({ dias = 5 } = {}) {
+  const hoje = new Date();
+  const fim = new Date(Date.UTC(hoje.getUTCFullYear(), hoje.getUTCMonth(), hoje.getUTCDate() - 1));
+  const n = Math.min(Math.max(Number(dias) || 5, 1), 400);
+  const inicio = new Date(Date.UTC(fim.getUTCFullYear(), fim.getUTCMonth(), fim.getUTCDate() - (n - 1)));
+
+  const startDate = fmtData(inicio);
+  const endDate = fmtData(fim);
+
+  let linhas;
+  try {
+    linhas = await yt.fetchChannelViewsPorDia(null, startDate, endDate);
+  } catch (err) {
+    // ⚠️ Erro PROPAGA como resultado declarado, nunca como "0 views": quem lê
+    // "coletado: 0" sem motivo conclui que a audiência zerou.
+    return { ok: false, erro: (err.message || String(err)).slice(0, 200), janela: `${startDate}..${endDate}` };
+  }
+
+  if (!linhas || linhas.length === 0) {
+    return { ok: true, coletados: 0, janela: `${startDate}..${endDate}`, aviso: 'Analytics não devolveu nenhum dia' };
+  }
+
+  const agora = new Date().toISOString();
+  const payload = linhas
+    .filter((l) => l && typeof l.dia === 'string' && Number.isFinite(Number(l.views)))
+    .map((l) => ({
+      data: l.dia,
+      views: Math.max(0, Math.round(Number(l.views))),
+      watch_minutos: Number.isFinite(Number(l.watch_minutos)) ? Math.max(0, Math.round(Number(l.watch_minutos))) : null,
+      coletado_em: agora,
+    }));
+
+  if (payload.length === 0) {
+    return { ok: true, coletados: 0, janela: `${startDate}..${endDate}`, aviso: 'nenhuma linha legível' };
+  }
+
+  const { error } = await supabase
+    .from('online_canal_views_dia')
+    .upsert(payload, { onConflict: 'data' });
+  if (error) {
+    return { ok: false, erro: error.message.slice(0, 200), janela: `${startDate}..${endDate}` };
+  }
+
+  return {
+    ok: true,
+    coletados: payload.length,
+    janela: `${startDate}..${endDate}`,
+    total_views: payload.reduce((a, b) => a + b.views, 0),
+  };
+}
 module.exports = {
   liveMonitor, dsCollector, ddusCollector, subsCollector,
   traficoCollector, retencaoCurvaCollector, subStatusCollector,
   backfillCultoVideoIds, catchUpMetricas, backfillRange,
-  engajamentoCollector,
+  engajamentoCollector, viewsDiaCollector,
   verificarColetaOnline, findCultoAtual,
   dsJaDeviaTerColetado,
 };

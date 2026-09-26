@@ -1,4 +1,6 @@
 const router = require('express').Router();
+// ⚠️ Cadeia de modelos + tradução do erro da IA (régua pura, no gate).
+const { cadeiaDeModelos, ehModeloInexistente, mensagemParaUsuario, modeloProvado } = require('../utils/modeloIa');
 const crypto = require('crypto');
 const rateLimit = require('express-rate-limit');
 const { authenticate, authorize, getEffectiveLevel } = require('../middleware/auth');
@@ -61,7 +63,17 @@ router.post('/chat', chatLimiter, async (req, res) => {
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) return res.status(503).json({ error: 'API da Anthropic não configurada' });
 
-  const { message, module, sessionId } = sanitizeObj(req.body);
+  // A `message` NÃO passa por sanitizeObj (HTML-escape) — isso corrompia
+  // perguntas com HTML/aspas ("como o &lt;div&gt; funciona?") e ainda dava falsa
+  // sensação de proteção contra prompt-injection (LLMs entendem entidades HTML
+  // como texto). Validação real fica no envelope XML do contexto (ver #F2/#B2
+  // do code review) + limite de comprimento aqui.
+  const rawMessage = req.body?.message;
+  const message = typeof rawMessage === 'string' ? rawMessage.trim().slice(0, 8000) : '';
+  const { module, sessionId } = sanitizeObj({
+    module: req.body?.module,
+    sessionId: req.body?.sessionId,
+  });
   if (!message) return res.status(400).json({ error: 'Mensagem obrigatória' });
 
   const agentModule = module || 'supervisor';
@@ -132,17 +144,31 @@ router.post('/chat', chatLimiter, async (req, res) => {
 
       sendEvent('session', { sessionId: activeSessionId, dbSessionId, module: agentModule });
     } else {
-      // Update last_message_at (preenche title só se ainda estiver vazio · COALESCE)
+      // Ownership check: só o dono da sessão pode continuar/atualizar ela.
+      // Antes deste guard, um usuário autenticado podia enviar o
+      // anthropic_session_id de outro (ou enumerar UUIDs), continuar a
+      // conversa alheia e ler a resposta pelo SSE. Ver CRIT-05 do code review.
       try {
         const { data: sessRows } = await supabase
           .from('agent_sessions')
-          .select('title')
+          .select('id, title, user_id')
           .eq('anthropic_session_id', activeSessionId)
           .limit(1);
+        const owned = sessRows?.[0] && sessRows[0].user_id === req.user.userId;
+        if (!owned) {
+          sendEvent('error', { text: 'Sessão não encontrada ou sem permissão.' });
+          res.write('data: [DONE]\n\n');
+          return res.end();
+        }
         const patch = { last_message_at: new Date().toISOString() };
-        if (sessRows?.[0] && !sessRows[0].title) patch.title = message.slice(0, 80);
-        await supabase.from('agent_sessions').update(patch).eq('anthropic_session_id', activeSessionId);
-      } catch (e) { console.warn('[AGENTS] Failed to update session timestamp:', e.message); }
+        if (!sessRows[0].title) patch.title = message.slice(0, 80);
+        await supabase.from('agent_sessions').update(patch).eq('id', sessRows[0].id);
+      } catch (e) {
+        console.warn('[AGENTS] Failed to validate/update session:', e.message);
+        sendEvent('error', { text: 'Erro ao validar sessão.' });
+        res.write('data: [DONE]\n\n');
+        return res.end();
+      }
     }
 
     // 2. Build context from DB (filtrado pela permissão do usuário)
@@ -246,11 +272,14 @@ router.post('/chat', chatLimiter, async (req, res) => {
       return [...new Set(candidates)];
     };
 
+    const debugAgents = process.env.DEBUG_AGENTS === '1';
     const handleSsePayload = (jsonStr) => {
       if (!jsonStr || jsonStr === '[DONE]') return;
 
-      // Send raw payload to frontend for debugging
-      sendEvent('raw', { payload: jsonStr.slice(0, 500) });
+      // Só envia payload bruto ao cliente com DEBUG_AGENTS=1. Em produção
+      // isso vazava metadata interna da Sessions API (session ids, telemetria
+      // de agente) via SSE. Ver ALT-07 do code review.
+      if (debugAgents) sendEvent('raw', { payload: jsonStr.slice(0, 500) });
 
       try {
         const event = JSON.parse(jsonStr);
@@ -438,14 +467,40 @@ router.post('/ask', chatLimiter, async (req, res) => {
     const tools = getToolDefsForUser(req);
     const messages = [...history, { role: 'user', content: message }];
     let finalText = '';
+
+    // ⚠️⚠️ CADEIA de modelos, não ID fixo. Em 22/09/2026 o assistente parou e
+    // mostrava na tela `model: claude-sonnet-4-20250514` — o corpo cru de um
+    // `not_found_error`: o modelo foi descontinuado. Com cadeia, o próximo
+    // degrau assume; o último é um modelo PROVADO em produção.
+    const cadeia = cadeiaDeModelos(process.env.ASSISTENTE_AI_MODEL);
+    let modeloAtual = cadeia[0];
+    let iModelo = 0;
+
     for (let iter = 0; iter < 5; iter++) {
       const resp = await fetch('https://api.anthropic.com/v1/messages', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-        body: JSON.stringify({ model: 'claude-sonnet-4-20250514', max_tokens: 2048, system: ASSISTANT_SYSTEM, tools, messages }),
+        body: JSON.stringify({ model: modeloAtual, max_tokens: 2048, system: ASSISTANT_SYSTEM, tools, messages }),
       });
       const data = await resp.json();
-      if (data.error) { sendEvent('error', { text: data.error.message || 'Erro na IA' }); break; }
+      if (data.error) {
+        // ⚠️ Só "modelo não existe" justifica tentar outro. Crédito, auth e
+        // rate limit não melhoram trocando de modelo — insistir gastaria N
+        // chamadas para falhar N vezes (e num 429 pioraria o limite).
+        if (ehModeloInexistente(data.error) && iModelo + 1 < cadeia.length) {
+          iModelo += 1;
+          modeloAtual = cadeia[iModelo];
+          console.warn('[assistente] modelo indisponível, caindo para', modeloAtual, '·', data.error.message);
+          iter -= 1; // esta volta não conta: não houve resposta
+          continue;
+        }
+        // ⚠️⚠️ O erro CRU nunca vai para a tela: `model: claude-sonnet-4-...`
+        // não diz nada a quem só queria uma resposta, e aparece numa bolha que
+        // parece a fala do assistente. O detalhe fica no LOG, onde conserta.
+        console.error('[assistente] IA falhou:', data.error.type, data.error.message);
+        sendEvent('error', { text: mensagemParaUsuario(data.error) });
+        break;
+      }
 
       const textBlocks = (data.content || []).filter((b) => b.type === 'text').map((b) => b.text).join('');
       if (textBlocks) finalText += (finalText ? '\n' : '') + textBlocks;
@@ -617,7 +672,9 @@ router.post('/generate', authorize('admin', 'diretor'), aiLimiter, async (req, r
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        // ⚠️ Era claude-sonnet-4-20250514 (descontinuado · 22/09/2026).
+        // Chamada única, sem laço de retry → modelo PROVADO.
+        model: process.env.ASSISTENTE_AI_MODEL || modeloProvado(),
         max_tokens: 2000,
         system: `Você é um assistente do PMO da CBRio (igreja). Responda em português. Contexto: ${context || 'gestão de projetos e eventos'}`,
         messages: [{ role: 'user', content: prompt }]

@@ -315,6 +315,7 @@ const TotemKidsVinculos = lazyWithRetry(() => import('./pages/ministerial/totemK
 const TotemKidsPortao = lazyWithRetry(() => import('./pages/ministerial/totemKids/TotemKidsPortao'));
 const MarketingDashboard = lazyWithRetry(() => import('./pages/marketing/MarketingDashboard'));
 const MarketingKanban = lazyWithRetry(() => import('./pages/marketing/MarketingKanban'));
+const MarketingLinhaDoTempo = lazyWithRetry(() => import('./pages/marketing/MarketingLinhaDoTempo'));
 const MarketingPlanner = lazyWithRetry(() => import('./pages/marketing/MarketingPlanner'));
 const MarketingAdmin = lazyWithRetry(() => import('./pages/marketing/MarketingAdmin'));
 const MarketingAnalytics = lazyWithRetry(() => import('./pages/marketing/MarketingAnalytics'));
@@ -332,6 +333,7 @@ const RH = lazyWithRetry(() => import('./pages/admin/rh/RH'));
 const Logistica = lazyWithRetry(() => import('./pages/admin/logistica/Logistica'));
 const GestaoAnual = lazyWithRetry(() => import('./pages/GestaoAnual'));
 const PlanejamentoAnual = lazyWithRetry(() => import('./pages/planejamentoAnual/PlanejamentoAnual'));
+const ExecucaoPlanejamento = lazyWithRetry(() => import('./pages/execucaoPlanejamento/ExecucaoPlanejamento'));
 const Eventos = lazyWithRetry(() => import('./pages/eventos/Eventos'));
 const Projetos = lazyWithRetry(() => import('./pages/Projetos'));
 const Processos = lazyWithRetry(() => import('./pages/Processos'));
@@ -346,6 +348,7 @@ const Grupos = lazyWithRetry(() => import('./pages/ministerial/Grupos'));
 const GruposSupervisao = lazyWithRetry(() => import('./pages/ministerial/GruposSupervisao'));
 const CadastroMembresia = lazyWithRetry(() => import('./pages/public/CadastroMembresia'));
 const OnboardingColaborador = lazyWithRetry(() => import('./pages/public/OnboardingColaborador'));
+const FichaContratada = lazyWithRetry(() => import('./pages/public/FichaContratada'));
 const InscricaoBatismo = lazyWithRetry(() => import('./pages/public/InscricaoBatismo'));
 const BatismoAcesso = lazyWithRetry(() => import('./pages/public/BatismoAcesso'));
 const ApresentacaoCriancasPublica = lazyWithRetry(() => import('./pages/public/ApresentacaoCriancas'));
@@ -368,6 +371,9 @@ const Motion = lazyWithRetry(() => import('./pages/public/Motion'));
 // Pública, standalone, fora de qualquer menu. Conteúdo entra depois.
 const NovoSite = lazyWithRetry(() => import('./pages/public/NovoSite'));
 const QuemSomos = lazyWithRetry(() => import('./pages/public/QuemSomos'));
+// /series · séries de pregação do ano (conteúdo em pages/public/novosite/series2027.ts).
+const SeriesLista = lazyWithRetry(() => import('./pages/public/SeriesLista'));
+const SerieDetalhe = lazyWithRetry(() => import('./pages/public/SerieDetalhe'));
 const Suporte = lazyWithRetry(() => import('./pages/public/Suporte'));
 // /atlas · atlas operacional do sistema (manual + auditoria) · standalone, autenticado, fora do menu.
 const Atlas = lazyWithRetry(() => import('./pages/atlas/Atlas'));
@@ -403,6 +409,7 @@ const GovernancaRitual = lazyWithRetry(() => import('./pages/governanca/RitualPa
 // Mantido aqui apenas pra retrocompat de URL — redirect via Navigate.
 const InscricaoNext = lazyWithRetry(() => import('./pages/public/InscricaoNext'));
 const EventoExterno = lazyWithRetry(() => import('./pages/public/EventoExterno'));
+const GenesisPublico = lazyWithRetry(() => import('./pages/public/GenesisPublico'));
 const PagamentoInscricao = lazyWithRetry(() => import('./pages/public/PagamentoInscricao'));
 // Doação (Generosidade) · página PÚBLICA. ⚠️ É esta página que o app de membros
 // abre no NAVEGADOR EXTERNO — a guideline 3.2.2(iv) da App Store proíbe coletar
@@ -417,7 +424,6 @@ const EventoCheckin = lazyWithRetry(() => import('./pages/public/EventoCheckin')
 // virada pro /inscricoes (SPEC-04 · 2026-07-28); arquivos ficam no repo até
 // 1 ciclo sem divergência (rollback = restaurar as 2 rotas).
 const Inscricoes = lazyWithRetry(() => import('./pages/Inscricoes'));
-const Propostas = lazyWithRetry(() => import('./pages/Propostas'));
 const Campanhas = lazyWithRetry(() => import('./pages/Campanhas'));
 const CampanhaPublica = lazyWithRetry(() => import('./pages/public/CampanhaPublica'));
 const InscricaoEventoDetalhe = lazyWithRetry(() => import('./pages/InscricaoEventoDetalhe'));
@@ -671,11 +677,18 @@ function AppRoutes() {
       {/* Rotas publicas */}
       <Route path="/cadastro-membresia" element={<Suspense fallback={<Loading />}><CadastroMembresia /></Suspense>} />
       <Route path="/onboarding/:token" element={<Suspense fallback={<Loading />}><OnboardingColaborador /></Suspense>} />
+      {/* Ficha da CONTRATADA (Anexo II) · porta pública própria, só PJ. */}
+      <Route path="/ficha-contratada/:token" element={<Suspense fallback={<Loading />}><FichaContratada /></Suspense>} />
       <Route path="/inscricao-batismo" element={<Suspense fallback={<Loading />}><InscricaoBatismo /></Suspense>} />
       {/* Acesso às fotos do batismo pelo QR da etiqueta do quiosque · token = credencial · sem login */}
       <Route path="/batismo/acesso" element={<Suspense fallback={<Loading />}><BatismoAcesso /></Suspense>} />
       <Route path="/apresentacao-criancas" element={<Suspense fallback={<Loading />}><ApresentacaoCriancasPublica /></Suspense>} />
       <Route path="/evento/:slug" element={<Suspense fallback={<Loading />}><EventoExterno /></Suspense>} />
+      {/* Porta do Genesis CBA (igreja parceira · 24/09): MESMA página e mesmo
+          backend do /evento — o que muda é o endereço divulgado. A régua de
+          "não vira pessoa da CBRio" é do SERVIDOR (services/igrejaParceira). */}
+      <Route path="/genesis" element={<Suspense fallback={<Loading />}><GenesisPublico /></Suspense>} />
+      <Route path="/genesis/:slug" element={<Suspense fallback={<Loading />}><EventoExterno /></Suspense>} />
       {/* Status do pagamento da inscrição · público, pelo public_token da cobrança */}
       <Route path="/pagamento/:token" element={<Suspense fallback={<Loading />}><PagamentoInscricao /></Suspense>} />
       {/* Doação · público. `/doar` é o formulário; `/doar/:token` é a tela do
@@ -724,6 +737,8 @@ function AppRoutes() {
       {/* Prévia interna do novo site (redesign cbrio.com.br) · não-listada */}
       <Route path="/novosite" element={<Suspense fallback={<Loading />}><NovoSite /></Suspense>} />
       <Route path="/novosite/quem-somos" element={<Suspense fallback={<Loading />}><QuemSomos /></Suspense>} />
+      <Route path="/novosite/series" element={<Suspense fallback={<Loading />}><SeriesLista /></Suspense>} />
+      <Route path="/novosite/series/:slug" element={<Suspense fallback={<Loading />}><SerieDetalhe /></Suspense>} />
       {/* Página pública de suporte dos apps (Apple Guideline 1.5 · Support URL) */}
       <Route path="/suporte" element={<Suspense fallback={<Loading />}><Suporte /></Suspense>} />
       <Route path="/nps/publica/:token" element={<Suspense fallback={<Loading />}><NpsPublica /></Suspense>} />
@@ -734,7 +749,7 @@ function AppRoutes() {
           ⚠️ NÃO usar `/c/:slug`: `/c/:token` (linha acima) é o link assinado do
           voluntário para lançar decisões no culto, e dois padrões idênticos fazem
           o PRIMEIRO vencer — a barrinha abriria a tela de decisões. É a mesma
-          armadilha do `/:id` que engoliu `/avaliar` e `/mural` nas Propostas. */}
+          armadilha do `/:id` que engoliu `/avaliar` e `/mural` no antigo módulo Propostas (removido em 23/09/2026). */}
       <Route path="/campanha/:slug" element={<Suspense fallback={<Loading />}><CampanhaPublica /></Suspense>} />
       {/* Retirada do Kids · QR aberto pelo link do WhatsApp · público, sem PII */}
       <Route path="/kids/retirada/:codigo" element={<Suspense fallback={<Loading />}><KidsRetirada /></Suspense>} />
@@ -785,6 +800,7 @@ function AppRoutes() {
         <Route path="/tarefas" element={<Suspense fallback={<Loading />}><MinhasTarefas /></Suspense>} />
         <Route path="/planejamento" element={<Suspense fallback={<Loading />}><GestaoAnual /></Suspense>} />
         <Route path="/planejamento-anual" element={<ModuleGuard moduleSlug="planejamento-anual"><Suspense fallback={<Loading />}><PlanejamentoAnual /></Suspense></ModuleGuard>} />
+        <Route path="/planejamento-execucao" element={<ModuleGuard moduleSlug="planejamento-execucao"><Suspense fallback={<Loading />}><ExecucaoPlanejamento /></Suspense></ModuleGuard>} />
         <Route path="/eventos" element={<ModuleGuard permKey="canAgenda"><Suspense fallback={<Loading />}><Eventos /></Suspense></ModuleGuard>} />
         <Route path="/eventos/:id" element={<ModuleGuard permKey="canAgenda"><Suspense fallback={<Loading />}><EventDetail /></Suspense></ModuleGuard>} />
         <Route path="/projetos" element={<ModuleGuard permKey="canProjetos"><Suspense fallback={<Loading />}><Projetos /></Suspense></ModuleGuard>} />
@@ -864,7 +880,6 @@ function AppRoutes() {
         <Route path="/eventos-externos" element={<Navigate to="/inscricoes" replace />} />
         <Route path="/eventos-externos/:id" element={<Navigate to="/inscricoes" replace />} />
         <Route path="/inscricoes" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={1}><Suspense fallback={<Loading />}><Inscricoes /></Suspense></ModuleGuard>} />
-        <Route path="/propostas" element={<ModuleGuard moduleSlug="propostas" nivelMinimo={1}><Suspense fallback={<Loading />}><Propostas /></Suspense></ModuleGuard>} />
         <Route path="/campanhas" element={<ModuleGuard moduleSlug="campanhas" nivelMinimo={1}><Suspense fallback={<Loading />}><Campanhas /></Suspense></ModuleGuard>} />
         <Route path="/inscricoes/evento/:id" element={<ModuleGuard moduleSlug="inscricoes" nivelMinimo={1}><Suspense fallback={<Loading />}><InscricaoEventoDetalhe /></Suspense></ModuleGuard>} />
         {/* Check-in do evento (SPEC-06) · nível 2 = operar check-in (SPEC-08) */}
@@ -886,6 +901,8 @@ function AppRoutes() {
             que agora abre o dashboard, com o Kanban a um clique no cabeçalho. */}
         <Route path="/marketing" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingDashboard /></Suspense></ModuleGuard>} />
         <Route path="/marketing/kanban" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingKanban /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/demandas" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingLinhaDoTempo /></Suspense></ModuleGuard>} />
+        <Route path="/marketing/linha-do-tempo" element={<Navigate to="/marketing/demandas" replace />} />
         <Route path="/marketing/dashboard" element={<Navigate to="/marketing" replace />} />
         <Route path="/marketing/calendario" element={<Navigate to="/marketing/kanban" replace />} />
         <Route path="/marketing/planner" element={<ModuleGuard moduleSlug="marketing" nivelMinimo={1}><Suspense fallback={<Loading />}><MarketingPlanner /></Suspense></ModuleGuard>} />
@@ -971,6 +988,8 @@ function SitePublicoRoutes() {
     <Routes>
       <Route path="/" element={<Suspense fallback={<Loading />}><NovoSite /></Suspense>} />
       <Route path="/quem-somos" element={<Suspense fallback={<Loading />}><QuemSomos /></Suspense>} />
+      <Route path="/series" element={<Suspense fallback={<Loading />}><SeriesLista /></Suspense>} />
+      <Route path="/series/:slug" element={<Suspense fallback={<Loading />}><SerieDetalhe /></Suspense>} />
       {/* caminhos antigos da prévia continuam funcionando */}
       <Route path="/novosite" element={<Navigate to="/" replace />} />
       <Route path="/novosite/quem-somos" element={<Navigate to="/quem-somos" replace />} />

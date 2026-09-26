@@ -16,7 +16,7 @@ import MegaMenu from '../ui/mega-menu';
 import { CommandSearch } from '../ui/command-search';
 import { navItemAllowed } from '../../lib/menuAccess';
 import {
-  Activity, ArrowRight, ArrowRightLeft, Baby, BarChart2, Bell, BellOff, BellRing, BookOpen, BrainCircuit, CalendarDays, Camera, Check, CheckCheck, ClipboardCheck, ClipboardList, Compass, DollarSign, Droplets, FileText, FolderKanban, GraduationCap, HandHelping, Heart, Landmark, LayoutDashboard, ListChecks, LogOut, Map, Megaphone, Menu as MenuIcon, MessageSquare, MonitorSmartphone, Moon, QrCode, Search, Settings, Shield, ShoppingCart, SlidersHorizontal, Sparkles, Sun, Tag, Target, TrendingUp, Truck, UserCheck, UserSearch, Users, UsersRound, Youtube, Filter,
+  Activity, ArrowRight, ArrowRightLeft, Baby, BarChart2, Bell, BellOff, BellRing, BookOpen, BrainCircuit, CalendarDays, Camera, Check, CheckCheck, ClipboardList, Compass, DollarSign, Droplets, FileText, FolderKanban, GraduationCap, HandHelping, Heart, Landmark, LayoutDashboard, ListChecks, LogOut, Map, Megaphone, Menu as MenuIcon, MessageSquare, MonitorSmartphone, Moon, QrCode, Search, Settings, Shield, ShoppingCart, SlidersHorizontal, Sparkles, Sun, Tag, Target, TrendingUp, Truck, UserCheck, UserSearch, Users, UsersRound, Youtube, Filter,
 } from 'lucide-react';
 import { Sheet, SheetContent, SheetTrigger } from '../ui/sheet';
 import {
@@ -227,9 +227,9 @@ const NAV_ITEMS = [
           // "Eventos Externos" saiu do menu na virada pro /inscricoes (SPEC-04 · 2026-07-28); a rota redireciona.
           { label: 'Inscrições', description: 'Módulo central de inscrições · calendário, eventos, séries e sorteios', icon: CalendarDays, path: '/inscricoes', module: 'inscricoes' },
           { label: 'Projetos', description: 'Acompanhamento de projetos com Kanban/Gantt', icon: FolderKanban, path: '/projetos', perm: 'canProjetos' },
-          { label: 'Propostas', description: 'Ciclo anual de propostas de projetos, eventos e rotinas', icon: ClipboardCheck, path: '/propostas', module: 'propostas' },
           { label: 'Planejamento Estratégico', description: 'Plano plurianual · etapas e marcos (vigente: Expansão 2026–2029)', icon: Map, path: '/expansao', module: 'expansao' },
           { label: 'Planejamento Anual', description: 'Propostas do ciclo · avaliação pelas diretorias · decisão do Pastor · calendário e orçamento', icon: CalendarDays, path: '/planejamento-anual', module: 'planejamento-anual' },
+          { label: 'Execução do Planejamento', description: 'Propostas aprovadas · detalhe da proposta · fases do Projeto/Evento vinculado em Kanban', icon: FolderKanban, path: '/planejamento-execucao', module: 'planejamento-execucao' },
         ],
       },
       {
@@ -351,6 +351,20 @@ export default function AppShell() {
       navigate(rotaTravada, { replace: true });
     }
   }, [rotaTravada, travaPrefixos, location.pathname, navigate]);
+
+  // Voluntário digitando URL do staff (/dashboard, /planejamento, /revisao,
+  // /solicitacoes, /admin/*) renderiza a página do staff completa — o guard
+  // depende do backend rejeitar as chamadas de API, e um caso já falhou
+  // (NotificacaoRegras.jsx faz supabase.from('profiles').select direto sem
+  // passar por backend). Ver ALT-14 do code review. Mantém livre:
+  // /voluntariado/*, /perfil (dados próprios), /notificacoes (do voluntário).
+  const PREFIXOS_VOLUNTARIO = ['/voluntariado', '/perfil', '/notificacoes'];
+  useEffect(() => {
+    if (!isVoluntario || rotaTravada) return; // rotaTravada já cuida acima
+    if (!PREFIXOS_VOLUNTARIO.some((p) => location.pathname.startsWith(p))) {
+      navigate('/voluntariado/checkin', { replace: true });
+    }
+  }, [isVoluntario, rotaTravada, location.pathname, navigate]);
 
   const initials = (profile?.name || '??')
     .split(' ')

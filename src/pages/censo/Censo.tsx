@@ -10,6 +10,7 @@
 // F1: coleta pública por QR. F3: dashboards. F4: leitura da IA.
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
+import { safeHref } from '../../lib/safeHref';
 import { censo } from '../../api';
 import { useAuth } from '../../contexts/AuthContext';
 import { ModuleHeader } from '@/components/layout/ModuleHeader';
@@ -25,6 +26,7 @@ import AbaCobertura from '@/components/censo/AbaCobertura';
 import AbaPerfil from '@/components/censo/AbaPerfil';
 import AbaLeituraIA from '@/components/censo/AbaLeituraIA';
 import AbaRelatorio from '@/components/censo/AbaRelatorio';
+import AbaPotencial from '@/components/censo/AbaPotencial';
 import AbaRespostas from '@/components/censo/AbaRespostas';
 import QrLinkDialog from '@/components/QrLinkDialog';
 import ConstrutorPerguntas from '@/components/censo/ConstrutorPerguntas';
@@ -33,7 +35,7 @@ import { toast } from 'sonner';
 import {
   ClipboardList, Plus, Loader2, Copy, Trash2, Save, ArrowLeft,
   Play, Square, ListChecks, BarChart3, Sparkles, Users, User, HeartHandshake, Lock, Clock,
-  QrCode, Copy as CopyIcon, ExternalLink, AlertTriangle, FileText} from 'lucide-react';
+  QrCode, Copy as CopyIcon, ExternalLink, AlertTriangle, FileText, Target} from 'lucide-react';
 
 type Stats = {
   pesquisa_id: string; slug: string; titulo: string; tipo: string; status: string;
@@ -115,6 +117,12 @@ const TABS = [
   // ⚠️ `min: 1` como as outras de leitura: o relatório é agregado e todos
   // precisam ler o MESMO. Quem GERA é nível 4, e isso é checado na rota.
   { id: 'relatorio', label: 'Relatório', icon: FileText, min: 1 },
+  // ⚠️⚠️ `min: 2` (e não 4) DE PROPÓSITO: quem é nível 2 entra e vê os NÚMEROS,
+  // que é o que a liderança precisa. A LISTA com nome e telefone exige nível 4 e
+  // é a própria rota que recusa — 34 cargos têm nível >= 2 no censo, incluindo
+  // "Membro" e "Voluntário". Esconder a aba inteira faria quem tem acesso
+  // parcial achar que o recurso não existe.
+  { id: 'potencial', label: 'Potencial', icon: Target, min: 2 },
 ];
 
 const CUIDADO_LABEL: Record<string, string> = {
@@ -313,7 +321,7 @@ export default function Censo() {
 
         {/* As três abas de análise compartilham o mesmo seletor de pesquisa: o
             número só quer dizer algo junto com "de qual censo". */}
-        {(['respostas', 'cobertura', 'perfil', 'ia', 'relatorio'] as const)
+        {(['respostas', 'cobertura', 'perfil', 'ia', 'relatorio', 'potencial'] as const)
           .filter((id) => tabsPermitidas.some((t) => t.id === id))
           .map((id) => (
           <TabsContent key={id} value={id}>
@@ -352,6 +360,9 @@ export default function Censo() {
                   pesquisaId={pesquisaEscolhida}
                   titulo={lista?.find((p) => p.pesquisa_id === pesquisaEscolhida)?.titulo}
                 />
+              )}
+              {id === 'potencial' && (
+                <AbaPotencial pesquisaId={pesquisaEscolhida} nivel={nivel} />
               )}
             </div>
           </TabsContent>
@@ -415,7 +426,7 @@ function Compartilhar({ slug, status, compacto }: { slug: string; status: string
             </Button>
           )}
           <Button size={compacto ? 'sm' : 'default'} variant="ghost" asChild>
-            <a href={link} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
+            <a href={safeHref(link)} target="_blank" rel="noreferrer" onClick={(e) => e.stopPropagation()}>
               <ExternalLink className="h-4 w-4 mr-1" /> {compacto ? '' : 'Abrir o formulário'}
             </a>
           </Button>

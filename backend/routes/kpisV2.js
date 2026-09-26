@@ -89,7 +89,19 @@ async function coletarERecalcular() {
   } catch (e) {
     nsm = { error: e.message };
   }
-  return { ok, total: resultados.length, nps, recalculo, adm, nsm, resultados };
+  // Planejamento Anual · de carona (a Vercel está no teto de crons do plano,
+  // então esta rotina não ganha slot próprio): gera as solicitações de
+  // COMPRAS de propostas de rotina já aprovadas cujo ciclo de recorrência
+  // venceu hoje. Bloco protegido — falhar aqui não pode derrubar a coleta
+  // de KPI, que é o trabalho principal deste cron.
+  let planejamentoRotina = null;
+  try {
+    const { gerarSolicitacoesRotinaCompras } = require('../services/planejamentoAnualSolicitacoes');
+    planejamentoRotina = await gerarSolicitacoesRotinaCompras();
+  } catch (e) {
+    planejamentoRotina = { error: e.message };
+  }
+  return { ok, total: resultados.length, nps, recalculo, adm, nsm, planejamentoRotina, resultados };
 }
 
 router.get('/cron/coletar', autorizaCron, async (_req, res) => {

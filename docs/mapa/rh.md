@@ -14,7 +14,7 @@
 - `backend/routes/painelRh.js`
 - `backend/routes/rh.js`
 Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
-<details><summary>Endpoints (95)</summary>
+<details><summary>Endpoints (101)</summary>
 - `DELETE /api/events/:id`
 - `DELETE /api/events/attachments/:attachId`
 - `DELETE /api/events/risks/:riskId`
@@ -51,12 +51,14 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 - `GET /api/rh/dashboard/series`
 - `GET /api/rh/extras`
 - `GET /api/rh/ferias`
+- `GET /api/rh/ficha-contratada/pendentes`
 - `GET /api/rh/folha/nao-vinculados`
 - `GET /api/rh/funcionarios`
 - `GET /api/rh/funcionarios/:id`
 - `GET /api/rh/funcionarios/:id/pagamentos`
 - `GET /api/rh/kpis`
 - `GET /api/rh/onboarding/pendentes`
+- `GET /api/rh/solicitacoes/:solicitacaoId/ferias`
 - `GET /api/rh/treinamentos`
 - `PATCH /api/events/:id/occurrences/:occId`
 - `PATCH /api/events/:id/status`
@@ -88,12 +90,15 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 - `POST /api/rh/avaliacoes/iniciar-ciclo`
 - `POST /api/rh/coberturas/:id/cancelar`
 - `POST /api/rh/extras`
+- `POST /api/rh/ficha-contratada/cobrar`
 - `POST /api/rh/folha/auto-vincular`
+- `POST /api/rh/foto`
 - `POST /api/rh/funcionarios`
 - `POST /api/rh/funcionarios/:id/concluir-admissao`
 - `POST /api/rh/funcionarios/:id/desligar`
 - `POST /api/rh/funcionarios/:id/documentos`
 - `POST /api/rh/funcionarios/:id/ferias`
+- `POST /api/rh/funcionarios/:id/ficha-contratada-link`
 - `POST /api/rh/funcionarios/:id/foto`
 - `POST /api/rh/funcionarios/:id/onboarding-link`
 - `POST /api/rh/funcionarios/:id/reativar`
@@ -101,6 +106,7 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 - `POST /api/rh/onboarding/preview`
 - `POST /api/rh/organograma/ia`
 - `POST /api/rh/organograma/ia/aplicar`
+- `POST /api/rh/solicitacoes/:solicitacaoId/ferias`
 - `POST /api/rh/treinamentos`
 - `POST /api/rh/treinamentos/:id/inscrever`
 - `PUT /api/events/:id`
@@ -115,17 +121,21 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 **Réguas puras (backend/utils)**
 
 - `backend/utils/cronAuth.js`
+- `backend/utils/fichaContratada.js`
+- `backend/utils/linkInscricaoApp.js`
 - `backend/utils/sanitize.js`
 - `backend/utils/semFalhar.js`
-- `backend/utils/storagePath.js`
 - `backend/utils/supabase.js`
 
 **Serviços**
 
+- `backend/services/anexosRhDocumentos.js`
 - `backend/services/cerebroSync.js`
 - `backend/services/cobertura.js`
+- `backend/services/igrejaParceira.js`
 - `backend/services/notificar.js`
 - `backend/services/organogramaIA.js`
+- `backend/services/rhFichaEnvios.js`
 - `backend/services/rhOnboardingEnvios.js`
 - `backend/services/storageService.js`
 - `backend/services/whatsappService.js`
@@ -154,6 +164,7 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 - `fin_plano_contas`
 - `fin_transacoes`
 - `insc_eventos`
+- `marketing_categoria_cultos`
 - `meetings`
 - `pcs_criterios`
 - `pcs_graus`
@@ -173,6 +184,8 @@ Guard: `authorizeModule('rh', 1 | 2 | 3 | 4 | 5 | padrão)`
 - `rh_treinamentos`
 - `rh_treinamentos_funcionarios`
 - `simple_event_task_templates`
+- `solicitacoes`
+- `solicitacoes_eventos`
 - `usuarios`
 - `v_events_dashboard`
 - `vw_fin_transacoes_completa`

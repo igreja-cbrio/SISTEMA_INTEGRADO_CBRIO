@@ -33,10 +33,13 @@ export const SITE_PUBLICO = typeof window !== 'undefined'
 
 export const HOME = SITE_PUBLICO ? '/' : '/novosite';
 export const QUEM_SOMOS = SITE_PUBLICO ? '/quem-somos' : '/novosite/quem-somos';
+export const SERIES_PATH = SITE_PUBLICO ? '/series' : '/novosite/series';
+export const seriePath = (slug: string) => `${SERIES_PATH}/${slug}`;
 
 export const NAV = [
   { label: 'Início', to: HOME },
   { label: 'Quem Somos', to: QUEM_SOMOS },
+  { label: 'Séries', to: SERIES_PATH },
   { label: 'Nossa Jornada', to: HOME, hash: 'jornada' },
   { label: 'Valores', to: HOME, hash: 'valores' },
   { label: 'Agenda', to: HOME, hash: 'visita' },

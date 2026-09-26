@@ -26,6 +26,7 @@ const { supabase } = require('../utils/supabase');
 const { notificar } = require('../services/notificar');
 const spMarketing = require('../services/sharepointMarketing');
 const arrecadacaoCampanhas = require('../services/campanhaArrecadacao');
+const regraSubtarefa = require('../utils/marketingChecklist');
 const {
   CAMPANHA_INICIO,
   agruparArrecadacaoMensal,
@@ -42,12 +43,10 @@ router.use(authenticate);
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function levelOf(req) {
-  const modulePerms = req.user.granular?.modulePerms || {};
-  const mkt = modulePerms.marketing || modulePerms.Marketing;
-  if (!mkt) return 0;
-  return Math.max(mkt.leitura || 0, mkt.escrita || 0);
-}
+// levelOf e contextoSubtarefa moram em services/marketingContexto (a linha do
+// tempo usa a mesma régua de líder).
+const { levelOf, contextoSubtarefa } = require('../services/marketingContexto');
+const { avisarEntregue, avisarSeChecklistConcluiu, avisarPrazoAjustado } = require('../services/marketingAvisos');
 
 function isAdminLike(req) {
   if (['admin', 'diretor'].includes(req.user.role)) return true;
@@ -90,6 +89,14 @@ async function enrichCards(cards) {
   const membroIds   = [...new Set(cards.map(c => c.atribuido_a).filter(Boolean))];
   const solicIds    = [...new Set(cards.map(c => c.solicitacao_id).filter(Boolean))];
   const cycleTaskIds= [...new Set(cards.map(c => c.cycle_phase_task_id).filter(Boolean))];
+  // Linha do tempo (Fase 2): o card nasce da FASE (event_phase_id), sem cycle_phase_task.
+  const faseIds     = [...new Set(cards.filter(c => !c.cycle_phase_task_id && c.event_phase_id).map(c => c.event_phase_id))];
+  const { data: fasesDiretas } = faseIds.length
+    ? await supabase.from('event_cycle_phases')
+        .select('id, event_id, nome_fase, numero_fase, data_inicio_prevista, data_fim_prevista, events:event_id(id, name)')
+        .in('id', faseIds)
+    : { data: [] };
+  const faseMap = Object.fromEntries((fasesDiretas || []).map(f => [f.id, f]));
 
   const [tipos, destinos, membros, solics, cycleTasks] = await Promise.all([
     tipoIds.length    ? supabase.from('marketing_etiquetas_tipo').select('id, slug, nome, cor, habilidade_padrao, esforco_max_h').in('id', tipoIds) : Promise.resolve({ data: [] }),
@@ -154,7 +161,19 @@ async function enrichCards(cards) {
       ...solicMap[c.solicitacao_id],
       solicitante: profileMap[solicMap[c.solicitacao_id]?.solicitante_id] || null,
     } : null,
-    cycle_phase_task: c.cycle_phase_task_id ? (() => {
+    cycle_phase_task: !c.cycle_phase_task_id && c.event_phase_id ? (() => {
+      // mesmo formato do espelho antigo, para o Kanban tratar os dois iguais
+      const f = faseMap[c.event_phase_id];
+      if (!f) return null;
+      return {
+        id: null, event_id: f.event_id, event_name: f.events?.name || null,
+        fase: `${f.numero_fase}. ${f.nome_fase}`, fase_id: f.id,
+        numero_fase: f.numero_fase, nome_fase: f.nome_fase,
+        fase_de: f.data_inicio_prevista || null, fase_ate: f.data_fim_prevista || null,
+        is_critical: false, prioridade: c.prioridade || 'normal',
+        link: f.event_id ? `/eventos/${f.event_id}` : null,
+      };
+    })() : c.cycle_phase_task_id ? (() => {
       const t = cycleMap[c.cycle_phase_task_id];
       if (!t) return null;
       const f = t.event_cycle_phases || null;
@@ -442,7 +461,9 @@ router.get('/cards', authorizeModule('marketing', 1), async (req, res) => {
     const { data, error } = await q;
     if (error) throw error;
 
-    const enriched = await enrichCards(data || []);
+    const ctx = await contextoSubtarefa(req);
+    const visiveis = (data || []).filter(c => ctx.lider || c.visibilidade !== 'so_lider');
+    const enriched = await enrichCards(visiveis);
     res.json(enriched);
   } catch (e) {
     console.error('[MARKETING] list cards:', e.message);
@@ -589,7 +610,19 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
       if (estado) update.estado = estado;
     }
 
+    // Linha do tempo (Fase 1): culto, prioridade e visibilidade · só o líder muda.
+    const pedeCamposLider = ['culto', 'prioridade', 'visibilidade'].some(k => (req.body || {})[k] !== undefined);
+    if (pedeCamposLider) {
+      const ctx = await contextoSubtarefa(req);
+      if (!ctx.lider) return res.status(403).json({ error: 'Só o líder do Marketing muda culto, prioridade e visibilidade' });
+      const { campos, erro } = regraSubtarefa.camposCardLider(req.body);
+      if (erro) return res.status(400).json({ error: erro });
+      Object.assign(update, campos);
+    }
+
     if (!Object.keys(update).length) return res.status(400).json({ error: 'Nada para atualizar' });
+    // service_role não tem auth.uid() · é daqui que o histórico de prazo sabe quem mudou
+    update.atualizado_por = req.user.userId;
 
     const { data, error } = await supabase
       .from('marketing_kanban_cards')
@@ -641,19 +674,7 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
 
     // Notificação · entregue (estado=concluido) · solicitante avisado
     if (update.estado === 'concluido' && atual.estado !== 'concluido' && solDoCard) {
-      const sol = { solicitante_id: solDoCard.solicitante_id, titulo: solDoCard.titulo_solicitacao };
-      if (sol?.solicitante_id) {
-        notificar({
-          modulo: 'marketing',
-          tipo: 'marketing_card_entregue',
-          titulo: `Entregue: ${sol.titulo}`,
-          mensagem: 'Sua solicitação foi marcada como entregue. Avalie em 30 segundos.',
-          link: '/solicitacoes',
-          severidade: 'info',
-          chaveDedup: `marketing_card_entregue_${data.id}`,
-          targetIds: [sol.solicitante_id],
-        }).catch(err => console.error('[MARKETING] notify entregue:', err.message));
-      }
+      avisarEntregue(data, solDoCard);
     }
 
     // Notificação · prazo confirmado (Pedro definiu prazo) · solicitante avisado
@@ -701,6 +722,9 @@ router.patch('/cards/:id', authorizeModule('marketing', 3), async (req, res) => 
     res.status(500).json({ error: e.message });
   }
 });
+
+// avisarEntregue / avisarSeChecklistConcluiu moram em services/marketingAvisos
+// (a linha do tempo dispara os mesmos avisos).
 
 // Solicitante aprova entrega · card vira concluído (Spec 012)
 // Endpoint dedicado pq solicitante não tem permissão geral de UPDATE no card.
@@ -1316,7 +1340,9 @@ router.get('/kanban', authorizeModule('marketing', 1), async (req, res) => {
       .order('ordem_fila', { ascending: true });
     if (error) throw error;
 
-    const cards = await enrichCards(data || []);
+    // Pré Briefing e Debrief (visibilidade so_lider) só aparecem para o líder.
+    const ctxKanban = await contextoSubtarefa(req);
+    const cards = await enrichCards((data || []).filter(c => ctxKanban.lider || c.visibilidade !== 'so_lider'));
 
     let foraDaJanela = 0;
     let semDataDaFase = 0;
@@ -2190,23 +2216,76 @@ router.post('/cards/:id/checklist', authorizeModule('marketing', 3), async (req,
   try {
     const { texto, grupo } = req.body || {};
     if (!texto || !texto.trim()) return res.status(400).json({ error: 'texto obrigatorio' });
+    const { campos, erro } = regraSubtarefa.camposSubtarefa(req.body || {});
+    if (erro) return res.status(400).json({ error: erro });
+    delete campos.registro; // item nasce aberto; o registro é escrito ao concluir
+    const { data: card, error: eCard } = await supabase
+      .from('marketing_kanban_cards').select('id, visibilidade')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (eCard) throw eCard;
+    if (!card) return res.status(404).json({ error: 'Card não encontrado' });
+    const ctx = await contextoSubtarefa(req);
+    if (!regraSubtarefa.podeEditarItem({ lider: ctx.lider, nivel: ctx.nivel, card })) {
+      return res.status(403).json({ error: 'Só o líder do Marketing altera esta tarefa' });
+    }
     const { data, error } = await supabase
       .from('marketing_card_checklist')
-      .insert({ card_id: req.params.id, texto: texto.trim(), grupo: (grupo && grupo.trim()) || null })
+      .insert({ card_id: req.params.id, texto: texto.trim(), grupo: (grupo && grupo.trim()) || null, ...campos })
       .select('*').single();
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-router.patch('/checklist/:itemId', authorizeModule('marketing', 3), async (req, res) => {
+// Linha do tempo (Fase 1): o DONO do item e o RESPONSÁVEL do card também marcam
+// (antes só nível 3). Em card lider_move/so_lider, só o líder. A régua é pura:
+// utils/marketingChecklist.
+router.patch('/checklist/:itemId', authorizeModule('marketing', 1), async (req, res) => {
   try {
-    const update = {};
-    const { texto, feito, grupo, ordem } = req.body || {};
+    const body = req.body || {};
+    const { data: item, error: eItem } = await supabase
+      .from('marketing_card_checklist').select('*').eq('id', req.params.itemId).maybeSingle();
+    if (eItem) throw eItem;
+    if (!item) return res.status(404).json({ error: 'Item não encontrado' });
+    const { data: card, error: eCard } = await supabase
+      .from('marketing_kanban_cards').select('id, atribuido_a, visibilidade, estado')
+      .eq('id', item.card_id).is('deleted_at', null).maybeSingle();
+    if (eCard) throw eCard;
+    if (!card) return res.status(404).json({ error: 'Card não encontrado' });
+    const ctx = await contextoSubtarefa(req);
+
+    const { campos, erro } = regraSubtarefa.camposSubtarefa(body);
+    if (erro) return res.status(400).json({ error: erro });
+    const { registro, ...estrutura } = campos;
+
+    const mexeEstrutura = Object.keys(estrutura).length > 0
+      || body.texto !== undefined || body.grupo !== undefined || body.ordem !== undefined;
+    const marca = body.feito !== undefined || registro !== undefined;
+
+    if (mexeEstrutura && !regraSubtarefa.podeEditarItem({ lider: ctx.lider, nivel: ctx.nivel, card })) {
+      return res.status(403).json({ error: 'Só o líder do Marketing altera esta subtarefa' });
+    }
+    if (marca && !regraSubtarefa.podeMarcarItem({ ...ctx, item, card })) {
+      return res.status(403).json({ error: card.visibilidade === 'equipe'
+        ? 'Só quem faz esta subtarefa ou o responsável da tarefa pode marcar'
+        : 'Nesta etapa quem marca é o líder do Marketing' });
+    }
+
+    const update = { ...estrutura };
+    const { texto, feito, grupo, ordem } = body;
     if (texto !== undefined) update.texto = texto;
     if (feito !== undefined) update.feito = !!feito;
     if (grupo !== undefined) update.grupo = (grupo && grupo.trim()) || null;
     if (ordem !== undefined) update.ordem = ordem;
+    if (registro !== undefined) update.registro = registro;
+
+    const feitoFinal = update.feito !== undefined ? update.feito : item.feito;
+    const exigeFinal = update.exige_registro !== undefined ? update.exige_registro : item.exige_registro;
+    const registroFinal = update.registro !== undefined ? update.registro : item.registro;
+    if (regraSubtarefa.faltaRegistro({ exigeRegistro: exigeFinal, feito: feitoFinal, registro: registroFinal })) {
+      return res.status(400).json({ error: 'Escreva o registro antes de concluir este item', codigo: 'registro_obrigatorio' });
+    }
+    if (update.feito === true && !item.feito) update.concluido_por = req.user.userId;
     update.updated_at = new Date().toISOString();
     const { data, error } = await supabase
       .from('marketing_card_checklist')
@@ -2214,17 +2293,27 @@ router.patch('/checklist/:itemId', authorizeModule('marketing', 3), async (req, 
       .eq('id', req.params.itemId)
       .select('*').single();
     if (error) throw error;
+    // AWAITED: em serverless o container congela ao responder, e o aviso de
+    // entrega é o único caminho pelo qual o solicitante fica sabendo.
+    if (update.feito !== undefined) await avisarSeChecklistConcluiu(card.id, card.estado);
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 router.delete('/checklist/:itemId', authorizeModule('marketing', 3), async (req, res) => {
   try {
+    // Apagar o último item aberto também fecha o card (gatilho da Fase 3).
+    const { data: item } = await supabase
+      .from('marketing_card_checklist').select('card_id').eq('id', req.params.itemId).maybeSingle();
+    const { data: cardAntes } = item
+      ? await supabase.from('marketing_kanban_cards').select('estado').eq('id', item.card_id).maybeSingle()
+      : { data: null };
     const { error } = await supabase
       .from('marketing_card_checklist')
       .delete()
       .eq('id', req.params.itemId);
     if (error) throw error;
+    if (item) await avisarSeChecklistConcluiu(item.card_id, cardAntes?.estado);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2264,15 +2353,24 @@ router.get('/admin/ciclo-padroes/fases', authorizeModule('marketing', 5), async 
   try {
     const { category_id } = req.query;
     if (!category_id) return res.status(400).json({ error: 'category_id obrigatorio' });
-    const { data, error } = await supabase
+    const { data: proprias, error } = await supabase
       .from('cycle_phase_templates')
       .select('numero, nome, area')
       .eq('category_id', category_id)
       .order('numero', { ascending: true });
     if (error) throw error;
+    let data = proprias || [];
+    // a Série não tem etapas próprias: usa o criativo padrão, como a ativação do ciclo
+    if (!data.length) {
+      const { data: padrao, error: e2 } = await supabase
+        .from('cycle_phase_templates').select('numero, nome, area')
+        .is('category_id', null).order('numero', { ascending: true });
+      if (e2) throw e2;
+      data = padrao || [];
+    }
     const seen = new Set();
     const fases = [];
-    for (const t of (data || [])) {
+    for (const t of data) {
       if (t.nome && !seen.has(t.nome)) { seen.add(t.nome); fases.push({ numero: t.numero, nome: t.nome, area: t.area }); }
     }
     res.json(fases);
@@ -2296,6 +2394,11 @@ router.post('/admin/ciclo-padroes', authorizeModule('marketing', 5), async (req,
     const { category_id, nome_fase, etiqueta_tipo_id, atribuido_a } = req.body || {};
     if (!category_id || !nome_fase) return res.status(400).json({ error: 'category_id e nome_fase obrigatórios' });
     if (!etiqueta_tipo_id && !atribuido_a) return res.status(400).json({ error: 'informe ao menos etiqueta ou dono' });
+    const { campos: extra, erro } = regraSubtarefa.camposCardLider({
+      culto: req.body?.culto === '' ? null : req.body?.culto,
+      visibilidade: req.body?.visibilidade,
+    });
+    if (erro) return res.status(400).json({ error: erro });
     const { data, error } = await supabase
       .from('marketing_ciclo_padroes')
       .insert({
@@ -2304,13 +2407,14 @@ router.post('/admin/ciclo-padroes', authorizeModule('marketing', 5), async (req,
         etiqueta_tipo_id: etiqueta_tipo_id || null,
         atribuido_a: atribuido_a || null,
         ativo: true,
+        ...extra,
       })
       .select('*').single();
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) {
     if (/duplicate key/i.test(e.message)) {
-      return res.status(409).json({ error: 'Já existe padrão pra essa categoria + fase · edite o existente.' });
+      return res.status(409).json({ error: 'Já existe padrão pra essa categoria + fase + culto · edite o existente.' });
     }
     res.status(500).json({ error: e.message });
   }
@@ -2320,6 +2424,12 @@ router.patch('/admin/ciclo-padroes/:id', authorizeModule('marketing', 5), async 
   try {
     const update = {};
     const { nome_fase, etiqueta_tipo_id, atribuido_a, ativo } = req.body || {};
+    const { campos: extra, erro } = regraSubtarefa.camposCardLider({
+      culto: req.body?.culto === '' ? null : req.body?.culto,
+      visibilidade: req.body?.visibilidade,
+    });
+    if (erro) return res.status(400).json({ error: erro });
+    Object.assign(update, extra);
     if (nome_fase !== undefined) update.nome_fase = nome_fase;
     if (etiqueta_tipo_id !== undefined) update.etiqueta_tipo_id = etiqueta_tipo_id || null;
     if (atribuido_a !== undefined) update.atribuido_a = atribuido_a || null;
@@ -2342,6 +2452,86 @@ router.delete('/admin/ciclo-padroes/:id', authorizeModule('marketing', 5), async
       .delete()
       .eq('id', req.params.id);
     if (error) throw error;
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// ─── Subtarefas padrão do ciclo (linha do tempo · Fase 2 · 2026-09-25) ────────
+// marketing_ciclo_itens_padrao: o checklist com que cada tarefa de etapa nasce.
+// culto NULL = os 3 cultos · membro_id NULL = o responsável da tarefa.
+// ⚠️ Mexer aqui vale para as tarefas que NASCEREM depois; as que já existem não mudam.
+router.get('/admin/ciclo-itens', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    let q = supabase.from('marketing_ciclo_itens_padrao').select('*')
+      .order('nome_fase').order('ordem').order('created_at');
+    if (req.query.category_id) q = q.eq('category_id', req.query.category_id);
+    const { data, error } = await q;
+    if (error) {
+      if (error.code === '42P01') return res.json([]);
+      throw error;
+    }
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+function camposItemPadrao(body = {}) {
+  const { campos, erro } = regraSubtarefa.camposSubtarefa(body);
+  if (erro) return { erro };
+  delete campos.prazo; delete campos.registro; // o prazo vem da fase; registro é do card
+  if (body.texto !== undefined) {
+    if (typeof body.texto !== 'string' || !body.texto.trim()) return { erro: 'texto obrigatório' };
+    campos.texto = body.texto.trim();
+  }
+  if (body.culto !== undefined) {
+    const c = body.culto === '' ? null : body.culto;
+    if (c !== null && !regraSubtarefa.CULTOS.includes(c)) return { erro: 'culto inválido' };
+    campos.culto = c;
+  }
+  if (body.ordem !== undefined) {
+    if (!Number.isInteger(body.ordem)) return { erro: 'ordem deve ser inteiro' };
+    campos.ordem = body.ordem;
+  }
+  if (body.ativo !== undefined) campos.ativo = body.ativo === true;
+  return { campos };
+}
+
+router.post('/admin/ciclo-itens', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { category_id, nome_fase } = req.body || {};
+    if (!category_id || !nome_fase) return res.status(400).json({ error: 'category_id e nome_fase obrigatórios' });
+    const { campos, erro } = camposItemPadrao(req.body);
+    if (erro) return res.status(400).json({ error: erro });
+    if (!campos.texto) return res.status(400).json({ error: 'texto obrigatório' });
+    const { data, error } = await supabase.from('marketing_ciclo_itens_padrao')
+      .insert({ category_id, nome_fase, ...campos }).select('*').single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+router.patch('/admin/ciclo-itens/:id', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { campos, erro } = camposItemPadrao(req.body);
+    if (erro) return res.status(400).json({ error: erro });
+    if (!Object.keys(campos).length) return res.status(400).json({ error: 'Nada para atualizar' });
+    campos.updated_at = new Date().toISOString();
+    const { data, error } = await supabase.from('marketing_ciclo_itens_padrao')
+      .update(campos).eq('id', req.params.id).select('*').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Subtarefa padrão não encontrada' });
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Remover = desativar (ativo=false): a linha é config, e apagar tiraria o
+// rastro de por que uma tarefa antiga nasceu com aquele item.
+router.delete('/admin/ciclo-itens/:id', authorizeModule('marketing', 5), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('marketing_ciclo_itens_padrao')
+      .update({ ativo: false, updated_at: new Date().toISOString() })
+      .eq('id', req.params.id).select('id').maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Subtarefa padrão não encontrada' });
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2439,29 +2629,8 @@ router.patch('/campanhas/:id', authorizeModule('marketing', 5), async (req, res)
     const { data, error } = await supabase
       .from('marketing_campanhas').update(update).eq('id', req.params.id).select('*').single();
     if (error) throw error;
-    // Se o Pedro definiu/mudou o prazo de entrega e ele difere da data que o cliente
-    // pediu, avisa o solicitante (o Pedro vai conversar e dar a 1a devolutiva).
-    if (prazo_entrega !== undefined && data?.solicitacao_id && data?.solicitante_id) {
-      try {
-        const { data: sol } = await supabase.from('solicitacoes')
-          .select('data_necessaria, titulo').eq('id', data.solicitacao_id).maybeSingle();
-        const pedida = sol?.data_necessaria ? new Date(sol.data_necessaria).toISOString().slice(0, 10) : null;
-        const nova = data.prazo_entrega ? new Date(data.prazo_entrega).toISOString().slice(0, 10) : null;
-        if (nova && pedida && nova !== pedida) {
-          const fmt = (d) => d.split('-').reverse().join('/');
-          notificar({
-            modulo: 'marketing',
-            tipo: 'marketing_prazo_ajustado',
-            titulo: `Prazo ajustado: ${sol?.titulo || data.titulo}`,
-            mensagem: `A equipe de Marketing ajustou a entrega de ${fmt(pedida)} para ${fmt(nova)}. O Pedro vai falar com você sobre isso.`,
-            link: '/solicitacoes',
-            severidade: 'info',
-            chaveDedup: `mkt_prazo_${data.id}_${nova}`,
-            targetIds: [data.solicitante_id],
-          }).catch(err => console.error('[MARKETING] notify prazo ajustado:', err.message));
-        }
-      } catch (nerr) { console.error('[MARKETING] prazo ajustado block:', nerr.message); }
-    }
+    // Entrega final diferente da data pedida → avisa o solicitante.
+    if (prazo_entrega !== undefined) await avisarPrazoAjustado(data);
     res.json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

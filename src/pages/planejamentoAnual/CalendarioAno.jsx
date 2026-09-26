@@ -1,5 +1,7 @@
 import { useMemo } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { feriadosPorData } from '../../lib/feriadosBrasil';
+import { events } from '../../api';
 import { C, cardStyle, hint, MESES_LONGOS, fmtBRL } from './comum';
 
 // Calendário consolidado do ANO do ciclo · 12 meses em grade.
@@ -25,6 +27,24 @@ const CORES_NATUREZA = { evento: C.blue, projeto: C.purple, rotina: C.primary };
 
 export default function CalendarioAno({ ano, itens = [] }) {
   const feriados = useMemo(() => feriadosPorData(ano), [ano]);
+
+  // Cor do feriado vem da mesma regra de cores do módulo de Eventos
+  // (event_categories · categoria "Feriado"), pra não ter duas cores
+  // diferentes pra feriado nacional entre as telas. Cacheada por SESSÃO
+  // (react-query, mesmo padrão do QueryClient em App.tsx) — sem isso a
+  // busca reiniciava a cada vez que a aba era remontada e o feriado
+  // piscava vermelho→amarelo toda vez que a pessoa voltava pra ela; agora
+  // só pisca (ou nem isso) na primeira vez da sessão. Sem sucesso na
+  // busca, mantém o tom local como fallback.
+  const { data: categoriasEventos } = useQuery({
+    queryKey: ['event-categories'],
+    queryFn: () => events.categories(),
+    staleTime: 5 * 60_000,
+  });
+  const corFeriado = useMemo(() => {
+    const cat = (categoriasEventos || []).find((c) => (c.name || '').trim().toLowerCase() === 'feriado');
+    return cat?.color || C.red;
+  }, [categoriasEventos]);
 
   // Índices: dia exato (precisão 'dia') e faixa do mês (precisão 'mes')
   const { porDia, porMes } = useMemo(() => {
@@ -52,7 +72,7 @@ export default function CalendarioAno({ ano, itens = [] }) {
     <div style={{ display: 'grid', gap: 12 }}>
       <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'center', fontSize: 12, color: C.t2 }}>
         <strong style={{ fontSize: 14, color: C.text }}>Ano {ano}</strong>
-        <span><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 2, background: C.red, marginRight: 5 }} />feriado nacional</span>
+        <span><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 2, background: corFeriado, marginRight: 5 }} />feriado nacional</span>
         <span><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 2, background: C.blue, marginRight: 5 }} />evento</span>
         <span><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 2, background: C.purple, marginRight: 5 }} />projeto</span>
         <span><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 2, background: C.primary, marginRight: 5 }} />rotina</span>
@@ -103,9 +123,9 @@ export default function CalendarioAno({ ano, itens = [] }) {
                       style={{
                         position: 'relative', textAlign: 'center', fontSize: 10.5, lineHeight: '20px',
                         height: 20, borderRadius: 4, cursor: titulo ? 'help' : 'default',
-                        color: fer ? C.red : domingo ? C.t3 : C.text,
+                        color: fer ? corFeriado : domingo ? C.t3 : C.text,
                         fontWeight: fer || eventosDoDia.length ? 700 : 400,
-                        background: fer ? '#ef444418' : eventosDoDia.length ? `${C.primary}14` : 'transparent',
+                        background: fer ? `${corFeriado}18` : eventosDoDia.length ? `${C.primary}14` : 'transparent',
                       }}
                     >
                       {dia}
@@ -130,7 +150,7 @@ export default function CalendarioAno({ ano, itens = [] }) {
               {(fer0(feriados, ano, mes).length > 0 || mensais.length > 0) && (
                 <div style={{ marginTop: 7, borderTop: '1px solid var(--hairline)', paddingTop: 6, display: 'grid', gap: 3 }}>
                   {fer0(feriados, ano, mes).map((f) => (
-                    <div key={f.data} style={{ fontSize: 10.5, color: C.red }}>
+                    <div key={f.data} style={{ fontSize: 10.5, color: corFeriado }}>
                       {String(f.data).slice(8, 10)} · {f.nome}
                     </div>
                   ))}

@@ -14,6 +14,7 @@
 |---|---|---|
 | `/marketing` | `src/pages/marketing/MarketingDashboard` | 1 |
 | `/marketing/kanban` | `src/pages/marketing/MarketingKanban` | 1 |
+| `/marketing/demandas` | `src/pages/marketing/MarketingLinhaDoTempo` | 1 |
 | `/marketing/planner` | `src/pages/marketing/MarketingPlanner` | 1 |
 | `/marketing/admin` | `src/pages/marketing/MarketingAdmin` | 5 |
 | `/marketing/analytics` | `src/pages/marketing/MarketingAnalytics` | 1 |
@@ -24,11 +25,13 @@
 - `backend/routes/comunicados.js`
 - `backend/routes/destaques.js`
 - `backend/routes/marketing.js`
+- `backend/routes/marketingLinha.js`
 Guard: `authorizeModule('marketing', 1 | 3 | 5)`
-<details><summary>Endpoints (78)</summary>
+<details><summary>Endpoints (88)</summary>
 - `DELETE /api/batismo-fotos/:data/fotos/:nome`
 - `DELETE /api/comunicados/:id`
 - `DELETE /api/destaques/:id`
+- `DELETE /api/marketing/admin/ciclo-itens/:id`
 - `DELETE /api/marketing/admin/ciclo-padroes/:id`
 - `DELETE /api/marketing/admin/membros/:id`
 - `DELETE /api/marketing/admin/overrides/:id`
@@ -37,10 +40,12 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `DELETE /api/marketing/cards/:id`
 - `DELETE /api/marketing/checklist/:itemId`
 - `DELETE /api/marketing/entregaveis/:id`
+- `DELETE /api/marketing/linha/rotina/:compromissoId/:semanaInicio`
 - `GET /api/batismo-fotos`
 - `GET /api/batismo-fotos/:data/fotos`
 - `GET /api/comunicados`
 - `GET /api/destaques`
+- `GET /api/marketing/admin/ciclo-itens`
 - `GET /api/marketing/admin/ciclo-padroes`
 - `GET /api/marketing/admin/ciclo-padroes/categorias`
 - `GET /api/marketing/admin/ciclo-padroes/fases`
@@ -67,8 +72,10 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `GET /api/marketing/fila/posicao/:cardId`
 - `GET /api/marketing/generosidade`
 - `GET /api/marketing/kanban`
+- `GET /api/marketing/linha`
 - `GET /api/marketing/membros`
 - `GET /api/marketing/planner`
+- `PATCH /api/marketing/admin/ciclo-itens/:id`
 - `PATCH /api/marketing/admin/ciclo-padroes/:id`
 - `PATCH /api/marketing/admin/etiquetas/destino/:id`
 - `PATCH /api/marketing/admin/etiquetas/tipo/:id`
@@ -82,6 +89,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `PATCH /api/marketing/cards/:id/sugerir-revisao`
 - `PATCH /api/marketing/checklist/:itemId`
 - `PATCH /api/marketing/ciclo-criativo/batch`
+- `PATCH /api/marketing/linha/tarefas/:id`
 - `POST /api/batismo-fotos/:data/fotos`
 - `POST /api/comunicados`
 - `POST /api/comunicados/:id/arquivar`
@@ -89,6 +97,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `POST /api/comunicados/upload-foto`
 - `POST /api/destaques`
 - `POST /api/destaques/:id/imagem`
+- `POST /api/marketing/admin/ciclo-itens`
 - `POST /api/marketing/admin/ciclo-padroes`
 - `POST /api/marketing/admin/ciclo-padroes/aplicar`
 - `POST /api/marketing/admin/etiquetas/destino`
@@ -102,13 +111,19 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `POST /api/marketing/cards`
 - `POST /api/marketing/cards/:id/checklist`
 - `POST /api/marketing/cards/:id/entregaveis`
+- `POST /api/marketing/linha/pendentes/:campanhaId/alocar`
+- `POST /api/marketing/linha/tarefas`
 - `PUT /api/comunicados/:id`
 - `PUT /api/destaques/:id`
+- `PUT /api/marketing/linha/rotina/:compromissoId/:semanaInicio`
 </details>
 
 **Réguas puras (backend/utils)**
 
+- `backend/utils/marketingAlocacao.js`
+- `backend/utils/marketingChecklist.js`
 - `backend/utils/marketingCores.js`
+- `backend/utils/marketingLinha.js`
 - `backend/utils/marketingOcupacao.js`
 - `backend/utils/marketingSemanas.js`
 - `backend/utils/supabase.js`
@@ -116,6 +131,8 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 **Serviços**
 
 - `backend/services/campanhaArrecadacao.js`
+- `backend/services/marketingAvisos.js`
+- `backend/services/marketingContexto.js`
 - `backend/services/marketingGenerosidade.js`
 - `backend/services/marketingSolicitante.js`
 - `backend/services/notificar.js`
@@ -138,6 +155,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `marketing_campanhas`
 - `marketing_capacidade_override`
 - `marketing_card_checklist`
+- `marketing_ciclo_itens_padrao`
 - `marketing_ciclo_padroes`
 - `marketing_compromissos_recorrentes`
 - `marketing_entregaveis`
@@ -146,6 +164,7 @@ Guard: `authorizeModule('marketing', 1 | 3 | 5)`
 - `marketing_kanban_cards`
 - `marketing_membros`
 - `marketing_recorrentes_participantes`
+- `marketing_rotina_execucoes`
 - `profiles`
 - `solicitacoes`
 - `vw_fin_decendio`

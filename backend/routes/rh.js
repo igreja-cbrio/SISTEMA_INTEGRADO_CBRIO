@@ -1,5 +1,17 @@
 const router = require('express').Router();
 const multer = require('multer');
+const crypto = require('crypto'); // rota POST /foto (admissão sobe a foto antes de existir o id)
+// Régua PURA da ficha da CONTRATADA (Anexo II) · está no gate de deploy.
+const { ehContratada, estadoFicha, bloqueioFolha } = require('../utils/fichaContratada');
+// ⚠️ A base do link vem da régua ÚNICA da casa, que é CONSTANTE e NÃO lê env
+// (lei de 20/08): `FRONTEND_URL` existe em produção com valor encriptado e pode
+// apontar pro domínio da Vercel — e já houve link de `localhost` entregue a uma
+// líder por WhatsApp. Este link vai pro WhatsApp de prestador externo.
+const { basePublica } = require('../utils/linkInscricaoApp');
+const rhFichaEnvios = require('../services/rhFichaEnvios');
+// ⚠️ 30 dias: o link carrega dado bancário e o `onboarding_token` irmão, que
+// NÃO expira, deixou 33 tokens de agosto vivos até hoje. Renovar é 1 clique.
+const DIAS_VALIDADE_FICHA = 30;
 const { authenticate, authorizeModule, applyAccessFilter, getEffectiveLevel } = require('../middleware/auth');
 const { supabase } = require('../utils/supabase');
 const { uploadModuleFile, SHAREPOINT_CONFIGURED, sanitizePath } = require('../services/storageService');
@@ -9,7 +21,8 @@ const { chamarModelo: organogramaIA } = require('../services/organogramaIA');
 const { aplicarCobertura, encerrarCobertura } = require('../services/cobertura');
 const rhOnboardingEnvios = require('../services/rhOnboardingEnvios');
 const { escapePostgrestValue } = require('../utils/sanitize'); // varredura 2026-09: RHP-11 — `_` e `%` sao curinga no ilike do PostgREST
-const { caminhoNoBucket, aplicarAssinaturas } = require('../utils/storagePath'); // varredura 2026-09: RHP-01 documento de RG servido por URL pública — precisa derivar o caminho e assinar na leitura
+const { BUCKET_DOCS_RH, assinarDocumentosRh } = require('../services/anexosRhDocumentos'); // varredura 2026-09: RHP-01 · régua ÚNICA, compartilhada com o app do Staff
+const { semFalhar } = require('../utils/semFalhar'); // PostgrestFilterBuilder não é Promise: nunca `.catch()` na cadeia — ver src/test/postgrestCatch.test.ts
 
 const uploadMw = multer({
   storage: multer.memoryStorage(),
@@ -326,6 +339,15 @@ router.get('/funcionarios/:id', async (req, res) => {
     ]);
 
     await preencherFotoDoPerfil(func);
+
+    // ⚠️⚠️ O estado da ficha da CONTRATADA vai PRONTO para a tela. A régua é a
+    // mesma do painel de pendentes e do bloqueio de pagamento — recalcular no
+    // front daria uma segunda resposta para "a ficha está completa?", e as duas
+    // divergiriam no primeiro campo novo.
+    // ⚠️ Calculado sobre a linha JÁ REDIGIDA: quem não pode ver o bloco
+    // confidencial recebe `preenchida:false`, que é honesto do ponto de vista
+    // dele — ele realmente não tem como saber.
+    func.ficha_estado = estadoFicha(func);
     res.json({
       ...ocultarConfidenciaisRh(req, func), // varredura 2026-09: RHP-03 — ficha devolvia cpf/salário/benefícios pra nível <4 (o front só pintava "•••")
       documentos: await assinarDocumentosRh(docs.data || []), // varredura 2026-09: RHP-01 caminho no bucket privado precisa virar URL assinada de 1h na leitura
@@ -360,9 +382,20 @@ function _docsNoTexto(s) {
 // ("caju lider pj+", NF com "CNPJ + razão"), muitas vezes SEM o nome.
 function _termosFuncionario(f) {
   const ad = f.admissao_dados || {};
+  // ⚠️⚠️ LEITURA DUPLA, e a ORDEM importa: a ficha da CONTRATADA (`ficha_contratada`,
+  // preenchida pelo próprio prestador) vem ANTES de `admissao_dados` (digitado
+  // pelo RH na admissão). Quem declara o próprio CNPJ é a empresa.
+  //
+  // Sem isto, a ficha nova seria gravada e a conciliação continuaria cega — que
+  // é justamente o consumidor que esta feature veio consertar: com `pj_cnpj`
+  // nulo em 31 de 32 PJ, o match cai em NOME com `includes` frouxo.
+  //
+  // ⚠️ `admissao_dados` FICA como fallback: o histórico está lá, e tirá-lo
+  // quebraria a conciliação de quem foi cadastrado antes da ficha existir.
+  const fc = f.ficha_contratada || {};
   const cpf = String(f.cpf || '').replace(/\D/g, '');
-  const cnpj = String(ad.pj_cnpj || '').replace(/\D/g, '');
-  const razao = _normFolha(ad.pj_razao_social);
+  const cnpj = String(fc.cnpj || ad.pj_cnpj || '').replace(/\D/g, '');
+  const razao = _normFolha(fc.razao_social || ad.pj_razao_social);
   const norm = _normFolha(f.nome);
   return {
     id: f.id,
@@ -397,7 +430,7 @@ function mesCorrenteBRT() {
 async function funcionariosSemPagamentoNoMes(mes) {
   const { data: funcs } = await supabase
     .from('rh_funcionarios')
-    .select('id, nome, cpf, admissao_dados')
+    .select('id, nome, cpf, admissao_dados, ficha_contratada')
     .eq('status', 'ativo')
     .is('deleted_at', null);
   const alvos = (funcs || []).map(_termosFuncionario);
@@ -469,7 +502,7 @@ router.get('/funcionarios/:id/pagamentos', async (req, res) => {
   try {
     if (!podeEditarRemuneracao(req)) return res.status(403).json({ error: 'Sem permissão para ver pagamentos (exige RH nível ≥ 4).' });
 
-    let fq = supabase.from('rh_funcionarios').select('id, nome, salario, tipo_contrato, status, cpf, admissao_dados').eq('id', req.params.id);
+    let fq = supabase.from('rh_funcionarios').select('id, nome, salario, tipo_contrato, status, cpf, admissao_dados, ficha_contratada').eq('id', req.params.id);
     fq = applyAccessFilter(fq, req, 'rh', { areaColumn: 'area', ownerColumn: 'email', ownerEmail: true });
     const { data: func, error: fErr } = await fq.maybeSingle();
     if (fErr || !func) return res.status(404).json({ error: 'Funcionário não encontrado' });
@@ -571,7 +604,7 @@ router.post('/folha/auto-vincular', async (req, res) => {
     const planoIds = await planoPessoalIds();
     if (!planoIds.length) return res.json({ vinculados: 0, analisados: 0 });
 
-    const { data: funcs } = await supabase.from('rh_funcionarios').select('id, nome, cpf, admissao_dados').is('deleted_at', null);
+    const { data: funcs } = await supabase.from('rh_funcionarios').select('id, nome, cpf, admissao_dados, ficha_contratada').is('deleted_at', null);
     const alvos = (funcs || [])
       .map(_termosFuncionario)
       .filter(a => a.norm || a.razao || a.cpf || a.cnpj);
@@ -818,6 +851,12 @@ const CAMPOS_ADMISSAO_CONFIDENCIAIS = [
 ];
 
 const CAMPOS_RH_CONFIDENCIAIS = [
+  // ⚠️⚠️ A ficha da CONTRATADA inteira é confidencial — ela carrega CNPJ,
+  // endereço da sede, CPF do representante, banco, conta e CHAVE PIX. Por ser
+  // um jsonb, esta ÚNICA linha protege o bloco todo, e campo novo dentro dela
+  // nasce protegido em vez de nascer exposto. É o defeito RHP-03 ao contrário:
+  // com colunas escalares, esquecer UMA nesta lista é vazamento silencioso.
+  'ficha_contratada',
   'cpf',
   'salario', 'remuneracao_bruta', 'grau_id', 'data_enquadramento',
   'complemento_salario', 'alimentacao', 'transporte', 'saude', 'seguro_vida', 'educacao',
@@ -858,6 +897,7 @@ const RH_FIELD_TYPES = {
   nome: 'text', cpf: 'text', email: 'text', telefone: 'fone', cargo: 'text',
   area: 'text', tipo_contrato: 'upper', observacoes: 'text', status: 'text', foto_url: 'text',
   setor_id: 'int',
+  ficha_contratada: 'json', // ⚠️ CONFIDENCIAL (ver CAMPOS_RH_CONFIDENCIAIS) — carrega CNPJ, CPF do representante e chave PIX
   salario: 'num', remuneracao_bruta: 'num',
   // Benefícios / descontos / totais / provisões — editados na seção Benefícios da
   // ficha. Antes NÃO entravam no payload (eram descartados silenciosamente) → a
@@ -871,7 +911,12 @@ const RH_FIELD_TYPES = {
   bonus_anual_50: 'num', bonus_anual_integral: 'num', ferias_integral: 'num',
   data_admissao: 'date', data_demissao: 'date', data_enquadramento: 'date', data_nascimento: 'date',
   grau_id: 'uuid',
-  admissao_dados: 'json', // jsonb com dados extras do onboarding (RG, PJ, contrato…) · não sensível
+  // ⚠️⚠️ O comentário aqui dizia "não sensível" e MENTIA — e mentia justamente
+  // sobre o campo mais tóxico da tabela: `admissao_dados` carrega RG, CPF,
+  // salário, o HTML do contrato e as chaves `pj_*`, e a lista
+  // CAMPOS_ADMISSAO_CONFIDENCIAIS (logo acima) redige tudo isso para nível < 4.
+  // Comentário podre em cima de campo sensível engana a próxima sessão.
+  admissao_dados: 'json', // CONFIDENCIAL por chave (ver CAMPOS_ADMISSAO_CONFIDENCIAIS)
   // Modernização do cadastro (revisão Feedz/HRIS, 2026-08-12): matrícula,
   // cargo visível e endereço estruturado (padrão do censo · cepAutopreenche.ts).
   matricula: 'text', cargo_visivel: 'text',
@@ -1202,6 +1247,136 @@ router.post('/organograma/ia/aplicar', async (req, res) => {
   }
 });
 
+// ── Ficha da CONTRATADA (Anexo II) ───────────────────────────────────────────
+// POST /api/rh/funcionarios/:id/ficha-contratada-link — gera o link pessoal.
+//
+// ⚠️ SÓ PJ. A régua é `ehContratada` (no gate): 13 CLT e 1 PREBENDA ativos não
+// têm empresa, e mandar o link para eles é pedir CNPJ a quem não tem. Recusa
+// com 400 e diz o motivo, em vez de gerar um link que abre num formulário
+// impossível de preencher.
+//
+// ⚠️ Token com EXPIRAÇÃO — diferente do `onboarding_token`, que não expira
+// (medido em 21/09: 33 tokens de agosto seguem válidos, e aquele link é um
+// handle de ESCRITA permanente no cadastro). Este carrega dado bancário.
+router.post('/funcionarios/:id/ficha-contratada-link', authorizeModule('rh', 2), async (req, res) => {
+  try {
+    const { data: func, error } = await supabase.from('rh_funcionarios')
+      .select('id, nome, tipo_contrato, ficha_contratada_token')
+      .eq('id', req.params.id).is('deleted_at', null).maybeSingle();
+    if (error) return res.status(503).json({ error: 'Não consegui consultar agora.' });
+    if (!func) return res.status(404).json({ error: 'Colaborador não encontrado' });
+
+    if (!ehContratada(func.tipo_contrato)) {
+      return res.status(400).json({
+        error: `A ficha da contratada é só para PJ — este colaborador é ${func.tipo_contrato || 'sem tipo definido'}.`,
+      });
+    }
+
+    const regenerar = !!(req.body && req.body.regenerar);
+    const token = (!func.ficha_contratada_token || regenerar)
+      ? crypto.randomBytes(24).toString('base64url')
+      : func.ficha_contratada_token;
+
+    const expira = new Date();
+    expira.setDate(expira.getDate() + DIAS_VALIDADE_FICHA);
+
+    const { error: upErr } = await supabase.from('rh_funcionarios').update({
+      ficha_contratada_token: token,
+      ficha_contratada_enviado_em: new Date().toISOString(),
+      ficha_contratada_expira_em: expira.toISOString(),
+    }).eq('id', func.id);
+    if (upErr) return res.status(400).json({ error: upErr.message });
+
+    res.json({
+      url: `${basePublica()}/ficha-contratada/${token}`,
+      token,
+      nome: func.nome,
+      expira_em: expira.toISOString(),
+    });
+  } catch (e) {
+    console.error('[RH] ficha-contratada-link:', e.message);
+    res.status(500).json({ error: 'Erro ao gerar o link.' });
+  }
+});
+
+// GET /api/rh/ficha-contratada/pendentes — quem ainda não entregou a ficha.
+//
+// ⚠️⚠️ É a lista NOMINAL, e é ela que materializa a decisão de condicionar o
+// pagamento: o sistema NÃO emite folha (`rh_folha_snapshots` é um agregado de
+// 3 linhas e o módulo só CONCILIA o que já foi pago), então não existe botão de
+// pagamento para travar. O que dá para fazer — e é o que isto faz — é tornar o
+// bloqueio VISÍVEL e nominal para quem libera o PIX. Prometer "folha travada"
+// num software que não paga seria a tela afirmando o que o produto não faz.
+router.get('/ficha-contratada/pendentes', authorizeModule('rh', 2), async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('rh_funcionarios')
+      .select('id, nome, cargo, tipo_contrato, status, email, telefone, ficha_contratada, ficha_contratada_enviado_em, ficha_contratada_preenchido_em')
+      .is('deleted_at', null)
+      .eq('status', 'ativo');
+    if (error) return res.status(503).json({ error: 'Não consegui carregar a lista agora.' });
+
+    const pjs = (data || []).filter((f) => ehContratada(f.tipo_contrato));
+    const itens = pjs.map((f) => {
+      const e = estadoFicha(f);
+      const b = bloqueioFolha(f);
+      return {
+        id: f.id,
+        nome: f.nome,
+        cargo: f.cargo || null,
+        // ⚠️ Declara se DÁ pra cobrar: 2 dos 32 PJ não têm e-mail nem telefone,
+        // e "não respondeu" é coisa diferente de "não tem como receber o link".
+        tem_canal: !!(f.email || f.telefone),
+        link_enviado_em: f.ficha_contratada_enviado_em || null,
+        preenchido_em: f.ficha_contratada_preenchido_em || null,
+        completa: e.completa,
+        aceita: e.aceita,
+        faltando: e.faltando,
+        bloqueado: b.bloqueado,
+        motivo: b.motivo,
+      };
+    });
+
+    res.json({
+      total_pj: pjs.length,
+      bloqueados: itens.filter((i) => i.bloqueado).length,
+      sem_canal: itens.filter((i) => !i.tem_canal).length,
+      itens: itens.sort((a, b2) => Number(b2.bloqueado) - Number(a.bloqueado) || a.nome.localeCompare(b2.nome)),
+    });
+  } catch (e) {
+    console.error('[RH] ficha-contratada/pendentes:', e.message);
+    res.status(500).json({ error: 'Erro ao carregar a lista.' });
+  }
+});
+
+// POST /api/rh/ficha-contratada/cobrar — dispara a rodada de cobrança.
+//
+// ⚠️ Nível 4: é comunicação em massa com prestador externo, e a lição do censo
+// (04/08) é que falar com N pessoas pelo canal institucional é decisão de outro
+// peso que editar cadastro. `?seco=1` mostra quem entraria SEM enviar nada.
+router.post('/ficha-contratada/cobrar', authorizeModule('rh', 4), async (req, res) => {
+  try {
+    const seco = req.query.seco === '1' || req.body?.seco === true;
+    const r = await rhFichaEnvios.dispararCobranca({ seco });
+    // ⚠️ Canal ausente responde 503, NUNCA 200 com zero envio: caixa verde
+    // dizendo "disparado" sem ninguém receber foi o incidente do censo.
+    if (r.erro) return res.status(503).json(r);
+    res.json(r);
+  } catch (e) {
+    console.error('[RH] ficha-contratada/cobrar:', e.message);
+    res.status(500).json({ error: 'Erro ao disparar a cobrança.' });
+  }
+});
+
+// POST /api/rh/ficha-contratada/cobrar (CRON) — a escada de lembretes.
+//
+// ⚠️⚠️ SEM SLOT NOVO: a Vercel está com 47 crons, no teto do plano. Este disparo
+// pega CARONA no cron diário de notificações (`/api/notificacoes/cron`, 0 9 * * *)
+// e roda em BLOCO PROTEGIDO lá — falhar aqui não pode derrubar o gerador de
+// notificações, que é o trabalho principal daquela execução.
+async function cobrancaDiaria() {
+  return rhFichaEnvios.dispararCobranca({});
+}
+
 // POST /api/rh/funcionarios/:id/onboarding-link — gera (ou reusa) o link público
 // do formulário de dados pessoais pra mandar pro colaborador preencher. O RH só
 // cuida de salário/cargo; os dados pessoais vêm do próprio colaborador.
@@ -1266,6 +1441,33 @@ router.post('/onboarding/disparar', authorizeModule('rh', 5), async (req, res) =
   }
 });
 
+const BUCKET_FOTOS_PESSOAS = 'avatars';
+
+// POST /api/rh/foto — upload de foto ANTES de o colaborador existir.
+// ⚠️ Existe porque o modal de admissão sobe a foto e só depois salva o cadastro:
+// sem esta rota, o front não tem `:id` para chamar e volta a subir direto do
+// browser com a anon key — que é exatamente o que as policies abertas do
+// `rh-fotos` permitiam e este PR está fechando.
+router.post('/foto', authorizeModule('rh', 3), uploadMw.single('foto'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Arquivo "foto" obrigatorio' });
+    if (!req.file.mimetype?.startsWith('image/')) {
+      return res.status(400).json({ error: 'Arquivo precisa ser uma imagem' });
+    }
+    const ext = (req.file.originalname?.split('.').pop() || 'jpg').toLowerCase().slice(0, 5);
+    const path = `colaboradores/${crypto.randomUUID()}.${ext}`;
+    const { error: upErr } = await supabase.storage
+      .from(BUCKET_FOTOS_PESSOAS)
+      .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
+    if (upErr) return res.status(500).json({ error: 'Falha ao salvar imagem: ' + upErr.message });
+    const { data: urlData } = supabase.storage.from(BUCKET_FOTOS_PESSOAS).getPublicUrl(path);
+    res.json({ foto_url: urlData.publicUrl });
+  } catch (e) {
+    console.error('[RH] Upload foto (sem id):', e.message);
+    res.status(500).json({ error: 'Erro ao enviar foto' });
+  }
+});
+
 // POST /api/rh/funcionarios/:id/foto — upload foto de perfil (multipart 'foto')
 router.post('/funcionarios/:id/foto', uploadMw.single('foto'), async (req, res) => {
   try {
@@ -1277,12 +1479,18 @@ router.post('/funcionarios/:id/foto', uploadMw.single('foto'), async (req, res) 
     const ext = (req.file.originalname?.split('.').pop() || 'jpg').toLowerCase().slice(0, 5);
     const path = `funcionarios/${req.params.id}/avatar-${Date.now()}.${ext}`;
 
+    // ⚠️⚠️ A FOTO vai para `avatars` (público), não para `documentos-rh`.
+    // Decisão declarada: foto de perfil de PESSOA já é pública por convenção da
+    // casa (`fotos-membros` tem 652, `avatars` 38, e `rh_funcionarios.foto_url`
+    // já cai no `mem_membros.foto_url` quando está vazia). O que precisa de
+    // cofre é DOCUMENTO (RG, contrato, comprovante bancário), não retrato.
+    // Isso é o que permite FECHAR o `rh-fotos` sem quebrar avatar nenhum.
     const { error: upErr } = await supabase.storage
-      .from('rh-fotos')
+      .from(BUCKET_FOTOS_PESSOAS)
       .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
     if (upErr) return res.status(500).json({ error: 'Falha ao salvar imagem: ' + upErr.message });
 
-    const { data: urlData } = supabase.storage.from('rh-fotos').getPublicUrl(path);
+    const { data: urlData } = supabase.storage.from(BUCKET_FOTOS_PESSOAS).getPublicUrl(path);
     const foto_url = urlData.publicUrl;
 
     const { error: updErr } = await supabase
@@ -1307,30 +1515,9 @@ router.post('/funcionarios/:id/foto', uploadMw.single('foto'), async (req, res) 
 // LEITURA — mesmo padrão de `services/anexosLogArquivos`. `caminhoNoBucket` é
 // idempotente e fail-closed, então o histórico misto (URL antiga do `rh-fotos`,
 // link do SharePoint) passa INTACTO e nada quebra.
-const BUCKET_DOCS_RH = 'documentos-rh';
-const DOCS_RH_TTL_SEG = 60 * 60; // 1h: a pessoa abre a ficha e clica em seguida
-async function assinarDocumentosRh(linhas) {
-  if (!Array.isArray(linhas) || !linhas.length) return linhas;
-  const caminhos = [...new Set(
-    linhas.map((l) => caminhoNoBucket(l?.storage_path, BUCKET_DOCS_RH)).filter(Boolean)
-  )];
-  if (!caminhos.length) return linhas;
-  const { data, error } = await supabase.storage
-    .from(BUCKET_DOCS_RH).createSignedUrls(caminhos, DOCS_RH_TTL_SEG);
-  // ⚠️ Falhou a assinatura: devolve o valor original (mostra que o anexo
-  // existe) em vez de sumir com o documento da ficha.
-  if (error) {
-    console.warn('[RH] createSignedUrls documentos-rh falhou:', error.message);
-    return linhas;
-  }
-  const mapa = {};
-  for (const item of (data || [])) {
-    const url = item?.signedUrl || item?.signedURL; // o SDK já usou as duas grafias
-    if (item?.path && url && !item.error) mapa[item.path] = url;
-  }
-  if (!Object.keys(mapa).length) return linhas;
-  return linhas.map((l) => aplicarAssinaturas(l, ['storage_path'], BUCKET_DOCS_RH, mapa));
-}
+// ⚠️ A régua de assinatura foi EXTRAÍDA para services/anexosRhDocumentos: o app
+// do Staff escreve e lê os MESMOS documentos por caminho próprio, e duas cópias
+// divergiriam (o documento abriria aqui e daria link morto lá).
 // POST /api/rh/funcionarios/:id/documentos — aceita JSON ou multipart com arquivo
 router.post('/funcionarios/:id/documentos', uploadMw.single('arquivo'), async (req, res) => {
   try {
@@ -1601,6 +1788,100 @@ router.post('/funcionarios/:id/ferias', async (req, res) => {
   }
 });
 
+// GET /api/rh/solicitacoes/:solicitacaoId/ferias — o registro de férias/licença
+// vinculado a esta Solicitação (categoria ferias/licenca), se já foi lançado.
+router.get('/solicitacoes/:solicitacaoId/ferias', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('rh_ferias_licencas')
+      .select('id, tipo, data_inicio, data_fim, status, observacoes, funcionario_id')
+      .eq('solicitacao_id', req.params.solicitacaoId)
+      .maybeSingle();
+    if (error) return res.status(400).json({ error: error.message });
+    res.json(data || null);
+  } catch (e) {
+    console.error('[RH] Buscar férias por solicitação:', e.message);
+    res.status(500).json({ error: 'Erro ao buscar vínculo com o RH' });
+  }
+});
+
+// POST /api/rh/solicitacoes/:solicitacaoId/ferias — o RH registra a férias/
+// licença oficial a partir de uma Solicitação (categoria ferias/licenca) já
+// aberta. É isso que torna a Solicitação ACIONÁVEL no RH (antes só chegava
+// como aviso, sem virar registro nenhum) — a partir daqui, aprovar/rejeitar em
+// PATCH /ferias/:id abaixo fecha o loop e atualiza a própria Solicitação.
+router.post('/solicitacoes/:solicitacaoId/ferias', async (req, res) => {
+  try {
+    if (!(['admin', 'diretor'].includes(req.user.role) || getEffectiveLevel(req, 'rh') >= 3)) {
+      return res.status(403).json({ error: 'Sem permissão para registrar férias/licença (exige RH nível ≥ 3).' });
+    }
+    const { solicitacaoId } = req.params;
+    const { tipo, data_inicio, data_fim, observacoes, substituto_id } = req.body || {};
+    if (!tipo || !data_inicio || !data_fim) {
+      return res.status(400).json({ error: 'Tipo, data início e data fim são obrigatórios' });
+    }
+
+    const { data: sol, error: solErr } = await supabase
+      .from('solicitacoes')
+      .select('id, categoria, solicitante_id')
+      .eq('id', solicitacaoId)
+      .maybeSingle();
+    if (solErr) return res.status(400).json({ error: solErr.message });
+    if (!sol) return res.status(404).json({ error: 'Solicitação não encontrada' });
+    if (!['ferias', 'licenca'].includes(sol.categoria)) {
+      return res.status(400).json({ error: 'Esta solicitação não é de férias/licença' });
+    }
+
+    const { data: jaVinculado } = await supabase
+      .from('rh_ferias_licencas')
+      .select('id')
+      .eq('solicitacao_id', solicitacaoId)
+      .maybeSingle();
+    if (jaVinculado) {
+      return res.status(409).json({ error: 'Esta solicitação já tem um registro de férias/licença vinculado no RH' });
+    }
+
+    // Resolve o funcionário a partir de quem abriu a solicitação — mesma
+    // chave usada em toda a casa (e-mail case-insensitive contra
+    // rh_funcionarios, espelho de current_user_funcionario_id()). Nunca
+    // adivinha por nome.
+    const { data: solicitanteProfile } = await supabase
+      .from('profiles')
+      .select('id, email')
+      .eq('id', sol.solicitante_id)
+      .maybeSingle();
+    if (!solicitanteProfile?.email) {
+      return res.status(404).json({ error: 'Não foi possível identificar o e-mail de quem abriu a solicitação' });
+    }
+    const { data: func } = await supabase
+      .from('rh_funcionarios')
+      .select('id, nome, email')
+      .ilike('email', solicitanteProfile.email)
+      .maybeSingle();
+    if (!func) {
+      return res.status(404).json({ error: 'Quem abriu esta solicitação não está cadastrado como funcionário no RH' });
+    }
+
+    const { data, error } = await supabase
+      .from('rh_ferias_licencas')
+      .insert({
+        funcionario_id: func.id,
+        tipo, data_inicio, data_fim,
+        observacoes: observacoes || null,
+        substituto_id: substituto_id || null,
+        solicitacao_id: solicitacaoId,
+      })
+      .select()
+      .single();
+
+    if (error) return res.status(400).json({ error: error.message });
+    res.json({ ...data, funcionario_nome: func.nome });
+  } catch (e) {
+    console.error('[RH] Registrar férias a partir de solicitação:', e.message);
+    res.status(500).json({ error: 'Erro ao registrar férias/licença' });
+  }
+});
+
 // varredura 2026-09: RHP-11 — espelho em JS de `user_is_lider_de(funcionario_id)`
 // (migration 20260521200000): casa o e-mail do logado com `rh_funcionarios` (ativo e
 // não apagado, igual `current_user_funcionario_id()`) e compara com o `gestor_id` do
@@ -1742,6 +2023,55 @@ router.patch('/ferias/:id', podeDecidirFerias(), async (req, res) => {
       severidade: status === 'aprovado' ? 'info' : 'aviso',
       chaveDedup: `ferias_${status}_${data.id}`,
     }).catch(() => {});
+
+    // Fecha o loop com a Solicitação que originou este registro (quando veio
+    // de lá via POST /solicitacoes/:id/ferias): aprovar/rejeitar aqui muda o
+    // status da Solicitação aberta e avisa quem pediu — sem isso, o pedido
+    // ficava "pendente" pra sempre na tela de Solicitações mesmo já decidido
+    // no RH. Mesmo padrão do Marketing (`aprovar-entrega`): escreve o status
+    // direto em `solicitacoes` + notifica com `targetIds` explícito.
+    if (data.solicitacao_id) {
+      const novoStatusSolicitacao = status === 'aprovado' ? 'concluido' : 'rejeitado';
+      const { data: solVinculada } = await supabase
+        .from('solicitacoes')
+        .select('id, status, solicitante_id, titulo')
+        .eq('id', data.solicitacao_id)
+        .maybeSingle();
+      if (solVinculada && solVinculada.status !== novoStatusSolicitacao) {
+        await supabase
+          .from('solicitacoes')
+          .update({
+            status: novoStatusSolicitacao,
+            ...(status === 'aprovado' ? { concluido_em: new Date().toISOString() } : {}),
+          })
+          .eq('id', data.solicitacao_id);
+
+        await semFalhar(supabase.from('solicitacoes_eventos').insert({
+          solicitacao_id: data.solicitacao_id,
+          status_anterior: solVinculada.status,
+          status_novo: novoStatusSolicitacao,
+          ator_id: req.user?.userId || req.user?.id || null,
+          observacao: `${tipoLabel} ${statusLabel} pelo RH.`,
+        }), '[RH] registrar evento da solicitação:');
+
+        if (solVinculada.solicitante_id) {
+          notificar({
+            modulo: 'rh',
+            tipo: status === 'aprovado' ? 'solicitacao_avaliar' : 'solicitacao_status',
+            titulo: status === 'aprovado'
+              ? `${tipoLabel} aprovada: ${solVinculada.titulo}`
+              : `${tipoLabel} recusada: ${solVinculada.titulo}`,
+            mensagem: status === 'aprovado'
+              ? `Sua solicitação de ${tipoLabel.toLowerCase()} (${data.data_inicio} a ${data.data_fim}) foi aprovada pelo RH.`
+              : `Sua solicitação de ${tipoLabel.toLowerCase()} foi recusada pelo RH.${observacoes ? ` Motivo: ${observacoes}` : ''}`,
+            link: '/solicitacoes',
+            severidade: status === 'aprovado' ? 'info' : 'alta',
+            chaveDedup: `solicitacao_status_${data.solicitacao_id}_${novoStatusSolicitacao}`,
+            targetIds: [solVinculada.solicitante_id],
+          }).catch(() => {});
+        }
+      }
+    }
 
     res.json(data);
   } catch (e) {
@@ -2204,3 +2534,5 @@ router.post('/avaliacoes/iniciar-ciclo', async (req, res) => {
 });
 
 module.exports = router;
+// ⚠️ Exportado para o cron de notificações chamar de carona (sem slot novo).
+module.exports.cobrancaDiariaFichaContratada = cobrancaDiaria;

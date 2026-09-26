@@ -16,6 +16,9 @@ import InscricoesDashboard from './InscricoesDashboard';
 import InscricoesPortas from './InscricoesPortas';
 import InscricoesQrInventario from './InscricoesQrInventario';
 import InscricoesEmails from './InscricoesEmails';
+import { caminhoPublicoEvento } from '../lib/genesisCba';
+import { rotuloStatusEvento, eventoNaListaAtiva } from '../lib/statusEvento';
+import GenesisPainel from '../components/inscricoes/GenesisPainel';
 import { useAuth } from '../contexts/AuthContext';
 import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
@@ -302,6 +305,8 @@ function CamposEditor({ campos, setCampos }: { campos: any[]; setCampos: (v: any
 
 const EVENTO_VAZIO = {
   nome: '', area: '', periodicidade: 'unica', tipo: 'evento',
+  // Igreja PARCEIRA (CBA · Genesis 24/09). Vazio = evento da CBRio.
+  igreja_id: '',
   data: '', hora: '', local: '', descricao: '', capa_url: '',
   // Último dia (retiro/viagem de vários dias) + arquivo de instruções gerais
   // que a pessoa baixa ao concluir e recebe anexado no e-mail (20/08).
@@ -413,6 +418,9 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
   evento?: any; areas: any[]; onClose: () => void; onSaved: () => void;
 }) {
   const ed = !!evento;
+  // Edição de igreja PARCEIRA (Genesis CBA): a igreja sede aparece e é obrigatória.
+  // Evento comum não mostra o campo — Genesis se cria pelo painel do Genesis CBA.
+  const ehGenesis = !!evento?.igreja_id;
   const [f, setF] = useState<any>(() => ed ? {
     ...EVENTO_VAZIO, ...evento,
     vagas: evento.vagas ?? '',
@@ -432,8 +440,33 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
     whatsapp_duvidas_url: evento.whatsapp_duvidas_url || '',
     pagamento_expira_horas: evento.pagamento_expira_horas ?? '',
     inscricoes_encerram_em: isoParaInputLocal(evento.inscricoes_encerram_em),
+    igreja_id: evento.igreja_id || '',
   } : { ...EVENTO_VAZIO });
   const [campos, setCampos] = useState<any[]>(evento?.campos || []);
+  // Igrejas parceiras (catálogo curto · só `cba_acompanhada`).
+  const [igrejas, setIgrejas] = useState<any[] | null>(null);
+  const [novaIgreja, setNovaIgreja] = useState('');
+  const [criandoIgreja, setCriandoIgreja] = useState(false);
+  useEffect(() => {
+    let vivo = true;
+    if (!ehGenesis) return () => { vivo = false; };
+    api.igrejasParceiras()
+      .then((r: any) => { if (vivo) setIgrejas(Array.isArray(r) ? r : []); })
+      .catch(() => { if (vivo) setIgrejas([]); });
+    return () => { vivo = false; };
+  }, [ehGenesis]);
+  async function cadastrarIgreja() {
+    const nome = novaIgreja.trim();
+    if (nome.length < 3) { toast.error('Informe o nome da igreja parceira'); return; }
+    setCriandoIgreja(true);
+    try {
+      const nova: any = await api.criarIgrejaParceira({ nome });
+      setIgrejas((l) => [...(l || []), nova].sort((x, y) => String(x.nome).localeCompare(String(y.nome))));
+      setF((s: any) => ({ ...s, igreja_id: nova.id }));
+      setNovaIgreja('');
+      toast.success('Igreja parceira cadastrada');
+    } catch (e: any) { toast.error(e?.message || 'Erro ao cadastrar a igreja'); } finally { setCriandoIgreja(false); }
+  }
   const [premios, setPremios] = useState<string[]>(evento?.premios || []);
   const [termos, setTermos] = useState<any[]>(Array.isArray(evento?.termos_extra) ? evento.termos_extra : []);
   // Lotes na tela ficam em REAIS (como o campo Valor); viram centavos no save.
@@ -463,6 +496,7 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
   async function salvar() {
     if (f.nome.trim().length < 2) { toast.error('Informe o nome do evento'); return; }
     if (!f.area) { toast.error('Selecione a área (obrigatória)'); return; }
+    if (ehGenesis && !f.igreja_id) { toast.error('Escolha a igreja sede do Genesis'); return; }
     for (const c of campos) { if (!c.label?.trim()) { toast.error('Todo campo extra precisa de uma pergunta'); return; } }
     if (f.pagamento_ativo) {
       // Evento pago sem valor ou sem forma não abre no formulário público (o
@@ -479,6 +513,7 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
     try {
       const payload: any = {
         nome: f.nome, area: f.area, tipo: f.tipo, data: f.data || null, hora: f.hora || null,
+        ...(ehGenesis ? { igreja_id: f.igreja_id || null } : {}),
         local: f.local || null, descricao: f.descricao || null, capa_url: f.capa_url || null,
         data_fim: f.data_fim || null,
         instrucoes_url: f.instrucoes_url || null,
@@ -574,6 +609,29 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
                 Quem cuida desta área também recebe o aviso de cada nova inscrição.
               </p>
             </div>
+            {ehGenesis && <div className="sm:col-span-2 rounded-md border border-border p-2.5 space-y-2">
+              <label className="text-xs text-muted-foreground">
+                Igreja sede deste Genesis *
+              </label>
+              <select value={f.igreja_id || ''} onChange={set('igreja_id')}
+                className="w-full h-9 rounded-md border border-border bg-[var(--cbrio-input-bg)] text-sm px-2">
+                <option value="">Selecione a igreja…</option>
+                {(igrejas || []).map((g: any) => <option key={g.id} value={g.id}>{g.nome}</option>)}
+              </select>
+              <div className="flex gap-2">
+                <Input value={novaIgreja} onChange={(e) => setNovaIgreja(e.target.value)}
+                  placeholder="Cadastrar nova igreja parceira" className="h-8 text-sm" />
+                <Button type="button" size="sm" variant="outline" disabled={criandoIgreja} onClick={cadastrarIgreja}>
+                  {criandoIgreja ? 'Salvando…' : 'Cadastrar'}
+                </Button>
+              </div>
+              {f.igreja_id && (
+                <p className="text-[11px] text-amber-600">
+                  Quem se inscrever aqui NÃO vira cadastro da CBRio, não entra nos números da CBRio e
+                  não vê o evento no app. A igreja só pode ser trocada enquanto o evento não tiver inscrições.
+                </p>
+              )}
+            </div>}
             {!ed && (
               <div>
                 <label className="text-xs text-muted-foreground">Recorrência</label>
@@ -832,8 +890,8 @@ function EventoForm({ evento, areas, onClose, onSaved }: {
               <label className="text-xs text-muted-foreground">Status</label>
               <select value={f.status} onChange={set('status')} className="w-full h-9 rounded-md border border-border bg-[var(--cbrio-input-bg)] text-sm px-2">
                 <option value="rascunho">Rascunho</option>
-                <option value="publicado">Publicado</option>
-                <option value="encerrado">Encerrado</option>
+                <option value="publicado">Ativo (publicado)</option>
+                <option value="encerrado">Inativo (inscrições encerradas)</option>
                 <option value="arquivado">Arquivado</option>
               </select>
               <p className="text-[11px] text-muted-foreground mt-1">Publicado = o formulário público fica NO AR em /evento/{'{slug}'} (mesmo endereço dos QRs do Celebra). Evento pago só abre na fase do Pix.</p>
@@ -950,7 +1008,7 @@ function SerieModal({ grupo, onClose, onEditar, onDuplicar, onPublicar, onCopiar
                   <div className="text-xs text-muted-foreground flex items-center gap-2 flex-wrap">
                     {e.data && <span>{fmtData(e.data)}{e.hora ? ` · ${e.hora}` : ''}</span>}
                     <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {e.inscritos}{e.vagas ? `/${e.vagas}` : ''}</span>
-                    <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{e.status}</span>
+                    <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{rotuloStatusEvento(e.status)}</span>
                   </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0" onClick={ev => ev.stopPropagation()}>
@@ -1060,7 +1118,8 @@ export default function Inscricoes() {
   const [areas, setAreas] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [mesRef, setMesRef] = useState(() => { const d = new Date(); return new Date(d.getFullYear(), d.getMonth(), 1); });
-  const [modal, setModal] = useState<{ tipo: 'novo' | 'editar' | 'edicao' | 'serie'; evento?: any; serieId?: string } | null>(null);
+  const [modal, setModal] = useState<{ tipo: 'novo' | 'genesis' | 'editar' | 'edicao' | 'serie'; evento?: any; serieId?: string } | null>(null);
+  const [verInativos, setVerInativos] = useState(false);
 
   function carregar() {
     setLoading(true);
@@ -1077,11 +1136,23 @@ export default function Inscricoes() {
     return m;
   }, [eventos]);
 
-  // Aba Eventos agrupada: série recorrente = 1 card com as edições dentro
+  // Aba Eventos agrupada: série recorrente = 1 card com as edições dentro.
+  // Por padrão só o que está em uso (ativo/rascunho); inativos atrás do botão.
+  // Genesis CBA sai do agrupamento: tem card fixo próprio no topo, e cada
+  // Genesis aparece como evento comum dentro dele.
+  const ehDoGenesis = (e: any) => e.serie?.slug_base === 'genesis';
+  const totalInativos = useMemo(() => eventos.filter(e => !eventoNaListaAtiva(e.status)).length, [eventos]);
+  const genesisEdicoes = useMemo(
+    () => eventos.filter(e => ehDoGenesis(e) && (verInativos || eventoNaListaAtiva(e.status)))
+      .sort((a, b) => (b.data || '').localeCompare(a.data || '')),
+    [eventos, verInativos],
+  );
   const { grupos, avulsos } = useMemo(() => {
     const map = new Map<string, { serie: any; edicoes: any[] }>();
     const av: any[] = [];
     eventos.forEach(e => {
+      if (ehDoGenesis(e)) return;
+      if (!verInativos && !eventoNaListaAtiva(e.status)) return;
       if (e.serie_id && e.serie) {
         const g = map.get(e.serie_id) || { serie: e.serie, edicoes: [] };
         g.edicoes.push(e); map.set(e.serie_id, g);
@@ -1089,7 +1160,7 @@ export default function Inscricoes() {
     });
     map.forEach(g => g.edicoes.sort((a, b) => (b.data || '').localeCompare(a.data || '')));
     return { grupos: [...map.values()], avulsos: av };
-  }, [eventos]);
+  }, [eventos, verInativos]);
 
   const grupoAberto = useMemo(
     () => modal?.tipo === 'serie' ? grupos.find(g => g.serie.id === modal.serieId) || null : null,
@@ -1122,10 +1193,53 @@ export default function Inscricoes() {
   }
 
   function copiarLink(ev: any) {
-    navigator.clipboard.writeText(`${window.location.origin}/evento/${ev.slug}`);
+    navigator.clipboard.writeText(`${window.location.origin}${caminhoPublicoEvento(ev)}`);
     if (ev.status === 'publicado') toast.success('Link copiado — formulário no ar');
     else toast.warning('Link copiado, mas o evento está em RASCUNHO — clique em Publicar pra ativar');
   }
+
+  // Linha de evento comum (avulso ou Genesis) — mesma gestão pra todos.
+  const linhaEvento = (e: any) => (
+                // O CARD INTEIRO abre o evento (só o texto abria antes, e sem
+                // afordância nenhuma — o clique na linha não fazia nada e isso
+                // se lê como "o card não é clicável"). Os botões de ação param
+                // a propagação: publicar/copiar/editar não devem navegar.
+                <div key={e.id} role="button" tabIndex={0}
+                  onClick={() => navigate(`/inscricoes/evento/${e.id}`)}
+                  onKeyDown={ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); navigate(`/inscricoes/evento/${e.id}`); } }}
+                  title="Abrir o evento (inscritos, pagamento e sorteio)"
+                  className="rounded-lg border border-border p-3 flex items-center gap-3 flex-wrap cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-colors">
+                  <div className="flex-1 min-w-[220px] text-left">
+                    <div className="font-medium text-sm">{e.nome}</div>
+                    <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
+                      <span className="rounded bg-foreground/8 px-1.5 py-0.5">{e.area}</span>
+                      {e.igreja?.nome && <span className="rounded bg-amber-500/15 text-amber-700 px-1.5 py-0.5">Parceira · {e.igreja.nome}</span>}
+                      {e.data && <span>{fmtData(e.data)}</span>}
+                      <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {e.inscritos}{e.vagas ? `/${e.vagas}` : ''}</span>
+                      <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{rotuloStatusEvento(e.status)}</span>
+                    </div>
+                  </div>
+                  <span className="text-xs text-primary font-medium shrink-0">Abrir →</span>
+                  <div className="flex items-center gap-1.5 shrink-0" onClick={ev => ev.stopPropagation()}>
+                    {e.status === 'rascunho' && (
+                      <Button size="sm" onClick={() => publicar(e)} title="Coloca o formulário no ar agora">
+                        <Megaphone className="h-3.5 w-3.5 mr-1" /> Publicar
+                      </Button>
+                    )}
+                    <Button size="sm" variant="outline" onClick={() => navigate(`/inscricoes/evento/${e.id}`)} title="Inscritos e sorteio">
+                      <Users className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button size="sm" variant="outline" title="Copiar o link público (/evento/…)" onClick={() => copiarLink(e)}>
+                      <Link2 className="h-3.5 w-3.5" />
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setModal({ tipo: 'edicao', evento: e })} title="Copiar formulário e configurações pra próxima data">
+                      <CopyPlus className="h-3.5 w-3.5 mr-1" /> Duplicar evento
+                    </Button>
+                    <Button size="sm" variant="outline" onClick={() => setModal({ tipo: 'editar', evento: e })}>Editar</Button>
+                    <button onClick={() => excluir(e)} className="text-red-500 p-1.5" title="Excluir (soft)"><Trash2 className="h-4 w-4" /></button>
+                  </div>
+                </div>
+  );
 
   const ABAS = [
     { key: 'calendario', label: 'Calendário', on: true },
@@ -1207,16 +1321,49 @@ export default function Inscricoes() {
         <>
         <AvisoCredencialPagamento podeForcar={podeEditar} />
         <Card className="glass-solid p-4">
+          <div className="flex items-center justify-between gap-2 mb-3 flex-wrap">
+            <span className="text-xs text-muted-foreground">{verInativos ? 'Todos os eventos, inclusive os inativos' : 'Eventos ativos e em rascunho'}</span>
+            <Button size="sm" variant="outline" onClick={() => setVerInativos(v => !v)}>
+              {verInativos ? 'Esconder inativos' : `Ver inativos (${totalInativos})`}
+            </Button>
+          </div>
           {loading ? (
             <div className="flex justify-center py-8"><Loader2 className="h-5 w-5 animate-spin text-primary" /></div>
-          ) : eventos.length === 0 ? (
-            <p className="text-sm text-muted-foreground py-6 text-center">Nenhum evento na espinha ainda — crie o primeiro. (Os eventos do módulo antigo migram na próxima entrega, sem perder nada.)</p>
           ) : (
             <div className="space-y-2">
+              {/* Genesis CBA · card FIXO (25/09): aparece mesmo sem nenhum Genesis
+                  criado. Cada Genesis é um evento comum (abrir, link, editar,
+                  inativar), marcado como de igreja parceira — a pessoa inscrita
+                  não vira cadastro nem entra nos números da CBRio. */}
+              <div className="rounded-lg border border-amber-500/40 bg-amber-500/5 p-3 space-y-2">
+                <div className="flex items-center gap-3 flex-wrap">
+                  <div className="flex-1 min-w-[220px]">
+                    <div className="font-medium text-sm flex items-center gap-2">
+                      <Repeat className="h-3.5 w-3.5 text-amber-700" /> Genesis CBA
+                      <span className="text-[10px] rounded-full bg-amber-500/15 text-amber-700 px-1.5 py-0.5">Igreja parceira · fora dos números da CBRio</span>
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-0.5">
+                      Link sempre aberto: <code className="rounded bg-foreground/8 px-1">{window.location.origin}/genesis</code> — mostra o Genesis ativo no momento.
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <Button size="sm" variant="outline" title="Copiar o link /genesis"
+                      onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/genesis`); toast.success('Link do Genesis copiado'); }}>
+                      <Link2 className="h-3.5 w-3.5 mr-1" /> Copiar link
+                    </Button>
+                    <Button size="sm" onClick={() => setModal({ tipo: 'genesis' })} title="Criar Genesis, cadastrar igreja sede, ver o resumo">
+                      <Plus className="h-3.5 w-3.5 mr-1" /> Novo Genesis / igrejas
+                    </Button>
+                  </div>
+                </div>
+                {genesisEdicoes.length === 0
+                  ? <p className="text-xs text-muted-foreground">Nenhum Genesis {verInativos ? 'criado' : 'ativo ou em rascunho'} ainda — clique em "Novo Genesis" e escolha a data e a igreja sede.</p>
+                  : <div className="space-y-2">{genesisEdicoes.map(e => linhaEvento(e))}</div>}
+              </div>
               {grupos.map(g => {
                 const totalInscritos = g.edicoes.reduce((s, e) => s + (Number(e.inscritos) || 0), 0);
                 return (
-                  <button key={g.serie.id} onClick={() => setModal({ tipo: 'serie', serieId: g.serie.id })}
+                  <button key={g.serie.id} onClick={() => setModal(g.serie.slug_base === 'genesis' ? { tipo: 'genesis' } : { tipo: 'serie', serieId: g.serie.id })}
                     className="w-full rounded-lg border border-primary/40 bg-primary/5 p-3 flex items-center gap-3 flex-wrap text-left hover:bg-primary/10 transition-colors">
                     <div className="flex-1 min-w-[220px]">
                       <div className="font-medium text-sm flex items-center gap-2">
@@ -1236,46 +1383,7 @@ export default function Inscricoes() {
                   </button>
                 );
               })}
-              {avulsos.map(e => (
-                // O CARD INTEIRO abre o evento (só o texto abria antes, e sem
-                // afordância nenhuma — o clique na linha não fazia nada e isso
-                // se lê como "o card não é clicável"). Os botões de ação param
-                // a propagação: publicar/copiar/editar não devem navegar.
-                <div key={e.id} role="button" tabIndex={0}
-                  onClick={() => navigate(`/inscricoes/evento/${e.id}`)}
-                  onKeyDown={ev => { if (ev.key === 'Enter' || ev.key === ' ') { ev.preventDefault(); navigate(`/inscricoes/evento/${e.id}`); } }}
-                  title="Abrir o evento (inscritos, pagamento e sorteio)"
-                  className="rounded-lg border border-border p-3 flex items-center gap-3 flex-wrap cursor-pointer hover:border-primary/40 hover:bg-primary/5 transition-colors">
-                  <div className="flex-1 min-w-[220px] text-left">
-                    <div className="font-medium text-sm">{e.nome}</div>
-                    <div className="text-xs text-muted-foreground flex items-center gap-2 mt-0.5 flex-wrap">
-                      <span className="rounded bg-foreground/8 px-1.5 py-0.5">{e.area}</span>
-                      {e.data && <span>{fmtData(e.data)}</span>}
-                      <span className="inline-flex items-center gap-1"><Users className="h-3 w-3" /> {e.inscritos}{e.vagas ? `/${e.vagas}` : ''}</span>
-                      <span className={`rounded px-1.5 py-0.5 ${STATUS_BADGE[e.status] || ''}`}>{e.status}</span>
-                    </div>
-                  </div>
-                  <span className="text-xs text-primary font-medium shrink-0">Abrir →</span>
-                  <div className="flex items-center gap-1.5 shrink-0" onClick={ev => ev.stopPropagation()}>
-                    {e.status === 'rascunho' && (
-                      <Button size="sm" onClick={() => publicar(e)} title="Coloca o formulário no ar agora">
-                        <Megaphone className="h-3.5 w-3.5 mr-1" /> Publicar
-                      </Button>
-                    )}
-                    <Button size="sm" variant="outline" onClick={() => navigate(`/inscricoes/evento/${e.id}`)} title="Inscritos e sorteio">
-                      <Users className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button size="sm" variant="outline" title="Copiar o link público (/evento/…)" onClick={() => copiarLink(e)}>
-                      <Link2 className="h-3.5 w-3.5" />
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => setModal({ tipo: 'edicao', evento: e })} title="Copiar formulário e configurações pra próxima data">
-                      <CopyPlus className="h-3.5 w-3.5 mr-1" /> Duplicar evento
-                    </Button>
-                    <Button size="sm" variant="outline" onClick={() => setModal({ tipo: 'editar', evento: e })}>Editar</Button>
-                    <button onClick={() => excluir(e)} className="text-red-500 p-1.5" title="Excluir (soft)"><Trash2 className="h-4 w-4" /></button>
-                  </div>
-                </div>
-              ))}
+              {avulsos.map(e => linhaEvento(e))}
             </div>
           )}
         </Card>
@@ -1287,6 +1395,8 @@ export default function Inscricoes() {
       )}
 
       {modal?.tipo === 'novo' && <EventoModal areas={areas} onClose={() => setModal(null)} onSaved={() => { setModal(null); carregar(); }} />}
+      {modal?.tipo === 'genesis' && <GenesisPainel onClose={() => setModal(null)} onChanged={carregar}
+        onEditar={(e: any) => setModal({ tipo: 'editar', evento: e })} />}
       {modal?.tipo === 'editar' && <EventoModal evento={modal.evento} areas={areas} onClose={() => setModal(null)} onSaved={() => { setModal(null); carregar(); }} />}
       {modal?.tipo === 'edicao' && <NovaEdicaoModal evento={modal.evento} onClose={() => setModal(null)} onSaved={() => { setModal(null); carregar(); }} />}
       {grupoAberto && (
