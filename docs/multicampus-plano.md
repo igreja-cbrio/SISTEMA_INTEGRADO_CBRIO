@@ -149,6 +149,24 @@ Pendentes: demais produtores, gerador periódico, regras administrativas,
 WhatsApp/fila/webhooks e endpoints próprios dos apps. A frente inteira de jobs
 e notificações permanece não certificada.
 
+### Batismo · arquivos, configuração e cobertura
+
+- Configuração agora por campus em `20260927120000_multicampus_batismo_config_storage.sql`,
+  com ponte para singleton legado apenas em preparação. Upload novo no bucket
+  privado `batismos-campi`, por campus/evento; fotos de referência exigem
+  consentimento prévio e pai local. URLs assinadas após autorização.
+- `backend/scripts/multicampus/cutover-batismo-storage.sql` permanece fora das
+  migrations. O bucket legado público tinha zero objetos na consulta viva,
+  mas só pode ser privatizado após atualizar leitores/Edge Functions legados.
+- Cobertura de convertidos (`20260927140000_multicampus_batismo_cobertura.sql`)
+  lista apenas convertidos locais; RPC retorna somente booleanos para identidade
+  canônica global. Não compara nomes sozinhos nem devolve atos de outra unidade.
+- Edição de contato na gestão App preserva funcionalidade via opção interna
+  `editarDadosPessoa`: corrige snapshot, acumula contato secundário e encaminha
+  nascimento divergente para revisão; não troca CPF/vínculo pelo payload.
+- Bloco validado com 26 testes de serviço/SQL. Gestão App e Edge Functions ainda
+  estão sendo concluídos na PR associada; não ativar o domínio inteiro.
+
 Migrations preparadas, **não aplicadas**:
 1. `20260926200000_multicampus_contexto_e_ativacao.sql`: configuração, gate de
    ativação, helper e administração de vínculos. Deve preceder qualquer deploy

@@ -32,11 +32,13 @@ async function selecao(db, ctx, dados) {
   if (Boolean(evento)!==Boolean(horario)) throw new ErroCampus(400,'batismo_selecao_incompleta','Selecione a data e o horário do batismo.');
   return {evento,horario};
 }
-async function salvar(db,ctx,body,{atual=null,usuarioId=null,resolverPessoa=resolverPessoaRegistro}={}) {
+async function salvar(db,ctx,body,{atual=null,usuarioId=null,editarDadosPessoa=false,resolverPessoa=resolverPessoaRegistro}={}) {
   validarContexto(ctx,true);
-  // Campos de auditoria, identidade e consentimento não são editáveis nesta rota.
+  // Auditoria, CPF, vínculo e consentimento não são editáveis pelo payload.
+  // A gestão autorizada pode corrigir o snapshot de contato; o cadastro principal
+  // não é sobrescrito e divergências seguem para o contrato canônico.
   const dados=atual?{...atual}:{status:'pendente',origem:'manual',area_kpi:'sede',eh_crianca:false,possui_deficiencia:false};
-  const campos=atual?CAMPOS_EDICAO:[...CAMPOS_RPC,'data_batismo','evento_id','horario_culto','horario_id'];
+  const campos=atual?[...CAMPOS_EDICAO,...(editarDadosPessoa?['nome','sobrenome','telefone','email','data_nascimento']:[])]:[...CAMPOS_RPC,'data_batismo','evento_id','horario_culto','horario_id'];
   for (const campo of campos) if (body[campo]!==undefined) dados[campo]=body[campo];
   if (atual && body.data_batismo!==undefined && body.evento_id===undefined && body.data_batismo!==atual.data_batismo) dados.evento_id=null;
   if (atual && body.evento_id!==undefined && body.data_batismo===undefined && body.evento_id!==atual.evento_id) dados.data_batismo=null;
@@ -51,13 +53,13 @@ async function salvar(db,ctx,body,{atual=null,usuarioId=null,resolverPessoa=reso
     dados.evento_id=eventos[0].id;
   }
   const {evento,horario}=await selecao(db,ctx,dados);
-  if (!atual) {
-    if (dados.origem === 'totem' && !String(dados.cpf || '').replace(/\D/g,'')) throw new ErroCampus(400,'batismo_cpf_obrigatorio','CPF é obrigatório para se inscrever pelo totem.');
+  if (!atual || editarDadosPessoa) {
+    if (!atual && dados.origem === 'totem' && !String(dados.cpf || '').replace(/\D/g,'')) throw new ErroCampus(400,'batismo_cpf_obrigatorio','CPF é obrigatório para se inscrever pelo totem.');
     dados.telefone=String(dados.telefone||'').replace(/\D/g,'')||null;
     dados.cpf=String(dados.cpf||'').replace(/\D/g,'')||null;
     dados.email=String(dados.email||'').trim().toLowerCase()||null;
     dados.nome=dados.nome.trim();dados.sobrenome=dados.sobrenome.trim();
-    dados.membro_id=await resolverPessoa({...dados,nome:`${dados.nome} ${dados.sobrenome}`},ctx,'batismo_cadastro_interno',{supabase:db});
+    dados.membro_id=await resolverPessoa({...dados,nome:`${dados.nome} ${dados.sobrenome}`},ctx,'batismo_cadastro_interno',{supabase:db,...(atual ? {membroVinculado:atual.membro_id} : {})});
   }
   let row;
   if (evento) {
@@ -67,7 +69,7 @@ async function salvar(db,ctx,body,{atual=null,usuarioId=null,resolverPessoa=reso
   } else {
     // Sem evento e sem horário não há vaga reservada. Atribuí-los posteriormente
     // exige a mesma RPC transacional usada na inscrição pública.
-    const payload={};for(const campo of (atual?CAMPOS_EDICAO:CAMPOS_RPC)) if(dados[campo]!==undefined) payload[campo]=dados[campo];
+    const payload={};for(const campo of (atual?[...campos,...(editarDadosPessoa?['membro_id']:[])]:CAMPOS_RPC)) if(dados[campo]!==undefined) payload[campo]=dados[campo];
     if(!atual) payload.inscrito_por=usuarioId;
     const q=atual?filtrarCampus(db.from('batismo_inscricoes').update({...payload,updated_at:new Date().toISOString()}),ctx).eq('id',atual.id).is('deleted_at',null):db.from('batismo_inscricoes').insert(carimbarCampus(payload,ctx));
     const result=await q.select().single();erroBanco(result.error);row=result.data;

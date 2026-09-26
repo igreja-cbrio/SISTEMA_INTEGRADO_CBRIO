@@ -13,6 +13,8 @@ const { filtrarCampus, carimbarCampus } = require('../utils/campusQuery');
 const { lerTodasPaginas } = require('../utils/campusPaginacao');
 const { listarBatismos, listarHorarios, validarHorario } = require('../services/campusBatismoAdmin');
 const { salvar: salvarInscricaoBatismo, registrarCheckin: registrarCheckinBatismo } = require('../services/campusBatismoInscricao');
+const { lerConfigBatismo, salvarConfigBatismo, salvarFotoReferencia } = require('../services/campusBatismoArquivos');
+const { coberturaBatismo } = require('../services/campusBatismoCobertura');
 const { responderErroCampus } = require('../services/campusContexto');
 const { notificar } = require('../services/notificar');
 const { coletarTodos } = require('../services/kpiAutoCollector');
@@ -941,80 +943,10 @@ router.get('/batismos', authorizeBatismoLeitura, campusBatismos.contexto, async 
   catch (e) { responderErroCampus(res, e); }
 });
 
-// ── Cobertura de batismo dos convertidos ────────────────────────────────────
-// Trilho UNIVERSAL: todo convertido deve ser chamado pro batismo. A Integracao
-// acompanha aqui quem ja foi batizado, quem esta inscrito e quem ainda falta —
-// independente do acompanhamento pastoral (Cuidados). Cruza cui_convertidos com
-// batismo_inscricoes por membro_id, CPF ou nome. Paginado (cap de 1000 do PostgREST).
-// varredura 2026-09: era só `authenticate` e devolve nome/telefone de cada convertido ainda não batizado — mesma régua do GET /batismos (a tela é a mesma).
-router.get('/batismos/cobertura-convertidos', authorizeBatismoLeitura, async (req, res) => {
-  try {
-    const onlyDigits = (v) => String(v || '').replace(/\D/g, '');
-    const fetchAll = async (table, columns) => {
-      const out = []; let from = 0; const page = 1000;
-      while (true) {
-        const { data, error } = await supabase.from(table).select(columns)
-          .is('deleted_at', null).range(from, from + page - 1);
-        if (error) throw error;
-        out.push(...(data || []));
-        if (!data || data.length < page) break;
-        from += page;
-      }
-      return out;
-    };
-
-    const [convertidos, inscricoes] = await Promise.all([
-      fetchAll('cui_convertidos', 'id, nome, telefone, cpf, membro_id, data_culto'),
-      fetchAll('batismo_inscricoes', 'status, membro_id, cpf, nome, data_batismo'),
-    ]);
-
-    // Indices de batismo · realizado tem prioridade sobre inscrito
-    const byMembro = new Map(), byCpf = new Map(), byNome = new Map();
-    const put = (map, key, realizado) => {
-      if (!key) return;
-      const cur = map.get(key);
-      const rank = realizado ? 2 : 1;
-      if (!cur || rank > cur.rank) map.set(key, { realizado });
-    };
-    for (const b of inscricoes) {
-      const realizado = b.status === 'realizado';
-      put(byMembro, b.membro_id, realizado);
-      put(byCpf, onlyDigits(b.cpf).length === 11 ? onlyDigits(b.cpf) : null, realizado);
-      put(byNome, String(b.nome || '').trim().toLowerCase() || null, realizado);
-    }
-    const matchOf = (c) => {
-      const cands = [
-        c.membro_id ? byMembro.get(c.membro_id) : null,
-        onlyDigits(c.cpf).length === 11 ? byCpf.get(onlyDigits(c.cpf)) : null,
-        byNome.get(String(c.nome || '').trim().toLowerCase()),
-      ].filter(Boolean);
-      if (!cands.length) return null;
-      return { realizado: cands.some(m => m.realizado) };
-    };
-
-    let batizados = 0, inscritos = 0, naoInscritos = 0;
-    const pendentes = [];
-    for (const c of convertidos) {
-      const m = matchOf(c);
-      if (m && m.realizado) { batizados++; continue; }
-      if (m) inscritos++; else naoInscritos++;
-      pendentes.push({
-        id: c.id, nome: c.nome, telefone: c.telefone, membro_id: c.membro_id,
-        data_culto: c.data_culto, status_batismo: m ? 'inscrito' : 'nao_inscrito',
-      });
-    }
-    pendentes.sort((a, b) => String(b.data_culto || '').localeCompare(String(a.data_culto || '')));
-
-    res.json({
-      total: convertidos.length,
-      batizados, inscritos, nao_inscritos: naoInscritos,
-      pct_batizados: convertidos.length ? Math.round((batizados / convertidos.length) * 100) : 0,
-      pendentes,
-    });
-  } catch (e) {
-    console.error('[kpis/batismos/cobertura-convertidos]', e.message);
-    res.status(500).json({ error: e.message });
-  }
+// Convertidos locais; conclusão pessoal retorna apenas um sinal, nunca atos alheios.
+router.get('/batismos/cobertura-convertidos', authorizeBatismoLeitura, campusBatismos.contexto, async (req, res) => {
+  try { res.json(await coberturaBatismo(supabase, req.campus)); }
+  catch (e) { responderErroCampus(res, e); }
 });
 
 // ── Horários de batismo (abrir/fechar + limite) ──────────────────────────────
@@ -1058,25 +990,16 @@ router.delete('/batismos/horarios/:id', authorizeBatismo, campusBatismoHorarios.
 });
 
 // Config do batismo · link do grupo de WhatsApp (Lorena atualiza a cada mês)
-router.get('/batismos/config', authorizeBatismo, async (_req, res) => {
-  try {
-    const { data } = await supabase.from('batismo_config').select('grupo_url, updated_at').eq('id', 1).maybeSingle();
-    res.json(data || { grupo_url: null });
-  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao carregar config' }); }
+router.get('/batismos/config', authorizeBatismo, campusBatismos.contexto, async (req, res) => {
+  try { res.json(await lerConfigBatismo(supabase, req.campus.campus_id)); }
+  catch (e) { responderErroCampus(res, e); }
 });
 
-router.patch('/batismos/config', authorizeBatismo, async (req, res) => {
+router.patch('/batismos/config', authorizeBatismo, campusBatismos.contexto, campusBatismos.payload, async (req, res) => {
   try {
-    const grupo_url = req.body?.grupo_url ? String(req.body.grupo_url).trim().slice(0, 500) : null;
-    if (grupo_url && !/^https:\/\/chat\.whatsapp\.com\//.test(grupo_url)) {
-      return res.status(400).json({ error: 'O link precisa ser de um grupo do WhatsApp (chat.whatsapp.com).' });
-    }
-    const { data, error } = await supabase.from('batismo_config')
-      .update({ grupo_url, updated_by: req.user?.id || null, updated_at: new Date().toISOString() })
-      .eq('id', 1).select('grupo_url, updated_at').single();
-    if (error) throw error;
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message || 'Erro ao salvar o link do grupo' }); }
+    const grupo_url = req.body?.grupo_url ? String(req.body.grupo_url).trim() : null;
+    res.json(await salvarConfigBatismo(supabase, req.campus.campus_id, { grupo_url, updated_by: req.user.id }));
+  } catch (e) { responderErroCampus(res, e); }
 });
 
 router.post('/batismos', authorizeBatismo, campusBatismos.contexto, campusBatismos.payload, campusBatismos.membro, async (req, res) => {
@@ -1163,31 +1086,9 @@ router.post('/batismos/:id/checkin', authorizeBatismo, campusBatismos.contexto, 
 });
 
 // Upload da selfie de referência (opcional · consentida) → bucket privado.
-router.post('/batismos/:id/foto-referencia', authorizeBatismo, uploadFotoRef.single('foto'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'arquivo (campo "foto") obrigatório' });
-
-  const { data: insc, error: e0 } = await supabase
-    .from('batismo_inscricoes')
-    .select('id, deleted_at')
-    .eq('id', req.params.id)
-    .single();
-  if (e0 || !insc || insc.deleted_at) return res.status(404).json({ error: 'Inscrição não encontrada' });
-
-  const ext = (req.file.originalname.split('.').pop() || 'jpg').toLowerCase().replace(/[^a-z0-9]/g, '') || 'jpg';
-  const path = `referencia/${req.params.id}.${ext}`;
-  const { error: upErr } = await supabase.storage
-    .from('batismos-biometria')
-    .upload(path, req.file.buffer, { contentType: req.file.mimetype, upsert: true });
-  if (upErr) return res.status(500).json({ error: upErr.message });
-
-  const nowIso = new Date().toISOString();
-  const { error: e1 } = await supabase
-    .from('batismo_inscricoes')
-    .update({ foto_referencia_url: path, consentimento_em: nowIso, updated_at: nowIso })
-    .eq('id', req.params.id);
-  if (e1) return res.status(500).json({ error: e1.message });
-
-  res.json({ ok: true, foto_referencia_url: path });
+router.post('/batismos/:id/foto-referencia', authorizeBatismo, campusBatismos.contexto, campusBatismos.registro, uploadFotoRef.single('foto'), async (req, res) => {
+  try { res.json(await salvarFotoReferencia(supabase, req.campus.campus_id, req.params.id, req.file)); }
+  catch (e) { responderErroCampus(res, e); }
 });
 
 // ── Dashboard (agregado) ──────────────────────────────────────────────────────

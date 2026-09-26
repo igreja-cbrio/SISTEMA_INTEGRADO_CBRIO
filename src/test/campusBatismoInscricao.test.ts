@@ -54,4 +54,11 @@ describe('Gravação administrativa de batismo',()=>{
   const e=ambiente(),resolverPessoa=vi.fn();await expect(e.svc.registrarCheckin(e.db,ctx,{id:'i',igreja_id:B},{},'ator',{resolverPessoa})).rejects.toThrow('não encontrada');expect(resolverPessoa).not.toHaveBeenCalled();expect(e.payload()).toBeUndefined();
  });
 
+ it('edição de contato autorizada acumula na identidade vinculada e não aceita trocar CPF/membro',async()=>{
+  const e=ambiente(),resolverPessoa=vi.fn(async()=> 'm');const atual={id:'i',igreja_id:A,membro_id:'m',cpf:'52998224725',nome:'Ana',sobrenome:'Silva',telefone:'21911111111',email:'original@example.org',status:'pendente',area_kpi:'sede',eh_crianca:false,possui_deficiencia:false,evento_id:'e',horario_id:'h'};
+  await e.svc.salvar(e.db,ctx,{telefone:'(21) 99999-9999',email:' NOVO@EXAMPLE.ORG ',membro_id:'intruso',cpf:'outro'},{atual,editarDadosPessoa:true,resolverPessoa});
+  expect(resolverPessoa).toHaveBeenCalledWith(expect.objectContaining({membro_id:'m',cpf:'52998224725',telefone:'21999999999',email:'novo@example.org'}),ctx,'batismo_cadastro_interno',{supabase:e.db,membroVinculado:'m'});
+  expect(e.db.rpc).toHaveBeenCalledWith('fn_campus_batismo_reservar',expect.objectContaining({p_membro_id:'m',p_cpf:'52998224725',p_telefone:'21999999999',p_email:'novo@example.org'}));
+ });
+
 });
